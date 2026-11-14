@@ -38,6 +38,11 @@ pub struct HoverHelp(pub u32, pub &'static str);
 #[derive(Component)]
 pub struct HoverHelpText;
 
+/// A message shown in the bottom bar's help box while no button is hovered (for example "You
+/// must choose a name."). Screens set it; it is cleared when the state changes.
+#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
+pub struct HelpMessage(pub Option<String>);
+
 /// The frame's art, loaded at startup so screens open instantly.
 #[derive(Resource, Clone)]
 pub struct WindowArt {
@@ -54,7 +59,10 @@ impl Plugin for MenuWindowPlugin {
         if !app.is_plugin_added::<WidgetsPlugin>() {
             app.add_plugins(WidgetsPlugin);
         }
-        app.add_systems(Startup, load_art).add_systems(Update, show_hover_help);
+        app.init_resource::<HelpMessage>()
+            .add_systems(Startup, load_art)
+            .add_systems(Update, show_hover_help)
+            .add_systems(StateTransition, clear_help_message);
     }
 }
 
@@ -141,23 +149,34 @@ pub fn spawn_frame(
         });
 }
 
-/// Shows the hovered button's help in the bottom bar.
+fn clear_help_message(transitions: Option<MessageReader<bevy::state::state::StateTransitionEvent<crate::main_menu::AppState>>>, mut message: ResMut<HelpMessage>) {
+    if let Some(mut t) = transitions
+        && t.read().count() > 0
+        && message.0.is_some()
+    {
+        message.0 = None;
+    }
+}
+
+/// Shows the hovered button's help in the bottom bar (or the screen's [`HelpMessage`]).
 fn show_hover_help(
     buttons: Query<(&HoverHelp, &Hovered)>,
     menu_text: Option<Res<MenuText>>,
     mes: Res<Assets<MesAsset>>,
     mut help: Query<(Option<&mut BitmapText>, Option<&mut Text>), With<HoverHelpText>>,
+    message: Option<Res<HelpMessage>>,
 ) {
     if help.is_empty() {
         return;
     }
+    let fallback = message.and_then(|m| m.0.clone()).unwrap_or_default();
     let wanted = buttons
         .iter()
         .find(|(_, hovered)| hovered.get())
         .map(|(HoverHelp(id, fallback), _)| {
             menu_text.as_ref().and_then(|t| mes.get(&t.0)).and_then(|m| m.get(*id)).unwrap_or(fallback).to_string()
         })
-        .unwrap_or_default();
+        .unwrap_or(fallback);
     for (bitmap, text) in &mut help {
         if let Some(mut bitmap) = bitmap {
             if bitmap.text != wanted {

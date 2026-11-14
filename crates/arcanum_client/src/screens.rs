@@ -71,7 +71,7 @@ fn spawn_placeholder(
 pub fn back_from(state: AppState) -> AppState {
     match state {
         AppState::LoadGame | AppState::NewGameChoice => AppState::SinglePlayer,
-        AppState::NewGame => AppState::NewGameChoice,
+        AppState::NewGame | AppState::CreateCharacter => AppState::NewGameChoice,
         _ => AppState::MainMenu,
     }
 }

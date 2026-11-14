@@ -31,6 +31,8 @@ pub enum AppState {
     NewGameChoice,
     /// The pre-made character picker (see [`crate::new_game`]).
     NewGame,
+    /// Character creation (see [`crate::create_character`]).
+    CreateCharacter,
     /// The Load Game screen (see [`crate::load_game`]).
     LoadGame,
     /// The loading screen on the way into the game (see [`crate::loading`]).
@@ -68,7 +70,7 @@ pub enum MenuAction {
 impl MenuAction {
     /// False for entries whose feature does not exist yet: shown dimmed, not clickable.
     pub fn is_available(self) -> bool {
-        !matches!(self, Self::Continue | Self::CreateCharacter)
+        !matches!(self, Self::Continue)
     }
 }
 
@@ -308,7 +310,7 @@ fn on_activate(
         MenuAction::NewGame => next_state.set(AppState::NewGameChoice),
         MenuAction::PickCharacter => next_state.set(AppState::NewGame),
         MenuAction::BackToSinglePlayer => next_state.set(AppState::SinglePlayer),
-        MenuAction::CreateCharacter => {}
+        MenuAction::CreateCharacter => next_state.set(AppState::CreateCharacter),
         MenuAction::Cancel => next_state.set(AppState::MainMenu),
         MenuAction::LoadGame => next_state.set(AppState::LoadGame),
         MenuAction::Continue => {}

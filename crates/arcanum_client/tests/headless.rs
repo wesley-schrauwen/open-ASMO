@@ -290,7 +290,7 @@ fn menu_app(vfs: Vfs) -> App {
         .init_asset::<Font>()
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<GameSettings>()
-        .add_plugins((TimePlugin, BitmapTextPlugin, FontsPlugin, MenuAudioPlugin, MainMenuPlugin, OptionsPlugin, ScreensPlugin, LoadingPlugin, LoadGamePlugin, NewGamePlugin))
+        .add_plugins((TimePlugin, BitmapTextPlugin, FontsPlugin, MenuAudioPlugin, MainMenuPlugin, OptionsPlugin, ScreensPlugin, LoadingPlugin, LoadGamePlugin, NewGamePlugin, arcanum_client::CreateCharacterPlugin))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)));
     app
 }
@@ -1888,10 +1888,29 @@ fn new_game_first_asks_pre_made_or_custom() {
         label_order(&mut app),
         [(420, "Premade"), (421, "Custom"), (422, "Return")].map(|(id, t)| (id, t.to_string()))
     );
-    // Character creation does not exist yet: dimmed and inert.
-    let custom = button_for(&mut app, MenuAction::CreateCharacter);
-    assert!(app.world().get::<Button>(custom).is_none());
-    assert_eq!(label_color(&mut app, custom), DISABLED_COLOR);
+    // New Character opens character creation; Back and Escape return here.
+    activate(&mut app, MenuAction::CreateCharacter);
+    app.update();
+    assert_eq!(state(&app), AppState::CreateCharacter);
+    let world = app.world_mut();
+    assert_eq!(world.query::<&arcanum_client::create_character::CreateCharacterScreen>().iter(world).count(), 1);
+    press_escape(&mut app);
+    assert_eq!(state(&app), AppState::NewGameChoice);
+    let back = {
+        activate(&mut app, MenuAction::CreateCharacter);
+        app.update();
+        let world = app.world_mut();
+        world
+            .query::<(Entity, &arcanum_client::create_character::CreateAction)>()
+            .iter(world)
+            .find(|(_, a)| **a == arcanum_client::create_character::CreateAction::Back)
+            .unwrap()
+            .0
+    };
+    app.world_mut().trigger(Activate { entity: back });
+    app.update();
+    app.update();
+    assert_eq!(state(&app), AppState::NewGameChoice);
 
     activate(&mut app, MenuAction::BackToSinglePlayer);
     app.update();
@@ -1979,5 +1998,115 @@ fn the_picker_cycles_through_the_characters_and_shows_them() {
     press_new_game(&mut app, NewGameAction::Following);
     press_new_game(&mut app, NewGameAction::Next);
     assert_eq!(app.world().resource::<ChosenCharacter>().0, 16094);
+    assert_eq!(state(&app), AppState::Loading);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Character creation
+
+fn creation_data() -> arcanum_client::create_character::CreationData {
+    use arcanum_client::creation::CreationRules;
+    use arcanum_formats::mes::MesFile;
+    let mes = |t: &str| MesFile::parse(t.as_bytes()).unwrap();
+    arcanum_client::create_character::CreationData {
+        rules: CreationRules::from_files(
+            &mes("{0}{1000}{1}{86}{2}{}{10}{1001}{11}{90}{12}{}"),
+            &mes("{65}{st +1, cn +1, ch -1, dx -1}{90}{pe +1}"),
+            &mes("{1001}{DWM1}{1005}{HUM1}{1018}{HUM2}{1008}{HUF1}"),
+        ),
+        menu: mes("{500}{Choose Name}{506}{You must choose a name.}{720}{Human}{721}{Dwarf}{722}{Elf}{739}{Initial Stats}{740}{Female}{741}{Male}{745}{Race}{771}{Human men.}{773}{Dwarf men.}"),
+        stats: mes("{0}{Strength}{1}{Dexterity}{2}{Constitution}{3}{Beauty}{4}{Intelligence}{5}{Perception}{6}{Willpower}{7}{Charisma}"),
+        stories: mes("{1000}{No significant background\n\nNothing happened.}{1001}{Raised by Monks\n\nQuiet years.}"),
+    }
+}
+
+fn create_text(app: &mut App, which: arcanum_client::create_character::CreateText) -> String {
+    let world = app.world_mut();
+    let e = world.query::<(Entity, &arcanum_client::create_character::CreateText)>().iter(world).find(|(_, t)| **t == which).unwrap().0;
+    texts_in(app, e).remove(0)
+}
+
+fn press_create(app: &mut App, action: arcanum_client::create_character::CreateAction) {
+    let entity = {
+        let world = app.world_mut();
+        world.query::<(Entity, &arcanum_client::create_character::CreateAction)>().iter(world).find(|(_, a)| **a == action).map(|(e, _)| e).unwrap()
+    };
+    app.world_mut().trigger(Activate { entity });
+    app.update();
+    app.update();
+}
+
+fn type_keys(app: &mut App, text: &str) {
+    use bevy::input::ButtonState;
+    use bevy::input::keyboard::{Key, KeyboardInput};
+    for c in text.chars() {
+        let logical_key = if c == '\u{8}' { Key::Backspace } else { Key::Character(c.to_string().into()) };
+        app.world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::KeyA,
+            logical_key,
+            state: ButtonState::Pressed,
+            text: None,
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        });
+    }
+    app.update();
+    app.update();
+}
+
+#[test]
+fn character_creation_builds_a_character() {
+    use arcanum_client::create_character::{CreateAction, CreateText, CreatedCharacter};
+    let mut app = ready_menu(&Fixture::new());
+    app.add_message::<bevy::input::keyboard::KeyboardInput>();
+    app.insert_resource(creation_data());
+    activate(&mut app, MenuAction::SinglePlayer);
+    app.update();
+    activate(&mut app, MenuAction::NewGame);
+    app.update();
+    activate(&mut app, MenuAction::CreateCharacter);
+    app.update();
+    app.update();
+
+    // The template: a nameless human male, no background, base stats.
+    assert_eq!(create_text(&mut app, CreateText::Name), "Choose Name");
+    assert_eq!(create_text(&mut app, CreateText::Gender), "Male");
+    assert_eq!(create_text(&mut app, CreateText::Race), "Human");
+    assert_eq!(create_text(&mut app, CreateText::Background), "No significant background");
+    assert_eq!(create_text(&mut app, CreateText::Stat(0)), "Strength: 8");
+    assert_eq!(create_text(&mut app, CreateText::PanelHeading), "Race");
+    assert_eq!(create_text(&mut app, CreateText::PanelBody), "Human men.");
+
+    // Next without a name is refused with the original's message.
+    press_create(&mut app, CreateAction::Next);
+    assert_eq!(state(&app), AppState::CreateCharacter);
+    assert_eq!(app.world().resource::<arcanum_client::menu_window::HelpMessage>().0.as_deref(), Some("You must choose a name."));
+
+    // Race: dwarf changes the stats and the description; dwarves cannot be female.
+    press_create(&mut app, CreateAction::Race(1));
+    assert_eq!(create_text(&mut app, CreateText::Race), "Dwarf");
+    assert_eq!(create_text(&mut app, CreateText::Stat(0)), "Strength: 9");
+    assert_eq!(create_text(&mut app, CreateText::PanelBody), "Dwarf men.");
+    press_create(&mut app, CreateAction::Gender);
+    assert_eq!(create_text(&mut app, CreateText::Gender), "Male", "no female dwarves");
+
+    // A background replaces the race description with its story.
+    press_create(&mut app, CreateAction::Background(1));
+    assert_eq!(create_text(&mut app, CreateText::Background), "Raised by Monks");
+    assert_eq!(create_text(&mut app, CreateText::Stat(5)), "Perception: 9");
+    assert_eq!(create_text(&mut app, CreateText::PanelBody), "Quiet years.");
+
+    // Typing names the character; Backspace deletes.
+    type_keys(&mut app, "Virgilx\u{8}");
+    assert_eq!(create_text(&mut app, CreateText::Name), "Virgil");
+
+    // The content layer lets the pointer through to the arrows.
+    let world = app.world_mut();
+    let layer = world.query_filtered::<&bevy::picking::Pickable, With<arcanum_client::create_character::CreateContent>>().single(world).unwrap();
+    assert!(!layer.should_block_lower);
+
+    press_create(&mut app, CreateAction::Next);
+    let made = app.world().resource::<CreatedCharacter>().0.clone();
+    assert_eq!((made.name.as_str(), made.race, made.background), ("Virgil", 1, 1));
     assert_eq!(state(&app), AppState::Loading);
 }
