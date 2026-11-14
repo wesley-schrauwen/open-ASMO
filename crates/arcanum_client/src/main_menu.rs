@@ -56,6 +56,8 @@ pub enum MenuAction {
     LoadGame,
     /// Resumes the most recent save. Replaces the original's Last Save.
     Continue,
+    /// Co-op play (see `plans/multiplayer.md`); not built yet.
+    Multiplayer,
     /// Back to the main menu.
     Cancel,
     // New Game choice
@@ -70,7 +72,18 @@ pub enum MenuAction {
 impl MenuAction {
     /// False for entries whose feature does not exist yet: shown dimmed, not clickable.
     pub fn is_available(self) -> bool {
-        !matches!(self, Self::Continue)
+        !matches!(self, Self::Continue | Self::Multiplayer)
+    }
+
+    /// Our own label where it replaces the game's text: the main menu's "Single Player"
+    /// (`MainMenu.mes` 10) reads "Play", since there is no multiplayer entry to tell it apart from.
+    pub fn label_override(self) -> Option<&'static str> {
+        match self {
+            Self::SinglePlayer => Some("Play"),
+            // The game's own text (`MainMenu.mes` 11) is "MultiPlayer".
+            Self::Multiplayer => Some("Multiplayer"),
+            _ => None,
+        }
     }
 }
 
@@ -86,13 +99,14 @@ pub const MENU_ENTRIES: [(u32, MenuAction); 4] = [
 /// Message ids of [`MENU_ENTRIES`], in order.
 pub const MENU_ENTRY_IDS: [u32; 4] = [10, 12, 13, 14];
 
-/// Single Player menu entries, top to bottom, with their message ids in `MainMenu.mes`. The
-/// original's View Intro (53) is left out, and Continue (34, from the in-game menu) takes the
-/// place of Last Save (52).
-pub const SINGLE_PLAYER_ENTRIES: [(u32, MenuAction); 4] = [
+/// Play menu entries (the original's Single Player menu), top to bottom, with their message ids
+/// in `MainMenu.mes`. The original's View Intro (53) is left out, Continue (34, from the in-game
+/// menu) takes the place of Last Save (52), and Multiplayer (11) is added below it.
+pub const SINGLE_PLAYER_ENTRIES: [(u32, MenuAction); 5] = [
     (50, MenuAction::NewGame),
     (51, MenuAction::LoadGame),
     (34, MenuAction::Continue),
+    (11, MenuAction::Multiplayer),
     (54, MenuAction::Cancel),
 ];
 
@@ -133,6 +147,9 @@ pub(crate) const PANEL_WIDTH: f32 = 400.0 * ART_SCALE;
 const ROW_HEIGHT: f32 = 55.0 * ART_SCALE;
 /// Top of the first row.
 pub(crate) const PANEL_TOP: f32 = (145.0 - 55.0 / 2.0) * ART_SCALE;
+/// Row position (0-based, in rows) of each menu's last entry (Exit Game / Cancel): the bottom of
+/// the panel, kept clear of the frame's lower ornament.
+pub const BOTTOM_ROW: f32 = 4.7;
 
 /// A menu entry's text, tagged with its message id. The text entity is also the button.
 #[derive(Component)]
@@ -250,16 +267,20 @@ fn spawn_menu(
     commands
         .spawn((OnMainMenu, DespawnOnExit(state), panel_node()))
         .with_children(|column| {
-            for &(id, action) in entries {
-                let Some(label) = mes.get(id) else {
+            let last = entries.len().saturating_sub(1);
+            for (index, &(id, action)) in entries.iter().enumerate() {
+                let Some(label) = action.label_override().or_else(|| mes.get(id)) else {
                     warn!("{} has no message {id}", text::MAIN_MENU);
                     continue;
                 };
                 // The row only spaces the entries out. The button is the text itself, so hover and
                 // clicks only register over the words, not across the whole panel width.
+                // The last entry (Exit Game / Cancel) sits at the bottom of the panel.
+                let gap = if index == last { (BOTTOM_ROW - index as f32).max(0.0) * ROW_HEIGHT } else { 0.0 };
                 column
                     .spawn(Node {
                         height: Val::Px(ROW_HEIGHT),
+                        margin: UiRect::top(Val::Px(gap)),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         ..default()
@@ -313,6 +334,6 @@ fn on_activate(
         MenuAction::CreateCharacter => next_state.set(AppState::CreateCharacter),
         MenuAction::Cancel => next_state.set(AppState::MainMenu),
         MenuAction::LoadGame => next_state.set(AppState::LoadGame),
-        MenuAction::Continue => {}
+        MenuAction::Continue | MenuAction::Multiplayer => {}
     }
 }
