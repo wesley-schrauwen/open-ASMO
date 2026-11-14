@@ -196,7 +196,13 @@ fn show_character(
     let body = split_story(&p.story).1.to_string();
     let portrait = p.portrait.clone().map(|path| assets.load::<Image>(path));
     let content = commands
-        .spawn((PickerContent, Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }))
+        .spawn((
+            PickerContent,
+            // A full-screen layer added after the buttons: it must let the pointer through, or it
+            // swallows every hover and click on the arrows, Back and Next.
+            bevy::picking::Pickable::IGNORE,
+            Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+        ))
         .with_children(|c| {
             if let Some(image) = portrait {
                 c.spawn((ImageNode::new(image), at(on_screen(PORTRAIT))));
