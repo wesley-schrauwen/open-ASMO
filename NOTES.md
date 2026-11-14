@@ -1,7 +1,36 @@
 # Project notes (handoff)
 
 Working notes for whoever picks this up next, human or agent. Read this first, then `README.md`.
-Last updated: 2026-11-13 (options screen).
+Last updated: 2026-11-15 (character creation and the stats page).
+
+## Handoff: start here
+
+- **Branch / PR stack.** Every change is an open PR stacked on the previous one, oldest first:
+  #9 (interactive menu, base `main`) → #10 → #11 → #12 → #13 → #14 → #15 → #16 → #17 → #18 → #19
+  (world milestone, another session's map/sector/object readers) → #20 (character creation) →
+  #21 (fonts) → #22 (name text field) → #23 (Play button, Multiplayer entry) → #24 (stats page,
+  branch `feat/stat-screen`, the newest; `git log` there has everything). Merge in order and
+  **retarget each PR to `main` before merging** (stacked PRs merged into their parent branch do
+  not reach `main`; this already bit once, fixed by #8).
+- **Work tree** is clean on `feat/stat-screen` at handoff; all branches are pushed.
+- **Not yet checked by eye:** the stats page (#24). Screenshots came out fully black late in the
+  session for every screen, even ones that worked the day before (display asleep/locked, not a
+  code change). Run `DEBUG_ARCANUM_SCREEN=charactereditor DEBUG_ARCANUM_SCREENSHOT=/tmp/x.png
+  cargo run -p arcanum_client` with the display awake and check the layout against the
+  original coordinates in "Character editor" below.
+- **Also unverified with a real mouse:** clicking outside the name field to unfocus it (tests use
+  Enter), and the picker/creation arrows (fixed a full-screen layer swallowing clicks; owner to
+  confirm in-game).
+- **Reverse engineering workflow (owner's preference):** send REA / disassembly questions to
+  Sonnet sub-agents, batched by topic, with the known addresses as context; verify their numbers
+  against the game data before relying on them (several reports were cross-checked this way).
+  `objdump -d --start-address=... --stop-address=...` on `assets/Arcanum/Arcanum.exe` works for
+  code Ghidra did not mark as functions. The original menu screens are a window table at
+  0x5c3a40 (records: background art, callbacks, button lists); see the sections below.
+- **Open questions for the owner:** "Play" vs "PLAY" on the main menu (the font's small capitals
+  make "Play" look small; screenshots compared, left as "Play"); the pocket-watch replacement
+  animation (owner will supply a GIF/SVG, see `TODO.md`).
+
 
 ## What this is
 
@@ -14,14 +43,12 @@ are not.
 ## Current state
 
 Working end to end: `cargo run -p arcanum_client` opens a window and shows the original main menu
-at any supported resolution, with the original menu music. Four entries from `MainMenu.mes`
-(the original's MultiPlayer is removed) are buttons: hover brightens the text and plays the
-original hover sound; a click plays the click sound and runs the action. Single Player opens the
-original's Single Player menu on the same panel (New Game, Load Game, Continue, Cancel; the
-original's View Intro is removed and Last Save became Continue, text from `MainMenu.mes` 34). Load
-Game opens the Load Game screen (below); Continue is dimmed and inert until saves exist. New Game opens the New Game screen
-(below), whose Next goes through the loading screen (random original "Loading Arcanum..." picture, pocket watch in the bottom-right corner, one turn every 8 s) to a world placeholder. Credits is a placeholder; Esc returns to the main menu (not from the loading screen). Exit Game quits.
-Options opens the original options screen (see below).
+at any supported resolution, with the original menu music, sounds and fonts. Play → New Game →
+Pick Character (pre-made picker) or New Character (creation, then the stats page) → loading
+screen → world placeholder. Load Game shows the original save screen (no saves exist yet).
+Options opens the original options screen, settings persist in `config.toml`. Credits and the
+world are placeholders. Esc goes back one level (not from the loading screen or while typing in
+a text field).
 
 | Area | State |
 |---|---|
@@ -29,16 +56,17 @@ Options opens the original options screen (see below).
 | `.mes` text | Done. Decoder + Bevy asset. |
 | `.art` sprites | Frame decode done (raw + RLE, palettes, 8 rotations). No animation playback. |
 | Bevy integration | Done. VFS is Bevy's default asset source; `.art` → `Image`, `.mes` → `MesAsset`. |
-| Main menu | Interactive: buttons, hover, click, `AppState` transitions. Single Player menu (second level) done; Credits and the world are placeholders. |
-| New Game screen | Scaffold: the original character picker art (`PreGenCharacterBase`) in the shared menu frame (`menu_window.rs`: top/bottom bars, Back/Next, hover help). Back returns to the Single Player menu; Next goes through the loading screen. Portrait, arrows, info bars and panels are art only. |
+| Main menu | Play / Options / Credits / Exit Game ("Play" is our label for the original's Single Player). Play menu: New Game, Load Game, Continue (dimmed), Multiplayer (dimmed), Cancel. Each menu's last entry sits at the bottom of the panel. Credits and the world are placeholders. |
+| New Game flow | Choice menu (Pick Character / New Character / Cancel, `MainMenu.mes` 420-422) → pre-made picker (12 characters from their prototypes: portrait, name, gender, race, background title, story) → loading; or → character creation (name text field, portrait/gender/race/background arrows, initial stats, race description or background story) → stats page (spend 5 points on stats, hit points, fatigue; derived stats and resistances) → loading. See the sections below. |
 | Load Game screen | Original art and layout from Arcanum.exe's screen table (0x5c4560): top bar, `SaveLoadBackground`, bottom bar; Back/Load round buttons, Delete, info toggle, hover help in the bottom bar. Lists `SaveGames` (empty until saving exists; `DEBUG_ARCANUM_SCREEN=loadgame` uses example saves). Load goes through the loading screen to the world placeholder. No portraits/screenshots or delete confirmation yet. |
 | Loading screen | Scaffolded: `LoadRequest { next, assets, min_secs }` + `AppState::Loading`; waits for assets (failures warn and continue) and at least 1.5 s; `LoadingProgress` for a future bar. Shown entering the game only (owner's decision). |
 | Options screen | Original art and text; Game/Video/Sound tabs, arrows on every setting, commit on change. Resolution: arrows pick, Done applies, then "Confirm Resolution" with a 15 s auto-revert. Saved to `config.toml` on leaving the screen. Resolution, fullscreen, brightness and the three volumes take effect; the rest are stored only. |
 | Brightness | A gamma curve over the finished frame (`brightness.rs` + `brightness.wgsl`, Bevy's `FullscreenMaterial` scheduled after `ui_pass`, before `upscaling`), so menus and world both change; colour grading would skip the UI. 0.5 is neutral and pixel-identical; exponent 2^±1 at the ends; black and white stay put. Live. |
 | Audio | Menu music (`sound/music/Arcanum.mp3`, loop, 50% × Music setting) and hover/click sounds (× Effects). Options arrows use `Button_Medium.wav` on press and `Button_Medium_Release.wav` on release, no hover sound, as in the original (confirmed in Arcanum.exe at 0x57fe60: art 667/668 with sound ids 3000/3001); text buttons keep `MorphText_CLICK.wav`. Voice volume applies to anything spawned with `play_voice`/`VoiceLine` (no voice plays yet). All live. |
-| Fonts | Game bitmap fonts decoded and rendered (`BitmapText`). Menu uses `Morph30Font`/`morph15font`. Override TTF still wins if present; built-in font as last resort. |
+| Fonts | Game bitmap fonts decoded and rendered (`BitmapText`, multi-line: wrap, `\n`, tab indents, whole-line clipping). Menu uses `Morph30Font`/`morph15font`; character screens add `Flare12Font` (`UiFont::Body`) with the original white/red tints. Override TTF still wins if present; built-in font as last resort. |
+| Game data formats | `.mes`, `.art`, fonts, `.dat`; objects (`arcanum_formats::object`: prototypes and instances, PC field tables from the engine's names); maps/sectors (#19). |
 | Resolutions | Done. 720p–8K, 4:3–2.4:1, `UiScale` from a 1080 baseline. |
-| Tests | 211 tests, 182 need no game data (synthetic archives/art/fonts, headless Bevy). |
+| Tests | 278 tests, 254 need no game data (synthetic archives/art/fonts, headless Bevy). |
 | Everything else | Not started: game screens, maps, critters, dialogue, scripts, saves. |
 
 ### Git state
@@ -115,7 +143,7 @@ cargo test --workspace                              # real-data tests skip witho
 | `ARCANUM_FULLSCREEN` | `1`/`true` for borderless fullscreen. Overrides the saved value for this run only. |
 | `ARCANUM_CONFIG` | Path of the settings file to use instead of `<user config dir>/open-arcanum/config.toml` (macOS: `~/Library/Application Support/open-arcanum/`). |
 | `DEBUG_ARCANUM_SCREENSHOT` | Path; saves the window once the menu (or Options) is ready, then exits. Used to verify rendering. |
-| `DEBUG_ARCANUM_SCREEN` | `options`, `singleplayer`, `newgame`, `loadgame` (with example saves) or `loading` (held for 60 s) opens straight onto that screen (for screenshots). Screenshots are taken 60 frames after the screen is ready; earlier captures came out black. |
+| `DEBUG_ARCANUM_SCREEN` | `options`, `singleplayer`, `newgamechoice`, `newgame`, `createcharacter`, `charactereditor`, `loadgame` (with example saves) or `loading` (held for 60 s) opens straight onto that screen (for screenshots). Screenshots are taken 60 frames after the screen is ready; earlier captures came out black. |
 
 ## Format knowledge
 
@@ -475,16 +503,23 @@ Character (the picker's Next starts the game directly, 0x5459f0 -> 0x5412d0).
 
 ## Suggested next steps
 
-1. Make the remaining settings take effect once their systems exist (combat, floating text). Dialogue must play voice through `audio::play_voice`.
-2. New Game picker: see "New Game picker: research and plan" above (multi-line text, object
-   reader, then the screen), then character creation. Then menu keyboard hotkeys
+1. Check the stats page by eye (see Handoff), then its remaining parts: the skills / tech /
+   spells tabs (top-right buttons and the right-hand panel), portrait, alignment gauge, hover
+   help (charedit 100-140); then the original's window 15 between the editor and the game.
+2. The seven derived stats on character creation's "Initial Stats" panel (formulas are now in
+   `creation.rs::derived`), the picker's stat values (it shows "Initial Stats" with no values),
+   and story scrolling for long texts.
+3. Use the chosen/created character when the game starts (`ChosenCharacter`,
+   `CreatedCharacter`), once there is a world.
+4. Make the remaining settings take effect once their systems exist (combat, floating text).
+   Dialogue must play voice through `audio::play_voice`. Menu keyboard hotkeys
    (`MainMenu.mes` 20-24, 60-64).
-3. Credits screen (needs multi-line text).
-4. `.art` animation playback (frame rate, rotations, center/delta offsets) as a Bevy component.
-5. Replacement-art layer: a PNG next to an asset path (e.g. `mainmenuback.png`) overrides the
+5. Credits screen (multi-line text now exists).
+6. `.art` animation playback (frame rate, rotations, center/delta offsets) as a Bevy component.
+7. Replacement-art layer: a PNG next to an asset path (e.g. `mainmenuback.png`) overrides the
    `.art`, so new art and upscales can drop in. Plus a coverage report of replaced assets.
-6. Steam install auto-detection (libraryfolders.vdf) as the default `ARCANUM_DIR`.
-7. Later: maps/tiles, critters, dialogue, scripts, saves.
+8. Steam install auto-detection (libraryfolders.vdf) as the default `ARCANUM_DIR`.
+9. Later: maps/tiles, critters, dialogue, scripts, saves.
 
 ## Art pipeline (outside the repo)
 
