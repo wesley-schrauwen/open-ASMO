@@ -33,6 +33,8 @@ pub enum AppState {
     NewGame,
     /// Character creation (see [`crate::create_character`]).
     CreateCharacter,
+    /// The character editor's stats page after creation (see [`crate::character_editor`]).
+    CharacterEditor,
     /// The Load Game screen (see [`crate::load_game`]).
     LoadGame,
     /// The loading screen on the way into the game (see [`crate::loading`]).
@@ -331,7 +333,11 @@ fn on_activate(
         MenuAction::NewGame => next_state.set(AppState::NewGameChoice),
         MenuAction::PickCharacter => next_state.set(AppState::NewGame),
         MenuAction::BackToSinglePlayer => next_state.set(AppState::SinglePlayer),
-        MenuAction::CreateCharacter => next_state.set(AppState::CreateCharacter),
+        MenuAction::CreateCharacter => {
+            // A fresh character each time New Character is chosen.
+            commands.insert_resource(crate::create_character::CharacterDraft::default());
+            next_state.set(AppState::CreateCharacter);
+        }
         MenuAction::Cancel => next_state.set(AppState::MainMenu),
         MenuAction::LoadGame => next_state.set(AppState::LoadGame),
         MenuAction::Continue | MenuAction::Multiplayer => {}

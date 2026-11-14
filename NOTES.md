@@ -417,6 +417,33 @@ From Arcanum.exe window index 12 (record 0x5c4e28, background 765 `CreateCharact
 - Not yet: derived stats, the hover modes that switch the large panel (0x5456b0), window 14,
   long bar texts (centred and clipped; the original left-aligns when too wide).
 
+## Character editor (stats page after creation)
+
+`AppState::CharacterEditor`, `character_editor.rs`; rules in `creation.rs`. Only after New
+Character (the picker's Next starts the game directly, 0x5459f0 -> 0x5412d0).
+- Original flow: creation's Next opens window 14 (record 0x5c5370, no background), whose refresh
+  0x545df0 opens the in-game character screen 0x5597c0 over the menu; its Next goes to window 15
+  (record 0x5c5468, untraced; then 0x5412d0 starts the game); Previous returns to creation with
+  the character kept. We go from the editor straight to loading.
+- Screen: `Char_Maint.art` (art 22, 800x400 at y=41); +/- `Char_Plus`/`Char_Minus` (24/23, 19x19,
+  4 frames). Window coordinates (screen y = +41): info name (212,15), Level/Points/XP Next
+  (212,34/53/72), Race/Gender/Age (337,...); stat values centred x 211 (ST CN DX BE) / 350
+  (IN WP PE CH), y 115/155/195/235, buttons at x 170/224 and 313/367, y+2; HP (447,143) and
+  fatigue (447,213) with buttons at 409/465; "Derived Stats" (51,282,253,18) rows x 49/178,
+  y 308-362 (stat.mes 8-15); "Resistance" (315,282,136,18) rows x 322, y 301-365 (charedit
+  12-16). Hover rects and the rest: draw 0x55b150, values 0x55b280, derived 0x55b1b0, top panel
+  0x55a240, +/- handlers 0x55a80a / 0x55a997, init 0x55e110.
+- Rules: 5 starting points; 1 point per step (table 0x5b52e0); min 1; race maximums (0x4b0fd0:
+  20, dwarf ST/CN 21, elf DX/BE/WP 21, half-elf DX 21, gnome WP 22, halfling DX 22, half-orc
+  ST/CN 21, half-ogre ST 24); a stat cannot go below its starting value (charedit 19). HP = 4 x
+  bought + WP + 2 x (level + ST) + 4; fatigue the same with CN. Carry 500 x ST; damage bonus
+  ST-10 (halved when negative, doubled at ST >= 20); AC DX-10; speed DX (+5 at 20); heal
+  (CN+1)/3; poison recovery CN; reaction from BE (table 0x5b5330); followers CH/4 (+1 with a
+  skill, not modelled). Resistances from race/background effects. XP Next 2100 at level 1.
+- Not yet: the skills/tech/spells tabs (top-right buttons 527/595/663,11 and the panel at
+  503,104), the portrait, alignment, hover help texts (charedit 100-140), magick-tech aptitude,
+  window 15.
+
 ## Known issues / backlog (not started)
 
 - Sector objects: instance fields fall back to the prototype when the instance bitmap omits them

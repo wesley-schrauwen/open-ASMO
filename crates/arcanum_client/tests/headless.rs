@@ -290,7 +290,7 @@ fn menu_app(vfs: Vfs) -> App {
         .init_asset::<Font>()
         .init_resource::<ButtonInput<KeyCode>>()
         .init_resource::<GameSettings>()
-        .add_plugins((TimePlugin, BitmapTextPlugin, FontsPlugin, MenuAudioPlugin, MainMenuPlugin, OptionsPlugin, ScreensPlugin, LoadingPlugin, LoadGamePlugin, NewGamePlugin, arcanum_client::CreateCharacterPlugin))
+        .add_plugins((TimePlugin, BitmapTextPlugin, FontsPlugin, MenuAudioPlugin, MainMenuPlugin, OptionsPlugin, ScreensPlugin, LoadingPlugin, LoadGamePlugin, NewGamePlugin, arcanum_client::CreateCharacterPlugin, arcanum_client::CharacterEditorPlugin))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)));
     app
 }
@@ -2018,6 +2018,7 @@ fn creation_data() -> arcanum_client::create_character::CreationData {
         menu: mes("{500}{Choose Name}{506}{You must choose a name.}{720}{Human}{721}{Dwarf}{722}{Elf}{739}{Initial Stats}{740}{Female}{741}{Male}{745}{Race}{771}{Human men.}{773}{Dwarf men.}"),
         stats: mes("{0}{Strength}{1}{Dexterity}{2}{Constitution}{3}{Beauty}{4}{Intelligence}{5}{Perception}{6}{Willpower}{7}{Charisma}"),
         stories: mes("{1000}{No significant background\n\nNothing happened.}{1001}{Raised by Monks\n\nQuiet years.}"),
+        charedit: mes("{0}{Points}{1}{Level}{2}{XP Next}{4}{Race}{5}{Gender}{6}{Age}{7}{Derived Stats}{8}{Resistance}{12}{Damage}{13}{Magick}{14}{Fire}{15}{Poison}{16}{Electrical}{17}{Stat has reached its maximum value.}{18}{You haven't enough character points.}{19}{You cannot reduce this stat below its last accepted level.}{20}{Stat has reached its minimum value.}"),
     }
 }
 
@@ -2159,7 +2160,57 @@ fn character_creation_builds_a_character() {
     assert!(!layer.should_block_lower);
 
     press_create(&mut app, CreateAction::Next);
+    assert_eq!(state(&app), AppState::CharacterEditor, "Next opens the stats page");
+    character_editor_spends_points(&mut app);
     let made = app.world().resource::<CreatedCharacter>().0.clone();
     assert_eq!((made.name.as_str(), made.race, made.background), ("Virgil", 1, 1));
+    assert_eq!(made.bought[0], 1, "the strength point bought in the editor");
     assert_eq!(state(&app), AppState::Loading);
+}
+
+fn editor_text(app: &mut App, which: arcanum_client::character_editor::EditorText) -> String {
+    let world = app.world_mut();
+    let e = world.query::<(Entity, &arcanum_client::character_editor::EditorText)>().iter(world).find(|(_, t)| **t == which).unwrap().0;
+    texts_in(app, e).remove(0)
+}
+
+fn press_editor(app: &mut App, action: arcanum_client::character_editor::EditorAction) {
+    let entity = {
+        let world = app.world_mut();
+        world.query::<(Entity, &arcanum_client::character_editor::EditorAction)>().iter(world).find(|(_, a)| **a == action).map(|(e, _)| e).unwrap()
+    };
+    app.world_mut().trigger(Activate { entity });
+    app.update();
+    app.update();
+}
+
+/// Runs on the editor opened by the creation test (a dwarf named Virgil, raised by monks).
+fn character_editor_spends_points(app: &mut App) {
+    use arcanum_client::character_editor::{EditorAction, EditorText};
+    use arcanum_client::create_character::CreateText;
+    use arcanum_client::menu_window::HelpMessage;
+    app.update();
+    assert_eq!(editor_text(app, EditorText::Name), "Virgil");
+    assert_eq!(editor_text(app, EditorText::Points), "Points: 5");
+    assert_eq!(editor_text(app, EditorText::Race), "Race: Dwarf");
+    assert_eq!(editor_text(app, EditorText::XpNext), "XP Next: 2100");
+    assert_eq!(editor_text(app, EditorText::Stat(0)), "9", "dwarf strength");
+    // Spend: +1 strength costs a point and updates derived stats.
+    press_editor(app, EditorAction::Stat(0, 1));
+    assert_eq!(editor_text(app, EditorText::Stat(0)), "10");
+    assert_eq!(editor_text(app, EditorText::Points), "Points: 4");
+    // Hit points: +4 per point.
+    let hp: i32 = editor_text(app, EditorText::HitPoints).parse().unwrap();
+    press_editor(app, EditorAction::HitPoints(1));
+    assert_eq!(editor_text(app, EditorText::HitPoints).parse::<i32>().unwrap(), hp + 4);
+    // Lowering below the starting value is refused with the original's message.
+    press_editor(app, EditorAction::Stat(1, -1));
+    assert_eq!(app.world().resource::<HelpMessage>().0.as_deref(), Some("You cannot reduce this stat below its last accepted level."));
+    // Back keeps the character; returning to the editor keeps the points spent.
+    press_editor(app, EditorAction::Back);
+    assert_eq!(state(app), AppState::CreateCharacter);
+    assert_eq!(create_text(app, CreateText::Race), "Dwarf", "the character survives going back");
+    press_create(app, arcanum_client::create_character::CreateAction::Next);
+    assert_eq!(editor_text(app, EditorText::Points), "Points: 3", "points spent are kept");
+    press_editor(app, EditorAction::Next);
 }

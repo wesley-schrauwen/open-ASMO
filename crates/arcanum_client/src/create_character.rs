@@ -28,7 +28,6 @@ use crate::audio::MenuSounds;
 use crate::bitmap_text::Align;
 use crate::creation::{CreationRules, MAX_NAME, NewCharacter, PRIMARY_STATS};
 use crate::fonts::{ArcanumFonts, ORIGINAL_SCALE, UiFont};
-use crate::loading::LoadRequest;
 use crate::main_menu::AppState;
 use crate::menu_window::{HelpMessage, HoverHelp, MenuWindowPlugin, SCREEN_RED, SCREEN_WHITE, TOP_BAR_HEIGHT, WindowArt, at, rect, screen_root, spawn_frame};
 use crate::premade::split_story;
@@ -91,6 +90,8 @@ pub struct CreationData {
     pub menu: MesFile,
     pub stats: MesFile,
     pub stories: MesFile,
+    /// The character editor's labels and messages.
+    pub charedit: MesFile,
 }
 
 impl CreationData {
@@ -104,6 +105,7 @@ impl CreationData {
             menu: mes("mes/MainMenu.mes")?,
             stats: mes("mes/stat.mes")?,
             stories: mes("mes/gameback.mes")?,
+            charedit: mes("mes/charedit.mes")?,
         })
     }
 
@@ -213,14 +215,15 @@ impl Plugin for CreateCharacterPlugin {
                     cycle_right: assets.load(interface::CYCLE_RIGHT),
                 });
             })
-            .add_systems(OnEnter(AppState::CreateCharacter), (enter, build_screen).chain())
+            .add_systems(OnEnter(AppState::CreateCharacter), (load_creation_data, build_screen).chain())
             .add_systems(Update, (sync_name, show_character).chain().run_if(in_state(AppState::CreateCharacter)))
             .add_observer(on_activate);
     }
 }
 
-fn enter(mut commands: Commands, data: Option<Res<CreationData>>, vfs: Option<Res<VfsResource>>, mut draft: ResMut<CharacterDraft>) {
-    *draft = CharacterDraft::default();
+/// Reads the rules and text tables once (character creation and the editor both need them). The
+/// draft itself is reset by the New Character menu entry, so coming back from the editor keeps it.
+pub fn load_creation_data(mut commands: Commands, data: Option<Res<CreationData>>, vfs: Option<Res<VfsResource>>) {
     if data.is_some() {
         return;
     }
@@ -386,9 +389,8 @@ fn on_activate(
                 message.0 = Some(text.to_string());
                 return;
             }
-            commands.insert_resource(CreatedCharacter(draft.0.clone()));
-            commands.insert_resource(LoadRequest::new(AppState::InGame));
-            next_state.set(AppState::Loading);
+            // On to the character editor to spend the starting points (the original's window 14).
+            next_state.set(AppState::CharacterEditor);
         }
     }
 }

@@ -71,6 +71,11 @@ pub mod paths {
         /// (art 757/758, 23x23).
         pub const CYCLE_LEFT: &str = "art/interface/MPCycleLeftButton.ART";
         pub const CYCLE_RIGHT: &str = "art/interface/MPCycleRightButton.ART";
+        /// Character editor background with the stat ovals, heart, cross and panels (art 22,
+        /// 800x400), and its +/- buttons (art 24/23, 19x19, 4 frames).
+        pub const CHAR_MAINT: &str = "art/interface/Char_Maint.art";
+        pub const CHAR_PLUS: &str = "art/interface/Char_Plus.art";
+        pub const CHAR_MINUS: &str = "art/interface/Char_Minus.art";
         /// Save list box, portrait socket and screenshot oval (transparent windows), 800x400.
         pub const SAVE_LOAD_BACK: &str = "art/interface/SaveLoadBackground.ART";
         /// Ring over the portrait, 89x89.
@@ -182,6 +187,9 @@ pub mod paths {
         interface::PICKER_RIGHT,
         interface::CYCLE_LEFT,
         interface::CYCLE_RIGHT,
+        interface::CHAR_MAINT,
+        interface::CHAR_PLUS,
+        interface::CHAR_MINUS,
         interface::SAVE_LOAD_LENS,
         interface::SAVE_SHOT_COVER,
         interface::NEXT_BUTTON,
