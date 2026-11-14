@@ -22,7 +22,7 @@ use crate::bitmap_text::Align;
 use crate::fonts::{ArcanumFonts, ORIGINAL_SCALE, UiFont};
 use crate::loading::LoadRequest;
 use crate::main_menu::AppState;
-use crate::menu_window::{HoverHelp, INFO_COLOR, MenuWindowPlugin, TOP_BAR_HEIGHT, WindowArt, at, rect, screen_root, spawn_frame};
+use crate::menu_window::{HoverHelp, MenuWindowPlugin, SCREEN_RED, SCREEN_WHITE, TOP_BAR_HEIGHT, WindowArt, at, rect, screen_root, spawn_frame};
 use crate::premade::{Premade, PremadeCharacters, split_story};
 use crate::resource_pack::paths::interface;
 use crate::vfs_asset::VfsResource;
@@ -207,23 +207,25 @@ fn show_character(
             if let Some(image) = portrait {
                 c.spawn((ImageNode::new(image), at(on_screen(PORTRAIT))));
             }
-            let mut centred = |r: Rect, text: &str, which: PickerText| {
-                c.spawn(Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..at(on_screen(r)) })
+            // Fonts and colours as the original's slots: name morph15 red, bars Flare12 red,
+            // headings morph15 white, story Flare12 white.
+            let mut centred = |r: Rect, text: &str, which: PickerText, font: UiFont, colour: Color| {
+                c.spawn(Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, overflow: Overflow::clip(), ..at(on_screen(r)) })
                     .with_children(|cell| {
-                        let mut t = cell.spawn((which, TextColor(INFO_COLOR)));
-                        fonts.insert_text(&mut t, text, UiFont::Small);
+                        let mut t = cell.spawn((which, TextColor(colour)));
+                        fonts.insert_text(&mut t, text, font);
                     });
             };
-            centred(NAME_BAR, &p.name, PickerText::Name);
+            centred(NAME_BAR, &p.name, PickerText::Name, UiFont::Small, SCREEN_RED);
             for (i, (r, text)) in BARS.iter().zip(bar_texts(&p)).enumerate() {
-                centred(*r, &text, PickerText::Bar(i));
+                centred(*r, &text, PickerText::Bar(i), UiFont::Body, SCREEN_RED);
             }
-            centred(STATS_HEADING, &stats_heading, PickerText::StatsHeading);
+            centred(STATS_HEADING, &stats_heading, PickerText::StatsHeading, UiFont::Small, SCREEN_WHITE);
             // The body wraps to the panel and shows the whole lines that fit (no scrolling yet).
             c.spawn(Node { overflow: Overflow::clip(), ..at(on_screen(STORY_BODY)) }).with_children(|panel| {
-                let mut t = panel.spawn((PickerText::StoryBody, TextColor(INFO_COLOR)));
+                let mut t = panel.spawn((PickerText::StoryBody, TextColor(SCREEN_WHITE)));
                 let (w, h) = (STORY_BODY.width() * ORIGINAL_SCALE, STORY_BODY.height() * ORIGINAL_SCALE);
-                fonts.insert_block(&mut t, &body, UiFont::Small, w, Some(h), Align::Left);
+                fonts.insert_block(&mut t, &body, UiFont::Body, w, Some(h), Align::Left);
             });
         })
         .id();

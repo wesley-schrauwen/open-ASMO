@@ -24,8 +24,11 @@ pub const ORIGINAL_SCALE: f32 = BASELINE_HEIGHT / 600.0;
 pub enum UiFont {
     /// Menu entries and titles (`Morph30Font`).
     Large,
-    /// Hints and small print (`morph15font`).
+    /// Hints, small print and headings (`morph15font`).
     Small,
+    /// Running text: stories, stat rows and detail bars on the character screens (`Flare12Font`,
+    /// interface art 229, as the original uses there).
+    Body,
 }
 
 impl UiFont {
@@ -34,6 +37,7 @@ impl UiFont {
         match self {
             Self::Large => 26.0 * ORIGINAL_SCALE,
             Self::Small => 15.0 * ORIGINAL_SCALE,
+            Self::Body => 12.0 * ORIGINAL_SCALE,
         }
     }
 }
@@ -46,6 +50,8 @@ pub struct ArcanumFonts {
     pub large: Option<Handle<BitmapFontAsset>>,
     /// The game's small bitmap font, if present.
     pub small: Option<Handle<BitmapFontAsset>>,
+    /// The game's body text font, if present (falls back to the small font).
+    pub body: Option<Handle<BitmapFontAsset>>,
 }
 
 impl ArcanumFonts {
@@ -63,6 +69,7 @@ impl ArcanumFonts {
         match font {
             UiFont::Large => self.large.as_ref(),
             UiFont::Small => self.small.as_ref(),
+            UiFont::Body => self.body.as_ref().or(self.small.as_ref()),
         }
     }
 
@@ -129,6 +136,9 @@ fn load_fonts(mut fonts: ResMut<ArcanumFonts>, vfs: Option<Res<VfsResource>>, as
     }
     if exists(paths::fonts::SMALL) {
         fonts.small = Some(assets.load(paths::fonts::SMALL));
+    }
+    if exists(paths::fonts::BODY) {
+        fonts.body = Some(assets.load(paths::fonts::BODY));
     }
     if fonts.serif.is_none() && (fonts.large.is_none() || fonts.small.is_none()) {
         warn!("game bitmap fonts missing from the VFS; using the built-in font where needed");
