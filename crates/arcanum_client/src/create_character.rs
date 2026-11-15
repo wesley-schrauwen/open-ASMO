@@ -1,7 +1,7 @@
 //! Character creation: the original's `CreateCharacterBase` screen (window index 12 in
 //! Arcanum.exe's screen table, record 0x5c4e28; buttons at 0x5c4c48, click handler 0x544ff0) in
 //! the shared menu frame ([`crate::menu_window`]). Reached from the New Game choice menu
-//! (New Character). Rules live in [`crate::creation`].
+//! (New Character). Rules live in [`arcanum_rules::creation`].
 //!
 //! - Bar 1: the name, a [`crate::text_field`]: hover lightens it, a click focuses it (the
 //!   "Choose Name" placeholder, `MainMenu.mes` 500, clears and a caret blinks), clicking elsewhere,
@@ -16,7 +16,7 @@
 //! - Large panel: the background's story when one is chosen; otherwise "Race" (745) and the race
 //!   description (770 + gender + 2 × race).
 //! - Next needs a name ("You must choose a name.", 506, otherwise); then the character is kept as
-//!   [`CreatedCharacter`] and the game loads (the original continues to another screen first).
+//!   the [`CharacterHost`](crate::character_host::CharacterHost) and the game loads (the original continues to another screen first).
 
 use arcanum_formats::mes::MesFile;
 use bevy::picking::hover::Hovered;
@@ -26,7 +26,9 @@ use bevy::ui_widgets::{Activate, ActivateOnPress, Button};
 use crate::art_loader::ArtFrames;
 use crate::audio::MenuSounds;
 use crate::bitmap_text::Align;
-use crate::creation::{CreationRules, MAX_NAME, NewCharacter, PRIMARY_STATS};
+use arcanum_rules::{CharacterAction, CharacterSheet, MAX_NAME, PRIMARY_STATS, RulesData};
+
+use crate::character_host::CharacterHost;
 use crate::fonts::{ArcanumFonts, ORIGINAL_SCALE, UiFont};
 use crate::main_menu::AppState;
 use crate::menu_window::{HelpMessage, HoverHelp, MenuWindowPlugin, SCREEN_RED, SCREEN_WHITE, TOP_BAR_HEIGHT, WindowArt, at, rect, screen_root, spawn_frame};
@@ -62,13 +64,6 @@ pub const NAME_HOVER: Color = Color::srgb_u8(255, 140, 140);
 #[derive(Component)]
 pub struct CreateContent;
 
-/// The character being made.
-#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
-pub struct CharacterDraft(pub NewCharacter);
-
-/// The finished character, kept when Next is pressed.
-#[derive(Resource, Debug, Clone, PartialEq, Eq)]
-pub struct CreatedCharacter(pub NewCharacter);
 
 /// Marks the text pieces, for tests.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,7 +81,7 @@ pub enum CreateText {
 /// Rules and text tables, read when the screen first opens.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct CreationData {
-    pub rules: CreationRules,
+    pub rules: RulesData,
     pub menu: MesFile,
     pub stats: MesFile,
     pub stories: MesFile,
@@ -101,7 +96,7 @@ impl CreationData {
             MesFile::parse(&data).map_err(|e| format!("{path}: {e}"))
         };
         Ok(Self {
-            rules: CreationRules::load(vfs)?,
+            rules: RulesData::load(vfs)?,
             menu: mes("mes/MainMenu.mes")?,
             stats: mes("mes/stat.mes")?,
             stories: mes("mes/gameback.mes")?,
@@ -114,7 +109,7 @@ impl CreationData {
     }
 
     /// Texts for the bars, the stats and the large panel.
-    pub fn texts(&self, c: &NewCharacter) -> CreateTexts {
+    pub fn texts(&self, c: &CharacterSheet) -> CreateTexts {
         let name = if c.has_name() { c.name.clone() } else { self.menu_text(500, "Choose Name") };
         let story = self.rules.background(c).and_then(|b| self.stories.get(b.description)).unwrap_or("");
         let (title, body) = split_story(story);
@@ -205,7 +200,7 @@ impl Plugin for CreateCharacterPlugin {
         if !app.is_plugin_added::<TextFieldPlugin>() {
             app.add_plugins(TextFieldPlugin);
         }
-        app.init_resource::<CharacterDraft>()
+        app.init_resource::<CharacterHost>()
             .add_systems(Startup, |mut commands: Commands, assets: Res<AssetServer>| {
                 commands.insert_resource(CreateArt {
                     background: assets.load(interface::CREATE_BACK),
@@ -249,7 +244,7 @@ fn build_screen(
     frame: Res<WindowArt>,
     fonts: Option<Res<ArcanumFonts>>,
     data: Option<Res<CreationData>>,
-    draft: Res<CharacterDraft>,
+    host: Res<CharacterHost>,
 ) {
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
     let placeholder = data.as_ref().and_then(|d| d.menu.get(500)).unwrap_or("Choose Name").to_string();
@@ -265,7 +260,7 @@ fn build_screen(
                 (CreateAction::Next, HoverHelp(7003, "Next Screen")),
             );
             let name = TextField {
-                value: draft.0.name.clone(),
+                value: host.sheet().name.clone(),
                 placeholder,
                 max_chars: MAX_NAME,
                 colors: TextFieldColors { normal: SCREEN_RED, hover: NAME_HOVER, focused: NAME_HOVER },
@@ -286,10 +281,11 @@ fn build_screen(
 }
 
 /// Copies the name field into the draft.
-fn sync_name(fields: Query<&TextField, (With<NameField>, Changed<TextField>)>, mut draft: ResMut<CharacterDraft>) {
+fn sync_name(fields: Query<&TextField, (With<NameField>, Changed<TextField>)>, mut host: ResMut<CharacterHost>, data: Option<Res<CreationData>>) {
+    let rules = data.as_ref().map(|d| d.rules.clone()).unwrap_or_default();
     for field in &fields {
-        if draft.0.name != field.value {
-            draft.0.name = field.value.clone();
+        if host.sheet().name != field.value {
+            let _ = host.apply(&rules, CharacterAction::SetName(field.value.clone()));
         }
     }
 }
@@ -297,7 +293,7 @@ fn sync_name(fields: Query<&TextField, (With<NameField>, Changed<TextField>)>, m
 #[allow(clippy::too_many_arguments)]
 fn show_character(
     mut commands: Commands,
-    draft: Res<CharacterDraft>,
+    host: Res<CharacterHost>,
     data: Option<Res<CreationData>>,
     added: Query<(), Added<CreateCharacterScreen>>,
     contents: Query<Entity, With<CreateContent>>,
@@ -306,7 +302,7 @@ fn show_character(
     fonts: Option<Res<ArcanumFonts>>,
 ) {
     let Some(data) = data else { return };
-    if !draft.is_changed() && added.is_empty() && !data.is_changed() {
+    if !host.is_changed() && added.is_empty() && !data.is_changed() {
         return;
     }
     let Ok(root) = roots.single() else { return };
@@ -314,8 +310,8 @@ fn show_character(
         commands.entity(old).despawn();
     }
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-    let texts = data.texts(&draft.0);
-    let portrait = data.rules.portrait(&draft.0).map(|stem| assets.load::<Image>(format!("portrait/{stem}_b.bmp")));
+    let texts = data.texts(host.sheet());
+    let portrait = data.rules.portrait(host.sheet()).map(|stem| assets.load::<Image>(format!("portrait/{stem}_b.bmp")));
     let content = commands
         .spawn((
             CreateContent,
@@ -365,7 +361,7 @@ fn on_activate(
     actions: Query<&CreateAction>,
     mut commands: Commands,
     mut next_state: ResMut<NextState<AppState>>,
-    mut draft: ResMut<CharacterDraft>,
+    mut host: ResMut<CharacterHost>,
     data: Option<Res<CreationData>>,
     mut message: ResMut<HelpMessage>,
     sounds: Option<Res<MenuSounds>>,
@@ -377,14 +373,13 @@ fn on_activate(
     let rules = data.as_ref().map(|d| d.rules.clone()).unwrap_or_default();
     match action {
         CreateAction::Back => next_state.set(AppState::NewGameChoice),
-        CreateAction::Portrait(d) => draft.0.step_portrait(&rules, d),
-        CreateAction::Gender => {
-            draft.0.toggle_gender();
-        }
-        CreateAction::Race(d) => draft.0.step_race(d),
-        CreateAction::Background(d) => draft.0.step_background(&rules, d),
+        // Refusals here have no message in the original (e.g. female for a male-only race).
+        CreateAction::Portrait(d) => drop(host.apply(&rules, CharacterAction::StepPortrait(d))),
+        CreateAction::Gender => drop(host.apply(&rules, CharacterAction::ToggleGender)),
+        CreateAction::Race(d) => drop(host.apply(&rules, CharacterAction::StepRace(d))),
+        CreateAction::Background(d) => drop(host.apply(&rules, CharacterAction::StepBackground(d))),
         CreateAction::Next => {
-            if !draft.0.has_name() {
+            if !host.sheet().has_name() {
                 let text = data.as_ref().and_then(|d| d.menu.get(506)).unwrap_or("You must choose a name.");
                 message.0 = Some(text.to_string());
                 return;

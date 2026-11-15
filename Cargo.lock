@@ -286,6 +286,7 @@ name = "arcanum_client"
 version = "0.1.0"
 dependencies = [
  "arcanum_formats",
+ "arcanum_rules",
  "arcanum_vfs",
  "bevy",
  "dirs",
@@ -299,6 +300,15 @@ name = "arcanum_formats"
 version = "0.1.0"
 dependencies = [
  "arcanum_vfs",
+]
+
+[[package]]
+name = "arcanum_rules"
+version = "0.1.0"
+dependencies = [
+ "arcanum_formats",
+ "arcanum_vfs",
+ "tempfile",
 ]
 
 [[package]]

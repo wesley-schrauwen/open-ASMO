@@ -31,7 +31,9 @@ state to network.
 
 - NPCs, containers, scenery interaction, dialogue, combat, scripts, quests.
 - Client-side prediction, the tether, the inn, Steam transport, the host/join menus.
-- Custom character creation (New Character stays dimmed).
+- Networked character creation. Creation and the character rules exist (see
+  `docs/superpowers/specs/2026-11-15-character-rules-design.md`); until the host exists the
+  client calls the shared rules directly in its place.
 - Drop-out and reconnect at any time. The owner wants this, but its design is open.
 - The lobby UI, session broadcasting, and the inn/campfire restriction (disabled for
   development). Character reset is designed for but not built.
@@ -77,13 +79,19 @@ state to network.
   and normal deltas follow. The joiner's PC appears in the inn (or campfire). In A2 the
   restriction is turned off and the join is a "join now" stub.
 - **Characters per session:** a player chooses Join from the lobby. If they have no character in
-  that session, they create one (in A2: pick a pre-made, since character creation does not exist
-  yet). Characters belong to that session and are saved by the host in its `WorldSave`. A player
-  can reset their character at any time, which discards it and returns them to character
-  selection.
-- **New Game creates a save:** after character creation (or the pre-made picker's Next), the game
-  writes an initial save holding the character and the starting map and position, then boots the
-  world from it.
+  that session, they create one or pick a pre-made. Characters belong to that session and are
+  saved by the host in its `WorldSave`. A player can reset their character at any time, which
+  discards it and returns them to character selection.
+- **Characters exist only in the host's world** (owner's decision, 2026-11-15). Creation happens
+  inside a session: every creation step (race, gender, stat, skill, accept) is an action the host
+  applies with the shared rules (`arcanum_rules`), exactly like level-up. The host never receives
+  a finished character sheet to validate, so its ledger is correct by construction. The client
+  runs the same rules only to preview a change and grey out buttons; the host's result counts.
+- **New Game starts the session first:** New Game starts the (in-process) host and its session,
+  then character creation or the pre-made picker runs in it. The pre-made picker's choice is an
+  action too: the host builds the character from the PC prototype. Once the character is
+  accepted, the host writes the initial save (character, starting map and position) and the world
+  boots from it.
 - Combat is turn-based only. This milestone has no combat, but the message design must not assume
   a real-time mode.
 - From earlier discussion: the original streams 64×64-tile sectors and records per-sector
@@ -112,8 +120,9 @@ Each step is its own PR and ends in something testable.
    tick number that only increases, a `Transport` trait, and `LoopbackTransport`. Done when a
    headless test sends an intent and gets the expected delta back.
 3. **Save format and boot.** A `WorldSave` holding the session's state (players' characters, map,
-   positions, and later the per-sector changes). Pre-made Next builds the initial save from the
-   chosen prototype and the starting map, writes it, and boots the host from it. A development
+   positions, and later the per-sector changes). New Game starts the host session; the
+   character is created or picked in it; on accept the host writes the initial save with the
+   starting map and boots the world from it. A development
    quick-save key serializes the live host state (the inn/campfire rule is off in development).
    Done when tests round-trip a save, including one taken mid-session, and boot an identical sim
    from it.
@@ -132,9 +141,9 @@ Each step is its own PR and ends in something testable.
    sends the move to the host → the host validates and accepts or corrects → the client smooths
    any correction. **Milestone A.**
 8. **Milestone A2.** `UdpTransport`, a second client process, and a join: the joiner sends a
-   player id; if the host's save has no character for it, the joiner picks a pre-made and sends
-   it in a `SubmitCharacter` intent; the host adds it to its `WorldSave` and sends the snapshot,
-   then deltas. Two PCs on the map, each controlled from its own window.
+   player id; if the host's save has no character for it, the joiner creates or picks one through
+   creation actions the host applies (no finished sheet is ever submitted); the host adds it to
+   its `WorldSave` and sends the snapshot, then deltas. Two PCs on the map, each controlled from its own window.
 
 ## Builder's calls (proposed by Claude, not owner decisions)
 

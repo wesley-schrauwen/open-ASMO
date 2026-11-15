@@ -8,6 +8,7 @@ license = "MIT"
 members = [
     "crates/arcanum_vfs",
     "crates/arcanum_formats",
+    "crates/arcanum_rules",
     "crates/arcanum_client"
 ]
 resolver = "2"

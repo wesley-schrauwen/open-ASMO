@@ -153,6 +153,12 @@ pub mod paths {
         /// Option values: Off/On; floating text modes.
         pub const OPTIONS_OFF_ON: &str = "mes/OptionsOffOn.mes";
         pub const OPTIONS_FLOATS: &str = "mes/OptionsFloats.mes";
+        /// Character rules tables (read by `arcanum_rules::RulesData::load`).
+        pub const SKILLS: &str = "mes/skill.mes";
+        pub const TECH: &str = "mes/tech.mes";
+        pub const SPELLS: &str = "mes/spell.mes";
+        pub const SCHEMATICS: &str = "rules/schematic.mes";
+        pub const SCHEMATIC_TEXT: &str = "mes/schematic_text.mes";
     }
 
     /// Sound effects (`.wav`) and music (`.mp3`, loose files in the module folder).
@@ -208,6 +214,11 @@ pub mod paths {
         text::OPTIONS_UI,
         text::OPTIONS_OFF_ON,
         text::OPTIONS_FLOATS,
+        text::SKILLS,
+        text::TECH,
+        text::SPELLS,
+        text::SCHEMATICS,
+        text::SCHEMATIC_TEXT,
         interface::OPTIONS_BACK,
         interface::OPTION_SLIDER,
         interface::OPTION_CHOICE,
