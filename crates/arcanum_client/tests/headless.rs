@@ -59,7 +59,7 @@ use bevy::window::{MonitorSelection, WindowMode, WindowResolution};
 // ---------------------------------------------------------------------------------------------
 // Fixtures
 
-const MENU_MES: &[u8] = b"// test menu\r\n{10}{Play}\r\n{11}{Online}\r\n{12}{Settings}\r\n{13}{Thanks}\r\n{14}{Quit}\r\n{34}{Onward}{50}{Begin}{51}{Resume}{52}{Latest}{53}{Movie}{54}{Back}{420}{Premade}{421}{Custom}{422}{Return}\r\n{4000}{Gameplay}{4001}{Picture}{4002}{Audio}{4003}{Finished}\r\n";
+const MENU_MES: &[u8] = b"// test menu\r\n{10}{Solo}\r\n{11}{Online}\r\n{12}{Settings}\r\n{13}{Thanks}\r\n{14}{Quit}\r\n{34}{Onward}{50}{Begin}{51}{Resume}{52}{Latest}{53}{Movie}{54}{Back}{420}{Premade}{421}{Custom}{422}{Return}\r\n{4000}{Gameplay}{4001}{Picture}{4002}{Audio}{4003}{Finished}\r\n";
 
 /// An 8x6 static sprite whose pixel at index `i` uses palette index `i % 256`.
 fn menu_art_indices() -> Vec<u8> {
@@ -250,7 +250,7 @@ fn mes_loads_as_an_asset() {
     let (handle, state) = load::<MesAsset>(&mut app, "MES/mainmenu.MES");
     assert!(matches!(state, LoadState::Loaded));
     let mes = app.world().resource::<Assets<MesAsset>>().get(&handle).unwrap();
-    assert_eq!(mes.get(10), Some("Play"));
+    assert_eq!(mes.get(10), Some("Solo"));
     assert_eq!(mes.get(14), Some("Quit"));
 }
 
@@ -373,7 +373,7 @@ fn main_menu_skips_missing_messages() {
     let fx = Fixture::with_archive(
         DatBuilder::new()
             .raw(paths::backgrounds::MAIN_MENU, &menu_art())
-            .raw(paths::text::MAIN_MENU, b"{10}{Play}{14}{Quit}"),
+            .raw(paths::text::MAIN_MENU, b"{10}{Solo}{14}{Quit}"),
     );
     let mut app = menu_app(fx.vfs());
     run_until_menu_ready(&mut app);
@@ -699,13 +699,14 @@ fn single_player_shows_its_menu_on_the_same_panel() {
     assert_eq!(state(&app), AppState::SinglePlayer);
     assert_eq!(
         label_order(&mut app),
-        [(50, "Begin"), (51, "Resume"), (34, "Onward"), (54, "Back")]
-            .map(|(id, t)| (id, t.to_string()))
+        [(50, "Begin"), (51, "Resume"), (34, "Onward"), (11, "Multiplayer"), (54, "Back")]
+            .map(|(id, t)| (id, t.to_string())),
+        "Multiplayer sits below Continue, with our label rather than the game's \"Online\""
     );
     let actions: Vec<MenuAction> = buttons(&mut app).into_iter().map(|(_, a)| a).collect();
     assert_eq!(
         actions,
-        [MenuAction::NewGame, MenuAction::LoadGame, MenuAction::Continue, MenuAction::Cancel]
+        [MenuAction::NewGame, MenuAction::LoadGame, MenuAction::Continue, MenuAction::Multiplayer, MenuAction::Cancel]
     );
     // The background stays; the main menu entries are gone.
     let world = app.world_mut();
