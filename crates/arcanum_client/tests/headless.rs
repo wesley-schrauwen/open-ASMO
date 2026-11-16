@@ -2040,7 +2040,12 @@ fn type_keys(app: &mut App, text: &str) {
     use bevy::input::ButtonState;
     use bevy::input::keyboard::{Key, KeyboardInput};
     for c in text.chars() {
-        let logical_key = if c == '\u{8}' { Key::Backspace } else { Key::Character(c.to_string().into()) };
+        let logical_key = match c {
+            '\u{8}' => Key::Backspace,
+            '\n' => Key::Enter,
+            '\u{1b}' => Key::Escape,
+            _ => Key::Character(c.to_string().into()),
+        };
         app.world_mut().write_message(KeyboardInput {
             key_code: KeyCode::KeyA,
             logical_key,
@@ -2096,9 +2101,56 @@ fn character_creation_builds_a_character() {
     assert_eq!(create_text(&mut app, CreateText::Stat(5)), "Perception: 9");
     assert_eq!(create_text(&mut app, CreateText::PanelBody), "Quiet years.");
 
-    // Typing names the character; Backspace deletes.
+    // The name is a text field. Typing does nothing until it is focused.
+    type_keys(&mut app, "zzz");
+    assert_eq!(create_text(&mut app, CreateText::Name), "Choose Name");
+    let field = {
+        let world = app.world_mut();
+        world.query_filtered::<Entity, With<arcanum_client::create_character::NameField>>().single(world).unwrap()
+    };
+    let name_color = |app: &mut App| {
+        let world = app.world_mut();
+        world.query_filtered::<&TextColor, With<arcanum_client::text_field::TextFieldText>>().single(world).unwrap().0
+    };
+    // Hover lightens it.
+    let normal = name_color(&mut app);
+    app.world_mut().entity_mut(field).insert(Hovered(true));
+    app.update();
+    assert_eq!(name_color(&mut app), arcanum_client::create_character::NAME_HOVER);
+    app.world_mut().entity_mut(field).insert(Hovered(false));
+    app.update();
+    assert_eq!(name_color(&mut app), normal);
+
+    // A click focuses it: the placeholder clears and the caret shows.
+    app.world_mut().trigger(Activate { entity: field });
+    app.update();
+    assert_eq!(create_text(&mut app, CreateText::Name), "|");
+    // Leaving an empty field (Enter here; a click elsewhere does the same) restores the placeholder.
+    type_keys(&mut app, "\n");
+    assert_eq!(create_text(&mut app, CreateText::Name), "Choose Name");
+    app.world_mut().trigger(Activate { entity: field });
+    app.update();
+    // Typing names the character; Backspace deletes; the caret follows the text.
     type_keys(&mut app, "Virgilx\u{8}");
-    assert_eq!(create_text(&mut app, CreateText::Name), "Virgil");
+    assert!(create_text(&mut app, CreateText::Name).starts_with("Virgil"));
+    // Escape unfocuses the field without leaving the screen. A real key press arrives both as a
+    // keyboard message and as button input in the same frame.
+    {
+        use bevy::input::ButtonState;
+        use bevy::input::keyboard::{Key, KeyboardInput};
+        app.world_mut().write_message(KeyboardInput {
+            key_code: KeyCode::Escape,
+            logical_key: Key::Escape,
+            state: ButtonState::Pressed,
+            text: None,
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        });
+    }
+    press_escape(&mut app);
+    assert_eq!(state(&app), AppState::CreateCharacter, "Escape only left the text field");
+    assert_eq!(create_text(&mut app, CreateText::Name), "Virgil", "unfocused: no caret");
+    // A second Escape, with nothing focused, leaves as usual (checked last, below, via Next).
 
     // The content layer lets the pointer through to the arrows.
     let world = app.world_mut();

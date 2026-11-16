@@ -3,8 +3,9 @@
 //! the shared menu frame ([`crate::menu_window`]). Reached from the New Game choice menu
 //! (New Character). Rules live in [`crate::creation`].
 //!
-//! - Bar 1: the name, typed on the keyboard (Backspace deletes); "Choose Name" (`MainMenu.mes`
-//!   500) until something is typed.
+//! - Bar 1: the name, a [`crate::text_field`]: hover lightens it, a click focuses it (the
+//!   "Choose Name" placeholder, `MainMenu.mes` 500, clears and a caret blinks), clicking elsewhere,
+//!   Enter or Escape unfocuses it, and an empty field shows the placeholder again.
 //! - Portrait arrows (`Big_Grn_L/R`, 43,118 / 244,118) step through the race-gender's portraits.
 //! - Bars 2-4 with `MPCycle` arrows: gender (both arrows toggle; only where the race allows),
 //!   race (skips male-only races for women; resets portrait and background), background (the
@@ -18,8 +19,6 @@
 //!   [`CreatedCharacter`] and the game loads (the original continues to another screen first).
 
 use arcanum_formats::mes::MesFile;
-use bevy::input::ButtonState;
-use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{Activate, ActivateOnPress, Button};
@@ -27,13 +26,14 @@ use bevy::ui_widgets::{Activate, ActivateOnPress, Button};
 use crate::art_loader::ArtFrames;
 use crate::audio::MenuSounds;
 use crate::bitmap_text::Align;
-use crate::creation::{CreationRules, NewCharacter, PRIMARY_STATS};
+use crate::creation::{CreationRules, MAX_NAME, NewCharacter, PRIMARY_STATS};
 use crate::fonts::{ArcanumFonts, ORIGINAL_SCALE, UiFont};
 use crate::loading::LoadRequest;
 use crate::main_menu::AppState;
 use crate::menu_window::{HelpMessage, HoverHelp, MenuWindowPlugin, SCREEN_RED, SCREEN_WHITE, TOP_BAR_HEIGHT, WindowArt, at, rect, screen_root, spawn_frame};
 use crate::premade::split_story;
 use crate::resource_pack::paths::interface;
+use crate::text_field::{TextField, TextFieldColors, TextFieldPlugin, spawn_text_field};
 use crate::vfs_asset::VfsResource;
 use crate::widgets::FrameButton;
 
@@ -51,6 +51,13 @@ pub enum CreateAction {
 /// Root of the character creation screen.
 #[derive(Component)]
 pub struct CreateCharacterScreen;
+
+/// The name bar's text field.
+#[derive(Component)]
+pub struct NameField;
+
+/// The name text while the pointer is over it or while typing.
+pub const NAME_HOVER: Color = Color::srgb_u8(255, 140, 140);
 
 /// Root of the parts that change with the character (redrawn on change).
 #[derive(Component)]
@@ -193,6 +200,9 @@ impl Plugin for CreateCharacterPlugin {
         if !app.is_plugin_added::<MenuWindowPlugin>() {
             app.add_plugins(MenuWindowPlugin);
         }
+        if !app.is_plugin_added::<TextFieldPlugin>() {
+            app.add_plugins(TextFieldPlugin);
+        }
         app.init_resource::<CharacterDraft>()
             .add_systems(Startup, |mut commands: Commands, assets: Res<AssetServer>| {
                 commands.insert_resource(CreateArt {
@@ -204,7 +214,7 @@ impl Plugin for CreateCharacterPlugin {
                 });
             })
             .add_systems(OnEnter(AppState::CreateCharacter), (enter, build_screen).chain())
-            .add_systems(Update, (type_name, show_character).chain().run_if(in_state(AppState::CreateCharacter)))
+            .add_systems(Update, (sync_name, show_character).chain().run_if(in_state(AppState::CreateCharacter)))
             .add_observer(on_activate);
     }
 }
@@ -230,8 +240,16 @@ fn button(action: CreateAction, frames: &Handle<ArtFrames>, r: Rect) -> impl Bun
     (action, Button, ActivateOnPress, Hovered::default(), FrameButton::arrow(frames.clone()), ImageNode::default(), at(r))
 }
 
-fn build_screen(mut commands: Commands, art: Res<CreateArt>, frame: Res<WindowArt>, fonts: Option<Res<ArcanumFonts>>) {
+fn build_screen(
+    mut commands: Commands,
+    art: Res<CreateArt>,
+    frame: Res<WindowArt>,
+    fonts: Option<Res<ArcanumFonts>>,
+    data: Option<Res<CreationData>>,
+    draft: Res<CharacterDraft>,
+) {
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
+    let placeholder = data.as_ref().and_then(|d| d.menu.get(500)).unwrap_or("Choose Name").to_string();
     commands
         .spawn((CreateCharacterScreen, DespawnOnExit(AppState::CreateCharacter), screen_root()))
         .with_children(|screen| {
@@ -243,6 +261,13 @@ fn build_screen(mut commands: Commands, art: Res<CreateArt>, frame: Res<WindowAr
                 CreateAction::Back,
                 (CreateAction::Next, HoverHelp(7003, "Next Screen")),
             );
+            let name = TextField {
+                value: draft.0.name.clone(),
+                placeholder,
+                max_chars: MAX_NAME,
+                colors: TextFieldColors { normal: SCREEN_RED, hover: NAME_HOVER, focused: NAME_HOVER },
+            };
+            spawn_text_field(screen, name, at(on_screen(NAME_BAR)), UiFont::Small, &fonts, NameField, CreateText::Name);
             // Screen coordinates from the original's button table.
             screen.spawn(button(CreateAction::Portrait(-1), &art.portrait_left, rect(Vec2::new(43.0, 118.0), BIG_ARROW)));
             screen.spawn(button(CreateAction::Portrait(1), &art.portrait_right, rect(Vec2::new(244.0, 118.0), BIG_ARROW)));
@@ -257,25 +282,11 @@ fn build_screen(mut commands: Commands, art: Res<CreateArt>, frame: Res<WindowAr
         });
 }
 
-/// Typing edits the name; Backspace deletes.
-fn type_name(keys: Option<MessageReader<KeyboardInput>>, mut draft: ResMut<CharacterDraft>) {
-    // No keyboard without the input plugin (headless tests).
-    let Some(mut keys) = keys else { return };
-    for key in keys.read() {
-        if key.state != ButtonState::Pressed {
-            continue;
-        }
-        match &key.logical_key {
-            Key::Backspace => {
-                draft.0.name.pop();
-            }
-            Key::Space => draft.0.type_char(' '),
-            Key::Character(s) => {
-                for c in s.chars() {
-                    draft.0.type_char(c);
-                }
-            }
-            _ => {}
+/// Copies the name field into the draft.
+fn sync_name(fields: Query<&TextField, (With<NameField>, Changed<TextField>)>, mut draft: ResMut<CharacterDraft>) {
+    for field in &fields {
+        if draft.0.name != field.value {
+            draft.0.name = field.value.clone();
         }
     }
 }
@@ -324,7 +335,6 @@ fn show_character(
                     fonts.insert_text(&mut t, value, font);
                 });
             };
-            text(NAME_BAR, &texts.name, CreateText::Name, true, UiFont::Small, SCREEN_RED);
             text(BARS[0], &texts.gender, CreateText::Gender, true, UiFont::Body, SCREEN_RED);
             text(BARS[1], &texts.race, CreateText::Race, true, UiFont::Body, SCREEN_RED);
             text(BARS[2], &texts.background, CreateText::Background, true, UiFont::Body, SCREEN_RED);

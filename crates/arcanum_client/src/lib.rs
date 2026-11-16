@@ -19,6 +19,7 @@ pub mod options;
 pub mod resource_pack;
 pub mod screens;
 pub mod settings;
+pub mod text_field;
 pub mod vfs_asset;
 pub mod widgets;
 

@@ -77,10 +77,15 @@ pub fn back_from(state: AppState) -> AppState {
 }
 
 fn return_to_menu(
+    text_focus: Option<Res<crate::text_field::FocusedTextField>>,
     keys: Option<Res<ButtonInput<KeyCode>>>,
     state: Res<State<AppState>>,
     mut next_state: ResMut<NextState<AppState>>,
 ) {
+    // Escape belongs to a focused text field first (it unfocuses the field).
+    if text_focus.is_some_and(|f| f.captures_escape()) {
+        return;
+    }
     if keys.is_some_and(|k| k.just_pressed(KeyCode::Escape)) {
         next_state.set(back_from(*state.get()));
     }

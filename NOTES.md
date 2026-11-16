@@ -398,7 +398,10 @@ From Arcanum.exe window index 12 (record 0x5c4e28, background 765 `CreateCharact
   the pre-mades' and never offered (the exact step helpers 0x4c2300/0x4c2390/0x4c2420 were not
   decoded; we reset the background on race/gender change). Portraits: `gameport.mes` stems named
   `<code><n>` (`DWM1`..`DWM4`).
-- Name: text field in bar 1 (0x5461a0), buffer of 23 bytes incl. NUL (we allow 22 characters);
+- Name: our `text_field::TextField` (hover lightens the text, click focuses: placeholder
+  clears and a `|` caret blinks every 0.5 s; click elsewhere/Enter/Escape unfocuses and an empty
+  field shows "Choose Name" again; Escape on a focused field does not leave the screen,
+  `FocusedTextField::captures_escape`). Original: text field in bar 1 (0x5461a0), buffer of 23 bytes incl. NUL (we allow 22 characters);
   Next refuses an empty or default name with `MainMenu.mes` 506 (shown in the help box here,
   a popup in the original), then stores the name (field 0x10e). The original then opens window 14
   (record 0x5c5370, untraced; probably the character editor); we go to the loading screen.
