@@ -131,6 +131,8 @@ pub mod paths {
         pub const LARGE: &str = "art/interface/Morph30Font.ART";
         /// Hints and small print.
         pub const SMALL: &str = "art/interface/morph15font.art";
+        /// Running text on the character screens (interface art 229).
+        pub const BODY: &str = "art/interface/Flare12Font.art";
         /// TrueType override for UI text. Takes priority over the bitmap fonts when present.
         pub const SERIF: &str = "fonts/arcanum_serif.ttf";
     }
@@ -210,6 +212,7 @@ pub mod paths {
         sound::BUTTON_RELEASE,
         fonts::LARGE,
         fonts::SMALL,
+        fonts::BODY,
     ];
 
     /// Every directory path above, for checks.

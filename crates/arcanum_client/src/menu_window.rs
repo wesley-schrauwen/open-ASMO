@@ -29,6 +29,10 @@ pub const HELP_BOX: Rect = Rect { min: Vec2::new(206.0, BOTTOM_BAR_TOP + 58.0), 
 
 /// Hover help and other light text in the frame.
 pub const INFO_COLOR: Color = Color::srgb_u8(236, 220, 180);
+/// The character screens' text, as the original tints its fonts (Arcanum.exe font slots
+/// 0x64c210/0x64c214: (250,250,250); 0x64c218/0x64c21c: (255,50,50); created at 0x540e3c).
+pub const SCREEN_WHITE: Color = Color::srgb_u8(250, 250, 250);
+pub const SCREEN_RED: Color = Color::srgb_u8(255, 50, 50);
 
 /// `MainMenu.mes` id of a button's hover help, and its English fallback.
 #[derive(Component, Debug, Clone, Copy)]

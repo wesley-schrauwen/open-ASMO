@@ -31,7 +31,7 @@ use crate::creation::{CreationRules, NewCharacter, PRIMARY_STATS};
 use crate::fonts::{ArcanumFonts, ORIGINAL_SCALE, UiFont};
 use crate::loading::LoadRequest;
 use crate::main_menu::AppState;
-use crate::menu_window::{HelpMessage, HoverHelp, INFO_COLOR, MenuWindowPlugin, TOP_BAR_HEIGHT, WindowArt, at, rect, screen_root, spawn_frame};
+use crate::menu_window::{HelpMessage, HoverHelp, MenuWindowPlugin, SCREEN_RED, SCREEN_WHITE, TOP_BAR_HEIGHT, WindowArt, at, rect, screen_root, spawn_frame};
 use crate::premade::split_story;
 use crate::resource_pack::paths::interface;
 use crate::vfs_asset::VfsResource;
@@ -313,31 +313,33 @@ fn show_character(
             if let Some(image) = portrait {
                 c.spawn((ImageNode::new(image), at(on_screen(PORTRAIT))));
             }
-            let mut text = |r: Rect, value: &str, which: CreateText, centre: bool| {
+            // Fonts and colours as the original's slots: name morph15 red, bars Flare12 red,
+            // headings morph15 white, stats and story Flare12 white.
+            let mut text = |r: Rect, value: &str, which: CreateText, centre: bool, font: UiFont, colour: Color| {
                 let justify = if centre { JustifyContent::Center } else { JustifyContent::FlexStart };
                 // Clipped to the box: long texts (e.g. "No significant background") must not run
                 // under the bar's arrows.
                 c.spawn(Node { justify_content: justify, align_items: AlignItems::Center, overflow: Overflow::clip(), ..at(on_screen(r)) }).with_children(|cell| {
-                    let mut t = cell.spawn((which, TextColor(INFO_COLOR)));
-                    fonts.insert_text(&mut t, value, UiFont::Small);
+                    let mut t = cell.spawn((which, TextColor(colour)));
+                    fonts.insert_text(&mut t, value, font);
                 });
             };
-            text(NAME_BAR, &texts.name, CreateText::Name, true);
-            text(BARS[0], &texts.gender, CreateText::Gender, true);
-            text(BARS[1], &texts.race, CreateText::Race, true);
-            text(BARS[2], &texts.background, CreateText::Background, true);
-            text(STATS_HEADING, &texts.stats_heading, CreateText::StatsHeading, true);
+            text(NAME_BAR, &texts.name, CreateText::Name, true, UiFont::Small, SCREEN_RED);
+            text(BARS[0], &texts.gender, CreateText::Gender, true, UiFont::Body, SCREEN_RED);
+            text(BARS[1], &texts.race, CreateText::Race, true, UiFont::Body, SCREEN_RED);
+            text(BARS[2], &texts.background, CreateText::Background, true, UiFont::Body, SCREEN_RED);
+            text(STATS_HEADING, &texts.stats_heading, CreateText::StatsHeading, true, UiFont::Small, SCREEN_WHITE);
             for (slot, &stat) in STAT_ORDER.iter().enumerate() {
-                text(rect(STAT_ROWS[slot], STAT_SIZE), &texts.stats[stat], CreateText::Stat(stat), false);
+                text(rect(STAT_ROWS[slot], STAT_SIZE), &texts.stats[stat], CreateText::Stat(stat), false, UiFont::Body, SCREEN_WHITE);
             }
             let body_rect = if texts.panel_heading.is_empty() { PANEL } else { PANEL_BODY };
             if !texts.panel_heading.is_empty() {
-                text(PANEL_HEADING, &texts.panel_heading, CreateText::PanelHeading, true);
+                text(PANEL_HEADING, &texts.panel_heading, CreateText::PanelHeading, true, UiFont::Small, SCREEN_WHITE);
             }
             c.spawn(Node { overflow: Overflow::clip(), ..at(on_screen(body_rect)) }).with_children(|panel| {
-                let mut t = panel.spawn((CreateText::PanelBody, TextColor(INFO_COLOR)));
+                let mut t = panel.spawn((CreateText::PanelBody, TextColor(SCREEN_WHITE)));
                 let (w, h) = (body_rect.width() * ORIGINAL_SCALE, body_rect.height() * ORIGINAL_SCALE);
-                fonts.insert_block(&mut t, &texts.panel_body, UiFont::Small, w, Some(h), Align::Left);
+                fonts.insert_block(&mut t, &texts.panel_body, UiFont::Body, w, Some(h), Align::Left);
             });
         })
         .id();

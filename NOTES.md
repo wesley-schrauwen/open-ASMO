@@ -370,6 +370,19 @@ What is known so far:
 - Next: mount `<ARCANUM_DIR>/data` in the VFS (proto, Players), then the Rust reader
   (`arcanum_formats::object`), then fill the picker.
 
+## Character screen fonts
+
+From Arcanum.exe (fonts built at 0x540a24-0x540fb0 with `0x504330(art, ...)` + `0x5352e0`; a font
+is an interface art id plus one tint colour): the picker and creation screens use
+- 0x64c210: art 229 `Flare12Font` (15 px), (250,250,250): story text and stat rows (`UiFont::Body`);
+- 0x64c214: art 27 `morph15font`, (250,250,250): headings ("Initial Stats", "Race");
+- 0x64c218: art 229, (255,50,50): bars 2-4 (gender, race, background title);
+- 0x64c21c: art 27, (255,50,50): the name bar.
+Colours as `menu_window::SCREEN_WHITE` / `SCREEN_RED`. The red/white channel order is inferred
+(other slots in the same routine come out gold (255,210,0) and brown (0x61,0x3d,0x2a) in that
+order). Other slots there, not yet used by us: art 327 `Morph30Font` in black/brown/dark red
+(0x5c4040), art 171 `Cloister18Font` (grey 200 and red, 0x5c4064), art 229 in gold (0x64c240).
+
 ## Character creation (New Character)
 
 `AppState::CreateCharacter`, `create_character.rs` (screen) + `creation.rs` (rules, no Bevy).
