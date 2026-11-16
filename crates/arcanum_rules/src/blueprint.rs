@@ -15,6 +15,7 @@ pub struct Premade {
 /// Everything needed to spawn a PC: its sheet, gold and starting items (as prototype numbers;
 /// the world turns them into objects).
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CharacterBlueprint {
     pub sheet: CharacterSheet,
     pub gold: i32,

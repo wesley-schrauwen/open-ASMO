@@ -262,7 +262,7 @@ fn on_activate(
             Ok(())
         }
         EditorAction::Next => host.finish(&rules).map(|_| {
-            commands.insert_resource(LoadRequest::new(AppState::InGame));
+            commands.insert_resource(LoadRequest::new(AppState::InGame).after_host_accepts());
             next_state.set(AppState::Loading);
         }),
         EditorAction::Stat(i, d) if i < PRIMARY_STATS => {

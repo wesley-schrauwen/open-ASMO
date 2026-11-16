@@ -8,7 +8,9 @@
 //! To use it, insert a [`LoadRequest`] naming the screen to go to and the assets to wait for,
 //! then switch to [`AppState::Loading`]. The screen waits until every asset has loaded (or
 //! failed, with a warning) and at least [`LoadRequest::min_secs`] have passed (default
-//! [`MIN_LOADING_SECS`]), then moves on.
+//! [`MIN_LOADING_SECS`]), then moves on. A request made with [`LoadRequest::after_host_accepts`]
+//! also waits for the host to accept the character, and goes back to the main menu if it
+//! refuses.
 //! [`LoadingProgress`] reports how far it has got, for a progress bar later.
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,7 +19,9 @@ use bevy::asset::{LoadState, UntypedHandle};
 use bevy::prelude::*;
 
 use crate::art_loader::ArtFrames;
+use crate::character_host::CharacterHost;
 use crate::fonts::ORIGINAL_SCALE;
+use crate::sim_bridge::HostLink;
 use crate::main_menu::AppState;
 use crate::resource_pack::paths::{backgrounds, interface};
 
@@ -43,11 +47,19 @@ pub struct LoadRequest {
     pub assets: Vec<UntypedHandle>,
     /// Shortest time to stay on the loading screen.
     pub min_secs: f32,
+    /// Also wait for the host to accept the [`CharacterHost`]'s character.
+    pub wait_for_host: bool,
 }
 
 impl LoadRequest {
     pub fn new(next: AppState) -> Self {
-        Self { next, assets: Vec::new(), min_secs: MIN_LOADING_SECS }
+        Self { next, assets: Vec::new(), min_secs: MIN_LOADING_SECS, wait_for_host: false }
+    }
+
+    /// Also waits for the host to accept the character (counted as one more item to load).
+    pub fn after_host_accepts(mut self) -> Self {
+        self.wait_for_host = true;
+        self
     }
 
     /// Stays up for at least `secs`.
@@ -189,6 +201,7 @@ fn exit_loading(mut commands: Commands) {
 }
 
 /// Counts finished assets and moves on once everything is done and the minimum time has passed.
+#[allow(clippy::too_many_arguments)]
 fn track_progress(
     assets: Res<AssetServer>,
     time: Res<Time<Real>>,
@@ -197,9 +210,28 @@ fn track_progress(
     progress: Option<ResMut<LoadingProgress>>,
     mut next_state: ResMut<NextState<AppState>>,
     mut reported: Local<Vec<bevy::asset::UntypedAssetId>>,
+    character: Option<Res<CharacterHost>>,
+    host: Option<Res<HostLink>>,
 ) {
     let (Some(request), Some(started), Some(mut progress)) = (request, started, progress) else { return };
     let mut done = 0;
+    let mut total = request.assets.len();
+    if request.wait_for_host {
+        if host.is_none() {
+            warn!("loading screen: no host is running to accept the character; returning to the main menu");
+            next_state.set(AppState::MainMenu);
+            return;
+        }
+        if character.as_ref().is_some_and(|c| c.refused) {
+            warn!("loading screen: the host refused the character; returning to the main menu");
+            next_state.set(AppState::MainMenu);
+            return;
+        }
+        total += 1;
+        if character.as_ref().is_some_and(|c| c.accepted) {
+            done += 1;
+        }
+    }
     for handle in &request.assets {
         match assets.get_load_state(handle.id()) {
             Some(LoadState::Failed(err)) => {
@@ -215,7 +247,7 @@ fn track_progress(
             Some(_) => {}
         }
     }
-    let now = LoadingProgress { done, total: request.assets.len(), elapsed: time.elapsed_secs() - started.0 };
+    let now = LoadingProgress { done, total, elapsed: time.elapsed_secs() - started.0 };
     if *progress != now {
         *progress = now;
     }

@@ -65,7 +65,11 @@ fn main() {
             OptionsPlugin,
             ScreensPlugin,
         ))
-        // The single-player host, in this process.
+        // The single-player host, in this process. Saves go next to the config file.
+        .insert_resource(arcanum_client::sim_bridge::HostSettings {
+            save_dir: config::path_from_env().and_then(|p| p.parent().map(|d| d.join("saves"))),
+            manual_clock: false,
+        })
         .add_plugins(arcanum_client::sim_bridge::SimBridgePlugin);
 
     // Debugging aid: `DEBUG_ARCANUM_SCREEN=options|singleplayer|newgamechoice|newgame|createcharacter|charactereditor|loadgame|loading` opens that screen.

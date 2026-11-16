@@ -15,6 +15,7 @@ pub mod intent;
 pub mod net_id;
 pub mod player;
 pub mod plugin;
+pub mod save;
 pub mod session;
 
 pub use creation::*;
@@ -23,4 +24,5 @@ pub use intent::*;
 pub use net_id::*;
 pub use player::*;
 pub use plugin::*;
+pub use save::*;
 pub use session::*;

@@ -189,17 +189,40 @@ The in-process host now owns the character; the screens are unchanged.
 
 Not done, or done differently from the plan:
 
-- **The screens move on at once.** Next on the editor or the picker goes to loading on the
-  preview's say-so; the client records `CharacterAccepted` (`CharacterHost::accepted`) but
-  nothing waits for it. Once the host boots the world (the rest of step 3), loading should
-  wait for acceptance.
 - **The player id is fixed** (`LOCAL_PLAYER`, 1). The random id saved in the player's config
   comes with joining (step 8).
-- **The host starts with default rules** and takes the game's when `CreationData` loads (on
-  entering character creation or the picker). A New Character chosen before then is made with
-  default rules on both sides, as before this change.
-- **The host is created when the app starts**, not on entering New Game; it is idle until
-  intents arrive.
+
+Resolved in the next PR (the save): loading waits for the host, and the host is created on
+entering New Game.
+
+## The initial save (second part of step 3)
+
+- **`WorldSave`** (`arcanum_sim::save`): format version, tick, map name, each player's
+  `CharacterBlueprint` and position, and per-sector changes (`SectorDelta`, empty for now).
+  Encoded as JSON in one place (`to_bytes`/`from_bytes`); a different version is refused.
+- **On accept** the host puts the character into its `WorldState` at the start position. The
+  first accepted character starts the world on the start map (`StartMap`, the `START_MAP` entry
+  of `Rules/MapList.mes`: `Arcanum1-024-fixed` at 92958,82592). The save is written at the end of
+  any tick that changed it, to `<config dir>/open-arcanum/saves/<session>.save`, where the
+  session is the host's start time in milliseconds. Without a save folder (tests) nothing is
+  written.
+- **Loading waits for the host.** The editor's and the picker's `LoadRequest`s use
+  `after_host_accepts`: the host's answer counts as one more item to load. The host sends
+  `CharacterAccepted` before the update that answers the `Accept`, so an answer without it is a
+  refusal; loading then returns to the main menu, as it does when no host is running.
+- **The host lives with the new game.** It is created on entering the New Game choice menu, the
+  pre-made picker or character creation (whichever comes first), with the rules and start map
+  loaded then, and dropped on going back to the main or Single Player menu. A new host comes
+  with a fresh `CharacterHost`. The host still takes the game's rules again if `CreationData`
+  changes after it started.
+
+Not done, or done differently from the plan:
+
+- **Nothing boots from the save yet,** and there is no quick-save key. Step 3's "boot an
+  identical sim from it" and the mid-session save come with the host loading the map (step 4),
+  when there is state beyond the characters.
+- **Load Game does not list these saves yet.**
+- **A save is written per session,** named by start time, not chosen by the player.
 
 ## Builder's calls (proposed by Claude, not owner decisions)
 
