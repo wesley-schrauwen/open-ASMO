@@ -1967,9 +1967,14 @@ fn the_picker_cycles_through_the_characters_and_shows_them() {
     assert_eq!(picker_text(&mut app, PickerText::Bar(1)), "Human");
     press_new_game(&mut app, NewGameAction::Following);
     assert_eq!(picker_text(&mut app, PickerText::Name), "Merwin", "and forwards");
-    // Only one character's content at a time.
+    // Only one character's content at a time, and it lets the pointer through: it is a
+    // full-screen layer above the buttons, and blocking would make every button dead to the mouse.
     let world = app.world_mut();
-    assert_eq!(world.query::<&arcanum_client::new_game::PickerContent>().iter(world).count(), 1);
+    let layers: Vec<Option<&bevy::picking::Pickable>> =
+        world.query_filtered::<Option<&bevy::picking::Pickable>, With<arcanum_client::new_game::PickerContent>>().iter(world).collect();
+    assert_eq!(layers.len(), 1);
+    let pickable = layers[0].expect("the content layer must set Pickable");
+    assert!(!pickable.should_block_lower && !pickable.is_hoverable);
 
     press_new_game(&mut app, NewGameAction::Following);
     press_new_game(&mut app, NewGameAction::Next);

@@ -225,6 +225,8 @@ fn build_screen(
                 screen
                     .spawn((
                         SaveInfo,
+                        // Covers the oval, including the info toggle: let the pointer through.
+                        bevy::picking::Pickable::IGNORE,
                         Node {
                             flex_direction: FlexDirection::Column,
                             align_items: AlignItems::Center,
