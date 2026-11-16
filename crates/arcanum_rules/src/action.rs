@@ -5,6 +5,7 @@ use crate::*;
 
 /// A player's change to a character.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum CharacterAction {
     StepRace(i32),
     ToggleGender,

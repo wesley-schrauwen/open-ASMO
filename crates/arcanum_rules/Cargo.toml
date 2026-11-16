@@ -5,7 +5,12 @@ edition = "2024"
 license = "MIT"
 
 # The game's character rules, shared by the client and (later) the host. No Bevy.
+[features]
+# Adds Serialize/Deserialize to types sent over the wire (sheets, actions).
+serde = ["dep:serde"]
+
 [dependencies]
+serde = { version = "1", features = ["derive"], optional = true }
 arcanum_vfs = { path = "../arcanum_vfs" }
 arcanum_formats = { path = "../arcanum_formats" }
 

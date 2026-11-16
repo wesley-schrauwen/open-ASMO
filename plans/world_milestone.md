@@ -145,6 +145,29 @@ Each step is its own PR and ends in something testable.
    creation actions the host applies (no finished sheet is ever submitted); the host adds it to
    its `WorldSave` and sends the snapshot, then deltas. Two PCs on the map, each controlled from its own window.
 
+## Step 2 as built
+
+The crates follow step 2, with these differences:
+
+- **Two transport traits, not one.** `HostTransport` receives every player's intents (tagged
+  with the `PlayerId`) and sends a delta to one player; `ClientTransport` sends its own player's
+  intents and receives deltas. With one trait both ends could call every method. `LoopbackHost`
+  hands out a `LoopbackClient` per player through `connect`, so one host serves several clients.
+- **Deltas are not yet stamped with a tick.** `LedgerDelta::Tick(n)` marks the end of a host tick
+  instead. Stamping every delta (an envelope with the tick, for `last_confirmed_tick`) is still
+  owed and fits best with `UdpTransport` in step 8, where ordering and duplicates arise.
+- **"Done when" is half met.** A test sends intents through the loopback and the host receives
+  them; nothing answers them yet. The host system that applies intents and replies with deltas
+  comes with the session (character creation through the host), the next PR.
+- **No snapshot delta.** `WorldSave` arrives in step 3; the snapshot variant comes with it.
+  `Spawn` carries an `EntityKind` and a position.
+- **No separate pre-made intent.** `CharacterAction::PickPremade` already covers it.
+- **`SimApp`** is a headless `App` with `TimePlugin` and `SimPlugin` only, ticking
+  `FixedUpdate` at 30 Hz (`TICK_HZ`). Its owner calls `update`.
+- **`arcanum_rules` has an optional `serde` feature** for the sheet and actions, as
+  `arcanum_formats` has for `TileLoc`. `arcanum_net` has no serde yet; the loopback passes
+  values, not bytes.
+
 ## Builder's calls (proposed by Claude, not owner decisions)
 
 - `arcanum_sim` uses `bevy_ecs` (and `bevy_app` for scheduling) with no rendering, audio or

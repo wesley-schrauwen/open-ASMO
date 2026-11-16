@@ -32,6 +32,7 @@ impl std::error::Error for MapError {}
 
 /// A sector id: `(sector_y << 26) | sector_x`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SectorId(pub u64);
 
 impl SectorId {
@@ -55,6 +56,7 @@ impl SectorId {
 
 /// A tile position on a map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct TileLoc {
     pub x: u32,
     pub y: u32,

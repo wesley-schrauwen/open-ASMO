@@ -9,6 +9,8 @@ members = [
     "crates/arcanum_vfs",
     "crates/arcanum_formats",
     "crates/arcanum_rules",
-    "crates/arcanum_client"
+    "crates/arcanum_client",
+    "crates/arcanum_sim",
+    "crates/arcanum_net"
 ]
 resolver = "2"

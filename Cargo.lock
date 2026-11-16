@@ -300,6 +300,16 @@ name = "arcanum_formats"
 version = "0.1.0"
 dependencies = [
  "arcanum_vfs",
+ "serde",
+]
+
+[[package]]
+name = "arcanum_net"
+version = "0.1.0"
+dependencies = [
+ "arcanum_rules",
+ "arcanum_sim",
+ "crossbeam-channel",
 ]
 
 [[package]]
@@ -308,7 +318,22 @@ version = "0.1.0"
 dependencies = [
  "arcanum_formats",
  "arcanum_vfs",
+ "serde",
  "tempfile",
+]
+
+[[package]]
+name = "arcanum_sim"
+version = "0.1.0"
+dependencies = [
+ "arcanum_formats",
+ "arcanum_rules",
+ "arcanum_vfs",
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_time",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

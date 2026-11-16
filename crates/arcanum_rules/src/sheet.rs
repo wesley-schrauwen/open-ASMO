@@ -20,6 +20,7 @@ pub const MALE: u8 = 1;
 
 /// The two pools bought with character points (+4 each per point).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Pool {
     HitPoints,
     Fatigue,
@@ -28,6 +29,7 @@ pub enum Pool {
 /// Changes since the last accept. Only these can be sold back ("cannot reduce below its last
 /// accepted level", `mes/charedit.mes` 19).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Draft {
     pub stats: [i32; PRIMARY_STATS],
     pub hit_points: i32,
@@ -43,6 +45,7 @@ impl Draft {
 
 /// One character: accepted values plus a draft of unaccepted changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CharacterSheet {
     pub name: String,
     pub race: u8,
@@ -102,6 +105,7 @@ pub enum Message {
 
 /// Why a change was refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Refusal {
     /// charedit 17 "Stat has reached its maximum value."
     AtMaximum,
