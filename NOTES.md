@@ -370,6 +370,37 @@ What is known so far:
 - Next: mount `<ARCANUM_DIR>/data` in the VFS (proto, Players), then the Rust reader
   (`arcanum_formats::object`), then fill the picker.
 
+## Character creation (New Character)
+
+`AppState::CreateCharacter`, `create_character.rs` (screen) + `creation.rs` (rules, no Bevy).
+From Arcanum.exe window index 12 (record 0x5c4e28, background 765 `CreateCharacterBase`, buttons
+0x5c4c48, click handler 0x544ff0 via jump table 0x54528c, draw 0x5447b0/0x5448e0, Next validator
+0x545780):
+- Buttons (screen coords): Next/Back in the bottom bar; portrait arrows 283/284 at 43,118 /
+  244,118; gender 757/758 (`MPCycleLeft/RightButton`, 23x23) at 42,281 / 255,282 (both toggle);
+  race at 42,331 / 255,332; background at 42,381 / 255,382.
+- Race steps 0-7 with wrap, skipping races without women when female (race table 0x5c5170: only
+  Human, Elf, Half-Elf, Half-Orc allow female); race or gender change resets the portrait to the
+  first. Backgrounds: `Rules/backgrnd.mes` blocks of 10, legal by race-gender code, `NPC` ones are
+  the pre-mades' and never offered (the exact step helpers 0x4c2300/0x4c2390/0x4c2420 were not
+  decoded; we reset the background on race/gender change). Portraits: `gameport.mes` stems named
+  `<code><n>` (`DWM1`..`DWM4`).
+- Name: text field in bar 1 (0x5461a0), buffer of 23 bytes incl. NUL (we allow 22 characters);
+  Next refuses an empty or default name with `MainMenu.mes` 506 (shown in the help box here,
+  a popup in the original), then stores the name (field 0x10e). The original then opens window 14
+  (record 0x5c5370, untraced; probably the character editor); we go to the loading screen.
+- Stats panel: "Initial Stats" (739); rows "%s: %d" (`stat.mes` names) for 15 stats in order
+  0x5c5130 (ST CN DX BE IN WP PE CH, then carry weight .. reaction modifier) at rects 0x5c4f50.
+  We show the 8 primaries (8 + race effect `rules/effect.mes` 64+race + background effect) in two
+  columns (346 and 466; the original's 50-pixel columns at 346/406 assume narrower text); the 7
+  derived stats need formulas we do not have yet.
+- Large panel: background story when the background's description > 1000, else "Race" (745) and
+  770 + gender + 2 × race.
+- Defaults: the original creates proto 16066 (not in `data/proto`); we start as the template
+  16086 suggests: human male, first portrait, no background, no name.
+- Not yet: derived stats, the hover modes that switch the large panel (0x5456b0), window 14,
+  long bar texts (centred and clipped; the original left-aligns when too wide).
+
 ## Known issues / backlog (not started)
 
 - Sector objects: instance fields fall back to the prototype when the instance bitmap omits them

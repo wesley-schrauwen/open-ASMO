@@ -61,9 +61,16 @@ pub mod paths {
         /// New Game character picker: portrait box with arrows, four info bars, two description
         /// panels, 800x400.
         pub const PREGEN_BACK: &str = "art/interface/PreGenCharacterBase.ART";
+        /// Character creation: portrait box with sockets, four bars (2-4 with sockets at both
+        /// ends), two right panels; 800x400 (art 765).
+        pub const CREATE_BACK: &str = "art/interface/CreateCharacterBase.ART";
         /// Previous/next character arrows beside the picker's portrait (art 283/284).
         pub const PICKER_LEFT: &str = "art/interface/Big_Grn_L.ART";
         pub const PICKER_RIGHT: &str = "art/interface/Big_Grn_R.ART";
+        /// Small left/right arrows on character creation's gender, race and background bars
+        /// (art 757/758, 23x23).
+        pub const CYCLE_LEFT: &str = "art/interface/MPCycleLeftButton.ART";
+        pub const CYCLE_RIGHT: &str = "art/interface/MPCycleRightButton.ART";
         /// Save list box, portrait socket and screenshot oval (transparent windows), 800x400.
         pub const SAVE_LOAD_BACK: &str = "art/interface/SaveLoadBackground.ART";
         /// Ring over the portrait, 89x89.
@@ -168,8 +175,11 @@ pub mod paths {
         interface::BOTTOM_BAR,
         interface::SAVE_LOAD_BACK,
         interface::PREGEN_BACK,
+        interface::CREATE_BACK,
         interface::PICKER_LEFT,
         interface::PICKER_RIGHT,
+        interface::CYCLE_LEFT,
+        interface::CYCLE_RIGHT,
         interface::SAVE_LOAD_LENS,
         interface::SAVE_SHOT_COVER,
         interface::NEXT_BUTTON,
