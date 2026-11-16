@@ -18,5 +18,5 @@ fn character_is_accepted_through_the_loopback() {
 
     let deltas = client.recv_deltas();
     assert!(matches!(&deltas[0], LedgerDelta::CharacterUpdate { ack: 1, creation, .. } if creation.sheet.name == "Virgil"));
-    assert_eq!(deltas.last(), Some(&LedgerDelta::CharacterAccepted { player: PlayerId(7) }));
+    assert!(deltas.contains(&LedgerDelta::CharacterAccepted { player: PlayerId(7) }), "{deltas:?}");
 }

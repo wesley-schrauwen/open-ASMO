@@ -11,7 +11,7 @@ use bevy_ecs::prelude::*;
 use arcanum_rules::RulesData;
 use bevy_time::{Fixed, Time, TimePlugin, TimeUpdateStrategy};
 
-use crate::{Inbox, NetIdAllocator, Outbox, Session, SimRules, Tick, handle_intents};
+use crate::{Inbox, NetIdAllocator, Outbox, SaveStatus, Session, SimRules, Tick, WorldState, handle_intents, write_save};
 
 /// Host ticks per second.
 pub const TICK_HZ: f64 = 30.0;
@@ -24,7 +24,8 @@ pub struct SimTick(pub Tick);
 #[derive(Resource, Debug, Default)]
 pub struct NetIds(pub NetIdAllocator);
 
-/// Host resources, the session and the tick counter. Expects [`SimRules`].
+/// Host resources, the session, saving and the tick counter. Optional: [`StartMap`](crate::StartMap)
+/// (without it accepted characters have no world to join) and [`SaveFile`](crate::SaveFile).
 pub struct SimPlugin;
 
 impl Plugin for SimPlugin {
@@ -36,7 +37,9 @@ impl Plugin for SimPlugin {
             .init_resource::<Inbox>()
             .init_resource::<Outbox>()
             .init_resource::<Session>()
-            .add_systems(FixedUpdate, (handle_intents, advance_tick).chain());
+            .init_resource::<WorldState>()
+            .init_resource::<SaveStatus>()
+            .add_systems(FixedUpdate, (handle_intents, advance_tick, write_save).chain());
     }
 }
 

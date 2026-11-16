@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use arcanum_rules::{CharacterBlueprint, RulesData};
 use bevy_ecs::prelude::*;
 
-use crate::{Creation, LedgerDelta, PlayerId, PlayerIntent};
+use crate::{Creation, LedgerDelta, PlayerId, PlayerIntent, StartMap, WorldState};
 
 /// The rules the host applies.
 #[derive(Resource, Debug, Clone, Default)]
@@ -41,9 +41,18 @@ pub struct Session {
 /// Answers the intents in the [`Inbox`].
 ///
 /// Every character request gets a `CharacterUpdate` with the host's copy and the request's
-/// `seq`, refused or not. A finished character also gets `CharacterAccepted`. A player who is
-/// `Ready` can only start a new character.
-pub fn handle_intents(mut inbox: ResMut<Inbox>, mut outbox: ResMut<Outbox>, mut session: ResMut<Session>, rules: Res<SimRules>) {
+/// `seq`, refused or not. A finished character gets `CharacterAccepted` first, so a client
+/// that sees the update for its `Accept` without it knows the host refused. The accepted
+/// character joins the world at the start position. A player who is `Ready` can only start a
+/// new character.
+pub fn handle_intents(
+    mut inbox: ResMut<Inbox>,
+    mut outbox: ResMut<Outbox>,
+    mut session: ResMut<Session>,
+    rules: Res<SimRules>,
+    start: Option<Res<StartMap>>,
+    mut world: ResMut<WorldState>,
+) {
     for (player, intent) in inbox.0.drain(..) {
         match intent {
             PlayerIntent::Character { seq, request } => {
@@ -53,12 +62,13 @@ pub fn handle_intents(mut inbox: ResMut<Inbox>, mut outbox: ResMut<Outbox>, mut 
                 }
                 let SessionPlayer::Creating(creation) = entry else { continue };
                 let result = creation.request(&rules.0, &request);
-                let creation = creation.clone();
-                outbox.0.push((player, LedgerDelta::CharacterUpdate { player, ack: seq, creation }));
+                let update = LedgerDelta::CharacterUpdate { player, ack: seq, creation: creation.clone() };
                 if let Ok(Some(blueprint)) = result {
+                    world.add_player(start.as_deref(), player, blueprint.clone());
                     *entry = SessionPlayer::Ready(blueprint);
                     outbox.0.push((player, LedgerDelta::CharacterAccepted { player }));
                 }
+                outbox.0.push((player, update));
             }
             // Movement arrives with the world.
             PlayerIntent::MoveTo(_) => {}
@@ -104,8 +114,8 @@ mod tests {
         ]);
         assert_eq!(deltas.len(), 3, "{deltas:?}");
         assert!(matches!(&deltas[0], LedgerDelta::CharacterUpdate { ack: 1, creation, .. } if creation.sheet.name == "Virgil"));
-        assert!(matches!(&deltas[1], LedgerDelta::CharacterUpdate { ack: 2, .. }));
-        assert_eq!(deltas[2], LedgerDelta::CharacterAccepted { player: P });
+        assert_eq!(deltas[1], LedgerDelta::CharacterAccepted { player: P }, "before the update it answers");
+        assert!(matches!(&deltas[2], LedgerDelta::CharacterUpdate { ack: 2, .. }));
         let session = sim.app.world().resource::<Session>();
         assert!(matches!(&session.players[&P], SessionPlayer::Ready(b) if b.sheet.name == "Virgil"));
     }
@@ -128,6 +138,28 @@ mod tests {
         assert!(ignored.is_empty());
         let restarted = ticked(&mut sim, vec![character(4, CharacterRequest::New)]);
         assert!(matches!(&restarted[..], [LedgerDelta::CharacterUpdate { ack: 4, creation, .. }] if creation.sheet.name.is_empty()));
+    }
+
+    #[test]
+    fn an_accepted_character_is_saved_on_the_start_map() {
+        use arcanum_formats::map::TileLoc;
+        let dir = tempfile::tempdir().unwrap();
+        let file = crate::SaveFile::in_dir(dir.path(), 5);
+        let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 } };
+        let mut sim = started();
+        sim.app.insert_resource(start.clone()).insert_resource(file.clone());
+        ticked(&mut sim, vec![
+            character(1, CharacterRequest::Action(CharacterAction::SetName("Virgil".into()))),
+            character(2, CharacterRequest::Accept),
+        ]);
+        let saved = crate::WorldSave::read(&file.0).unwrap();
+        assert_eq!(saved.map, start.map);
+        assert_eq!(saved.players[&P].position, start.position);
+        assert_eq!(saved.players[&P].blueprint.sheet.name, "Virgil");
+        assert_eq!(saved.tick, 1, "saved at the end of the tick that accepted");
+        // Nothing changed since: no second write.
+        ticked(&mut sim, vec![]);
+        assert_eq!(sim.app.world().resource::<crate::SaveStatus>().writes, 1);
     }
 
     #[test]

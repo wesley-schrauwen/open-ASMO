@@ -6,5 +6,5 @@
 use serde::{Deserialize, Serialize};
 
 /// Identifies a player across the wire. Stable for the duration of a session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct PlayerId(pub u64);

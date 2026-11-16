@@ -292,8 +292,8 @@ fn menu_app(vfs: Vfs) -> App {
         .init_resource::<GameSettings>()
         .add_plugins((TimePlugin, BitmapTextPlugin, FontsPlugin, MenuAudioPlugin, MainMenuPlugin, OptionsPlugin, ScreensPlugin, LoadingPlugin, LoadGamePlugin, NewGamePlugin, arcanum_client::CreateCharacterPlugin, arcanum_client::CharacterEditorPlugin))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)))
+        .insert_resource(arcanum_client::sim_bridge::HostSettings { save_dir: None, manual_clock: true })
         .add_plugins(arcanum_client::sim_bridge::SimBridgePlugin);
-    app.world_mut().non_send_mut::<arcanum_client::sim_bridge::LocalHostRes>().0.sim.use_manual_clock();
     app
 }
 
@@ -850,6 +850,46 @@ fn a_failed_asset_does_not_block_loading() {
     app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::Loading);
     app.update();
     update_until(&mut app, |app| state(app) == AppState::Credits);
+}
+
+#[test]
+fn loading_waits_for_the_host_to_accept_the_character() {
+    use arcanum_client::character_host::CharacterHost;
+    let mut app = ready_menu(&Fixture::new());
+    app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::NewGameChoice);
+    app.update();
+    let rules = arcanum_rules::RulesData::default();
+    {
+        let mut host = app.world_mut().resource_mut::<CharacterHost>();
+        host.reset(&rules);
+        host.apply(&rules, arcanum_rules::CharacterAction::SetName("Virgil".into())).unwrap();
+        host.finish(&rules).unwrap();
+    }
+    // Stop the host's clock: it gets the Accept but runs no tick to answer it.
+    let host_clock = |app: &mut App, step: Duration| {
+        let mut host = app.world_mut().non_send_mut::<arcanum_client::sim_bridge::LocalHostRes>();
+        host.0.sim.app.insert_resource(TimeUpdateStrategy::ManualDuration(step));
+    };
+    host_clock(&mut app, Duration::ZERO);
+    app.insert_resource(LoadRequest::new(AppState::Credits).min_secs(0.0).after_host_accepts());
+    app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::Loading);
+    for _ in 0..10 {
+        app.update();
+    }
+    assert_eq!(state(&app), AppState::Loading, "nothing else to load, but the host has not answered");
+    assert_eq!(*app.world().resource::<LoadingProgress>(), LoadingProgress { done: 0, total: 1, ..*app.world().resource::<LoadingProgress>() });
+    host_clock(&mut app, arcanum_sim::SimApp::tick_duration());
+    update_until(&mut app, |app| state(app) == AppState::Credits);
+    assert!(app.world().resource::<CharacterHost>().accepted);
+}
+
+#[test]
+fn loading_for_the_host_without_one_returns_to_the_menu() {
+    let mut app = ready_menu(&Fixture::new());
+    app.insert_resource(LoadRequest::new(AppState::Credits).min_secs(0.0).after_host_accepts());
+    app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::Loading);
+    app.update();
+    update_until(&mut app, |app| state(app) == AppState::MainMenu);
 }
 
 #[test]

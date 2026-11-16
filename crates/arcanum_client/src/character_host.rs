@@ -28,6 +28,10 @@ pub struct CharacterHost {
     pub finished: Option<CharacterBlueprint>,
     /// Set when the host accepts the finished character.
     pub accepted: bool,
+    /// Set when the host answered the `Accept` without accepting (it disagreed with the preview).
+    pub refused: bool,
+    /// The `Accept` request's number, while waiting for the host.
+    accept_seq: Option<u32>,
 }
 
 impl CharacterHost {
@@ -42,6 +46,8 @@ impl CharacterHost {
     pub fn reset(&mut self, rules: &RulesData) {
         self.finished = None;
         self.accepted = false;
+        self.refused = false;
+        self.accept_seq = None;
         let _ = self.request(rules, CharacterRequest::New);
     }
 
@@ -57,6 +63,8 @@ impl CharacterHost {
     /// Accepts the character and keeps its blueprint.
     pub fn finish(&mut self, rules: &RulesData) -> Result<&CharacterBlueprint, Refusal> {
         let blueprint = self.request(rules, CharacterRequest::Accept)?.expect("Accept gives a blueprint");
+        self.accept_seq = Some(self.last_seq);
+        self.refused = false;
         Ok(self.finished.insert(blueprint))
     }
 
@@ -74,9 +82,16 @@ impl CharacterHost {
     }
 
     /// Takes a delta from the host. Others' and non-character deltas are ignored.
+    ///
+    /// The host sends `CharacterAccepted` before the update answering the `Accept`, so an
+    /// answer to it without acceptance first is a refusal.
     pub fn receive(&mut self, rules: &RulesData, delta: &LedgerDelta) {
         match delta {
             LedgerDelta::CharacterUpdate { ack, creation, .. } => {
+                if self.accept_seq.is_some_and(|seq| seq <= *ack) {
+                    self.accept_seq = None;
+                    self.refused = !self.accepted;
+                }
                 self.confirmed = creation.clone();
                 while self.pending.front().is_some_and(|(seq, _)| seq <= ack) {
                     self.pending.pop_front();
@@ -86,7 +101,7 @@ impl CharacterHost {
                     let _ = self.preview.request(rules, request);
                 }
             }
-            LedgerDelta::CharacterAccepted { .. } => self.accepted = true,
+            LedgerDelta::CharacterAccepted { .. } if self.accept_seq.is_some() => self.accepted = true,
             _ => {}
         }
     }
@@ -150,11 +165,25 @@ mod tests {
         let rules = RulesData::default();
         let mut host = CharacterHost::new(&rules);
         host.apply(&rules, CharacterAction::SetName("Virgil".into())).unwrap();
-        host.finish(&rules).unwrap();
+        host.finish(&rules).unwrap(); // seq 3
         host.receive(&rules, &LedgerDelta::CharacterAccepted { player: PlayerId(1) });
-        assert!(host.accepted && host.finished.is_some());
+        host.receive(&rules, &update(3, host.preview.clone()));
+        assert!(host.accepted && !host.refused && host.finished.is_some());
         host.reset(&rules);
         assert!(!host.accepted && host.finished.is_none());
         assert!(host.sheet().name.is_empty());
+    }
+
+    #[test]
+    fn an_answer_to_accept_without_acceptance_is_a_refusal() {
+        let rules = RulesData::default();
+        let mut host = CharacterHost::new(&rules); // seq 1
+        host.apply(&rules, CharacterAction::SetName("Virgil".into())).unwrap(); // seq 2
+        host.finish(&rules).unwrap(); // seq 3
+        host.receive(&rules, &update(2, host.preview.clone()));
+        assert!(!host.refused, "an earlier answer says nothing about the Accept");
+        // The host never saw the name (as if it had restarted): it refuses the Accept.
+        host.receive(&rules, &update(3, Creation::new(&rules)));
+        assert!(host.refused && !host.accepted);
     }
 }
