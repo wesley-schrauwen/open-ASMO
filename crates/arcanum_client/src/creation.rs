@@ -58,9 +58,21 @@ pub struct CreationRules {
     pub backgrounds: Vec<Background>,
     /// `(portrait id, file stem)` in id order.
     pub portraits: Vec<(u32, String)>,
-    /// Primary stat changes per effect id.
-    pub effects: Vec<(u32, [i32; PRIMARY_STATS])>,
+    /// Stat and resistance changes per effect id.
+    pub effects: Vec<(u32, Effect)>,
 }
+
+/// What an effect line in `rules/effect.mes` does to the stats this screen shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Effect {
+    pub stats: [i32; PRIMARY_STATS],
+    /// Damage, Magick, Fire, Poison, Electrical (`mes/charedit.mes` 12-16 order).
+    pub resist: [i32; RESISTANCES],
+}
+
+/// Resistance kinds, in the character editor's order.
+pub const RESISTANCES: usize = 5;
+const RESIST_KEYS: [&str; RESISTANCES] = ["resistdamage", "resistmagic", "resistfire", "resistpoison", "resistelectrical"];
 
 impl CreationRules {
     /// Reads `Rules/backgrnd.mes`, `rules/effect.mes` and `portrait/gameport.mes`.
@@ -86,9 +98,9 @@ impl CreationRules {
         let mut stat_effects = Vec::new();
         for id in 0..2000u32 {
             if let Some(text) = effects.get(id) {
-                let mods = parse_stat_effect(text);
-                if mods != [0; PRIMARY_STATS] {
-                    stat_effects.push((id, mods));
+                let effect = parse_effect(text);
+                if effect != Effect::default() {
+                    stat_effects.push((id, effect));
                 }
             }
         }
@@ -116,15 +128,80 @@ impl CreationRules {
             .collect()
     }
 
-    fn effect(&self, id: u32) -> [i32; PRIMARY_STATS] {
-        self.effects.iter().find(|(e, _)| *e == id).map(|(_, m)| *m).unwrap_or([0; PRIMARY_STATS])
+    fn effect(&self, id: u32) -> Effect {
+        self.effects.iter().find(|(e, _)| *e == id).map(|(_, m)| *m).unwrap_or_default()
     }
 
-    /// Starting primary stats: base, plus race, plus background.
-    pub fn stats(&self, character: &NewCharacter) -> [i32; PRIMARY_STATS] {
+    /// The race and background effects together.
+    fn character_effects(&self, character: &NewCharacter) -> Effect {
         let race = self.effect(RACE_EFFECT_BASE + u32::from(character.race));
-        let background = self.background(character).and_then(|b| b.effect).map(|e| self.effect(e)).unwrap_or([0; PRIMARY_STATS]);
-        std::array::from_fn(|i| BASE_STAT + race[i] + background[i])
+        let background = self.background(character).and_then(|b| b.effect).map(|e| self.effect(e)).unwrap_or_default();
+        Effect {
+            stats: std::array::from_fn(|i| race.stats[i] + background.stats[i]),
+            resist: std::array::from_fn(|i| race.resist[i] + background.resist[i]),
+        }
+    }
+
+    /// Starting primary stats before any points are spent: base 8, plus race and background.
+    pub fn starting_stats(&self, character: &NewCharacter) -> [i32; PRIMARY_STATS] {
+        let e = self.character_effects(character);
+        std::array::from_fn(|i| BASE_STAT + e.stats[i])
+    }
+
+    /// Current primary stats: the starting stats plus points spent.
+    pub fn stats(&self, character: &NewCharacter) -> [i32; PRIMARY_STATS] {
+        let start = self.starting_stats(character);
+        std::array::from_fn(|i| start[i] + character.bought[i])
+    }
+
+    /// Resistances from race and background, in percent.
+    pub fn resistances(&self, character: &NewCharacter) -> [i32; RESISTANCES] {
+        self.character_effects(character).resist
+    }
+
+    /// Raises primary stat `i` by one, spending a point (Arcanum.exe 0x55a80a).
+    pub fn raise_stat(&self, character: &mut NewCharacter, i: usize) -> Result<(), EditError> {
+        if self.stats(character)[i] >= race_max(character.race, i) {
+            return Err(EditError::AtMaximum);
+        }
+        if character.unspent() < STAT_COST {
+            return Err(EditError::NoPoints);
+        }
+        character.bought[i] += 1;
+        Ok(())
+    }
+
+    /// Lowers primary stat `i` by one, refunding a point; not below its starting value (0x55a997).
+    pub fn lower_stat(&self, character: &mut NewCharacter, i: usize) -> Result<(), EditError> {
+        if character.bought[i] == 0 {
+            return Err(if self.stats(character)[i] <= MIN_STAT { EditError::AtMinimum } else { EditError::BelowAccepted });
+        }
+        character.bought[i] -= 1;
+        Ok(())
+    }
+
+    /// The derived stats for a level-1 character (Arcanum.exe 0x4b0740, 0x43d5a0, 0x45d670).
+    pub fn derived(&self, character: &NewCharacter) -> Derived {
+        let s = self.stats(character);
+        let [st, dx, cn, be, _in, _pe, wp, ch] = s;
+        let level = 1;
+        let damage_bonus = {
+            let d = st - 10;
+            let d = if d < 0 { d / 2 } else { d };
+            if st >= 20 { d * 2 } else { d }
+        };
+        Derived {
+            carry_weight: 500 * st,
+            damage_bonus,
+            ac_adjustment: dx - 10,
+            speed: dx + if dx >= 20 { 5 } else { 0 },
+            heal_rate: (cn + 1) / 3,
+            poison_recovery: cn,
+            reaction: reaction_modifier(be),
+            max_followers: ch / 4,
+            hit_points: 4 * character.hp_bought + wp + 2 * (level + st) + 4,
+            fatigue: 4 * character.fatigue_bought + wp + 2 * (level + cn) + 4,
+        }
     }
 
     pub fn background(&self, character: &NewCharacter) -> Option<&Background> {
@@ -138,16 +215,115 @@ impl CreationRules {
 
 /// The primary stat changes in an effect line such as `st +1, cn +1, ch -1, repair +2`.
 pub fn parse_stat_effect(text: &str) -> [i32; PRIMARY_STATS] {
-    let mut out = [0; PRIMARY_STATS];
+    parse_effect(text).stats
+}
+
+/// The stat and resistance changes in an effect line.
+pub fn parse_effect(text: &str) -> Effect {
+    let mut out = Effect::default();
     for part in text.split(',') {
         let mut words = part.split_whitespace();
         let (Some(key), Some(value)) = (words.next(), words.next()) else { continue };
-        let Some(i) = STAT_KEYS.iter().position(|k| key.eq_ignore_ascii_case(k)) else { continue };
-        if let Ok(v) = value.trim_start_matches('+').parse::<i32>() {
-            out[i] += v;
+        let Ok(v) = value.trim_start_matches('+').parse::<i32>() else { continue };
+        if let Some(i) = STAT_KEYS.iter().position(|k| key.eq_ignore_ascii_case(k)) {
+            out.stats[i] += v;
+        } else if let Some(i) = RESIST_KEYS.iter().position(|k| key.eq_ignore_ascii_case(k)) {
+            out.resist[i] += v;
         }
     }
     out
+}
+
+/// Points a new level-1 character starts with (stat 21 in the prototypes).
+pub const STARTING_POINTS: i32 = 5;
+/// Character points per step of a primary stat, hit points or fatigue (table 0x5b52e0: flat 1).
+pub const STAT_COST: i32 = 1;
+/// No stat goes below this (table 0x5b5194).
+pub const MIN_STAT: i32 = 1;
+
+/// Why a +/- click was refused, with its `mes/charedit.mes` message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditError {
+    /// 17 "Stat has reached its maximum value."
+    AtMaximum,
+    /// 18 "You haven't enough character points."
+    NoPoints,
+    /// 19 "You cannot reduce this stat below its last accepted level."
+    BelowAccepted,
+    /// 20 "Stat has reached its minimum value."
+    AtMinimum,
+}
+
+impl EditError {
+    pub fn message_id(self) -> u32 {
+        match self {
+            Self::AtMaximum => 17,
+            Self::NoPoints => 18,
+            Self::BelowAccepted => 19,
+            Self::AtMinimum => 20,
+        }
+    }
+}
+
+/// The highest value primary stat `stat` can reach for `race` (Arcanum.exe 0x4b0fd0; 20 unless
+/// the race raises it).
+pub fn race_max(race: u8, stat: usize) -> i32 {
+    // Indices: 0 ST, 1 DX, 2 CN, 3 BE, 4 IN, 5 PE, 6 WP, 7 CH.
+    match (race, stat) {
+        (1, 0) | (1, 2) => 21,                 // dwarf: ST, CN
+        (2, 1) | (2, 3) | (2, 6) => 21,        // elf: DX, BE, WP
+        (3, 1) => 21,                          // half-elf: DX
+        (4, 6) => 22,                          // gnome: WP
+        (5, 1) => 22,                          // halfling: DX
+        (6, 0) | (6, 2) => 21,                 // half-orc: ST, CN
+        (7, 0) => 24,                          // half-ogre: ST
+        _ => 20,
+    }
+}
+
+/// Reaction modifier for a Beauty value (table 0x5b5330).
+pub fn reaction_modifier(beauty: i32) -> i32 {
+    const UP: [i32; 10] = [0, 3, 7, 12, 18, 25, 33, 42, 52, 65];
+    match beauty {
+        b if b >= 20 => 10 * b - 100,
+        b if b >= 10 => UP[(b - 10) as usize],
+        b if b >= 1 => -UP[(10 - b) as usize],
+        _ => -UP[9],
+    }
+}
+
+/// Experience needed for level 2 (`Rules/xp_level.mes` 2).
+pub const XP_FOR_LEVEL_2: i32 = 2100;
+
+/// The derived stats the character editor shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Derived {
+    pub carry_weight: i32,
+    pub damage_bonus: i32,
+    pub ac_adjustment: i32,
+    pub speed: i32,
+    pub heal_rate: i32,
+    pub poison_recovery: i32,
+    pub reaction: i32,
+    pub max_followers: i32,
+    pub hit_points: i32,
+    pub fatigue: i32,
+}
+
+impl Derived {
+    /// Stats 8-15 in `mes/stat.mes` order.
+    pub fn by_stat_id(&self) -> [i32; 8] {
+        [
+            self.carry_weight,
+            self.damage_bonus,
+            self.ac_adjustment,
+            self.speed,
+            self.heal_rate,
+            self.poison_recovery,
+            self.reaction,
+            self.max_followers,
+        ]
+    }
 }
 
 /// The character being created.
@@ -160,13 +336,18 @@ pub struct NewCharacter {
     pub background: usize,
     /// Index into [`CreationRules::portraits_for`].
     pub portrait: usize,
+    /// Points spent on each primary stat in the character editor.
+    pub bought: [i32; PRIMARY_STATS],
+    /// Points spent on hit points and fatigue (+4 each per point).
+    pub hp_bought: i32,
+    pub fatigue_bought: i32,
 }
 
 impl Default for NewCharacter {
     /// As the "create your own" template (prototype 016086): a human male, first portrait, no
     /// background, no name.
     fn default() -> Self {
-        Self { name: String::new(), race: 0, gender: MALE, background: 0, portrait: 0 }
+        Self { name: String::new(), race: 0, gender: MALE, background: 0, portrait: 0, bought: [0; PRIMARY_STATS], hp_bought: 0, fatigue_bought: 0 }
     }
 }
 
@@ -221,6 +402,29 @@ impl NewCharacter {
         if self.name.chars().count() < MAX_NAME && !c.is_control() && arcanum_formats::cp1252::encode_char(c).is_some() {
             self.name.push(c);
         }
+    }
+
+    /// Character points left to spend.
+    pub fn unspent(&self) -> i32 {
+        STARTING_POINTS - (self.bought.iter().sum::<i32>() + self.hp_bought + self.fatigue_bought) * STAT_COST
+    }
+
+    /// Buys or sells a step of hit points (`hp`) or fatigue.
+    pub fn adjust_pool(&mut self, hp: bool, delta: i32) -> Result<(), EditError> {
+        let unspent = self.unspent();
+        let pool = if hp { &mut self.hp_bought } else { &mut self.fatigue_bought };
+        if delta > 0 {
+            if unspent < STAT_COST {
+                return Err(EditError::NoPoints);
+            }
+            *pool += 1;
+        } else {
+            if *pool == 0 {
+                return Err(EditError::BelowAccepted);
+            }
+            *pool -= 1;
+        }
+        Ok(())
     }
 
     /// A name the player has actually entered.
@@ -324,5 +528,52 @@ mod tests {
         d.type_char('日');
         d.type_char(' ');
         assert!(!d.has_name(), "control, unsupported and blank input do not make a name");
+    }
+
+    #[test]
+    fn spending_points_follows_the_original_rules() {
+        let r = rules();
+        let mut c = NewCharacter::default();
+        assert_eq!(c.unspent(), STARTING_POINTS);
+        r.raise_stat(&mut c, 0).unwrap();
+        assert_eq!((r.stats(&c)[0], c.unspent()), (9, 4));
+        assert_eq!(r.lower_stat(&mut c, 1), Err(EditError::BelowAccepted), "not below the starting value");
+        r.lower_stat(&mut c, 0).unwrap();
+        assert_eq!(c.unspent(), STARTING_POINTS);
+        for _ in 0..5 {
+            r.raise_stat(&mut c, 7).unwrap();
+        }
+        assert_eq!(r.raise_stat(&mut c, 7), Err(EditError::NoPoints));
+        assert_eq!(c.adjust_pool(true, 1), Err(EditError::NoPoints));
+        // The race maximum stops a stat even with points left.
+        let mut d = NewCharacter { bought: [12, 0, 0, 0, 0, 0, 0, 0], ..NewCharacter::default() };
+        assert_eq!(r.stats(&d)[0], 20);
+        assert_eq!(r.raise_stat(&mut d, 0), Err(EditError::AtMaximum));
+        assert_eq!(race_max(7, 0), 24, "half-ogres reach 24 strength");
+    }
+
+    #[test]
+    fn derived_stats_use_the_original_formulas() {
+        let r = rules();
+        let c = NewCharacter::default();
+        let d = r.derived(&c);
+        assert_eq!((d.carry_weight, d.damage_bonus, d.ac_adjustment, d.speed), (4000, -1, -2, 8));
+        assert_eq!((d.heal_rate, d.poison_recovery, d.reaction, d.max_followers), (3, 8, -7, 2));
+        // HP = 4 x bought + WP + 2 x (level + ST) + 4 = 0 + 8 + 18 + 4.
+        assert_eq!((d.hit_points, d.fatigue), (30, 30));
+        let mut e = NewCharacter::default();
+        e.adjust_pool(true, 1).unwrap();
+        assert_eq!(r.derived(&e).hit_points, 34);
+        assert_eq!(reaction_modifier(10), 0);
+        assert_eq!(reaction_modifier(15), 25);
+        assert_eq!(reaction_modifier(1), -65);
+        assert_eq!(reaction_modifier(22), 120);
+    }
+
+    #[test]
+    fn effects_carry_resistances() {
+        let e = parse_effect("st +1, cn +1, melee +2, resistpoison +10, be -2");
+        assert_eq!(e.stats, [1, 0, 1, -2, 0, 0, 0, 0]);
+        assert_eq!(e.resist, [0, 0, 0, 10, 0]);
     }
 }

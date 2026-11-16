@@ -72,6 +72,7 @@ pub fn back_from(state: AppState) -> AppState {
     match state {
         AppState::LoadGame | AppState::NewGameChoice => AppState::SinglePlayer,
         AppState::NewGame | AppState::CreateCharacter => AppState::NewGameChoice,
+        AppState::CharacterEditor => AppState::CreateCharacter,
         _ => AppState::MainMenu,
     }
 }

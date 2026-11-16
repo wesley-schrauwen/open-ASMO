@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 use arcanum_client::main_menu::{MenuLabel, FitToBaseline};
 use arcanum_client::options::OptionSlot;
 use arcanum_client::{
-    ArcanumAssetsPlugin, BitmapTextPlugin, BrightnessPlugin, ConfigPlugin, CreateCharacterPlugin, DisplayPlugin, FontsPlugin, LoadGamePlugin, LoadingPlugin, NewGamePlugin, MainMenuPlugin, MenuAudioPlugin, ResourcePack,
+    ArcanumAssetsPlugin, BitmapTextPlugin, BrightnessPlugin, CharacterEditorPlugin, ConfigPlugin, CreateCharacterPlugin, DisplayPlugin, FontsPlugin, LoadGamePlugin, LoadingPlugin, NewGamePlugin, MainMenuPlugin, MenuAudioPlugin, ResourcePack,
     OptionsPlugin, ScreensPlugin, VfsAssetPlugin,
 };
 use arcanum_client::AppState;
@@ -54,6 +54,7 @@ fn main() {
             BrightnessPlugin,
             ConfigPlugin,
             CreateCharacterPlugin,
+            CharacterEditorPlugin,
             DisplayPlugin,
             FontsPlugin,
             LoadGamePlugin,
@@ -65,13 +66,14 @@ fn main() {
             ScreensPlugin,
         ));
 
-    // Debugging aid: `DEBUG_ARCANUM_SCREEN=options|singleplayer|newgamechoice|newgame|createcharacter|loadgame|loading` opens that screen.
+    // Debugging aid: `DEBUG_ARCANUM_SCREEN=options|singleplayer|newgamechoice|newgame|createcharacter|charactereditor|loadgame|loading` opens that screen.
     let start = match std::env::var(SCREEN_VAR).unwrap_or_default().to_ascii_lowercase().as_str() {
         "options" => Some(AppState::Options),
         "singleplayer" => Some(AppState::SinglePlayer),
         "newgamechoice" => Some(AppState::NewGameChoice),
         "newgame" => Some(AppState::NewGame),
         "createcharacter" => Some(AppState::CreateCharacter),
+        "charactereditor" => Some(AppState::CharacterEditor),
         // With example saves, so the list and info display have something to show.
         "loadgame" => {
             app.insert_resource(sample_saves());
@@ -127,8 +129,9 @@ fn screen_ready(
     load_game: Query<(), With<LoadGameScreen>>,
     new_game: Query<(), With<NewGameScreen>>,
     create: Query<(), With<arcanum_client::create_character::CreateCharacterScreen>>,
+    editor: Query<(), With<arcanum_client::character_editor::CharacterEditorScreen>>,
     images: Res<Assets<Image>>,
 ) -> bool {
     let loading_up = loading.iter().any(|p| images.get(&p.image).is_some());
-    (!labels.is_empty() || !slots.is_empty() || loading_up || !load_game.is_empty() || !new_game.is_empty() || !create.is_empty()) && pending.is_empty()
+    (!labels.is_empty() || !slots.is_empty() || loading_up || !load_game.is_empty() || !new_game.is_empty() || !create.is_empty() || !editor.is_empty()) && pending.is_empty()
 }

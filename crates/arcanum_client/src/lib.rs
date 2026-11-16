@@ -3,6 +3,7 @@
 pub mod art_loader;
 pub mod audio;
 pub mod bitmap_text;
+pub mod character_editor;
 pub mod brightness;
 pub mod config;
 pub mod create_character;
@@ -29,6 +30,7 @@ pub use art_loader::{ArtAssetLoader, ArtFrames, ArtFramesLoader};
 pub use audio::MenuAudioPlugin;
 pub use bitmap_text::BitmapTextPlugin;
 pub use brightness::BrightnessPlugin;
+pub use character_editor::CharacterEditorPlugin;
 pub use config::{ConfigFile, ConfigPlugin};
 pub use create_character::CreateCharacterPlugin;
 pub use fonts::FontsPlugin;
