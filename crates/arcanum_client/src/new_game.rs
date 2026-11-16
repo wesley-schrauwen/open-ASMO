@@ -9,7 +9,7 @@
 //! wrapped, in the large right panel. Bar texts are centred.
 //!
 //! Back returns to the New Game choice; Next (hover help "Next Screen", `MainMenu.mes` 7003)
-//! remembers the chosen character ([`ChosenCharacter`]) and goes through the loading screen
+//! picks the character in the [`CharacterHost`](crate::character_host::CharacterHost) and goes through the loading screen
 //! into the world placeholder.
 
 use bevy::picking::hover::Hovered;
@@ -23,7 +23,9 @@ use crate::fonts::{ArcanumFonts, ORIGINAL_SCALE, UiFont};
 use crate::loading::LoadRequest;
 use crate::main_menu::AppState;
 use crate::menu_window::{HoverHelp, MenuWindowPlugin, SCREEN_RED, SCREEN_WHITE, TOP_BAR_HEIGHT, WindowArt, at, rect, screen_root, spawn_frame};
+use crate::character_host::CharacterHost;
 use crate::premade::{Premade, PremadeCharacters, split_story};
+use arcanum_rules::CharacterAction;
 use crate::resource_pack::paths::interface;
 use crate::vfs_asset::VfsResource;
 use crate::widgets::FrameButton;
@@ -48,10 +50,6 @@ pub struct PickerContent;
 /// Which pre-made character is showing.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct PickerIndex(pub usize);
-
-/// The character picked with Next: its prototype number.
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ChosenCharacter(pub u32);
 
 /// Marks the text pieces, for tests.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -112,7 +110,7 @@ impl Plugin for NewGamePlugin {
                     right: assets.load(interface::PICKER_RIGHT),
                 });
             })
-            .add_systems(OnEnter(AppState::NewGame), (load_premades, build_screen).chain())
+            .add_systems(OnEnter(AppState::NewGame), (load_premades, crate::create_character::load_creation_data, build_screen).chain())
             .add_systems(Update, show_character.run_if(in_state(AppState::NewGame)))
             .add_observer(on_activate);
     }
@@ -239,6 +237,7 @@ fn on_activate(
     mut next_state: ResMut<NextState<AppState>>,
     mut index: ResMut<PickerIndex>,
     premades: Option<Res<PremadeCharacters>>,
+    data: Option<Res<crate::create_character::CreationData>>,
     sounds: Option<Res<MenuSounds>>,
 ) {
     let Ok(&action) = actions.get(activate.entity) else { return };
@@ -252,9 +251,16 @@ fn on_activate(
         NewGameAction::Following if count > 0 => index.0 = (index.0 + 1) % count,
         NewGameAction::Previous | NewGameAction::Following => {}
         NewGameAction::Next => {
-            if let Some(p) = premades.as_ref().and_then(|p| p.0.get(index.0)) {
-                commands.insert_resource(ChosenCharacter(p.prototype));
+            let Some(p) = premades.as_ref().and_then(|p| p.0.get(index.0)) else { return };
+            // The host takes the pre-made from its own rules data, built from the same prototype.
+            let rules = data.as_ref().map(|d| d.rules.clone()).unwrap_or_default();
+            let mut host = CharacterHost::new(&rules);
+            let picked = host.apply(&rules, CharacterAction::PickPremade(p.prototype)).and_then(|()| host.finish(&rules).map(|_| ()));
+            if let Err(e) = picked {
+                warn!("pre-made character {} cannot be picked: {e:?}", p.prototype);
+                return;
             }
+            commands.insert_resource(host);
             commands.insert_resource(LoadRequest::new(AppState::InGame));
             next_state.set(AppState::Loading);
         }

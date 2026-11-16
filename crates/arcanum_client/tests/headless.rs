@@ -758,7 +758,14 @@ fn cancel_and_escape_return_to_the_main_menu() {
 
 #[test]
 fn new_game_goes_through_the_loading_screen_into_the_world() {
-    let mut app = open_new_game_picker(&Fixture::new());
+    let mut app = ready_menu(&Fixture::new());
+    with_pickable_premades(&mut app);
+    activate(&mut app, MenuAction::SinglePlayer);
+    app.update();
+    activate(&mut app, MenuAction::NewGame);
+    app.update();
+    activate(&mut app, MenuAction::PickCharacter);
+    app.update();
     assert_eq!(state(&app), AppState::NewGame);
     press_new_game(&mut app, NewGameAction::Next);
     assert_eq!(state(&app), AppState::Loading);
@@ -1957,11 +1964,23 @@ fn picker_text(app: &mut App, which: arcanum_client::new_game::PickerText) -> St
     texts_in(app, e).remove(0)
 }
 
+/// The picker's characters, and the host's rules knowing their sheets (built from the same
+/// prototypes in the real game).
+fn with_pickable_premades(app: &mut App) {
+    app.insert_resource(sample_premades());
+    let mut data = creation_data();
+    for (prototype, name) in [(16087, "Merwin"), (16094, "Lugard")] {
+        let sheet = arcanum_rules::CharacterSheet { name: name.into(), ..Default::default() };
+        data.rules.premades.push(arcanum_rules::Premade { prototype, sheet, gold: 0, items: vec![] });
+    }
+    app.insert_resource(data);
+}
+
 #[test]
 fn the_picker_cycles_through_the_characters_and_shows_them() {
-    use arcanum_client::new_game::{ChosenCharacter, PickerIndex, PickerText};
+    use arcanum_client::new_game::{PickerIndex, PickerText};
     let mut app = ready_menu(&Fixture::new());
-    app.insert_resource(sample_premades());
+    with_pickable_premades(&mut app);
     activate(&mut app, MenuAction::SinglePlayer);
     app.update();
     activate(&mut app, MenuAction::NewGame);
@@ -1998,7 +2017,9 @@ fn the_picker_cycles_through_the_characters_and_shows_them() {
 
     press_new_game(&mut app, NewGameAction::Following);
     press_new_game(&mut app, NewGameAction::Next);
-    assert_eq!(app.world().resource::<ChosenCharacter>().0, 16094);
+    let host = app.world().resource::<arcanum_client::character_host::CharacterHost>();
+    let finished = host.finished.as_ref().expect("Next finishes the character");
+    assert_eq!((finished.prototype, finished.sheet.name.as_str()), (Some(16094), "Lugard"));
     assert_eq!(state(&app), AppState::Loading);
 }
 
@@ -2006,11 +2027,11 @@ fn the_picker_cycles_through_the_characters_and_shows_them() {
 // Character creation
 
 fn creation_data() -> arcanum_client::create_character::CreationData {
-    use arcanum_client::creation::CreationRules;
+    use arcanum_rules::RulesData;
     use arcanum_formats::mes::MesFile;
     let mes = |t: &str| MesFile::parse(t.as_bytes()).unwrap();
     arcanum_client::create_character::CreationData {
-        rules: CreationRules::from_files(
+        rules: RulesData::from_files(
             &mes("{0}{1000}{1}{86}{2}{}{10}{1001}{11}{90}{12}{}"),
             &mes("{65}{st +1, cn +1, ch -1, dx -1}{90}{pe +1}"),
             &mes("{1001}{DWM1}{1005}{HUM1}{1018}{HUM2}{1008}{HUF1}"),
@@ -2063,7 +2084,7 @@ fn type_keys(app: &mut App, text: &str) {
 
 #[test]
 fn character_creation_builds_a_character() {
-    use arcanum_client::create_character::{CreateAction, CreateText, CreatedCharacter};
+    use arcanum_client::create_character::{CreateAction, CreateText};
     let mut app = ready_menu(&Fixture::new());
     app.add_message::<bevy::input::keyboard::KeyboardInput>();
     app.insert_resource(creation_data());
@@ -2162,9 +2183,10 @@ fn character_creation_builds_a_character() {
     press_create(&mut app, CreateAction::Next);
     assert_eq!(state(&app), AppState::CharacterEditor, "Next opens the stats page");
     character_editor_spends_points(&mut app);
-    let made = app.world().resource::<CreatedCharacter>().0.clone();
-    assert_eq!((made.name.as_str(), made.race, made.background), ("Virgil", 1, 1));
-    assert_eq!(made.bought[0], 1, "the strength point bought in the editor");
+    let host = app.world().resource::<arcanum_client::character_host::CharacterHost>();
+    let made = host.finished.clone().expect("Next finishes the character");
+    assert_eq!((made.sheet.name.as_str(), made.sheet.race, made.sheet.background, made.prototype), ("Virgil", 1, 1, None));
+    assert_eq!(made.sheet.base[0], 9, "the strength point bought in the editor, accepted");
     assert_eq!(state(&app), AppState::Loading);
 }
 

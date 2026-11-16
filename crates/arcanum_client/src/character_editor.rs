@@ -23,8 +23,9 @@ use bevy::ui_widgets::{Activate, ActivateOnPress, Button};
 
 use crate::art_loader::ArtFrames;
 use crate::audio::MenuSounds;
-use crate::create_character::{CharacterDraft, CreatedCharacter, CreationData};
-use crate::creation::{PRIMARY_STATS, RESISTANCES, XP_FOR_LEVEL_2};
+use crate::character_host::CharacterHost;
+use crate::create_character::CreationData;
+use arcanum_rules::{CharacterAction, Message, PRIMARY_STATS, Pool, RESISTANCES, XP_FOR_LEVEL_2};
 use crate::fonts::{ArcanumFonts, UiFont};
 use crate::loading::LoadRequest;
 use crate::main_menu::AppState;
@@ -162,7 +163,7 @@ fn build_screen(mut commands: Commands, art: Res<EditorArt>, frame: Res<WindowAr
 #[allow(clippy::too_many_arguments)]
 fn show_values(
     mut commands: Commands,
-    draft: Res<CharacterDraft>,
+    host: Res<CharacterHost>,
     data: Option<Res<CreationData>>,
     added: Query<(), Added<CharacterEditorScreen>>,
     contents: Query<Entity, With<EditorContent>>,
@@ -170,7 +171,7 @@ fn show_values(
     fonts: Option<Res<ArcanumFonts>>,
 ) {
     let Some(data) = data else { return };
-    if !draft.is_changed() && added.is_empty() {
+    if !host.is_changed() && added.is_empty() {
         return;
     }
     let Ok(root) = roots.single() else { return };
@@ -178,7 +179,7 @@ fn show_values(
         commands.entity(old).despawn();
     }
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-    let c = &draft.0;
+    let c = host.sheet();
     let rules = &data.rules;
     let label = |id: u32, fallback: &str| data.charedit.get(id).unwrap_or(fallback).to_string();
     let stat_name = |id: u32| data.stats.get(id).unwrap_or("?").to_string();
@@ -205,7 +206,7 @@ fn show_values(
             // Info panel.
             put(win(212.0, 15.0, 240.0, 19.0), &c.name, EditorText::Name, UiFont::Small, NAME_COLOR, false);
             put(win(212.0, 34.0, 120.0, 19.0), &format!("{}: 1", label(1, "Level")), EditorText::Level, UiFont::Small, SCREEN_WHITE, false);
-            put(win(212.0, 53.0, 120.0, 19.0), &format!("{}: {}", label(0, "Points"), c.unspent()), EditorText::Points, UiFont::Small, SCREEN_WHITE, false);
+            put(win(212.0, 53.0, 120.0, 19.0), &format!("{}: {}", label(0, "Points"), rules.unspent(c)), EditorText::Points, UiFont::Small, SCREEN_WHITE, false);
             put(win(212.0, 72.0, 120.0, 19.0), &format!("{}: {XP_FOR_LEVEL_2}", label(2, "XP Next")), EditorText::XpNext, UiFont::Small, SCREEN_WHITE, false);
             put(win(337.0, 34.0, 130.0, 19.0), &format!("{}: {race}", label(4, "Race")), EditorText::Race, UiFont::Small, SCREEN_WHITE, false);
             put(win(337.0, 53.0, 130.0, 19.0), &format!("{}: {gender}", label(5, "Gender")), EditorText::Gender, UiFont::Small, SCREEN_WHITE, false);
@@ -213,13 +214,13 @@ fn show_values(
             // Primary stats.
             for (i, &y) in STAT_ROWS.iter().enumerate() {
                 for (x, stat) in [(211.0, LEFT_STATS[i]), (350.0, RIGHT_STATS[i])] {
-                    let colour = if c.bought[stat] > 0 { RAISED } else { SCREEN_WHITE };
+                    let colour = if c.draft.stats[stat] > 0 { RAISED } else { SCREEN_WHITE };
                     put(centred_on(x, y, 40.0, 19.0), &stats[stat].to_string(), EditorText::Stat(stat), UiFont::Small, colour, true);
                 }
             }
             let pool_colour = |bought: i32| if bought > 0 { RAISED } else { SCREEN_WHITE };
-            put(centred_on(447.0, 143.0, 40.0, 19.0), &derived.hit_points.to_string(), EditorText::HitPoints, UiFont::Small, pool_colour(c.hp_bought), true);
-            put(centred_on(447.0, 213.0, 40.0, 19.0), &derived.fatigue.to_string(), EditorText::Fatigue, UiFont::Small, pool_colour(c.fatigue_bought), true);
+            put(centred_on(447.0, 143.0, 40.0, 19.0), &derived.hit_points.to_string(), EditorText::HitPoints, UiFont::Small, pool_colour(c.draft.hit_points), true);
+            put(centred_on(447.0, 213.0, 40.0, 19.0), &derived.fatigue.to_string(), EditorText::Fatigue, UiFont::Small, pool_colour(c.draft.fatigue), true);
             // Derived stats and resistances.
             put(win(51.0, 282.0, 253.0, 18.0), &label(7, "Derived Stats"), EditorText::Derived(99), UiFont::Small, SCREEN_WHITE, true);
             let values = derived.by_stat_id();
@@ -245,7 +246,7 @@ fn on_activate(
     actions: Query<&EditorAction>,
     mut commands: Commands,
     mut next_state: ResMut<NextState<AppState>>,
-    mut draft: ResMut<CharacterDraft>,
+    mut host: ResMut<CharacterHost>,
     data: Option<Res<CreationData>>,
     mut message: ResMut<HelpMessage>,
     sounds: Option<Res<MenuSounds>>,
@@ -260,20 +261,23 @@ fn on_activate(
             next_state.set(AppState::CreateCharacter);
             Ok(())
         }
-        EditorAction::Next => {
-            commands.insert_resource(CreatedCharacter(draft.0.clone()));
+        EditorAction::Next => host.finish(&rules).map(|_| {
             commands.insert_resource(LoadRequest::new(AppState::InGame));
             next_state.set(AppState::Loading);
-            Ok(())
-        }
+        }),
         EditorAction::Stat(i, d) if i < PRIMARY_STATS => {
-            if d > 0 { rules.raise_stat(&mut draft.0, i) } else { rules.lower_stat(&mut draft.0, i) }
+            host.apply(&rules, if d > 0 { CharacterAction::RaiseStat(i) } else { CharacterAction::LowerStat(i) })
         }
         EditorAction::Stat(..) => Ok(()),
-        EditorAction::HitPoints(d) => draft.0.adjust_pool(true, d),
-        EditorAction::Fatigue(d) => draft.0.adjust_pool(false, d),
+        EditorAction::HitPoints(d) => host.apply(&rules, CharacterAction::AdjustPool(Pool::HitPoints, d)),
+        EditorAction::Fatigue(d) => host.apply(&rules, CharacterAction::AdjustPool(Pool::Fatigue, d)),
     };
     message.0 = result.err().map(|e| {
-        data.as_ref().and_then(|d| d.charedit.get(e.message_id())).unwrap_or("That cannot be changed.").to_string()
+        let text = match (e.message(), data.as_ref()) {
+            (Some(Message::Charedit(id)), Some(d)) => d.charedit.get(id),
+            (Some(Message::MainMenu(id)), Some(d)) => d.menu.get(id),
+            _ => None,
+        };
+        text.unwrap_or("That cannot be changed.").to_string()
     });
 }

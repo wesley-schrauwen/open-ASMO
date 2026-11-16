@@ -335,7 +335,7 @@ fn on_activate(
         MenuAction::BackToSinglePlayer => next_state.set(AppState::SinglePlayer),
         MenuAction::CreateCharacter => {
             // A fresh character each time New Character is chosen.
-            commands.insert_resource(crate::create_character::CharacterDraft::default());
+            commands.insert_resource(crate::character_host::CharacterHost::default());
             next_state.set(AppState::CreateCharacter);
         }
         MenuAction::Cancel => next_state.set(AppState::MainMenu),

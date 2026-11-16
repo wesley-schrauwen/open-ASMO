@@ -99,6 +99,13 @@ crates/arcanum_formats/          file format decoders, no Bevy dependency
   src/test_util.rs               ArtBuilder, TestFrame, rle_encode, font_art, ObjectBuilder,
                                  SectorBuilder (feature "test-util")
   tests/real_files.rs            parses every .mes/.art in the real archives (skips without data)
+crates/arcanum_rules/            character rules, no Bevy (shared by client and future host)
+  src/sheet.rs                   CharacterSheet (accepted values + Draft), Refusal, Message
+  src/data.rs                    RulesData: backgrounds, effects, portraits, tables, pre-mades
+  src/ops.rs                     operations and queries (raise/lower, accept, derived, ...)
+  src/tables.rs                  skill, tech, spell and schematic tables
+  src/action.rs                  CharacterAction + RulesData::apply
+  src/blueprint.rs               CharacterBlueprint, pre-made sheets, InvenSource parsing
 crates/arcanum_client/           the Bevy game
   src/main.rs                    app setup; DEBUG_ARCANUM_SCREENSHOT handling
   src/resource_pack.rs           ResourcePack (game dir, override, module) + VFS mount order + `paths::*`
@@ -413,7 +420,10 @@ order). Other slots there, not yet used by us: art 327 `Morph30Font` in black/br
 
 ## Character creation (New Character)
 
-`AppState::CreateCharacter`, `create_character.rs` (screen) + `creation.rs` (rules, no Bevy).
+`AppState::CreateCharacter`, `create_character.rs` (screen) + `arcanum_rules` (rules, no Bevy).
+The screens hold no sheet: `character_host.rs`'s `CharacterHost` (stand-in for the host until
+netcode exists) owns it; screens send `CharacterAction`s and draw `host.sheet()`. Next on the
+editor or the picker stores a `CharacterBlueprint` in `host.finished`.
 From Arcanum.exe window index 12 (record 0x5c4e28, background 765 `CreateCharacterBase`, buttons
 0x5c4c48, click handler 0x544ff0 via jump table 0x54528c, draw 0x5447b0/0x5448e0, Next validator
 0x545780):
@@ -447,7 +457,7 @@ From Arcanum.exe window index 12 (record 0x5c4e28, background 765 `CreateCharact
 
 ## Character editor (stats page after creation)
 
-`AppState::CharacterEditor`, `character_editor.rs`; rules in `creation.rs`. Only after New
+`AppState::CharacterEditor`, `character_editor.rs`; rules in `arcanum_rules`. Only after New
 Character (the picker's Next starts the game directly, 0x5459f0 -> 0x5412d0).
 - Original flow: creation's Next opens window 14 (record 0x5c5370, no background), whose refresh
   0x545df0 opens the in-game character screen 0x5597c0 over the menu; its Next goes to window 15
@@ -471,6 +481,84 @@ Character (the picker's Next starts the game directly, 0x5459f0 -> 0x5412d0).
 - Not yet: the skills/tech/spells tabs (top-right buttons 527/595/663,11 and the panel at
   503,104), the portrait, alignment, hover help texts (charedit 100-140), magick-tech aptitude,
   window 15.
+
+## Character rules (skills, tech, magick)
+
+From Arcanum.exe (2026-11-15, Sonnet sub-agents with objdump/REA; numbers cross-checked against the
+data where it has them). Code: `crates/arcanum_rules`. Engine stat ids: 4 IN, 6 WP, 16 magick/tech
+aptitude, 17 level, 18 XP, 21 unspent points, 22 spells known ("magick points"), 23 tech degrees
+("tech points"). Accessors: `stat_base_get` 0x4b0740 (derives 8-16), `stat_level_get` 0x4b0490
+(+ effects, clamped by min 0x5b5194 / max 0x5b5204 / race 0x4b0fd0), `stat_base_set` 0x4b0980.
+Editor refusal texts: global `0x64d3c4 + 4k` = charedit 17+k (init 0x55e1c9); "raise X first" by
+stat via 0x55f200: ST 32, DX 33, CN 34, BE 35, IN 26, PE 37, WP 36, CH 38.
+
+**Stats, effects, level**
+| Rule | Value | Address |
+|---|---|---|
+| Stored base stats exclude race | All 12 pre-made prototypes store 8 in ST..CH, level 1, unspent 5, age 20; race is effect 64+race with cause 0, female gender effect 330 with cause 9 | 0x4b0980 cases 0x1a/0x1b |
+| Race/gender change at creation | No refund (nothing spent there); the effect is swapped in place | 0x545490/0x5455d0, 0x441c70 |
+| XP table | `rules/xp_level.mes`, line n = XP for level n (2: 2100, 3: 4600, ..., 50: 1,300,000; 51 only in Arcanum4.dat) | loader 0x4a6620, need 0x4a68b0 |
+| Points per level | +1 per level, +1 more when level % 5 == 0 | 0x4a6980, 0x4a69c0 |
+| Level cap | 50 in practice (level clamp 0..51, but the loop rewrites XP to level 50's threshold) | 0x4a6a6b |
+| Max HP | 4·bought + field 0x1c + WP + 4 + 2·(level + ST), then effects | 0x43d5a0 |
+| Aptitude | `(50·spells − 55·degrees)/10` + the sector's magick/tech aura (sector+0x4644) + effects, clamped −100..100; derived, never stored | 0x4b0740 (0x4b08ce) |
+
+**Skills** (basic: field 0xdd[12]; tech skills: 0xde[4])
+| Rule | Value | Address |
+|---|---|---|
+| Storage | bits 0-5 points, bits 6-7 training rank (0 none, 1 Apprentice, 2 Expert, 3 Master) | 0x4c5fa0/0x4c6000, 0x4c6680/0x4c66e0 |
+| Level | points × 4 (+ effects), clamped 0..20, then capped by the governing stat; Melee is 20 when 0x45f730 (untraced) | 0x4c5eb0, 0x4c65e0 |
+| Cost | 1 point per step, refund 1 | 0x4c64b0, 0x4c6af0 |
+| Governing stat | Bow, Dodge, Melee, Throwing, Backstab, Pick Pocket DX; Prowling, Spot Trap PE; Gambling IN; Haggle WP; Heal IN; Persuasion CH; Repair IN, Firearms PE, Pick Locks DX, Disarm Traps PE | 0x5b6f04, 0x5b6f34 |
+| Cap by stat | stat 1-5 → 3, 6-8 → 7, 9-11 → 11, 12-14 → 15, 15-17 → 19, 18-20 → 20; a point is accepted only if cap ≥ points × 4 (so 0..5 points) | 0x4c5f70, table 0x5b6fa0 |
+| Training | rank r needs skill level [0,1,9,18][r]; only one step up at a time; no stat check; set by the trainer path, never by the editor | 0x4c6170, 0x4c6850, 0x5b6f44, 0x57ac90 |
+| Refusals | + : 18 no points, 21 level already 20, else "raise <stat> first"; − : 23 at the editor-open value, 24 no points, 25 minimum | 0x57acd0, 0x55d640, 0x57aeb0 |
+| Stat lowering | refused with 28 if a governed skill's points × 4 > cap(new stat) | 0x4c6b50 |
+| Percent in play (partial) | Dodge 2L; Bow, Melee, Prowling 5L+25 (0 at L 0); Throwing 7L+25; Spot Trap 4L; Haggle 4L+10; Heal 5L | 0x4c62e0 |
+
+**Tech** (field 0xdf `critter_spell_tech_idx` [17..24] = disciplines 0-7, degree 0-7)
+| Rule | Value | Address |
+|---|---|---|
+| Cost | 1 point per degree (table [0,1,1,1,1,1,1,1]); +1 stat 23 | 0x5b5124, 0x589a20, 0x4afec0 |
+| IN per degree | [0,5,8,11,13,15,17,19]; no level requirement | 0x5b5164 |
+| Learned schematics | degree d gives `rules/schematic.mes` 2000 + 200·discipline + 10·(d−1) | UI 0x56d1b2 |
+| Found schematics | using the schematic item adds its id to `pc_schematics_found_idx` (0x10b); no requirement | 0x56bb60 |
+| Crafting | needs complexity [0,10,20,35,50,65,80,100][effective degree] ≥ −(result field 0x60); effective degree drops while IN is below its requirement | 0x4b00b0 |
+| Refusals | 26 on + when IN too low (or at degree 7); 31 when lowering IN below a degree's requirement (order 28, 29, 31) | 0x4b02b0 |
+
+**Magick** (field 0xdf [0..15] = known count per college, a prefix; [16] = mastery college, −1 none)
+| Rule | Value | Address |
+|---|---|---|
+| Order | buy only the next spell of a college; sell only the top one | 0x4b1790, 0x4b19b0 |
+| Cost | 1 point per spell; +1 stat 22 | 0x4b1650, 0x57c540 |
+| Requirements | level ≥ [1,1,5,10,15][rank]; IN ≥ 5; WP ≥ [6,9,12,15,18][rank] (SpellList `IQ:` would override; the data has none) | 0x5b5770, 0x4502e0, 0x5b0de0 |
+| Refusals | 18 → 30 (level) → 26 (IN) → 36 (WP, also the fallback); 27 selling an accepted spell; 29/39 lowering IN/WP below a known spell's need | 0x55f160.., 0x4b1b90, 0x4b1c00 |
+| Mastery | [16] = mastered college (−1 none, set at 0x4b1530); settable once, for a college at 5 spells; earned in play through quest lines, never in the editor (owner, 2026-11-15) | 0x4b1cb0 |
+
+**Starting kit**
+- Created characters: background money (line 4, mostly 400) and items (line 5, 9 backgrounds).
+  The code that hands them out was not found; our blueprint uses them.
+- Pre-mades: `critter_inventory_source` → `Rules/InvenSource.mes` (`Name: min,max chance,proto ...`).
+  Lugard = 24 "General(sm)PC": 385 gold, 6029, 8168, 8065. All PC sources are fixed gold with only
+  100% items.
+- Auto-equip: not confirmed (module `Rules/AutoEquip.mes` exists; no call path from window 15).
+
+**Copied oddities** (behaviour that looks like a bug; copy, owner decides later)
+- Spell `IQ:`/MinIQ values are checked against Willpower; Intelligence is a flat 5.
+- A spell rank-order failure shows "raise Willpower first" (36), the fallback message.
+- Spell buy at a full college computes the next college's first spell; no bounds guard found.
+- Tech degrees can be sold below the accepted level (the snapshot is written, never read).
+- Tech + at degree 7 shows "raise Intelligence first" (reads past the cost table).
+- Lowering-IN check for tech uses the raw new IN in the UI, the effective IN in the setter.
+- Skill − at the accepted value shows 23 and may still lower it (fall-through, unconfirmed).
+- Basic skill − refunds until the level changes (several points); tech skill − one step.
+- Training rank is never lowered when skill points drop (to fix later: `TODO.md` → Rules).
+- Level 51 unreachable; at level 50 XP is clamped to 1,300,000 on every check.
+
+**Open**: who hands out background money/items; fatigue maximum formula; training rank effects
+(0x4c62e0, flags 0x5b6f64); the sector aura source; which quest/dialog path calls 0x4b1cb0 to grant
+mastery. (Index 16 settled: the mastery college; tech code skips it, which is why the tech report
+called it unused.)
 
 ## Known issues / backlog (not started)
 
@@ -507,7 +595,7 @@ Character (the picker's Next starts the game directly, 0x5459f0 -> 0x5412d0).
    spells tabs (top-right buttons and the right-hand panel), portrait, alignment gauge, hover
    help (charedit 100-140); then the original's window 15 between the editor and the game.
 2. The seven derived stats on character creation's "Initial Stats" panel (formulas are now in
-   `creation.rs::derived`), the picker's stat values (it shows "Initial Stats" with no values),
+   `arcanum_rules::RulesData::derived`), the picker's stat values (it shows "Initial Stats" with no values),
    and story scrolling for long texts.
 3. Use the chosen/created character when the game starts (`ChosenCharacter`,
    `CreatedCharacter`), once there is a world.
