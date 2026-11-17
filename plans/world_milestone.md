@@ -269,12 +269,14 @@ Not done, or done differently from the plan:
   added) and the PC stops on the host's tile.
 - **Every step is checked again as it is taken.** Actors move and doors close while a path is
   walked, and few actors are on the board, so `walk` checks each step just before taking it,
-  against the map and the tiles other PCs stand on (`Occupied`). A blocked step makes the host
-  plan a new path to the same goal from the PC's tile; every player, the PC's own included, gets
-  it as a `Move`. With no path left (the goal is taken, say), the PC stops and every player gets
-  a `MoveCorrection`. The client's path is checked against the map only, since the actors on it
-  may be gone by the time the PC gets there. This is the host planning paths, which the plan
-  left to the client; the owner asked for it (re-check every step, replan on collision).
+  against the map and the tiles other PCs stand on (`Occupied`; the corner rule counts them
+  too). The host never plans a PC's path (owner's call: the client plans, the host validates).
+  On a blocked step the PC stops and every player gets a `MoveCorrection`; the client replans
+  from there. Normally the client sees the obstacle in the deltas and sends a new path before
+  the host reaches the blocked step, so no correction is needed. The client's path is checked
+  against the map only, since the actors on it may be gone by the time the PC gets there.
+- **Clients follow the host's state as it arrives** (owner's call): other actors are drawn from
+  the deltas, and the drift that brings is accepted.
 - **The save follows the PCs.** A PC that stops (end of path or correction) has its position
   put into the `WorldState`, which writes the save.
 - **Real data:** from the start tile, every tile within 20 that A* reaches gets a path the host

@@ -367,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pc_in_the_way_is_walked_round() {
+    fn a_pc_in_the_way_stops_the_walker_and_the_client_replans() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());
         let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 }), (9, "B", TileLoc { x: 73, y: 80 })]));
@@ -375,16 +375,40 @@ mod tests {
         // The client's path goes straight through B; the map alone allows it.
         send_move(&mut sim, 7, 1, &row(80, 70, 76));
         let mut deltas = Vec::new();
-        for _ in 0..ticks_for(8) {
+        for _ in 0..ticks_for(6) {
             sim.update();
             assert_ne!(position(&mut sim, 7), position(&mut sim, 9), "never on the same tile");
             deltas.extend(sim.take_deltas());
         }
+        let stop = TileLoc { x: 72, y: 80 };
+        assert_eq!(position(&mut sim, 7), stop, "stopped before B; the host does not replan");
+        let correction = LedgerDelta::MoveCorrection { net_id: NetId(0), seq: 1, position: stop };
+        for to in [7, 9] {
+            assert!(deltas.contains(&(PlayerId(to), correction.clone())), "player {to}: {deltas:?}");
+        }
+        // The client replans round B from where the host stopped it.
+        // No diagonal past B's tile: the corner rule counts actors too.
+        send_move(&mut sim, 7, 2, &[(72, 80), (72, 81), (73, 81), (74, 81), (75, 80), (76, 80)]);
+        walk_ticks(&mut sim, ticks_for(5));
         assert_eq!(position(&mut sim, 7), TileLoc { x: 76, y: 80 });
-        let replans = |to: u64| deltas.iter().filter(|(p, d)| p.0 == to && matches!(d, LedgerDelta::Move { .. })).count();
-        assert_eq!(replans(7), 1, "A's player gets the new path: {deltas:?}");
-        assert_eq!(replans(9), 2, "B's player gets the first path and the new one");
-        assert!(!deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::MoveCorrection { .. })));
+    }
+
+    #[test]
+    fn a_new_path_before_the_block_needs_no_correction() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 }), (9, "B", TileLoc { x: 74, y: 80 })]));
+        sim.take_deltas();
+        send_move(&mut sim, 7, 1, &row(80, 70, 76));
+        sim.update();
+        walk_ticks(&mut sim, ticks_for(1));
+        let at = position(&mut sim, 7);
+        assert_eq!(at, TileLoc { x: 71, y: 80 });
+        // The client sees B ahead and replans round it before reaching it.
+        send_move(&mut sim, 7, 2, &[(71, 80), (72, 80), (73, 81), (74, 81), (75, 81), (76, 80)]);
+        walk_ticks(&mut sim, ticks_for(6));
+        assert_eq!(position(&mut sim, 7), TileLoc { x: 76, y: 80 });
+        assert!(!sim.take_deltas().iter().any(|(_, d)| matches!(d, LedgerDelta::MoveCorrection { .. })));
     }
 
     #[test]
@@ -407,17 +431,22 @@ mod tests {
     }
 
     #[test]
-    fn pcs_walking_into_each_other_pass() {
+    fn pcs_walking_into_each_other_both_stop() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());
         let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 }), (9, "B", TileLoc { x: 78, y: 80 })]));
         sim.take_deltas();
         send_move(&mut sim, 7, 1, &row(80, 70, 78));
         send_move(&mut sim, 9, 1, &row(80, 78, 70));
-        for _ in 0..ticks_for(14) {
+        let mut deltas = Vec::new();
+        for _ in 0..ticks_for(10) {
             sim.update();
             assert_ne!(position(&mut sim, 7), position(&mut sim, 9));
+            deltas.extend(sim.take_deltas());
         }
-        assert_eq!((position(&mut sim, 7), position(&mut sim, 9)), (TileLoc { x: 78, y: 80 }, TileLoc { x: 70, y: 80 }));
+        let (a, b) = (position(&mut sim, 7), position(&mut sim, 9));
+        assert_eq!(b.x - a.x, 1, "face to face: {a:?} {b:?}");
+        let corrections = deltas.iter().filter(|(_, d)| matches!(d, LedgerDelta::MoveCorrection { .. })).count();
+        assert_eq!(corrections, 4, "each stop goes to both players: {deltas:?}");
     }
 }

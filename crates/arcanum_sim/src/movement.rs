@@ -7,11 +7,11 @@
 //! a `MoveCorrection` with the PC's position on the host, and the PC stops there.
 //!
 //! Every step is checked again just before it is taken, against the map and the other PCs
-//! ([`Occupied`]): actors move and doors close while a path is walked. A blocked step makes the
-//! host plan a new path to the same goal from where the PC stands, and every player, the PC's
-//! own included, gets it as a `Move`. With no path left, the PC stops and every player gets a
-//! `MoveCorrection`. The path a client sends is checked against the map only, since the actors
-//! on it may be gone by the time the PC gets there.
+//! ([`Occupied`]): actors move and doors close while a path is walked. The host never plans a
+//! PC's path: on a blocked step the PC stops and every player gets a `MoveCorrection`, and the
+//! client replans from there. A client normally sees the obstacle in the deltas and sends a new
+//! path before the host gets to the blocked step. The path a client sends is checked against
+//! the map only, since the actors on it may be gone by the time the PC gets there.
 //!
 //! The host walks the PC itself, so a client cannot go faster than the host allows: a client
 //! that runs ahead sends a path that starts too far from where the host has the PC, and is
@@ -22,7 +22,7 @@ use std::collections::{HashSet, VecDeque};
 use arcanum_formats::map::TileLoc;
 use bevy_ecs::prelude::*;
 
-use crate::{LedgerDelta, LoadedMap, NetId, Outbox, PlayerControlled, PlayerId, Position, Session, SessionPlayer, TICK_HZ, Walkable, WorldState, adjacent, find_path, step_allowed};
+use crate::{LedgerDelta, LoadedMap, NetId, Outbox, PlayerControlled, PlayerId, Position, Session, SessionPlayer, TICK_HZ, Walkable, WorldState, adjacent, step_allowed};
 
 /// Walking speed. A placeholder until it is matched to the original's walk animation.
 pub const WALK_TILES_PER_SECOND: f64 = 3.5;
@@ -153,23 +153,11 @@ pub fn walk(
             occupied.remove(&at);
             let around = Occupied { map: &*map, occupied: &occupied };
             if !step_allowed(&around, at, next) {
-                let goal = *walking.steps.back().expect("not empty");
-                match find_path(&around, at, goal) {
-                    Ok(path) if !path.is_empty() && path.len() <= MAX_PATH_STEPS => {
-                        let relay = LedgerDelta::Move { net_id, path: path.clone() };
-                        outbox.0.extend(session.players.keys().map(|&p| (p, relay.clone())));
-                        walking.steps = path.into();
-                        occupied.insert(at);
-                        continue;
-                    }
-                    _ => {
-                        occupied.insert(at);
-                        let correction = LedgerDelta::MoveCorrection { net_id, seq: walking.seq, position: at };
-                        outbox.0.extend(session.players.keys().map(|&p| (p, correction.clone())));
-                        stopped = true;
-                        break;
-                    }
-                }
+                occupied.insert(at);
+                let correction = LedgerDelta::MoveCorrection { net_id, seq: walking.seq, position: at };
+                outbox.0.extend(session.players.keys().map(|&p| (p, correction.clone())));
+                stopped = true;
+                break;
             }
             walking.steps.pop_front();
             occupied.insert(next);
