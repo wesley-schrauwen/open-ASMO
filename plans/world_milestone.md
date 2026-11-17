@@ -267,14 +267,15 @@ Not done, or done differently from the plan:
   starts too far away and is corrected. Accepted moves go to the other players as
   `Move { net_id, path }`; refused ones get `MoveCorrection { net_id, seq, position }` (`seq`
   added) and the PC stops on the host's tile.
-- **Every step is checked again as it is taken.** Actors move and doors close while a path is
-  walked, and few actors are on the board, so `walk` checks each step just before taking it,
-  against the map and the tiles other PCs stand on (`Occupied`; the corner rule counts them
-  too). The host never plans a PC's path (owner's call: the client plans, the host validates).
-  On a blocked step the PC stops and every player gets a `MoveCorrection`; the client replans
-  from there. Normally the client sees the obstacle in the deltas and sends a new path before
-  the host reaches the blocked step, so no correction is needed. The client's path is checked
-  against the map only, since the actors on it may be gone by the time the PC gets there.
+- **Every step is checked again as it is taken.** `walk` checks each step against the map just
+  before taking it, since doors close while a path is walked. The host never plans a PC's path
+  (owner's call: the client plans, the host validates). On a blocked step the PC stops and
+  every player gets a `MoveCorrection`; the client replans from there.
+- **Actors block only in combat** (owner's call). Out of combat, PCs and NPCs do not block PCs:
+  they walk through each other and may share a tile, so a client is never snapped back because
+  another actor moved. In combat actors block (`Occupied`, which the corner rule counts too) and
+  the snap-back is enforced. Combat start must move apart actors sharing a tile, in the
+  combat-start pause.
 - **Clients follow the host's state as it arrives** (owner's call): other actors are drawn from
   the deltas, and the drift that brings is accepted.
 - **The save follows the PCs.** A PC that stops (end of path or correction) has its position
@@ -291,11 +292,14 @@ Not done, or done differently from the plan:
   step takes the same time, diagonal or not. Both are to be matched to the original's walk
   animation (step 6). The 10/14 costs and the no-corner-cutting rule are not checked against
   the original either.
-- **Only PCs block.** NPCs, closed doors and other dynamic blockers do not exist yet; when they
-  do, they go into the same `Occupied` check. A PC whose goal is taken stops at once rather than
-  waiting for it to clear.
-- **NPCs give way to PCs (owner's rule, for when NPCs move).** When an NPC's next step is
-  blocked by a PC, the NPC stops all movement for 5 s (150 ticks), then plans a new route from
+- **No combat yet,** so nothing blocks but the map: `Occupied` is written and unused.
+- **Corrections, for the client (step 7) and remote play:** the client slides to a corrected
+  tile rather than jumping, and ignores a correction whose `seq` is older than its last `Move`
+  (the answer to the newer one decides). A new path must start on the host's tile or one step
+  from it; with real latency the host walks further before a new path arrives, so before UDP
+  the tolerance must cover the tiles walked since the client's last acknowledged state.
+- **NPCs give way to PCs (owner's rule, for when NPCs move).** PCs do not block for each other
+  out of combat, but they do for NPCs: when an NPC's next step is blocked by a PC, the NPC stops all movement for 5 s (150 ticks), then plans a new route from
   where it stands. PCs keep replanning at once. The pause is not built: there are no NPCs yet.
 - **No tether and no combat rules** yet: the check is walkable tiles and speed only.
 - **A move is not stamped with a tick,** and the relayed `Move` has no `seq`.

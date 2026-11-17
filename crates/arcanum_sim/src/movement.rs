@@ -6,12 +6,13 @@
 //! [`WALK_TILES_PER_SECOND`] and tells the other players with a `Move`. A path it refuses gets
 //! a `MoveCorrection` with the PC's position on the host, and the PC stops there.
 //!
-//! Every step is checked again just before it is taken, against the map and the other PCs
-//! ([`Occupied`]): actors move and doors close while a path is walked. The host never plans a
-//! PC's path: on a blocked step the PC stops and every player gets a `MoveCorrection`, and the
-//! client replans from there. A client normally sees the obstacle in the deltas and sends a new
-//! path before the host gets to the blocked step. The path a client sends is checked against
-//! the map only, since the actors on it may be gone by the time the PC gets there.
+//! Every step is checked again just before it is taken, against the map: doors close while a
+//! path is walked. The host never plans a PC's path: on a blocked step the PC stops and every
+//! player gets a `MoveCorrection`, and the client replans from there.
+//!
+//! Out of combat, actors (PCs and NPCs) do not block PCs: they walk through each other and may
+//! share a tile, so a client is never snapped back because another actor moved. In combat they
+//! will block ([`Occupied`]), and the snap-back is enforced; there is no combat yet.
 //!
 //! The host walks the PC itself, so a client cannot go faster than the host allows: a client
 //! that runs ahead sends a path that starts too far from where the host has the PC, and is
@@ -30,7 +31,8 @@ pub const WALK_TILES_PER_SECOND: f64 = 3.5;
 /// The longest path the host takes in one move.
 pub const MAX_PATH_STEPS: usize = 256;
 
-/// A map with some tiles taken by actors, which cannot be walked through.
+/// A map with some tiles taken by actors, which cannot be walked through. For combat, where
+/// actors block (see the module docs); not used yet.
 pub struct Occupied<'a, M> {
     pub map: &'a M,
     pub occupied: &'a HashSet<TileLoc>,
@@ -129,8 +131,8 @@ pub fn apply_moves(
     }
 }
 
-/// Steps walking PCs along their paths, in net id order, checking each step just before it is
-/// taken (see the module docs). A PC that reaches the end or cannot go on stops, and its
+/// Steps walking PCs along their paths, in net id order, checking each step against the map
+/// just before it is taken (see the module docs). A PC that reaches the end or cannot go on stops, and its
 /// position goes into the save.
 pub fn walk(
     mut commands: Commands,
@@ -140,7 +142,6 @@ pub fn walk(
     mut world: ResMut<WorldState>,
     mut pcs: Query<(Entity, &NetId, &mut Position, &PlayerControlled, Option<&mut Walking>)>,
 ) {
-    let mut occupied: HashSet<TileLoc> = pcs.iter().map(|(_, _, p, _, _)| p.0).collect();
     let mut order: Vec<(NetId, Entity)> = pcs.iter().filter(|pc| pc.4.is_some()).map(|(e, id, ..)| (*id, e)).collect();
     order.sort();
     for (net_id, entity) in order {
@@ -150,17 +151,13 @@ pub fn walk(
         while walking.progress >= 1.0 {
             let Some(&next) = walking.steps.front() else { break };
             let at = position.0;
-            occupied.remove(&at);
-            let around = Occupied { map: &*map, occupied: &occupied };
-            if !step_allowed(&around, at, next) {
-                occupied.insert(at);
+            if !step_allowed(&*map, at, next) {
                 let correction = LedgerDelta::MoveCorrection { net_id, seq: walking.seq, position: at };
                 outbox.0.extend(session.players.keys().map(|&p| (p, correction.clone())));
                 stopped = true;
                 break;
             }
             walking.steps.pop_front();
-            occupied.insert(next);
             position.0 = next;
             walking.progress -= 1.0;
         }
