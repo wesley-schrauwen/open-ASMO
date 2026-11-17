@@ -92,7 +92,9 @@ impl Fixture {
         Self::with_archive(
             DatBuilder::new()
                 .zlib(&paths::backgrounds::MAIN_MENU.replace('/', "\\"), &menu_art())
-                .raw(&paths::text::MAIN_MENU.replace('/', "\\"), MENU_MES),
+                .raw(&paths::text::MAIN_MENU.replace('/', "\\"), MENU_MES)
+                // A start map with no sectors: enough for the host to put a PC in the world.
+                .raw("Rules\\MapList.mes", b"{0}{Test, 70, 80, Type: START_MAP}"),
         )
     }
 
@@ -298,17 +300,19 @@ fn menu_app(vfs: Vfs) -> App {
 }
 
 /// The character the in-process host holds for the local player once it has accepted one.
+/// The character the host's world holds for the local player, once its PC is in the world.
 fn host_accepted(app: &mut App) -> Option<arcanum_rules::CharacterBlueprint> {
-    use arcanum_sim::{Session, SessionPlayer};
+    use arcanum_sim::{Session, SessionPlayer, WorldState};
     // One frame for the host to tick, one for its answer to arrive.
     app.update();
     app.update();
     assert!(app.world().resource::<arcanum_client::character_host::CharacterHost>().accepted, "the host accepted");
+    assert!(app.world().resource::<arcanum_client::sim_bridge::LocalPc>().0.is_some(), "the PC is in the world");
     let host = app.world().non_send::<arcanum_client::sim_bridge::LocalHostRes>();
-    match host.0.sim.app.world().resource::<Session>().players.get(&arcanum_client::sim_bridge::LOCAL_PLAYER) {
-        Some(SessionPlayer::Ready(b)) => Some(b.clone()),
-        _ => None,
-    }
+    let world = host.0.sim.app.world();
+    let player = arcanum_client::sim_bridge::LOCAL_PLAYER;
+    assert!(matches!(world.resource::<Session>().players.get(&player), Some(SessionPlayer::InWorld(_))));
+    world.resource::<WorldState>().0.as_ref()?.players.get(&player).map(|p| p.blueprint.clone())
 }
 
 fn run_until_menu_ready(app: &mut App) {
@@ -853,7 +857,7 @@ fn a_failed_asset_does_not_block_loading() {
 }
 
 #[test]
-fn loading_waits_for_the_host_to_accept_the_character() {
+fn loading_waits_for_the_host_to_put_the_pc_in_the_world() {
     use arcanum_client::character_host::CharacterHost;
     let mut app = ready_menu(&Fixture::new());
     app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::NewGameChoice);
@@ -871,22 +875,24 @@ fn loading_waits_for_the_host_to_accept_the_character() {
         host.0.sim.app.insert_resource(TimeUpdateStrategy::ManualDuration(step));
     };
     host_clock(&mut app, Duration::ZERO);
-    app.insert_resource(LoadRequest::new(AppState::Credits).min_secs(0.0).after_host_accepts());
+    app.insert_resource(LoadRequest::new(AppState::Credits).min_secs(0.0).after_world_boots());
     app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::Loading);
     for _ in 0..10 {
         app.update();
     }
     assert_eq!(state(&app), AppState::Loading, "nothing else to load, but the host has not answered");
-    assert_eq!(*app.world().resource::<LoadingProgress>(), LoadingProgress { done: 0, total: 1, ..*app.world().resource::<LoadingProgress>() });
+    assert_eq!(*app.world().resource::<LoadingProgress>(), LoadingProgress { done: 0, total: 2, ..*app.world().resource::<LoadingProgress>() });
     host_clock(&mut app, arcanum_sim::SimApp::tick_duration());
     update_until(&mut app, |app| state(app) == AppState::Credits);
     assert!(app.world().resource::<CharacterHost>().accepted);
+    let pc = app.world().resource::<arcanum_client::sim_bridge::LocalPc>().0;
+    assert_eq!(pc.map(|(_, at)| (at.x, at.y)), Some((70, 80)), "the PC on the fixture's start map");
 }
 
 #[test]
 fn loading_for_the_host_without_one_returns_to_the_menu() {
     let mut app = ready_menu(&Fixture::new());
-    app.insert_resource(LoadRequest::new(AppState::Credits).min_secs(0.0).after_host_accepts());
+    app.insert_resource(LoadRequest::new(AppState::Credits).min_secs(0.0).after_world_boots());
     app.world_mut().resource_mut::<NextState<AppState>>().set(AppState::Loading);
     app.update();
     update_until(&mut app, |app| state(app) == AppState::MainMenu);

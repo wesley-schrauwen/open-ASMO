@@ -5,14 +5,15 @@
 //! menu, the pre-made picker or character creation), with the game's rules and start map, and
 //! dropped on going back to the main or Single Player menu. Each frame the bridge sends the
 //! [`CharacterHost`]'s queued intents, updates the host, and hands the deltas that came back to
-//! the [`CharacterHost`].
+//! the [`CharacterHost`]; the local PC's `Spawn` is kept in [`LocalPc`].
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use arcanum_net::{ClientTransport, LocalHost};
 use arcanum_rules::RulesData;
-use arcanum_sim::{PlayerId, SaveFile, SaveStatus, SimRules, StartMap};
+use arcanum_formats::map::TileLoc;
+use arcanum_sim::{EntityKind, LedgerDelta, NetId, PlayerId, SaveFile, SaveStatus, SimRules, SimVfs, StartMap};
 use bevy::prelude::*;
 
 use crate::character_host::CharacterHost;
@@ -29,6 +30,10 @@ pub struct HostLink(pub Box<dyn ClientTransport>);
 
 /// The in-process host (non-send: it holds a Bevy `App`).
 pub struct LocalHostRes(pub LocalHost);
+
+/// The local player's PC, once the host has spawned it.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LocalPc(pub Option<(NetId, TileLoc)>);
 
 /// How to make the local host.
 #[derive(Resource, Debug, Clone, Default)]
@@ -48,6 +53,7 @@ impl Plugin for SimBridgePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HostSettings>()
             .init_resource::<CharacterHost>()
+            .init_resource::<LocalPc>()
             .add_systems(OnEnter(AppState::MainMenu), stop_host)
             .add_systems(OnEnter(AppState::SinglePlayer), stop_host)
             .add_systems(PostUpdate, (share_rules, send_intents, run_host, receive_deltas).chain());
@@ -63,7 +69,8 @@ pub fn start_host(world: &mut World) {
         return;
     }
     let rules = world.get_resource::<CreationData>().map(|d| d.rules.clone()).unwrap_or_default();
-    let start = world.get_resource::<VfsResource>().map(|v| v.0.read().map_err(|e| e.to_string()).and_then(|vfs| StartMap::load(&vfs)));
+    let vfs = world.get_resource::<VfsResource>().map(|v| v.0.clone());
+    let start = vfs.as_ref().map(|v| v.read().map_err(|e| e.to_string()).and_then(|vfs| StartMap::load(&vfs)));
     let settings = world.get_resource::<HostSettings>().cloned().unwrap_or_default();
 
     let mut host = LocalHost::new(rules);
@@ -73,6 +80,9 @@ pub fn start_host(world: &mut World) {
         }
         Some(Err(e)) => warn!("no start map, so no world to start: {e}"),
         None => {}
+    }
+    if let Some(vfs) = vfs {
+        host.sim.app.insert_resource(SimVfs(vfs));
     }
     if let Some(dir) = &settings.save_dir {
         let session = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
@@ -86,6 +96,7 @@ pub fn start_host(world: &mut World) {
     world.insert_resource(HostLink(Box::new(link)));
     // Anything the old CharacterHost had in flight was for a host that is gone.
     world.insert_resource(CharacterHost::default());
+    world.insert_resource(LocalPc::default());
 }
 
 fn stop_host(world: &mut World) {
@@ -123,7 +134,7 @@ fn run_host(host: Option<NonSendMut<LocalHostRes>>, mut reported: Local<Option<S
     }
 }
 
-fn receive_deltas(link: Option<Res<HostLink>>, mut character: ResMut<CharacterHost>, data: Option<Res<CreationData>>) {
+fn receive_deltas(link: Option<Res<HostLink>>, mut character: ResMut<CharacterHost>, mut pc: ResMut<LocalPc>, data: Option<Res<CreationData>>) {
     let Some(link) = link else { return };
     let deltas = link.0.recv_deltas();
     if deltas.is_empty() {
@@ -139,6 +150,11 @@ fn receive_deltas(link: Option<Res<HostLink>>, mut character: ResMut<CharacterHo
     };
     for delta in &deltas {
         character.receive(rules, delta);
+        if let LedgerDelta::Spawn { net_id, kind: EntityKind::Pc { player }, position } = delta
+            && *player == link.0.player()
+        {
+            pc.0 = Some((*net_id, *position));
+        }
     }
 }
 
@@ -191,6 +207,7 @@ mod tests {
         assert!(!app.world().contains_resource::<HostLink>());
         enter(&mut app, AppState::CreateCharacter);
         assert!(!app.world().resource::<CharacterHost>().accepted, "a new host, a new character");
+        assert_eq!(app.world().resource::<LocalPc>().0, None);
     }
 
     #[test]
@@ -203,6 +220,7 @@ mod tests {
         make_virgil(&mut app);
         app.update();
         app.update();
+        assert_eq!(app.world().resource::<LocalPc>().0, Some((NetId(0), start.position)), "the PC is in the world");
         let files: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().path()).collect();
         assert_eq!(files.len(), 1, "{files:?}");
         let save = WorldSave::read(&files[0]).unwrap();

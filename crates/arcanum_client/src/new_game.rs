@@ -262,7 +262,7 @@ fn on_activate(
                 warn!("pre-made character {} cannot be picked: {e:?}", p.prototype);
                 return;
             }
-            commands.insert_resource(LoadRequest::new(AppState::InGame).after_host_accepts());
+            commands.insert_resource(LoadRequest::new(AppState::InGame).after_world_boots());
             next_state.set(AppState::Loading);
         }
     }

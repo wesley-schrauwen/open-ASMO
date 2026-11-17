@@ -11,7 +11,7 @@ use bevy_ecs::prelude::*;
 use arcanum_rules::RulesData;
 use bevy_time::{Fixed, Time, TimePlugin, TimeUpdateStrategy};
 
-use crate::{Inbox, NetIdAllocator, Outbox, SaveStatus, Session, SimRules, Tick, WorldState, handle_intents, write_save};
+use crate::{Inbox, LoadedMap, NetIdAllocator, Outbox, SaveStatus, Session, SimRules, Tick, WorldSave, WorldState, boot_world, handle_intents, write_save};
 
 /// Host ticks per second.
 pub const TICK_HZ: f64 = 30.0;
@@ -25,7 +25,8 @@ pub struct SimTick(pub Tick);
 pub struct NetIds(pub NetIdAllocator);
 
 /// Host resources, the session, saving and the tick counter. Optional: [`StartMap`](crate::StartMap)
-/// (without it accepted characters have no world to join) and [`SaveFile`](crate::SaveFile).
+/// (without it accepted characters have no world to join), [`SaveFile`](crate::SaveFile) and
+/// [`SimVfs`](crate::SimVfs) (without it no map is read).
 pub struct SimPlugin;
 
 impl Plugin for SimPlugin {
@@ -39,7 +40,8 @@ impl Plugin for SimPlugin {
             .init_resource::<Session>()
             .init_resource::<WorldState>()
             .init_resource::<SaveStatus>()
-            .add_systems(FixedUpdate, (handle_intents, advance_tick, write_save).chain());
+            .init_resource::<LoadedMap>()
+            .add_systems(FixedUpdate, (handle_intents, boot_world, advance_tick, write_save).chain());
     }
 }
 
@@ -63,6 +65,12 @@ impl SimApp {
     /// wall clock says. For tests.
     pub fn use_manual_clock(&mut self) {
         self.app.insert_resource(TimeUpdateStrategy::ManualDuration(Self::tick_duration()));
+    }
+
+    /// Continues `save` (a loaded game or a joined session): its PCs spawn on the next tick.
+    pub fn boot(&mut self, save: WorldSave) {
+        self.app.world_mut().resource_mut::<SimTick>().0 = save.tick;
+        self.app.insert_resource(WorldState(Some(save)));
     }
 
     /// Queues intents for the next tick.
