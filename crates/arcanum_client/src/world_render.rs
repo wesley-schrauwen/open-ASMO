@@ -212,6 +212,9 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
                 ));
             }
         }
+        // How many objects of this sector each tile has had so far (the original draws a tile's
+        // objects in list order).
+        let mut on_tile: HashMap<TileLoc, usize> = HashMap::new();
         for object in &sector.objects {
             let flags = object.int("flags").unwrap_or(0);
             if !DRAWN_OBJECTS.contains(&object.object_type) || flags & HIDDEN_FLAGS != 0 {
@@ -222,6 +225,11 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
                 continue;
             };
             let Some(location) = object_location(object) else { continue };
+            let tile_order = {
+                let n = on_tile.entry(location).or_default();
+                *n += 1;
+                *n - 1
+            };
             let path = client.paths.entry(aid.0).or_insert_with(|| art.path(aid)).clone();
             let Some(path) = path else {
                 client.unresolved += 1;
@@ -233,7 +241,7 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
             commands.spawn((
                 MapObject { location, object_type: object.object_type },
                 Sprite::default(),
-                Transform::from_translation(at.extend(object_depth(location, origin, flags & FLAT_FLAG != 0))),
+                Transform::from_translation(at.extend(object_depth(location, origin, flags & FLAT_FLAG != 0, tile_order))),
                 Visibility::Hidden,
                 PendingArt { art: handle, rotation: aid.rotation() as usize, frame: object_frame(aid), hotspot: Some(ObjectArt::of(aid)) },
                 DespawnOnExit(AppState::InGame),
@@ -257,27 +265,32 @@ pub fn facade_frame(id: ArtId) -> usize {
 }
 
 /// Screen rows (and places along a row) either side of the origin's that [`object_depth`]
-/// keeps in order: 1024, about 512 tiles.
-pub const DEPTH_REACH: i64 = 1024;
+/// keeps in order: 512, about 256 tiles.
+pub const DEPTH_REACH: i64 = 512;
+
+/// Objects on one tile that [`object_depth`] keeps in list order; later ones tie with the last.
+pub const DEPTH_TILE_ORDER: usize = 8;
 
 /// The camera's depth range in the world: wide enough for every [`object_depth`].
 pub const DEPTH_RANGE: f32 = (1 << 24) as f32;
 
 /// Draw depth of an object. The original sorts objects into classes (flat ones first, at
 /// 200,000,000 + n; the rest at 600,000,000 + n) and, inside a class, keeps the order it scans
-/// tiles in, a screen row at a time (0x43b390, comparator 0x443600). Here the depth is a whole
-/// number below 2^24, so `f32` holds it exactly: class (1 bit), the tile's screen row `x + y`
-/// (11 bits), its place along the row `y - x` (11 bits), each within [`DEPTH_REACH`] of the
-/// origin (further is clamped), plus one so objects stay in front of the ground at 0. Objects
-/// on the same tile tie (the original keeps its list order). The row-by-row scan is inferred
-/// from the loop, not proven.
-pub fn object_depth(at: TileLoc, origin: TileLoc, flat: bool) -> f32 {
+/// tiles in, a screen row at a time, and each tile's objects in list order (0x43b390, comparator
+/// 0x443600). Walls and the furniture against them often share a tile, so the list order
+/// matters. Here the depth is a whole number below 2^24, so `f32` holds it exactly: class
+/// (1 bit), the tile's screen row `x + y` (10 bits), its place along the row `y - x` (10 bits),
+/// both within [`DEPTH_REACH`] of the origin (further is clamped), and the object's place among
+/// its tile's objects in the sector's list (3 bits), plus one so objects stay in front of the
+/// ground at 0. The row-by-row scan is inferred from the loop, not proven.
+pub fn object_depth(at: TileLoc, origin: TileLoc, flat: bool, tile_order: usize) -> f32 {
     let dx = i64::from(at.x) - i64::from(origin.x);
     let dy = i64::from(at.y) - i64::from(origin.y);
     let place = |v: i64| (v.clamp(-DEPTH_REACH, DEPTH_REACH - 1) + DEPTH_REACH) as u32;
     let (row, column) = (place(dx + dy), place(dy - dx));
+    let order = tile_order.min(DEPTH_TILE_ORDER - 1) as u32;
     let class = u32::from(!flat);
-    (1 + ((class << 22) | (row << 11) | column)) as f32
+    (1 + ((class << 23) | (row << 13) | (column << 3) | order)) as f32
 }
 
 /// Gives each waiting sprite its frame once the `.art` has loaded; drops the ones whose art
@@ -334,7 +347,7 @@ mod tests {
     #[test]
     fn objects_lower_on_screen_draw_later_and_flat_ones_first() {
         let o = t(1000, 1000);
-        let d = |x, y, flat| object_depth(t(x, y), o, flat);
+        let d = |x, y, flat| object_depth(t(x, y), o, flat, 0);
         assert!(d(1000, 1000, false) < d(1001, 1000, false), "next row down");
         assert!(d(1000, 1000, false) < d(1000, 1001, false), "next row down");
         assert!(d(1001, 1000, false) < d(1000, 1001, false), "same row, further right");
@@ -342,7 +355,12 @@ mod tests {
         assert!(d(700, 700, true) > 0.0, "every object over the ground");
         assert!(d(1000, 1000, false) < DEPTH_RANGE);
         // Neighbouring rows stay apart in f32.
-        assert_ne!(d(1500, 1500, false), d(1500, 1501, false));
+        assert_ne!(d(1250, 1250, false), d(1250, 1251, false));
+        // On one tile, list order; the next tile along the row still comes after.
+        let on = |order| object_depth(t(1000, 1000), o, false, order);
+        assert!(on(0) < on(1) && on(1) < on(7));
+        assert_eq!(on(7), on(20), "clamped");
+        assert!(on(20) < d(999, 1001, false), "the next place along the row");
     }
 
     #[test]

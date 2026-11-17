@@ -287,6 +287,8 @@ Recovered by inspecting data and by reverse engineering `Arcanum.exe` with the R
     - Sub-art (flag 0x10000) is at 0+, effects at 400M+, overlays at 600M and 700M+.
     - n counts in scan order: tiles a screen row at a time (inferred), objects in tile list
       order. There is no screen-y comparator.
+    - Tile list order matters: walls and the furniture against them often share a tile, and the
+      walls come first in the sector's list. Ignoring it broke corners and hid furniture.
   - **Hidden.** Flags 0x1, 0x2 (default mask, 0x43a4f0) and 0x100 (0x43a4fa) are not drawn.
   - **Not done.**
     - Wall cutaway: type-0 objects with field 0x27 & 6, wall rotation in {0, 1, 6, 7}, and

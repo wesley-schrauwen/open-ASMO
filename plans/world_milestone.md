@@ -344,7 +344,7 @@ Not done, or done differently from the plan:
 - The rotation and frame come from the art id, with the original's wall and portal hotspot and
   mirroring rules (`NOTES.md` → "Objects on screen").
 - Depth follows the original's classes and scan order. Flat objects draw first, then the others
-  by screen row and place along the row. It is packed into an exact integer depth, and the
+  by screen row, place along the row, and order on the tile. It is packed into an exact integer depth, and the
   camera's depth range is widened to hold it.
 - Hidden objects (flags 0x1, 0x2, 0x100) are skipped.
 - `ArtFrames` now loads every rotation.
@@ -360,9 +360,11 @@ Not done:
 - **Objects without their own `current_aid`** (about 3% of scenery) are left out. The
   original takes the prototype's art; wall, portal and scenery prototypes are not read yet.
 - **No animation:** objects show the frame their art id names.
-- **Objects on the same tile tie in depth.** The original keeps their list order. The depth
-  holds order only within about 512 tiles of the first sector's corner, which needs a
-  re-origin once sectors stream far.
+- **Depth reach.** Objects on one tile keep the sector's list order, which matters for walls
+  and the furniture against them (the owner spotted broken corners, shelves, a bed and a candle
+  stand in the house at 90330,84122). Only 8 per tile are kept apart; more tie. Order holds
+  within about 256 tiles of the first sector's corner, which needs a re-origin once sectors
+  stream far.
 
 ## Builder's calls (proposed by Claude, not owner decisions)
 

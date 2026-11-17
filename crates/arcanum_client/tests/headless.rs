@@ -2447,7 +2447,7 @@ fn the_world_draws_the_ground_round_the_pc() {
     let art = world.resource::<Assets<ArtFrames>>().get(&art).unwrap().clone();
     assert_eq!(tree.1.image, art.rotations[2].frames[1]);
     assert_eq!(tree.2.translation.truncate(), tile_to_world(TileLoc { x: 71, y: 81 }, origin) + Vec2::new(3.0, 4.0));
-    assert_eq!(tree.2.translation.z, object_depth(TileLoc { x: 71, y: 81 }, origin, false));
+    assert_eq!(tree.2.translation.z, object_depth(TileLoc { x: 71, y: 81 }, origin, false, 0));
     assert_eq!(tree.3.0, Vec2::new(10.0 / 20.0 - 0.5, 0.5 - 28.0 / 30.0), "the hotspot");
     assert!(flat.2.translation.z < tree.2.translation.z, "flat objects under the others, though lower on screen");
 
