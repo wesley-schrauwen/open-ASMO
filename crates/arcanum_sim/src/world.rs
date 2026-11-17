@@ -359,4 +359,66 @@ mod tests {
         sim.update();
         assert!(sim.take_deltas().is_empty());
     }
+
+    /// The tiles from `(from, y)` to `(to, y)`, either way.
+    fn row(y: u32, xs: std::ops::RangeInclusive<u32>) -> Vec<(u32, u32)> {
+        let (from, to) = xs.into_inner();
+        let xs: Vec<u32> = if from <= to { (from..=to).collect() } else { (to..=from).rev().collect() };
+        xs.into_iter().map(|x| (x, y)).collect()
+    }
+
+    #[test]
+    fn a_pc_in_the_way_is_walked_round() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 }), (9, "B", TileLoc { x: 73, y: 80 })]));
+        sim.take_deltas();
+        // The client's path goes straight through B; the map alone allows it.
+        send_move(&mut sim, 7, 1, &row(80, 70..=76));
+        let mut deltas = Vec::new();
+        for _ in 0..ticks_for(8) {
+            sim.update();
+            assert_ne!(position(&mut sim, 7), position(&mut sim, 9), "never on the same tile");
+            deltas.extend(sim.take_deltas());
+        }
+        assert_eq!(position(&mut sim, 7), TileLoc { x: 76, y: 80 });
+        let replans = |to: u64| deltas.iter().filter(|(p, d)| p.0 == to && matches!(d, LedgerDelta::Move { .. })).count();
+        assert_eq!(replans(7), 1, "A's player gets the new path: {deltas:?}");
+        assert_eq!(replans(9), 2, "B's player gets the first path and the new one");
+        assert!(!deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::MoveCorrection { .. })));
+    }
+
+    #[test]
+    fn a_blocked_goal_stops_the_pc_next_to_it() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 }), (9, "B", TileLoc { x: 74, y: 80 })]));
+        sim.take_deltas();
+        send_move(&mut sim, 7, 3, &row(80, 70..=74));
+        walk_ticks(&mut sim, ticks_for(6));
+        let stop = TileLoc { x: 73, y: 80 };
+        assert_eq!(position(&mut sim, 7), stop);
+        let deltas = sim.take_deltas();
+        let correction = LedgerDelta::MoveCorrection { net_id: NetId(0), seq: 3, position: stop };
+        for to in [7, 9] {
+            assert!(deltas.contains(&(PlayerId(to), correction.clone())), "player {to}: {deltas:?}");
+        }
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(save.players[&PlayerId(7)].position, stop);
+    }
+
+    #[test]
+    fn pcs_walking_into_each_other_pass() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 }), (9, "B", TileLoc { x: 78, y: 80 })]));
+        sim.take_deltas();
+        send_move(&mut sim, 7, 1, &row(80, 70..=78));
+        send_move(&mut sim, 9, 1, &row(80, 78..=70));
+        for _ in 0..ticks_for(14) {
+            sim.update();
+            assert_ne!(position(&mut sim, 7), position(&mut sim, 9));
+        }
+        assert_eq!((position(&mut sim, 7), position(&mut sim, 9)), (TileLoc { x: 78, y: 80 }, TileLoc { x: 70, y: 80 }));
+    }
 }

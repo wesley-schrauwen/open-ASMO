@@ -267,6 +267,14 @@ Not done, or done differently from the plan:
   starts too far away and is corrected. Accepted moves go to the other players as
   `Move { net_id, path }`; refused ones get `MoveCorrection { net_id, seq, position }` (`seq`
   added) and the PC stops on the host's tile.
+- **Every step is checked again as it is taken.** Actors move and doors close while a path is
+  walked, and few actors are on the board, so `walk` checks each step just before taking it,
+  against the map and the tiles other PCs stand on (`Occupied`). A blocked step makes the host
+  plan a new path to the same goal from the PC's tile; every player, the PC's own included, gets
+  it as a `Move`. With no path left (the goal is taken, say), the PC stops and every player gets
+  a `MoveCorrection`. The client's path is checked against the map only, since the actors on it
+  may be gone by the time the PC gets there. This is the host planning paths, which the plan
+  left to the client; the owner asked for it (re-check every step, replan on collision).
 - **The save follows the PCs.** A PC that stops (end of path or correction) has its position
   put into the `WorldState`, which writes the save.
 - **Real data:** from the start tile, every tile within 20 that A* reaches gets a path the host
@@ -281,6 +289,9 @@ Not done, or done differently from the plan:
   step takes the same time, diagonal or not. Both are to be matched to the original's walk
   animation (step 6). The 10/14 costs and the no-corner-cutting rule are not checked against
   the original either.
+- **Only PCs block.** NPCs, closed doors and other dynamic blockers do not exist yet; when they
+  do, they go into the same `Occupied` check. A PC whose goal is taken stops at once rather than
+  waiting for it to clear.
 - **No tether and no combat rules** yet: the check is walkable tiles and speed only.
 - **A move is not stamped with a tick,** and the relayed `Move` has no `seq`.
 

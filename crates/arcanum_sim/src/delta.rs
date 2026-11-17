@@ -28,9 +28,11 @@ pub enum LedgerDelta {
     CharacterAccepted { player: PlayerId },
     /// An entity appeared.
     Spawn { net_id: NetId, kind: EntityKind, position: TileLoc },
-    /// An entity started along a path.
+    /// An entity started along a path. For a player's own PC this is a path the host planned
+    /// round something in the way, which replaces the one the client was walking.
     Move { net_id: NetId, path: Vec<TileLoc> },
-    /// The move numbered `seq` was refused; the entity stopped at `position`.
+    /// The entity stopped at `position`: the move numbered `seq` (its player's numbering) was
+    /// refused, or its path was blocked with no way round. Sent to every player.
     MoveCorrection { net_id: NetId, seq: u32, position: TileLoc },
     /// An entity is gone.
     Despawn { net_id: NetId },
