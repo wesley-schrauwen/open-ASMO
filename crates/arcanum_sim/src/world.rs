@@ -361,8 +361,7 @@ mod tests {
     }
 
     /// The tiles from `(from, y)` to `(to, y)`, either way.
-    fn row(y: u32, xs: std::ops::RangeInclusive<u32>) -> Vec<(u32, u32)> {
-        let (from, to) = xs.into_inner();
+    fn row(y: u32, from: u32, to: u32) -> Vec<(u32, u32)> {
         let xs: Vec<u32> = if from <= to { (from..=to).collect() } else { (to..=from).rev().collect() };
         xs.into_iter().map(|x| (x, y)).collect()
     }
@@ -374,7 +373,7 @@ mod tests {
         let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 }), (9, "B", TileLoc { x: 73, y: 80 })]));
         sim.take_deltas();
         // The client's path goes straight through B; the map alone allows it.
-        send_move(&mut sim, 7, 1, &row(80, 70..=76));
+        send_move(&mut sim, 7, 1, &row(80, 70, 76));
         let mut deltas = Vec::new();
         for _ in 0..ticks_for(8) {
             sim.update();
@@ -394,7 +393,7 @@ mod tests {
         write_map(dir.path());
         let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 }), (9, "B", TileLoc { x: 74, y: 80 })]));
         sim.take_deltas();
-        send_move(&mut sim, 7, 3, &row(80, 70..=74));
+        send_move(&mut sim, 7, 3, &row(80, 70, 74));
         walk_ticks(&mut sim, ticks_for(6));
         let stop = TileLoc { x: 73, y: 80 };
         assert_eq!(position(&mut sim, 7), stop);
@@ -413,8 +412,8 @@ mod tests {
         write_map(dir.path());
         let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 }), (9, "B", TileLoc { x: 78, y: 80 })]));
         sim.take_deltas();
-        send_move(&mut sim, 7, 1, &row(80, 70..=78));
-        send_move(&mut sim, 9, 1, &row(80, 78..=70));
+        send_move(&mut sim, 7, 1, &row(80, 70, 78));
+        send_move(&mut sim, 9, 1, &row(80, 78, 70));
         for _ in 0..ticks_for(14) {
             sim.update();
             assert_ne!(position(&mut sim, 7), position(&mut sim, 9));
