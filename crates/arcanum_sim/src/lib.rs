@@ -17,6 +17,7 @@ pub mod player;
 pub mod plugin;
 pub mod save;
 pub mod session;
+pub mod world;
 
 pub use creation::*;
 pub use delta::*;
@@ -26,3 +27,4 @@ pub use player::*;
 pub use plugin::*;
 pub use save::*;
 pub use session::*;
+pub use world::*;

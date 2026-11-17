@@ -8,9 +8,9 @@
 //! To use it, insert a [`LoadRequest`] naming the screen to go to and the assets to wait for,
 //! then switch to [`AppState::Loading`]. The screen waits until every asset has loaded (or
 //! failed, with a warning) and at least [`LoadRequest::min_secs`] have passed (default
-//! [`MIN_LOADING_SECS`]), then moves on. A request made with [`LoadRequest::after_host_accepts`]
-//! also waits for the host to accept the character, and goes back to the main menu if it
-//! refuses.
+//! [`MIN_LOADING_SECS`]), then moves on. A request made with [`LoadRequest::after_world_boots`]
+//! also waits for the host to accept the character and put the player's PC in the world, and
+//! goes back to the main menu if it refuses.
 //! [`LoadingProgress`] reports how far it has got, for a progress bar later.
 
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -21,7 +21,7 @@ use bevy::prelude::*;
 use crate::art_loader::ArtFrames;
 use crate::character_host::CharacterHost;
 use crate::fonts::ORIGINAL_SCALE;
-use crate::sim_bridge::HostLink;
+use crate::sim_bridge::{HostLink, LocalPc};
 use crate::main_menu::AppState;
 use crate::resource_pack::paths::{backgrounds, interface};
 
@@ -47,7 +47,7 @@ pub struct LoadRequest {
     pub assets: Vec<UntypedHandle>,
     /// Shortest time to stay on the loading screen.
     pub min_secs: f32,
-    /// Also wait for the host to accept the [`CharacterHost`]'s character.
+    /// Also wait for the host to accept the [`CharacterHost`]'s character and spawn the PC.
     pub wait_for_host: bool,
 }
 
@@ -56,8 +56,9 @@ impl LoadRequest {
         Self { next, assets: Vec::new(), min_secs: MIN_LOADING_SECS, wait_for_host: false }
     }
 
-    /// Also waits for the host to accept the character (counted as one more item to load).
-    pub fn after_host_accepts(mut self) -> Self {
+    /// Also waits for the host to accept the character and spawn the player's PC (counted as
+    /// two more items to load).
+    pub fn after_world_boots(mut self) -> Self {
         self.wait_for_host = true;
         self
     }
@@ -212,6 +213,7 @@ fn track_progress(
     mut reported: Local<Vec<bevy::asset::UntypedAssetId>>,
     character: Option<Res<CharacterHost>>,
     host: Option<Res<HostLink>>,
+    pc: Option<Res<LocalPc>>,
 ) {
     let (Some(request), Some(started), Some(mut progress)) = (request, started, progress) else { return };
     let mut done = 0;
@@ -227,8 +229,11 @@ fn track_progress(
             next_state.set(AppState::MainMenu);
             return;
         }
-        total += 1;
+        total += 2;
         if character.as_ref().is_some_and(|c| c.accepted) {
+            done += 1;
+        }
+        if pc.as_ref().is_some_and(|pc| pc.0.is_some()) {
             done += 1;
         }
     }

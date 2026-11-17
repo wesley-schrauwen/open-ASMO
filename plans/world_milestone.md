@@ -224,6 +224,32 @@ Not done, or done differently from the plan:
 - **Load Game does not list these saves yet.**
 - **A save is written per session,** named by start time, not chosen by the player.
 
+## The host loads the map (first part of step 4)
+
+- **Booting from the save.** `boot_world` (`arcanum_sim::world`) keeps the host's world in step
+  with its `WorldState`: it opens the save's map (`map.prp` into `LoadedMap`), spawns a PC for
+  each player in the save who has none (`NetId`, `PlayerControlled`, `Position`, `Sheet`), and
+  loads the sectors within one sector of it (a 3 x 3 block, fewer at the map's edge). A new
+  game and `SimApp::boot(save)` take the same path, so two hosts booted from one save have the
+  same PCs with the same net ids. The player's session state becomes `InWorld(NetId)`.
+- **Spawns.** Each new PC is announced with `Spawn` to every player in the session; its player
+  also gets a `Spawn` for each PC already there. The client keeps its own PC's spawn in
+  `LocalPc`.
+- **Loading waits for the world.** `LoadRequest::after_world_boots` (was `after_host_accepts`)
+  waits for acceptance and for the local PC's spawn: two items on the progress count.
+- **Missing and broken files.** A sector without a file is recorded as absent; a file that
+  does not parse is recorded in `LoadedMap::errors` and treated as absent. On the real start
+  map all nine sectors around the start load without errors.
+
+Not done, or done differently from the plan:
+
+- **Tile masks only.** `LoadedMap::tile_mask_blocked` reads the sectors' tile blocking masks;
+  object blocking is not decoded (`TODO.md` → World).
+- **No streaming:** sectors load when a PC spawns and are never unloaded (`TODO.md` → World).
+- **The save is not updated from the entities.** Positions in the save are the start
+  positions; once PCs move (step 4's movement), the save must be written from the entities.
+- **Pathfinding and movement validation** are the rest of step 4, in the next PR.
+
 ## Builder's calls (proposed by Claude, not owner decisions)
 
 - `arcanum_sim` uses `bevy_ecs` (and `bevy_app` for scheduling) with no rendering, audio or

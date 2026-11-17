@@ -3,11 +3,12 @@
 //! Every entity the host creates gets a [`NetId`]. Clients refer to entities by `NetId`, never
 //! by their local Bevy `Entity`. The host assigns them from a monotonic counter.
 
+use bevy_ecs::component::Component;
 use serde::{Deserialize, Serialize};
 
 /// A host-issued entity tag. Two `NetId`s from the same session are equal iff they name the
 /// same entity.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct NetId(pub u64);
 
 /// Hands out [`NetId`]s. The host owns exactly one of these.

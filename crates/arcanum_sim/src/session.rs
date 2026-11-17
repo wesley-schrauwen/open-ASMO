@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use arcanum_rules::{CharacterBlueprint, RulesData};
 use bevy_ecs::prelude::*;
 
-use crate::{Creation, LedgerDelta, PlayerId, PlayerIntent, StartMap, WorldState};
+use crate::{Creation, LedgerDelta, NetId, PlayerId, PlayerIntent, StartMap, WorldState};
 
 /// The rules the host applies.
 #[derive(Resource, Debug, Clone, Default)]
@@ -30,6 +30,8 @@ pub enum SessionPlayer {
     Creating(Creation),
     /// The character is finished; the world has not taken it yet.
     Ready(CharacterBlueprint),
+    /// The player's PC is in the world.
+    InWorld(NetId),
 }
 
 /// Every player who has talked to this host.
@@ -44,7 +46,7 @@ pub struct Session {
 /// `seq`, refused or not. A finished character gets `CharacterAccepted` first, so a client
 /// that sees the update for its `Accept` without it knows the host refused. The accepted
 /// character joins the world at the start position. A player who is `Ready` can only start a
-/// new character.
+/// new character; one who is `InWorld` can make no character requests.
 pub fn handle_intents(
     mut inbox: ResMut<Inbox>,
     mut outbox: ResMut<Outbox>,
@@ -57,6 +59,9 @@ pub fn handle_intents(
         match intent {
             PlayerIntent::Character { seq, request } => {
                 let entry = session.players.entry(player).or_insert_with(|| SessionPlayer::Creating(Creation::new(&rules.0)));
+                if matches!(entry, SessionPlayer::InWorld(_)) {
+                    continue;
+                }
                 if matches!(request, crate::CharacterRequest::New) {
                     *entry = SessionPlayer::Creating(Creation::new(&rules.0));
                 }
