@@ -63,3 +63,46 @@ fn a_new_game_boots_on_the_start_map() {
     let positions: Vec<TileLoc> = world.query::<&Position>().iter(world).map(|p| p.0).collect();
     assert_eq!(positions, vec![start.position]);
 }
+
+#[test]
+fn paths_on_the_start_map_pass_the_hosts_check() {
+    use std::sync::{Arc, RwLock};
+
+    use arcanum_rules::{CharacterBlueprint, CharacterSheet, RulesData};
+    use arcanum_sim::{LoadedMap, PlayerId, SimApp, SimVfs, Walkable, WorldState, check_path, find_path};
+
+    let Some(vfs) = vfs() else { return };
+    let start = StartMap::load(&vfs).unwrap();
+    let mut world = WorldState::default();
+    let sheet = CharacterSheet { name: "Virgil".into(), ..Default::default() };
+    world.add_player(Some(&start), PlayerId(1), CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None });
+    let mut sim = SimApp::new(RulesData::default());
+    sim.use_manual_clock();
+    sim.app.insert_resource(SimVfs(Arc::new(RwLock::new(vfs))));
+    sim.boot(world.0.unwrap());
+    sim.update();
+    sim.update();
+    let map = sim.app.world().resource::<LoadedMap>();
+
+    assert!(map.walkable(start.position), "the start tile");
+    // Every walkable tile within 20 of the start that A* reaches gets a path the host accepts.
+    let (mut found, mut blocked) = (0, 0);
+    for dy in -20i32..=20 {
+        for dx in -20i32..=20 {
+            let goal = TileLoc { x: start.position.x.wrapping_add_signed(dx), y: start.position.y.wrapping_add_signed(dy) };
+            if goal == start.position {
+                continue;
+            }
+            if !map.walkable(goal) {
+                blocked += 1;
+                continue;
+            }
+            if let Ok(path) = find_path(map, start.position, goal) {
+                found += 1;
+                assert_eq!(check_path(map, start.position, &path).as_ref(), Ok(&path), "to {goal:?}");
+            }
+        }
+    }
+    eprintln!("{found} tiles reached, {blocked} mask-blocked, of 41 x 41 around the start");
+    assert!(found > 100, "{found}");
+}

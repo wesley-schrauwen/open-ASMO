@@ -30,8 +30,8 @@ pub enum LedgerDelta {
     Spawn { net_id: NetId, kind: EntityKind, position: TileLoc },
     /// An entity started along a path.
     Move { net_id: NetId, path: Vec<TileLoc> },
-    /// A move was rejected; the entity is at `position`.
-    MoveCorrection { net_id: NetId, position: TileLoc },
+    /// The move numbered `seq` was refused; the entity stopped at `position`.
+    MoveCorrection { net_id: NetId, seq: u32, position: TileLoc },
     /// An entity is gone.
     Despawn { net_id: NetId },
     /// The host finished this tick.

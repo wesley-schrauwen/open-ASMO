@@ -14,10 +14,22 @@ Things to pick up later. Larger plans live in `plans/`; project state and findin
 - **Object blocking on the host:** `arcanum_sim::LoadedMap` has only the sectors' tile blocking
   masks. Walls, scenery and closed portals block too (their objects and prototype flags), but
   object blocking is not decoded yet, so the mask alone cannot decide where a PC can walk.
-  Needed before movement validation is trusted (`plans/world_milestone.md`, step 4).
+  Needed before movement validation is trusted (`plans/world_milestone.md`, step 4). Around
+  the real start position the mask blocks none of the 41 x 41 tiles, so today the host accepts
+  walking through everything there.
 - **Sector streaming on the host:** sectors are loaded around each PC when it spawns
   (`SECTOR_RADIUS` = 1, a 3 x 3 block) and never unloaded. Load as PCs move, and unload what no
   PC is near.
+
+## App
+
+- **One copy of the game per machine.** A second copy would share the config and save folder and
+  could overwrite the first one's files. Take an exclusive lock (a lock file in the config
+  folder) at start and, if it is held, focus the running copy or say it is running and quit.
+  Steam only half covers this: it refuses a second launch from the Steam library, but not one
+  from the executable or a shortcut, and builds outside Steam get nothing. Local multiplayer
+  testing needs two clients on one machine (Milestone A2), so the lock needs a development
+  override (an env var, or a separate config folder per copy).
 
 ## Rules (after the faithful copy)
 

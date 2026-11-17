@@ -248,7 +248,41 @@ Not done, or done differently from the plan:
 - **No streaming:** sectors load when a PC spawns and are never unloaded (`TODO.md` → World).
 - **The save is not updated from the entities.** Positions in the save are the start
   positions; once PCs move (step 4's movement), the save must be written from the entities.
-- **Pathfinding and movement validation** are the rest of step 4, in the next PR.
+- **Pathfinding and movement validation** are the rest of step 4, below.
+
+## Pathfinding and movement validation (rest of step 4)
+
+- **Pathfinding** (`arcanum_sim::pathfinding`): `find_path` is A* over the tile grid, plain
+  functions over a `Walkable` map so the client can use them too. Steps go to the 8 neighbours,
+  costed 10 straight and 14 diagonal; a diagonal may not cut past an unwalkable tile. Ties break
+  the same way every time. The search gives up after `MAX_SEARCH` (20 000) tiles. `LoadedMap`
+  is `Walkable` where the sector is loaded, the tile is inside `map.prp`'s size, and the tile
+  mask does not block.
+- **Movement follows the hybrid-trust design, not "the host paths".** The client sends
+  `PlayerIntent::Move { seq, path }` (was `MoveTo(goal)`) for the path it is already walking.
+  `check_path` accepts it when it starts on the PC's tile or one step ahead (the client walks at
+  once), every step is allowed by the same `step_allowed` A* uses, and it has at most
+  `MAX_PATH_STEPS` (256) tiles. The host then walks the PC itself (`Walking`) at
+  `WALK_TILES_PER_SECOND`, so a client cannot outrun it: one that runs ahead sends a path that
+  starts too far away and is corrected. Accepted moves go to the other players as
+  `Move { net_id, path }`; refused ones get `MoveCorrection { net_id, seq, position }` (`seq`
+  added) and the PC stops on the host's tile.
+- **The save follows the PCs.** A PC that stops (end of path or correction) has its position
+  put into the `WorldState`, which writes the save.
+- **Real data:** from the start tile, every tile within 20 that A* reaches gets a path the host
+  accepts (1680 tiles).
+
+Not done, or done differently from the plan:
+
+- **The tile mask blocks nothing around the start.** None of the 41 x 41 tiles round the start
+  position is mask-blocked, so until object blocking is decoded the host lets a PC walk through
+  the wreckage and scenery there (`TODO.md` → World).
+- **Walking speed is a placeholder** (3.5 tiles/s, from the implementation plan), and every
+  step takes the same time, diagonal or not. Both are to be matched to the original's walk
+  animation (step 6). The 10/14 costs and the no-corner-cutting rule are not checked against
+  the original either.
+- **No tether and no combat rules** yet: the check is walkable tiles and speed only.
+- **A move is not stamped with a tick,** and the relayed `Move` has no `seq`.
 
 ## Builder's calls (proposed by Claude, not owner decisions)
 

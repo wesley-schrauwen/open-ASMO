@@ -11,7 +11,7 @@ use bevy_ecs::prelude::*;
 use arcanum_rules::RulesData;
 use bevy_time::{Fixed, Time, TimePlugin, TimeUpdateStrategy};
 
-use crate::{Inbox, LoadedMap, NetIdAllocator, Outbox, SaveStatus, Session, SimRules, Tick, WorldSave, WorldState, boot_world, handle_intents, write_save};
+use crate::{Inbox, LoadedMap, MoveRequests, NetIdAllocator, Outbox, SaveStatus, Session, SimRules, Tick, WorldSave, WorldState, apply_moves, boot_world, handle_intents, walk, write_save};
 
 /// Host ticks per second.
 pub const TICK_HZ: f64 = 30.0;
@@ -41,7 +41,8 @@ impl Plugin for SimPlugin {
             .init_resource::<WorldState>()
             .init_resource::<SaveStatus>()
             .init_resource::<LoadedMap>()
-            .add_systems(FixedUpdate, (handle_intents, boot_world, advance_tick, write_save).chain());
+            .init_resource::<MoveRequests>()
+            .add_systems(FixedUpdate, (handle_intents, boot_world, apply_moves, walk, advance_tick, write_save).chain());
     }
 }
 
