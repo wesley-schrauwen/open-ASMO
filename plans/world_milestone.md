@@ -292,6 +292,9 @@ Not done, or done differently from the plan:
 - **Only PCs block.** NPCs, closed doors and other dynamic blockers do not exist yet; when they
   do, they go into the same `Occupied` check. A PC whose goal is taken stops at once rather than
   waiting for it to clear.
+- **NPCs give way to PCs (owner's rule, for when NPCs move).** When an NPC's next step is
+  blocked by a PC, the NPC stops all movement for 5 s (150 ticks), then plans a new route from
+  where it stands. PCs keep replanning at once. The pause is not built: there are no NPCs yet.
 - **No tether and no combat rules** yet: the check is walkable tiles and speed only.
 - **A move is not stamped with a tick,** and the relayed `Move` has no `seq`.
 

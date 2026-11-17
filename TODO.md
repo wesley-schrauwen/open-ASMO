@@ -17,6 +17,11 @@ Things to pick up later. Larger plans live in `plans/`; project state and findin
   Needed before movement validation is trusted (`plans/world_milestone.md`, step 4). Around
   the real start position the mask blocks none of the 41 x 41 tiles, so today the host accepts
   walking through everything there.
+- **NPCs pause when a PC blocks them:** when NPC movement comes, an NPC whose next step is
+  blocked by a PC stops for 5 s (150 ticks), then replans from where it stands; PCs replan at
+  once (`plans/world_milestone.md`, "Pathfinding and movement validation"). Open: whether NPCs
+  blocked by NPCs also pause, and what happens if the PC is still in the way after the pause
+  (replan round it, or wait again).
 - **Sector streaming on the host:** sectors are loaded around each PC when it spawns
   (`SECTOR_RADIUS` = 1, a 3 x 3 block) and never unloaded. Load as PCs move, and unload what no
   PC is near.
