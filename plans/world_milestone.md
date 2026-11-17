@@ -307,6 +307,36 @@ Not done, or done differently from the plan:
 - **No tether and no combat rules** yet: the check is walkable tiles and speed only.
 - **A move is not stamped with a tick,** and the relayed `Move` has no `seq`.
 
+## The client draws the ground (first part of step 5)
+
+- **Map name from the host.** `LedgerDelta::EnterMap { map }` comes before the player's PC
+  `Spawn`; the client keeps it in `LocalMap`.
+- **The client reads the map itself.** `world_render::ClientMap` holds a `LoadedMap` (the
+  host's reader) filled from the client's own VFS around `LocalPc`, and the art index.
+- **Ground tiles** are sprites at the original's tile centres (`isometric::tile_to_world`, from
+  `loc_to_xy` 0x4b8680; see `NOTES.md` → "Tiles on screen"). Each sits in the fixed 78 x 40
+  rectangle with no hotspot, mirrored by the original's rule, with the facade frame from the
+  tile id. World units are original pixels, relative to the corner of the PC's first sector so
+  `f32` stays exact. The camera shows 600 units vertically, the original's screen, centred on
+  the PC. World sprites use nearest sampling: linear filtering showed a line round every tile.
+- **Debug start:** `DEBUG_ARCANUM_SCREEN=ingame` makes a character named "Debug" and goes
+  through loading into the world; with `DEBUG_ARCANUM_SCREENSHOT` the capture waits until every
+  tile has its art. Checked by eye on the real start map: seamless ground and the crash site.
+
+Not done, or done differently from the plan:
+
+- **Walls, portals and scenery are not drawn** (the implementation plan's PR 6 had them). The
+  crash wreckage shows because it is facade tiles. Objects come next, as the plan's split
+  suggested; the placement rule is in `NOTES.md`, the draw order is not traced yet.
+- **No PC sprite** (critter art ids are not decoded; animation is step 6).
+- **Sectors stream in only.** The client reads sectors as the PC's position changes, but never
+  unloads them, and draws all 4096 tiles of each (no culling beyond Bevy's).
+- **The camera snaps to the PC;** following with a lerp waits for movement (step 7).
+- **The loading screen does not wait for tile art,** so tiles can appear a frame or two after
+  the world shows.
+- **Tile draw order** is not reproduced (all tiles at the same depth): ground tiles do not
+  overlap, so it shows nowhere yet.
+
 ## Builder's calls (proposed by Claude, not owner decisions)
 
 - `arcanum_sim` uses `bevy_ecs` (and `bevy_app` for scheduling) with no rendering, audio or

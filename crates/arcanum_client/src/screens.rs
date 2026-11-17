@@ -1,5 +1,5 @@
 //! Placeholder screens for the menu destinations that are not built yet (Options has its own
-//! screen in [`crate::options`]). Each shows its title (from `MainMenu.mes`) on the menu panel.
+//! screen in [`crate::options`], the world is drawn by [`crate::world_render`]). Each shows its title (from `MainMenu.mes`) on the menu panel.
 //!
 //! Escape goes back to the main menu (from New Game and Load Game, to the Single Player menu), except on the
 //! loading screen, which cannot be left.
@@ -16,8 +16,7 @@ pub struct PlaceholderScreen(pub AppState);
 
 /// Placeholder screens with the `MainMenu.mes` id of their title (if the game has one) and an
 /// English fallback.
-const PLACEHOLDERS: [(AppState, Option<u32>, &str); 2] =
-    [(AppState::InGame, None, "The world goes here"), (AppState::Credits, Some(13), "Credits")];
+const PLACEHOLDERS: [(AppState, Option<u32>, &str); 1] = [(AppState::Credits, Some(13), "Credits")];
 
 /// Shown under the title. Not from the game's text, so English only for now.
 pub const RETURN_HINT: &str = "Press Esc to return";

@@ -18,8 +18,8 @@ use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 /// Debugging aid: when set to a file path, saves the window there once the menu has loaded,
 /// then exits.
 const SCREENSHOT_VAR: &str = "DEBUG_ARCANUM_SCREENSHOT";
-/// Debugging aid: `options`, `singleplayer`, `newgamechoice`, `newgame`, `loadgame` or `loading` opens that screen instead of
-/// the main menu.
+/// Debugging aid: `options`, `singleplayer`, `newgamechoice`, `newgame`, `createcharacter`,
+/// `charactereditor`, `loadgame`, `loading` or `ingame` opens that screen instead of the main menu.
 const SCREEN_VAR: &str = "DEBUG_ARCANUM_SCREEN";
 
 fn main() {
@@ -70,9 +70,8 @@ fn main() {
             save_dir: config::path_from_env().and_then(|p| p.parent().map(|d| d.join("saves"))),
             manual_clock: false,
         })
-        .add_plugins(arcanum_client::sim_bridge::SimBridgePlugin);
+        .add_plugins((arcanum_client::sim_bridge::SimBridgePlugin, arcanum_client::WorldRenderPlugin));
 
-    // Debugging aid: `DEBUG_ARCANUM_SCREEN=options|singleplayer|newgamechoice|newgame|createcharacter|charactereditor|loadgame|loading` opens that screen.
     let start = match std::env::var(SCREEN_VAR).unwrap_or_default().to_ascii_lowercase().as_str() {
         "options" => Some(AppState::Options),
         "singleplayer" => Some(AppState::SinglePlayer),
@@ -84,6 +83,11 @@ fn main() {
         "loadgame" => {
             app.insert_resource(sample_saves());
             Some(AppState::LoadGame)
+        }
+        // A new game with a default character, straight into the world.
+        "ingame" => {
+            app.insert_resource(ScreenshotTheWorld).add_systems(Update, start_debug_game.run_if(in_state(AppState::CreateCharacter)));
+            Some(AppState::CreateCharacter)
         }
         // Stays up for a minute so it can be captured.
         "loading" => {
@@ -103,8 +107,33 @@ fn main() {
     app.run();
 }
 
+/// `DEBUG_ARCANUM_SCREEN=ingame`: once the creation data is in, names a character "Debug",
+/// hands it to the host and goes through the loading screen into the world.
+fn start_debug_game(
+    mut commands: Commands,
+    data: Option<Res<arcanum_client::create_character::CreationData>>,
+    mut host: ResMut<arcanum_client::character_host::CharacterHost>,
+    mut next: ResMut<NextState<AppState>>,
+) {
+    let Some(data) = data else { return };
+    host.reset(&data.rules);
+    let made = host
+        .apply(&data.rules, arcanum_rules::CharacterAction::SetName("Debug".into()))
+        .and_then(|()| host.finish(&data.rules).map(|_| ()));
+    if let Err(e) = made {
+        warn!("debug character refused: {e:?}");
+        return;
+    }
+    commands.insert_resource(LoadRequest::new(AppState::InGame).after_world_boots());
+    next.set(AppState::Loading);
+}
+
 #[derive(Resource)]
 struct ScreenshotPath(String);
+
+/// The screenshot waits for the world, not the first screen on the way.
+#[derive(Resource)]
+struct ScreenshotTheWorld;
 
 /// Waits for the menu to finish loading, captures the window, then exits once the capture has
 /// had time to be written.
@@ -127,6 +156,7 @@ fn screenshot_and_exit(
 
 /// True once a menu, the Options screen or the loading screen is up and the background has been
 /// fitted.
+#[allow(clippy::too_many_arguments)]
 fn screen_ready(
     labels: Query<(), With<MenuLabel>>,
     slots: Query<(), With<OptionSlot>>,
@@ -136,8 +166,20 @@ fn screen_ready(
     new_game: Query<(), With<NewGameScreen>>,
     create: Query<(), With<arcanum_client::create_character::CreateCharacterScreen>>,
     editor: Query<(), With<arcanum_client::character_editor::CharacterEditorScreen>>,
+    world: Option<Res<arcanum_client::world_render::ClientMap>>,
+    tiles: Query<(), With<arcanum_client::world_render::GroundTile>>,
+    waiting: Query<&Visibility, With<arcanum_client::world_render::GroundTile>>,
+    state: Res<State<AppState>>,
+    for_world: Option<Res<ScreenshotTheWorld>>,
     images: Res<Assets<Image>>,
 ) -> bool {
+    // The world: once its tiles are drawn and every one has its art.
+    if for_world.is_some() || *state.get() == AppState::InGame {
+        if *state.get() != AppState::InGame {
+            return false;
+        }
+        return world.is_some_and(|w| !w.drawn.is_empty()) && !tiles.is_empty() && waiting.iter().all(|v| *v != Visibility::Hidden);
+    }
     let loading_up = loading.iter().any(|p| images.get(&p.image).is_some());
     (!labels.is_empty() || !slots.is_empty() || loading_up || !load_game.is_empty() || !new_game.is_empty() || !create.is_empty() || !editor.is_empty()) && pending.is_empty()
 }

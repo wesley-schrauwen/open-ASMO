@@ -9,6 +9,7 @@ pub mod brightness;
 pub mod config;
 pub mod create_character;
 pub mod fonts;
+pub mod isometric;
 pub mod load_game;
 pub mod loading;
 pub mod main_menu;
@@ -24,6 +25,7 @@ pub mod sim_bridge;
 pub mod text_field;
 pub mod vfs_asset;
 pub mod widgets;
+pub mod world_render;
 
 use bevy::prelude::*;
 
@@ -45,6 +47,7 @@ pub use options::OptionsPlugin;
 pub use resource_pack::ResourcePack;
 pub use settings::{DisplayPlugin, DisplayResolution, GameSettings};
 pub use vfs_asset::{SharedVfs, VfsAssetPlugin, VfsAssetReader};
+pub use world_render::WorldRenderPlugin;
 
 /// Registers the `.art` (image and frame-set) and `.mes` asset loaders. Add after `DefaultPlugins`.
 pub struct ArcanumAssetsPlugin;

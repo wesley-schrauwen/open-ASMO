@@ -295,7 +295,7 @@ fn menu_app(vfs: Vfs) -> App {
         .add_plugins((TimePlugin, BitmapTextPlugin, FontsPlugin, MenuAudioPlugin, MainMenuPlugin, OptionsPlugin, ScreensPlugin, LoadingPlugin, LoadGamePlugin, NewGamePlugin, arcanum_client::CreateCharacterPlugin, arcanum_client::CharacterEditorPlugin))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)))
         .insert_resource(arcanum_client::sim_bridge::HostSettings { save_dir: None, manual_clock: true })
-        .add_plugins(arcanum_client::sim_bridge::SimBridgePlugin);
+        .add_plugins((arcanum_client::sim_bridge::SimBridgePlugin, arcanum_client::WorldRenderPlugin));
     app
 }
 
@@ -800,12 +800,13 @@ fn new_game_goes_through_the_loading_screen_into_the_world() {
     press_escape(&mut app);
     assert_eq!(state(&app), AppState::Loading);
 
-    // Nothing to load: it stays up for the minimum time, then the world placeholder follows.
+    // Nothing to load: it stays up for the minimum time, then the world follows (this fixture
+    // has no sectors or art, so nothing is drawn).
     update_until(&mut app, |app| state(app) == AppState::InGame);
     let world = app.world_mut();
     assert_eq!(world.query::<&LoadingScreen>().iter(world).count(), 0, "loading screen removed");
     assert!(world.get_resource::<LoadRequest>().is_none());
-    assert_eq!(texts_under::<PlaceholderScreen>(&mut app), ["The world goes here", RETURN_HINT]);
+    assert!(texts_under::<PlaceholderScreen>(&mut app).is_empty(), "no placeholder any more");
 
     press_escape(&mut app);
     assert_eq!(state(&app), AppState::MainMenu);
@@ -2301,3 +2302,129 @@ fn character_editor_spends_points(app: &mut App) {
     assert_eq!(editor_text(app, EditorText::Points), "Points: 3", "points spent are kept");
     press_editor(app, EditorAction::Next);
 }
+
+// ---------------------------------------------------------------------------------------------
+// The world
+
+/// Art index files for the world fixture: an indoor non-flippable terrain ("flr", key 300), an
+/// indoor flippable one ("flp", key 200) and a facade ("fac").
+fn world_art_index_files() -> Vec<(&'static str, String)> {
+    let facades: String = (0..1).map(|i| format!("{{{i}}}{{fac}}\n")).collect();
+    vec![
+        ("art/tile/tilename.mes", "{200}{flp 0}\n{300}{flr 0}\n".into()),
+        ("art/wall/structure.mes", String::new()),
+        ("art/portal/portal.mes", String::new()),
+        ("art/scenery/scenery.mes", String::new()),
+        ("art/facade/facadename.mes", facades),
+        ("art/roof/roofname.mes", String::new()),
+        ("art/light/light.mes", String::new()),
+    ]
+}
+
+/// A tile art: one 78 x 40 frame with its hotspot at (39, 39), as the game's ground tiles.
+fn tile_art(frames: usize) -> Vec<u8> {
+    ArtBuilder::animated(frames, |_, _| TestFrame::raw(78, 40, &vec![1; 78 * 40]).with_offsets((39, 39), (0, 0))).build()
+}
+
+/// The menu fixture plus the start map "Test" (start 70, 80, in sector (1, 1)) with that sector,
+/// the art index and the tile art. Tile (71, 80) is flipped and flippable, (73, 80) flipped but
+/// not flippable, (72, 80) frame 2 of a facade.
+fn world_fixture() -> (Fixture, String) {
+    use arcanum_formats::art_id::ArtIndex;
+    use arcanum_formats::map::SectorId;
+    use arcanum_formats::test_util::SectorBuilder;
+
+    let files = world_art_index_files();
+    let index = ArtIndex::load(|p| files.iter().find(|(f, _)| *f == p).map(|(_, s)| s.as_bytes().to_vec())).unwrap();
+    let plain = index.path(arcanum_formats::art_id::ArtId(0)).unwrap();
+    let facade_id = (0xB << 28) | (2 << 1);
+    let facade = index.path(arcanum_formats::art_id::ArtId(facade_id)).unwrap();
+    let flippable = index.path(arcanum_formats::art_id::ArtId(0xc1)).unwrap();
+    let mut sector = SectorBuilder::new();
+    sector.tiles[16 * 64 + 7] = 0xc1;
+    sector.tiles[16 * 64 + 9] = 1;
+    sector.tiles[16 * 64 + 8] = facade_id;
+    let mut prp = Vec::new();
+    for v in [0u32, 1] {
+        prp.extend(v.to_le_bytes());
+    }
+    for v in [256u64, 256] {
+        prp.extend(v.to_le_bytes());
+    }
+    let mut dat = DatBuilder::new()
+        .zlib(&paths::backgrounds::MAIN_MENU.replace('/', "\\"), &menu_art())
+        .raw(&paths::text::MAIN_MENU.replace('/', "\\"), MENU_MES)
+        .raw("Rules\\MapList.mes", b"{0}{Test, 70, 80, Type: START_MAP}")
+        .raw("maps\\Test\\map.prp", &prp)
+        .raw(&format!("maps\\Test\\{}", SectorId::new(1, 1).file_name()), &sector.build())
+        .raw(&plain.replace('/', "\\"), &tile_art(1))
+        .raw(&flippable.replace('/', "\\"), &tile_art(1))
+        .raw(&facade.replace('/', "\\"), &tile_art(3));
+    for (path, text) in &files {
+        dat = dat.raw(&path.replace('/', "\\"), text.as_bytes());
+    }
+    (Fixture::with_archive(dat), plain)
+}
+
+#[test]
+fn the_world_draws_the_ground_round_the_pc() {
+    use arcanum_client::isometric::tile_to_world;
+    use arcanum_client::world_render::{ClientMap, GroundTile};
+    use arcanum_formats::map::TileLoc;
+
+    let (fx, _) = world_fixture();
+    let mut app = ready_menu(&fx);
+    with_pickable_premades(&mut app);
+    activate(&mut app, MenuAction::SinglePlayer);
+    app.update();
+    activate(&mut app, MenuAction::NewGame);
+    app.update();
+    activate(&mut app, MenuAction::PickCharacter);
+    app.update();
+    press_new_game(&mut app, NewGameAction::Next);
+    update_until(&mut app, |app| state(app) == AppState::InGame);
+    // Every tile of the one sector, each with its art.
+    update_until(&mut app, |app| {
+        let world = app.world_mut();
+        let tiles: Vec<Visibility> = world.query_filtered::<&Visibility, With<GroundTile>>().iter(world).copied().collect();
+        tiles.len() == 4096 && tiles.iter().all(|v| *v != Visibility::Hidden)
+    });
+    let map = app.world().resource::<ClientMap>();
+    assert_eq!(map.drawn.len(), 1);
+    assert_eq!(map.unresolved, 0);
+    let origin = map.origin.unwrap();
+    assert_eq!(origin, TileLoc { x: 64, y: 64 }, "the corner of the PC's sector");
+
+    let world = app.world_mut();
+    let tile = |world: &mut World, x, y| {
+        let at = TileLoc { x, y };
+        world.query::<(&GroundTile, &Sprite, &Transform)>().iter(world).find(|t| t.0.0 == at).map(|(_, s, t)| (s.clone(), *t)).unwrap()
+    };
+    let (sprite, transform) = tile(world, 70, 80);
+    assert_eq!(transform.translation.truncate(), tile_to_world(TileLoc { x: 70, y: 80 }, origin));
+    assert!(!sprite.flip_x);
+    assert_eq!(sprite.custom_size, Some(Vec2::new(78.0, 40.0)), "the original's fixed tile rectangle");
+    assert!(tile(world, 71, 80).0.flip_x, "flip bit, both names flippable");
+    assert!(!tile(world, 73, 80).0.flip_x, "flip bit alone does not mirror");
+    let facade = tile(world, 72, 80).0;
+    let frames = world.resource::<AssetServer>().get_handle::<ArtFrames>("art/Facade/fac.art");
+    let frames = frames.and_then(|h| world.resource::<Assets<ArtFrames>>().get(&h).cloned()).expect("facade art loaded");
+    assert_eq!(facade.image, frames.frames[2], "the facade's frame from the tile id");
+
+    // The camera is on the PC, zoomed to the original's 600-pixel screen.
+    let (transform, projection) = world.query_filtered::<(&Transform, &Projection), With<Camera2d>>().single(world).unwrap();
+    assert_eq!(transform.translation.truncate(), tile_to_world(TileLoc { x: 70, y: 80 }, origin));
+    let Projection::Orthographic(o) = projection else { panic!() };
+    assert_eq!(o.scale * BASELINE_HEIGHT, 600.0);
+
+    // Leaving the world clears it and puts the menu camera back.
+    press_escape(&mut app);
+    assert_eq!(state(&app), AppState::MainMenu);
+    let world = app.world_mut();
+    assert_eq!(world.query::<&GroundTile>().iter(world).count(), 0);
+    let (transform, projection) = world.query_filtered::<(&Transform, &Projection), With<Camera2d>>().single(world).unwrap();
+    assert_eq!(transform.translation, Vec3::ZERO);
+    let Projection::Orthographic(o) = projection else { panic!() };
+    assert_eq!(o.scale, 1.0);
+}
+

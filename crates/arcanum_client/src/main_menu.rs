@@ -166,6 +166,10 @@ pub struct OnMainMenu;
 #[derive(Component)]
 pub struct FitToBaseline;
 
+/// The menu background sprite (hidden while the world is shown).
+#[derive(Component)]
+pub struct MenuBackground;
+
 /// `MainMenu.mes`, kept loaded for every menu screen.
 #[derive(Resource)]
 pub struct MenuText(pub Handle<MesAsset>);
@@ -206,7 +210,7 @@ fn setup_menu(mut commands: Commands, assets: Res<AssetServer>) {
             ..OrthographicProjection::default_2d()
         }),
     ));
-    commands.spawn((Sprite::from_image(assets.load(backgrounds::MAIN_MENU)), FitToBaseline));
+    commands.spawn((Sprite::from_image(assets.load(backgrounds::MAIN_MENU)), FitToBaseline, MenuBackground));
     commands.insert_resource(MenuText(assets.load(text::MAIN_MENU)));
 }
 

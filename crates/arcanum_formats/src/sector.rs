@@ -137,6 +137,14 @@ impl Tile {
     pub fn is_flipped(self) -> bool {
         self.0 & 1 == 1
     }
+
+    /// Whether the tile is drawn mirrored left to right: a type 0 tile with the flip bit and both
+    /// names flippable (bits 7 and 6). The blitter (0x502360, mirror at 0x521834) mirrors only
+    /// when 0x503900 allows it, which for type 0 is 0x503950 (bit 7) and 0x503990 (bit 6).
+    /// Facade tiles are never mirrored.
+    pub fn is_mirrored(self) -> bool {
+        self.art_type() == Self::ART_TYPE_TILE && self.0 & 0xc1 == 0xc1
+    }
 }
 
 /// A 48-byte light record. Field names are medium confidence (`FUN_004de390`); runtime fields

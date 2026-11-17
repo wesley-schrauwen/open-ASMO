@@ -2,7 +2,8 @@
 //!
 //! [`boot_world`] keeps the world in step with the [`WorldState`] save: it loads the save's map,
 //! spawns a PC for every player in the save who has none yet, and loads the sectors around each
-//! PC. A new game and a loaded save boot the same way.
+//! PC. A new game and a loaded save boot the same way. A player is told the map's name
+//! (`EnterMap`) before their PC's `Spawn`.
 //!
 //! Blocking: only the sectors' tile blocking masks are loaded. Walls, scenery and closed portals
 //! block too, but object blocking is not decoded yet.
@@ -133,6 +134,7 @@ pub fn boot_world(
         map.load_around(vfs, saved.position);
         session.players.insert(player, SessionPlayer::InWorld(net_id));
         // Everyone already here learns of the new PC; the new PC's player learns of everyone.
+        outbox.0.push((player, LedgerDelta::EnterMap { map: save.map.clone() }));
         let spawn = LedgerDelta::Spawn { net_id, kind: EntityKind::Pc { player }, position: saved.position };
         for &other in session.players.keys() {
             outbox.0.push((other, spawn.clone()));
@@ -257,6 +259,12 @@ mod tests {
         let deltas = sim.take_deltas();
         let spawns = |to: u64| deltas.iter().filter(|(p, d)| p.0 == to && matches!(d, LedgerDelta::Spawn { .. })).count();
         assert_eq!((spawns(1), spawns(2)), (2, 2), "{deltas:?}");
+        let enter = LedgerDelta::EnterMap { map: MAP.into() };
+        for to in [1, 2] {
+            let first = deltas.iter().position(|(p, d)| p.0 == to && *d == enter);
+            let spawn = deltas.iter().position(|(p, d)| p.0 == to && matches!(d, LedgerDelta::Spawn { .. }));
+            assert!(first < spawn && first.is_some(), "player {to} learns the map first: {deltas:?}");
+        }
         // No PC is spawned twice on later ticks.
         sim.update();
         assert!(sim.take_deltas().is_empty());

@@ -256,6 +256,23 @@ Recovered by inspecting data and by reverse engineering `Arcanum.exe` with the R
   unchanged** although the engine accessor 0x503700 remaps it (remapping gives missing files; not
   traced why). Facade ids use bits 17..24 (+0x100 from bit 27) as the `facadename.mes` position.
   Portal bit 9 turns the `U` in `...U0.ART` into `D`. Open: facade sub-fields, item/critter paths.
+- **Tiles on screen** (`crates/arcanum_client/src/isometric.rs`; found by a Sonnet agent over
+  objdump/REA, the flip rule rechecked by hand):
+  - `loc_to_xy` 0x4b8680 (isometric mode, `[0x5fc2d0] == 0`):
+    `sx = 40 * (y - x - 1) + origin_x`, `sy = 20 * (x + y) + origin_y`, screen y down. Origin is
+    64-bit at 0x5fc2e0 / 0x5fc2e8. Inverse `xy_to_loc` 0x4b8730 (bounds-checked) and 0x4b98b0.
+  - Ground tiles (loop 0x4d6950): fixed rect `left = sx + 1, top = sy, 78 x 40`. The art's
+    hotspot is not used, and the blitter (0x521000) scales art of another size to the rect. So a
+    tile's centre is `(40 * (y - x), 20 * (x + y) + 20)`. Every ground tile on the start sector
+    is 78 x 40, hotspot (39, 39).
+  - Drawing order: per sector, rows of `y`, columns of `x` inside, later over earlier.
+  - Mirroring: type 0 only, when bit 0 and both flippable bits (7, 6) are set (0x503900 →
+    0x503950, 0x503990). The blit flag bit 0 is a horizontal mirror (0x521834).
+  - Facades: frame = `(id >> 1) & 0x3ff` (0x504a90), never mirrored.
+  - Objects (0x4de290): `left = sx + 40 + off_x - center_x`, `top = sy + 20 + off_y - center_y`.
+    That is the tile centre plus the object's offset fields, minus the frame hotspot. The order
+    of the four values returned by 0x5031c0 (w, h, cx, cy) is not confirmed, and the object draw
+    order is not traced (passes at 0x4d8350, 0x43c690 and others).
 - Not yet investigated: the engine's 5-rotation mirrored-sprite optimisation, item/critter/monster/container/interface art id paths, fonts
   (`art/morph15font.art` and similar), sound formats, `.dlg`, `scr/` scripts, maps (`terrain/`,
   `modules/`), save games.

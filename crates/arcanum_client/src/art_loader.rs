@@ -67,6 +67,11 @@ fn rgba_image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
 #[derive(Asset, TypePath, Debug, Clone)]
 pub struct ArtFrames {
     pub frames: Vec<Handle<Image>>,
+    /// Each frame's hotspot, in pixels from its top-left corner: the point the engine places on
+    /// the art's position.
+    pub centers: Vec<IVec2>,
+    /// Each frame's size in pixels.
+    pub sizes: Vec<UVec2>,
     /// Playback speed from the file, in frames per second.
     pub frame_rate: u32,
 }
@@ -76,6 +81,23 @@ impl ArtFrames {
     pub fn frame(&self, index: usize) -> Option<&Handle<Image>> {
         self.frames.get(index).or(self.frames.last())
     }
+
+    /// The sprite anchor that puts frame `index`'s hotspot on the sprite's position (the last
+    /// frame if there are fewer).
+    pub fn anchor(&self, index: usize) -> bevy::sprite::Anchor {
+        let i = index.min(self.frames.len().saturating_sub(1));
+        let (Some(center), Some(size)) = (self.centers.get(i), self.sizes.get(i)) else { return bevy::sprite::Anchor::CENTER };
+        hotspot_anchor(*center, *size)
+    }
+}
+
+/// The anchor (fractions of the size from the middle, y up) for a hotspot at `center` pixels
+/// from the top-left of a `size` image.
+pub fn hotspot_anchor(center: IVec2, size: UVec2) -> bevy::sprite::Anchor {
+    if size.x == 0 || size.y == 0 {
+        return bevy::sprite::Anchor::CENTER;
+    }
+    bevy::sprite::Anchor(Vec2::new(center.x as f32 / size.x as f32 - 0.5, 0.5 - center.y as f32 / size.y as f32))
 }
 
 /// Loads `.art` files as [`ArtFrames`]. Shares the extension with the other `.art` loaders;
@@ -99,15 +121,19 @@ impl AssetLoader for ArtFramesLoader {
         let art = ArtFile::parse(&bytes).map_err(ArtLoadError::Art)?;
         let palette = art.default_palette().map_err(ArtLoadError::Art)?;
         let mut frames = Vec::with_capacity(art.frame_count);
+        let mut centers = Vec::with_capacity(art.frame_count);
+        let mut sizes = Vec::with_capacity(art.frame_count);
         for index in 0..art.frame_count {
             let frame = art.decode_frame(0, index, palette).map_err(ArtLoadError::Art)?;
+            centers.push(IVec2::new(frame.info.center_x, frame.info.center_y));
+            sizes.push(UVec2::new(frame.info.width, frame.info.height));
             let image = rgba_image(frame.info.width, frame.info.height, frame.rgba);
             frames.push(load_context.add_labeled_asset(format!("frame{index}"), image));
         }
         if frames.is_empty() {
             return Err(ArtLoadError::Art(ArtError::NoFrames));
         }
-        Ok(ArtFrames { frames, frame_rate: art.frame_rate })
+        Ok(ArtFrames { frames, centers, sizes, frame_rate: art.frame_rate })
     }
 
     fn extensions(&self) -> &[&str] {
