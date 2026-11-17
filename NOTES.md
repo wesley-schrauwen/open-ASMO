@@ -269,10 +269,29 @@ Recovered by inspecting data and by reverse engineering `Arcanum.exe` with the R
   - Mirroring: type 0 only, when bit 0 and both flippable bits (7, 6) are set (0x503900 →
     0x503950, 0x503990). The blit flag bit 0 is a horizontal mirror (0x521834).
   - Facades: frame = `(id >> 1) & 0x3ff` (0x504a90), never mirrored.
-  - Objects (0x4de290): `left = sx + 40 + off_x - center_x`, `top = sy + 20 + off_y - center_y`.
-    That is the tile centre plus the object's offset fields, minus the frame hotspot. The order
-    of the four values returned by 0x5031c0 (w, h, cx, cy) is not confirmed, and the object draw
-    order is not traced (passes at 0x4d8350, 0x43c690 and others).
+- **Objects on screen** (`crates/arcanum_client/src/world_render.rs`; a second Sonnet agent).
+  Checked by eye on two Shrouded Hills houses, with `DEBUG_ARCANUM_START=90266,84096` and
+  `90330,84122`.
+  - **Render passes.** Render callback 0x4046f0 runs 0x4d8350 (blend/light), 0x4d6950 (ground),
+    0x43c690 (hover highlight), **0x43b390 (objects)**, 0x439140 (roofs, likely), 0x4d5f10,
+    0x4d5310, then 0x4c95f0 (UI).
+  - **Placement.** The tile centre plus fields `offset_x`/`offset_y`, minus the frame hotspot.
+    `0x5031c0(aid, out)` returns w, h, cx, cy, dx, dy (confirmed).
+    - Rotation (0x502880) is bits 11..13 for walls, portals, scenery and critters.
+    - Frame (0x502b50) is 0 for walls and bits 14..18 for portals and scenery.
+    - Walls and portals in rotations 0, 1, 6, 7 move the hotspot by (−40, +20).
+    - Id bit 0 mirrors walls and portals, with `cx = w − cx − 2`.
+    - The 8-to-5 rotation mirror applies to critters only (art types 2, 0xC, 0xD).
+  - **Draw order.** A sort queue (0x443440 append, qsort comparator 0x443600, ascending key).
+    - Flat objects (flags 0x4) draw first, at 200,000,000 + n. Others draw at 600,000,000 + n.
+    - Sub-art (flag 0x10000) is at 0+, effects at 400M+, overlays at 600M and 700M+.
+    - n counts in scan order: tiles a screen row at a time (inferred), objects in tile list
+      order. There is no screen-y comparator.
+  - **Hidden.** Flags 0x1, 0x2 (default mask, 0x43a4f0) and 0x100 (0x43a4fa) are not drawn.
+  - **Not done.**
+    - Wall cutaway: type-0 objects with field 0x27 & 6, wall rotation in {0, 1, 6, 7}, and
+      0x439fa0(loc) set are skipped. This is presumably the cutaway near the PC.
+    - Scale: field `blit_scale` is a percent, and flag 0x80 doubles the rect.
 - Not yet investigated: the engine's 5-rotation mirrored-sprite optimisation, item/critter/monster/container/interface art id paths, fonts
   (`art/morph15font.art` and similar), sound formats, `.dlg`, `scr/` scripts, maps (`terrain/`,
   `modules/`), save games.

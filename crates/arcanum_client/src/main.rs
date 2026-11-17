@@ -69,6 +69,11 @@ fn main() {
         .insert_resource(arcanum_client::sim_bridge::HostSettings {
             save_dir: config::path_from_env().and_then(|p| p.parent().map(|d| d.join("saves"))),
             manual_clock: false,
+            // Debugging aid: `DEBUG_ARCANUM_START=x,y` starts new games on that tile.
+            start_at: std::env::var("DEBUG_ARCANUM_START").ok().and_then(|v| {
+                let (x, y) = v.split_once(',')?;
+                Some(arcanum_formats::map::TileLoc { x: x.trim().parse().ok()?, y: y.trim().parse().ok()? })
+            }),
         })
         .add_plugins((arcanum_client::sim_bridge::SimBridgePlugin, arcanum_client::WorldRenderPlugin));
 
@@ -131,6 +136,9 @@ fn start_debug_game(
 #[derive(Resource)]
 struct ScreenshotPath(String);
 
+/// Ground tiles and map objects.
+type WorldSprite = Or<(With<arcanum_client::world_render::GroundTile>, With<arcanum_client::world_render::MapObject>)>;
+
 /// The screenshot waits for the world, not the first screen on the way.
 #[derive(Resource)]
 struct ScreenshotTheWorld;
@@ -168,7 +176,7 @@ fn screen_ready(
     editor: Query<(), With<arcanum_client::character_editor::CharacterEditorScreen>>,
     world: Option<Res<arcanum_client::world_render::ClientMap>>,
     tiles: Query<(), With<arcanum_client::world_render::GroundTile>>,
-    waiting: Query<&Visibility, With<arcanum_client::world_render::GroundTile>>,
+    waiting: Query<&Visibility, WorldSprite>,
     state: Res<State<AppState>>,
     for_world: Option<Res<ScreenshotTheWorld>>,
     images: Res<Assets<Image>>,

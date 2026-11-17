@@ -46,6 +46,8 @@ pub struct HostSettings {
     pub save_dir: Option<PathBuf>,
     /// One host tick per frame, whatever the wall clock says (tests).
     pub manual_clock: bool,
+    /// Start new games here instead of the start map's position (debugging).
+    pub start_at: Option<TileLoc>,
 }
 
 pub struct SimBridgePlugin;
@@ -80,7 +82,10 @@ pub fn start_host(world: &mut World) {
 
     let mut host = LocalHost::new(rules);
     match start {
-        Some(Ok(start)) => {
+        Some(Ok(mut start)) => {
+            if let Some(at) = settings.start_at {
+                start.position = at;
+            }
             host.sim.app.insert_resource(start);
         }
         Some(Err(e)) => warn!("no start map, so no world to start: {e}"),
@@ -228,7 +233,7 @@ mod tests {
     #[test]
     fn the_accepted_character_is_saved() {
         let dir = tempfile::tempdir().unwrap();
-        let mut app = app(HostSettings { save_dir: Some(dir.path().to_path_buf()), manual_clock: true });
+        let mut app = app(HostSettings { save_dir: Some(dir.path().to_path_buf()), manual_clock: true, start_at: None });
         enter(&mut app, AppState::NewGameChoice);
         let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 } };
         app.world_mut().non_send_mut::<LocalHostRes>().0.sim.app.insert_resource(start.clone());

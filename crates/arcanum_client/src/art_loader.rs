@@ -62,8 +62,9 @@ fn rgba_image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
     )
 }
 
-/// Every frame of rotation 0 of an `.art` file, each as its own [`Image`] (sub-assets labelled
-/// `frame0`, `frame1`, ...). Used for multi-state art such as buttons.
+/// Every frame of an `.art` file, each as its own [`Image`]: rotation 0's labelled `frame0`,
+/// `frame1`, ..., the other rotations' `r1frame0`, .... Used for multi-state art such as buttons
+/// and for world objects.
 #[derive(Asset, TypePath, Debug, Clone)]
 pub struct ArtFrames {
     pub frames: Vec<Handle<Image>>,
@@ -74,12 +75,35 @@ pub struct ArtFrames {
     pub sizes: Vec<UVec2>,
     /// Playback speed from the file, in frames per second.
     pub frame_rate: u32,
+    /// Every rotation in the file (1 or 8), rotation 0 first (the same as the fields above).
+    pub rotations: Vec<ArtRotation>,
+}
+
+/// One rotation's frames, hotspots and sizes.
+#[derive(Debug, Clone)]
+pub struct ArtRotation {
+    pub frames: Vec<Handle<Image>>,
+    pub centers: Vec<IVec2>,
+    pub sizes: Vec<UVec2>,
+}
+
+impl ArtRotation {
+    /// Frame `index` (the last frame if there are fewer) with its hotspot and size.
+    pub fn frame(&self, index: usize) -> Option<(&Handle<Image>, IVec2, UVec2)> {
+        let i = index.min(self.frames.len().checked_sub(1)?);
+        Some((&self.frames[i], *self.centers.get(i)?, *self.sizes.get(i)?))
+    }
 }
 
 impl ArtFrames {
     /// Frame `index`, or the last frame if there are fewer.
     pub fn frame(&self, index: usize) -> Option<&Handle<Image>> {
         self.frames.get(index).or(self.frames.last())
+    }
+
+    /// Rotation `index`, or rotation 0 when the file has only one.
+    pub fn rotation(&self, index: usize) -> Option<&ArtRotation> {
+        self.rotations.get(index).or(self.rotations.first())
     }
 
     /// The sprite anchor that puts frame `index`'s hotspot on the sprite's position (the last
@@ -120,20 +144,23 @@ impl AssetLoader for ArtFramesLoader {
         reader.read_to_end(&mut bytes).await.map_err(ArtLoadError::Io)?;
         let art = ArtFile::parse(&bytes).map_err(ArtLoadError::Art)?;
         let palette = art.default_palette().map_err(ArtLoadError::Art)?;
-        let mut frames = Vec::with_capacity(art.frame_count);
-        let mut centers = Vec::with_capacity(art.frame_count);
-        let mut sizes = Vec::with_capacity(art.frame_count);
-        for index in 0..art.frame_count {
-            let frame = art.decode_frame(0, index, palette).map_err(ArtLoadError::Art)?;
-            centers.push(IVec2::new(frame.info.center_x, frame.info.center_y));
-            sizes.push(UVec2::new(frame.info.width, frame.info.height));
-            let image = rgba_image(frame.info.width, frame.info.height, frame.rgba);
-            frames.push(load_context.add_labeled_asset(format!("frame{index}"), image));
+        let mut rotations = Vec::with_capacity(art.rotation_count);
+        for rotation in 0..art.rotation_count {
+            let mut r = ArtRotation { frames: Vec::new(), centers: Vec::new(), sizes: Vec::new() };
+            for index in 0..art.frame_count {
+                let frame = art.decode_frame(rotation, index, palette).map_err(ArtLoadError::Art)?;
+                r.centers.push(IVec2::new(frame.info.center_x, frame.info.center_y));
+                r.sizes.push(UVec2::new(frame.info.width, frame.info.height));
+                let image = rgba_image(frame.info.width, frame.info.height, frame.rgba);
+                let label = if rotation == 0 { format!("frame{index}") } else { format!("r{rotation}frame{index}") };
+                r.frames.push(load_context.add_labeled_asset(label, image));
+            }
+            rotations.push(r);
         }
-        if frames.is_empty() {
+        let Some(first) = rotations.first().filter(|r| !r.frames.is_empty()).cloned() else {
             return Err(ArtLoadError::Art(ArtError::NoFrames));
-        }
-        Ok(ArtFrames { frames, centers, sizes, frame_rate: art.frame_rate })
+        };
+        Ok(ArtFrames { frames: first.frames, centers: first.centers, sizes: first.sizes, frame_rate: art.frame_rate, rotations })
     }
 
     fn extensions(&self) -> &[&str] {
