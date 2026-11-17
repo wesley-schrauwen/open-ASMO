@@ -5,7 +5,7 @@
 //! menu, the pre-made picker or character creation), with the game's rules and start map, and
 //! dropped on going back to the main or Single Player menu. Each frame the bridge sends the
 //! [`CharacterHost`]'s queued intents, updates the host, and hands the deltas that came back to
-//! the [`CharacterHost`]; the local PC's `Spawn` is kept in [`LocalPc`].
+//! the [`CharacterHost`]; the local PC's `Spawn` is kept in [`LocalPc`] and its map in [`LocalMap`].
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -35,6 +35,10 @@ pub struct LocalHostRes(pub LocalHost);
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct LocalPc(pub Option<(NetId, TileLoc)>);
 
+/// The map the host put the local player on (a folder under `maps/`).
+#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
+pub struct LocalMap(pub Option<String>);
+
 /// How to make the local host.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct HostSettings {
@@ -54,6 +58,7 @@ impl Plugin for SimBridgePlugin {
         app.init_resource::<HostSettings>()
             .init_resource::<CharacterHost>()
             .init_resource::<LocalPc>()
+            .init_resource::<LocalMap>()
             .add_systems(OnEnter(AppState::MainMenu), stop_host)
             .add_systems(OnEnter(AppState::SinglePlayer), stop_host)
             .add_systems(PostUpdate, (share_rules, send_intents, run_host, receive_deltas).chain());
@@ -97,6 +102,7 @@ pub fn start_host(world: &mut World) {
     // Anything the old CharacterHost had in flight was for a host that is gone.
     world.insert_resource(CharacterHost::default());
     world.insert_resource(LocalPc::default());
+    world.insert_resource(LocalMap::default());
 }
 
 fn stop_host(world: &mut World) {
@@ -134,7 +140,13 @@ fn run_host(host: Option<NonSendMut<LocalHostRes>>, mut reported: Local<Option<S
     }
 }
 
-fn receive_deltas(link: Option<Res<HostLink>>, mut character: ResMut<CharacterHost>, mut pc: ResMut<LocalPc>, data: Option<Res<CreationData>>) {
+fn receive_deltas(
+    link: Option<Res<HostLink>>,
+    mut character: ResMut<CharacterHost>,
+    mut pc: ResMut<LocalPc>,
+    mut map: ResMut<LocalMap>,
+    data: Option<Res<CreationData>>,
+) {
     let Some(link) = link else { return };
     let deltas = link.0.recv_deltas();
     if deltas.is_empty() {
@@ -150,6 +162,9 @@ fn receive_deltas(link: Option<Res<HostLink>>, mut character: ResMut<CharacterHo
     };
     for delta in &deltas {
         character.receive(rules, delta);
+        if let LedgerDelta::EnterMap { map: name } = delta {
+            map.0 = Some(name.clone());
+        }
         if let LedgerDelta::Spawn { net_id, kind: EntityKind::Pc { player }, position } = delta
             && *player == link.0.player()
         {
@@ -221,6 +236,7 @@ mod tests {
         app.update();
         app.update();
         assert_eq!(app.world().resource::<LocalPc>().0, Some((NetId(0), start.position)), "the PC is in the world");
+        assert_eq!(app.world().resource::<LocalMap>().0.as_deref(), Some(start.map.as_str()));
         let files: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().path()).collect();
         assert_eq!(files.len(), 1, "{files:?}");
         let save = WorldSave::read(&files[0]).unwrap();

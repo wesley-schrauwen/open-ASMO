@@ -26,6 +26,9 @@ pub enum LedgerDelta {
     CharacterUpdate { player: PlayerId, ack: u32, creation: Creation },
     /// The player's character was accepted; the world is booting.
     CharacterAccepted { player: PlayerId },
+    /// The player is now on `map` (a folder under `maps/`). Sent before the player's PC spawns:
+    /// the client reads the map's unchanged content from its own copy of the game data.
+    EnterMap { map: String },
     /// An entity appeared.
     Spawn { net_id: NetId, kind: EntityKind, position: TileLoc },
     /// An entity started along a path.
