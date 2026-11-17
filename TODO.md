@@ -23,6 +23,13 @@ Things to pick up later. Larger plans live in `plans/`; project state and findin
   blocked by NPCs also pause, and what happens if the PC is still in the way after the pause
   (replan round it, or wait again). Also: an NPC sharing a tile with a PC walks to the nearest
   free tile once nothing on it is moving.
+- **World drawing gaps** (`world_render`, `NOTES.md` → "Objects on screen"):
+  - wall cutaway near the PC;
+  - roofs (pass 0x439140);
+  - shadows, overlays and blit effects (`blit_flags`, `blit_scale`, flag 0x80);
+  - prototype art for objects with no `current_aid`;
+  - same-tile list order in depth;
+  - re-origin of the depth key when the PC goes far.
 - **Client sector unloading:** the client reads sectors round the PC as it moves and never
   drops them or their tile sprites (`world_render`).
 - **Sector streaming on the host:** sectors are loaded around each PC when it spawns

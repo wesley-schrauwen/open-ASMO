@@ -5,7 +5,8 @@
 //! sectors around the PC itself into a [`LoadedMap`] (the same reader the host uses). Each
 //! ground tile becomes a sprite centred on its [`isometric`](crate::isometric) position in the
 //! original's fixed 78 x 40 rectangle (the original ignores a tile art's hotspot). Walls,
-//! portals and scenery are not drawn yet.
+//! portals and scenery are sprites anchored on their frame's hotspot at the tile centre plus
+//! their offset fields, in the original's draw order ([`object_depth`]).
 //!
 //! World units are the original's screen pixels; on entering the world the camera zooms so the
 //! window shows as many of them vertically as the original's 600-pixel screen.
@@ -14,11 +15,12 @@ use std::collections::{HashMap, HashSet};
 
 use arcanum_formats::art_id::{ArtId, ArtIndex};
 use arcanum_formats::map::{SECTOR_TILES as SECTOR_SIZE, SectorId, TileLoc};
+use arcanum_formats::object::{TYPE_PORTAL, TYPE_SCENERY, TYPE_WALL};
 use arcanum_sim::LoadedMap;
 use bevy::image::{ImageFilterMode, ImageSampler};
 use bevy::prelude::*;
 
-use crate::art_loader::ArtFrames;
+use crate::art_loader::{ArtFrames, hotspot_anchor};
 use crate::isometric::{ORIGINAL_SCREEN_HEIGHT, TILE_SIZE, tile_to_world};
 use crate::main_menu::{AppState, MenuBackground};
 use crate::settings::BASELINE_HEIGHT;
@@ -48,20 +50,77 @@ pub struct ClientMap {
     pub drawn: HashSet<SectorId>,
     paths: HashMap<u32, Option<String>>,
     frames: HashMap<String, Handle<ArtFrames>>,
-    /// Tiles whose art id has no path (they are left out).
+    /// Tiles and objects whose art id has no path (they are left out).
     pub unresolved: usize,
+    /// Objects with no `current_aid` of their own (the original falls back to the prototype's,
+    /// which is not read yet): left out.
+    pub no_art: usize,
 }
 
 /// A ground tile.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroundTile(pub TileLoc);
 
-/// A sprite waiting for its `.art` to load: frame `frame` of `art`.
+/// A wall, portal or scenery object from a sector.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapObject {
+    pub location: TileLoc,
+    pub object_type: u32,
+}
+
+/// A sprite waiting for its `.art` to load: frame `frame` of rotation `rotation` of `art`.
+/// Ground tiles are centred on their position (`hotspot: None`); objects put their frame's
+/// hotspot there, adjusted by [`ObjectArt`].
 #[derive(Component)]
 struct PendingArt {
     art: Handle<ArtFrames>,
+    rotation: usize,
     frame: usize,
+    hotspot: Option<ObjectArt>,
 }
+
+/// How an object's art id changes where its frame's hotspot is (0x5031c0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObjectArt {
+    /// Walls and portals in rotations 0, 1, 6 and 7: the hotspot moves 40 left and 20 down.
+    pub half_tile: bool,
+    /// Walls and portals with id bit 0: mirrored left to right, hotspot x = width - x - 2.
+    pub mirrored: bool,
+}
+
+impl ObjectArt {
+    pub fn of(id: ArtId) -> Self {
+        let wall_or_portal = matches!(id.art_type(), 1 | 3);
+        let rotation = id.rotation();
+        Self { half_tile: wall_or_portal && !(2..=5).contains(&rotation), mirrored: wall_or_portal && id.0 & 1 == 1 }
+    }
+
+    /// The hotspot to anchor on, from the frame's stored one.
+    pub fn hotspot(self, mut center: IVec2, size: UVec2) -> IVec2 {
+        if self.half_tile {
+            center += IVec2::new(-40, 20);
+        }
+        if self.mirrored {
+            center.x = size.x as i32 - center.x - 2;
+        }
+        center
+    }
+}
+
+/// The frame an object's art id shows (0x502b50): walls always 0, portals and scenery bits 14..18.
+pub fn object_frame(id: ArtId) -> usize {
+    if id.art_type() == 1 { 0 } else { ((id.0 >> 14) & 0x1f) as usize }
+}
+
+/// Object flags the original's object pass skips (0x43b390): 0x1 and 0x2 (the default mask at
+/// 0x43a4f0, likely off and don't-draw) and 0x100 (mask at 0x43a4fa).
+pub const HIDDEN_FLAGS: i32 = 0x1 | 0x2 | 0x100;
+
+/// Object flag 0x4: drawn in the earlier ("flat") class, under every other object.
+pub const FLAT_FLAG: i32 = 0x4;
+
+/// The object types drawn.
+const DRAWN_OBJECTS: [u32; 3] = [TYPE_WALL, TYPE_PORTAL, TYPE_SCENERY];
 
 fn enter_world(
     mut commands: Commands,
@@ -72,6 +131,8 @@ fn enter_world(
     for mut projection in &mut cameras {
         if let Projection::Orthographic(o) = &mut *projection {
             o.scale = ORIGINAL_SCREEN_HEIGHT / BASELINE_HEIGHT;
+            o.near = -DEPTH_RANGE;
+            o.far = DEPTH_RANGE;
         }
     }
     for mut visibility in &mut background {
@@ -87,7 +148,8 @@ fn leave_world(
     commands.remove_resource::<ClientMap>();
     for (mut projection, mut transform) in &mut cameras {
         if let Projection::Orthographic(o) = &mut *projection {
-            o.scale = 1.0;
+            let menu = OrthographicProjection::default_2d();
+            (o.scale, o.near, o.far) = (1.0, menu.near, menu.far);
         }
         transform.translation = Vec3::ZERO;
     }
@@ -145,18 +207,77 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
                     Sprite { flip_x: tile.is_mirrored(), custom_size: Some(TILE_SIZE), ..default() },
                     Transform::from_translation(tile_to_world(loc, origin).extend(0.0)),
                     Visibility::Hidden,
-                    PendingArt { art: handle, frame },
+                    PendingArt { art: handle, rotation: 0, frame, hotspot: None },
                     DespawnOnExit(AppState::InGame),
                 ));
             }
         }
+        for object in &sector.objects {
+            let flags = object.int("flags").unwrap_or(0);
+            if !DRAWN_OBJECTS.contains(&object.object_type) || flags & HIDDEN_FLAGS != 0 {
+                continue;
+            }
+            let Some(aid) = object.art_id() else {
+                client.no_art += 1;
+                continue;
+            };
+            let Some(location) = object_location(object) else { continue };
+            let path = client.paths.entry(aid.0).or_insert_with(|| art.path(aid)).clone();
+            let Some(path) = path else {
+                client.unresolved += 1;
+                continue;
+            };
+            let handle = client.frames.entry(path.clone()).or_insert_with(|| assets.load(path)).clone();
+            let offset = Vec2::new(object.int("offset_x").unwrap_or(0) as f32, -(object.int("offset_y").unwrap_or(0) as f32));
+            let at = tile_to_world(location, origin) + offset;
+            commands.spawn((
+                MapObject { location, object_type: object.object_type },
+                Sprite::default(),
+                Transform::from_translation(at.extend(object_depth(location, origin, flags & FLAT_FLAG != 0))),
+                Visibility::Hidden,
+                PendingArt { art: handle, rotation: aid.rotation() as usize, frame: object_frame(aid), hotspot: Some(ObjectArt::of(aid)) },
+                DespawnOnExit(AppState::InGame),
+            ));
+        }
         client.drawn.insert(id);
+    }
+}
+
+/// An object's `location` field.
+fn object_location(object: &arcanum_formats::object::Object) -> Option<TileLoc> {
+    match object.field("location")? {
+        arcanum_formats::object::Value::Int64(Some(packed)) => Some(TileLoc::from_packed(*packed)),
+        _ => None,
     }
 }
 
 /// The frame of a facade's `.art` that a facade tile shows: bits 1..10 (0x504a90).
 pub fn facade_frame(id: ArtId) -> usize {
     ((id.0 >> 1) & 0x3ff) as usize
+}
+
+/// Screen rows (and places along a row) either side of the origin's that [`object_depth`]
+/// keeps in order: 1024, about 512 tiles.
+pub const DEPTH_REACH: i64 = 1024;
+
+/// The camera's depth range in the world: wide enough for every [`object_depth`].
+pub const DEPTH_RANGE: f32 = (1 << 24) as f32;
+
+/// Draw depth of an object. The original sorts objects into classes (flat ones first, at
+/// 200,000,000 + n; the rest at 600,000,000 + n) and, inside a class, keeps the order it scans
+/// tiles in, a screen row at a time (0x43b390, comparator 0x443600). Here the depth is a whole
+/// number below 2^24, so `f32` holds it exactly: class (1 bit), the tile's screen row `x + y`
+/// (11 bits), its place along the row `y - x` (11 bits), each within [`DEPTH_REACH`] of the
+/// origin (further is clamped), plus one so objects stay in front of the ground at 0. Objects
+/// on the same tile tie (the original keeps its list order). The row-by-row scan is inferred
+/// from the loop, not proven.
+pub fn object_depth(at: TileLoc, origin: TileLoc, flat: bool) -> f32 {
+    let dx = i64::from(at.x) - i64::from(origin.x);
+    let dy = i64::from(at.y) - i64::from(origin.y);
+    let place = |v: i64| (v.clamp(-DEPTH_REACH, DEPTH_REACH - 1) + DEPTH_REACH) as u32;
+    let (row, column) = (place(dx + dy), place(dy - dx));
+    let class = u32::from(!flat);
+    (1 + ((class << 22) | (row << 11) | column)) as f32
 }
 
 /// Gives each waiting sprite its frame once the `.art` has loaded; drops the ones whose art
@@ -170,7 +291,11 @@ fn show_tiles(
 ) {
     for (entity, wait, mut sprite, mut visibility) in &mut pending {
         if let Some(art) = frames.get(&wait.art) {
-            if let Some(image) = art.frame(wait.frame) {
+            if let Some((image, center, size)) = art.rotation(wait.rotation).and_then(|r| r.frame(wait.frame)) {
+                if let Some(object) = wait.hotspot {
+                    sprite.flip_x = object.mirrored;
+                    commands.entity(entity).insert(hotspot_anchor(object.hotspot(center, size), size));
+                }
                 // Nearest sampling: linear filtering blends the colour under transparent pixels
                 // into the tile edges, a visible line round every diamond.
                 if images.get(image).is_some_and(|i| !matches!(i.sampler, ImageSampler::Descriptor(ref d) if d.mag_filter == ImageFilterMode::Nearest))
@@ -195,5 +320,48 @@ fn follow_pc(pc: Res<LocalPc>, client: Res<ClientMap>, mut cameras: Query<&mut T
     for mut transform in &mut cameras {
         transform.translation.x = target.x;
         transform.translation.y = target.y;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn t(x: u32, y: u32) -> TileLoc {
+        TileLoc { x, y }
+    }
+
+    #[test]
+    fn objects_lower_on_screen_draw_later_and_flat_ones_first() {
+        let o = t(1000, 1000);
+        let d = |x, y, flat| object_depth(t(x, y), o, flat);
+        assert!(d(1000, 1000, false) < d(1001, 1000, false), "next row down");
+        assert!(d(1000, 1000, false) < d(1000, 1001, false), "next row down");
+        assert!(d(1001, 1000, false) < d(1000, 1001, false), "same row, further right");
+        assert!(d(1300, 1300, true) < d(700, 700, false), "flat under everything");
+        assert!(d(700, 700, true) > 0.0, "every object over the ground");
+        assert!(d(1000, 1000, false) < DEPTH_RANGE);
+        // Neighbouring rows stay apart in f32.
+        assert_ne!(d(1500, 1500, false), d(1500, 1501, false));
+    }
+
+    #[test]
+    fn wall_and_portal_hotspots_follow_rotation_and_mirroring() {
+        let wall = |rot: u32, flip: u32| ArtId((1 << 28) | (rot << 11) | flip);
+        let (c, size) = (IVec2::new(10, 30), UVec2::new(80, 50));
+        assert_eq!(ObjectArt::of(wall(3, 0)).hotspot(c, size), c);
+        assert_eq!(ObjectArt::of(wall(0, 0)).hotspot(c, size), IVec2::new(-30, 50), "half a tile");
+        assert_eq!(ObjectArt::of(wall(7, 0)).hotspot(c, size), IVec2::new(-30, 50));
+        assert_eq!(ObjectArt::of(wall(3, 1)).hotspot(c, size), IVec2::new(68, 30), "mirrored: 80 - 10 - 2");
+        let scenery = ArtId((4 << 28) | (7 << 11) | 1);
+        assert_eq!(ObjectArt::of(scenery), ObjectArt { half_tile: false, mirrored: false });
+    }
+
+    #[test]
+    fn frames_come_from_the_art_id() {
+        assert_eq!(object_frame(ArtId((1 << 28) | (5 << 14))), 0, "walls always 0");
+        assert_eq!(object_frame(ArtId((4 << 28) | (5 << 14))), 5);
+        assert_eq!(object_frame(ArtId((3 << 28) | (31 << 14) | (7 << 11))), 31);
+        assert_eq!(facade_frame(ArtId((0xb << 28) | (2 << 1))), 2);
     }
 }

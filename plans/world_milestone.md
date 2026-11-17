@@ -337,6 +337,33 @@ Not done, or done differently from the plan:
 - **Tile draw order** is not reproduced (all tiles at the same depth): ground tiles do not
   overlap, so it shows nowhere yet.
 
+## The client draws walls, portals and scenery (rest of step 5)
+
+- Each wall, portal and scenery object of a loaded sector is a sprite. It sits at the tile
+  centre plus its offset fields, anchored on its frame's hotspot.
+- The rotation and frame come from the art id, with the original's wall and portal hotspot and
+  mirroring rules (`NOTES.md` → "Objects on screen").
+- Depth follows the original's classes and scan order. Flat objects draw first, then the others
+  by screen row and place along the row. It is packed into an exact integer depth, and the
+  camera's depth range is widened to hold it.
+- Hidden objects (flags 0x1, 0x2, 0x100) are skipped.
+- `ArtFrames` now loads every rotation.
+- `DEBUG_ARCANUM_START=x,y` starts new games elsewhere on the start map.
+- Checked by eye at the start and in two Shrouded Hills houses: walls join up in every rotation,
+  and furniture, doors and rugs draw in the right order.
+
+Not done:
+
+- **No wall cutaway.** Front walls draw at full height; the original hides some near the PC.
+- **No roofs, shadows, overlays, light or blend effects.** `blit_flags`, `blit_scale` and
+  flag 0x80 are ignored, so the wreck's fires draw opaque.
+- **Objects without their own `current_aid`** (about 3% of scenery) are left out. The
+  original takes the prototype's art; wall, portal and scenery prototypes are not read yet.
+- **No animation:** objects show the frame their art id names.
+- **Objects on the same tile tie in depth.** The original keeps their list order. The depth
+  holds order only within about 512 tiles of the first sector's corner, which needs a
+  re-origin once sectors stream far.
+
 ## Builder's calls (proposed by Claude, not owner decisions)
 
 - `arcanum_sim` uses `bevy_ecs` (and `bevy_app` for scheduling) with no rendering, audio or

@@ -294,7 +294,7 @@ fn menu_app(vfs: Vfs) -> App {
         .init_resource::<GameSettings>()
         .add_plugins((TimePlugin, BitmapTextPlugin, FontsPlugin, MenuAudioPlugin, MainMenuPlugin, OptionsPlugin, ScreensPlugin, LoadingPlugin, LoadGamePlugin, NewGamePlugin, arcanum_client::CreateCharacterPlugin, arcanum_client::CharacterEditorPlugin))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)))
-        .insert_resource(arcanum_client::sim_bridge::HostSettings { save_dir: None, manual_clock: true })
+        .insert_resource(arcanum_client::sim_bridge::HostSettings { save_dir: None, manual_clock: true, start_at: None })
         .add_plugins((arcanum_client::sim_bridge::SimBridgePlugin, arcanum_client::WorldRenderPlugin));
     app
 }
@@ -2314,7 +2314,7 @@ fn world_art_index_files() -> Vec<(&'static str, String)> {
         ("art/tile/tilename.mes", "{200}{flp 0}\n{300}{flr 0}\n".into()),
         ("art/wall/structure.mes", String::new()),
         ("art/portal/portal.mes", String::new()),
-        ("art/scenery/scenery.mes", String::new()),
+        ("art/scenery/scenery.mes", "{1005}{tree.art}\n".into()),
         ("art/facade/facadename.mes", facades),
         ("art/roof/roofname.mes", String::new()),
         ("art/light/light.mes", String::new()),
@@ -2328,7 +2328,8 @@ fn tile_art(frames: usize) -> Vec<u8> {
 
 /// The menu fixture plus the start map "Test" (start 70, 80, in sector (1, 1)) with that sector,
 /// the art index and the tile art. Tile (71, 80) is flipped and flippable, (73, 80) flipped but
-/// not flippable, (72, 80) frame 2 of a facade.
+/// not flippable, (72, 80) frame 2 of a facade. Scenery: a tree on (71, 81) in rotation 2, frame
+/// 1, offset (3, -4); a flat one on (72, 82); a hidden one (flag 0x1) on (73, 83).
 fn world_fixture() -> (Fixture, String) {
     use arcanum_formats::art_id::ArtIndex;
     use arcanum_formats::map::SectorId;
@@ -2340,7 +2341,21 @@ fn world_fixture() -> (Fixture, String) {
     let facade_id = (0xB << 28) | (2 << 1);
     let facade = index.path(arcanum_formats::art_id::ArtId(facade_id)).unwrap();
     let flippable = index.path(arcanum_formats::art_id::ArtId(0xc1)).unwrap();
+    use arcanum_formats::object::{TYPE_SCENERY, Value};
+    use arcanum_formats::test_util::ObjectBuilder;
+    let tree_id = |rotation: u32, frame: u32| (4u32 << 28) | (5 << 19) | (frame << 14) | (rotation << 11) | (1 << 6);
+    let tree = index.path(arcanum_formats::art_id::ArtId(tree_id(0, 0))).unwrap();
+    let scenery = |x: u64, y: u64, aid: u32, flags: i32, offset: (i32, i32)| {
+        ObjectBuilder::new(TYPE_SCENERY)
+            .field("current_aid", Value::Int32(aid as i32))
+            .field("location", Value::Int64(Some(((y << 32) | x) as i64)))
+            .field("offset_x", Value::Int32(offset.0))
+            .field("offset_y", Value::Int32(offset.1))
+            .field("flags", Value::Int32(flags))
+            .build()
+    };
     let mut sector = SectorBuilder::new();
+    sector.objects = vec![scenery(71, 81, tree_id(2, 1), 0, (3, -4)), scenery(72, 82, tree_id(0, 0), 0x4, (0, 0)), scenery(73, 83, tree_id(0, 0), 0x1, (0, 0))];
     sector.tiles[16 * 64 + 7] = 0xc1;
     sector.tiles[16 * 64 + 9] = 1;
     sector.tiles[16 * 64 + 8] = facade_id;
@@ -2359,6 +2374,7 @@ fn world_fixture() -> (Fixture, String) {
         .raw(&format!("maps\\Test\\{}", SectorId::new(1, 1).file_name()), &sector.build())
         .raw(&plain.replace('/', "\\"), &tile_art(1))
         .raw(&flippable.replace('/', "\\"), &tile_art(1))
+        .raw(&tree.replace('/', "\\"), &ArtBuilder::animated(2, |r, f| TestFrame::raw(20, 30, &vec![(r * 2 + f + 1) as u8; 600]).with_offsets((10, 28), (0, 0))).build())
         .raw(&facade.replace('/', "\\"), &tile_art(3));
     for (path, text) in &files {
         dat = dat.raw(&path.replace('/', "\\"), text.as_bytes());
@@ -2410,6 +2426,30 @@ fn the_world_draws_the_ground_round_the_pc() {
     let frames = world.resource::<AssetServer>().get_handle::<ArtFrames>("art/Facade/fac.art");
     let frames = frames.and_then(|h| world.resource::<Assets<ArtFrames>>().get(&h).cloned()).expect("facade art loaded");
     assert_eq!(facade.image, frames.frames[2], "the facade's frame from the tile id");
+
+    // Scenery: the hidden one is left out; the tree shows its rotation and frame, its hotspot
+    // on the tile centre plus its offset; the flat one is under it.
+    use arcanum_client::world_render::{MapObject, object_depth};
+    update_until(&mut app, |app| {
+        let world = app.world_mut();
+        world.query_filtered::<(), (With<MapObject>, With<bevy::sprite::Anchor>)>().iter(world).count() == 2
+    });
+    let world = app.world_mut();
+    let objects: Vec<(TileLoc, Sprite, Transform, bevy::sprite::Anchor)> = world
+        .query::<(&MapObject, &Sprite, &Transform, &bevy::sprite::Anchor)>()
+        .iter(world)
+        .map(|(o, s, t, a)| (o.location, s.clone(), *t, *a))
+        .collect();
+    assert_eq!(objects.len(), 2, "the hidden object is not drawn");
+    let tree = objects.iter().find(|o| o.0 == TileLoc { x: 71, y: 81 }).unwrap();
+    let flat = objects.iter().find(|o| o.0 == TileLoc { x: 72, y: 82 }).unwrap();
+    let art = world.resource::<AssetServer>().get_handle::<ArtFrames>("art/scenery/tree.art").unwrap();
+    let art = world.resource::<Assets<ArtFrames>>().get(&art).unwrap().clone();
+    assert_eq!(tree.1.image, art.rotations[2].frames[1]);
+    assert_eq!(tree.2.translation.truncate(), tile_to_world(TileLoc { x: 71, y: 81 }, origin) + Vec2::new(3.0, 4.0));
+    assert_eq!(tree.2.translation.z, object_depth(TileLoc { x: 71, y: 81 }, origin, false));
+    assert_eq!(tree.3.0, Vec2::new(10.0 / 20.0 - 0.5, 0.5 - 28.0 / 30.0), "the hotspot");
+    assert!(flat.2.translation.z < tree.2.translation.z, "flat objects under the others, though lower on screen");
 
     // The camera is on the PC, zoomed to the original's 600-pixel screen.
     let (transform, projection) = world.query_filtered::<(&Transform, &Projection), With<Camera2d>>().single(world).unwrap();
