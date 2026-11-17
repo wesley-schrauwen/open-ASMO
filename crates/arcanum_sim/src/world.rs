@@ -262,4 +262,101 @@ mod tests {
         assert!(sim.take_deltas().is_empty());
         assert_eq!(pcs(&mut sim).len(), 2);
     }
+
+    fn walk_ticks(sim: &mut SimApp, ticks: usize) {
+        for _ in 0..ticks {
+            sim.update();
+        }
+    }
+
+    fn position(sim: &mut SimApp, player: u64) -> TileLoc {
+        pcs(sim).into_iter().find(|pc| pc.1 == PlayerId(player)).unwrap().2
+    }
+
+    fn send_move(sim: &mut SimApp, player: u64, seq: u32, path: &[(u32, u32)]) {
+        let path = path.iter().map(|&(x, y)| TileLoc { x, y }).collect();
+        sim.receive([(PlayerId(player), crate::PlayerIntent::Move { seq, path })]);
+    }
+
+    /// Ticks for `tiles` steps at walking speed, rounded up.
+    fn ticks_for(tiles: usize) -> usize {
+        (tiles as f64 * crate::TICK_HZ / crate::WALK_TILES_PER_SECOND).ceil() as usize + 1
+    }
+
+    #[test]
+    fn a_valid_move_walks_the_pc_and_reaches_the_others() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 }), (9, "B", TileLoc { x: 90, y: 90 })]));
+        sim.take_deltas();
+        send_move(&mut sim, 7, 1, &[(70, 80), (71, 81), (72, 81)]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        let path = vec![TileLoc { x: 71, y: 81 }, TileLoc { x: 72, y: 81 }];
+        assert_eq!(deltas, vec![(PlayerId(9), LedgerDelta::Move { net_id: NetId(0), path })], "only the other player is told");
+        assert_eq!(position(&mut sim, 7), TileLoc { x: 70, y: 80 }, "not a whole step yet");
+        walk_ticks(&mut sim, ticks_for(2));
+        assert_eq!(position(&mut sim, 7), TileLoc { x: 72, y: 81 });
+        let world = sim.app.world_mut();
+        assert_eq!(world.query::<&crate::Walking>().iter(world).count(), 0, "stopped at the end");
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(save.players[&PlayerId(7)].position, TileLoc { x: 72, y: 81 }, "the save has where it stopped");
+        assert!(sim.take_deltas().is_empty());
+    }
+
+    #[test]
+    fn a_blocked_move_is_corrected() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let at = TileLoc { x: 66, y: 69 };
+        let mut sim = booted(dir.path(), save(&[(7, "A", at)]));
+        sim.take_deltas();
+        // (67, 69) is mask-blocked.
+        send_move(&mut sim, 7, 4, &[(66, 69), (67, 69), (68, 69)]);
+        sim.update();
+        assert_eq!(sim.take_deltas(), vec![(PlayerId(7), LedgerDelta::MoveCorrection { net_id: NetId(0), seq: 4, position: at })]);
+        // Out of the loaded sectors: (1, 1) is the only sector with a file.
+        send_move(&mut sim, 7, 5, &[(65, 69), (64, 69), (63, 69)]);
+        sim.update();
+        assert_eq!(sim.take_deltas(), vec![(PlayerId(7), LedgerDelta::MoveCorrection { net_id: NetId(0), seq: 5, position: at })]);
+        walk_ticks(&mut sim, ticks_for(3));
+        assert_eq!(position(&mut sim, 7), at);
+    }
+
+    #[test]
+    fn a_client_running_ahead_is_corrected_where_the_host_has_it() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 })]));
+        sim.take_deltas();
+        send_move(&mut sim, 7, 1, &[(71, 80), (72, 80), (73, 80), (74, 80), (75, 80)]);
+        sim.update();
+        walk_ticks(&mut sim, ticks_for(1));
+        let host_at = position(&mut sim, 7);
+        assert_eq!(host_at, TileLoc { x: 71, y: 80 });
+        // The client claims to be at (74, 80) already.
+        send_move(&mut sim, 7, 2, &[(74, 80), (74, 81)]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        let LedgerDelta::MoveCorrection { seq: 2, position: stopped, .. } = deltas[0].1 else { panic!("{deltas:?}") };
+        assert!(stopped.x <= 72, "where the host had it, not where the client said: {stopped:?}");
+        walk_ticks(&mut sim, ticks_for(4));
+        assert_eq!(position(&mut sim, 7), stopped, "and it stopped there");
+        // A path from one step ahead of the host is fine.
+        send_move(&mut sim, 7, 3, &[(stopped.x + 1, 80), (stopped.x + 2, 80)]);
+        sim.update();
+        walk_ticks(&mut sim, ticks_for(2));
+        assert_eq!(position(&mut sim, 7), TileLoc { x: stopped.x + 2, y: 80 });
+    }
+
+    #[test]
+    fn moves_from_players_without_a_pc_are_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 })]));
+        sim.take_deltas();
+        send_move(&mut sim, 8, 1, &[(70, 80), (71, 80)]);
+        sim.update();
+        assert!(sim.take_deltas().is_empty());
+    }
 }

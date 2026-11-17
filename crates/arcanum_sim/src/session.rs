@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use arcanum_rules::{CharacterBlueprint, RulesData};
 use bevy_ecs::prelude::*;
 
-use crate::{Creation, LedgerDelta, NetId, PlayerId, PlayerIntent, StartMap, WorldState};
+use crate::{Creation, LedgerDelta, MoveRequests, NetId, PlayerId, PlayerIntent, StartMap, WorldState};
 
 /// The rules the host applies.
 #[derive(Resource, Debug, Clone, Default)]
@@ -40,7 +40,8 @@ pub struct Session {
     pub players: HashMap<PlayerId, SessionPlayer>,
 }
 
-/// Answers the intents in the [`Inbox`].
+/// Answers the intents in the [`Inbox`]. Moves are passed on to
+/// [`apply_moves`](crate::apply_moves) as [`MoveRequests`].
 ///
 /// Every character request gets a `CharacterUpdate` with the host's copy and the request's
 /// `seq`, refused or not. A finished character gets `CharacterAccepted` first, so a client
@@ -54,6 +55,7 @@ pub fn handle_intents(
     rules: Res<SimRules>,
     start: Option<Res<StartMap>>,
     mut world: ResMut<WorldState>,
+    mut moves: ResMut<MoveRequests>,
 ) {
     for (player, intent) in inbox.0.drain(..) {
         match intent {
@@ -75,8 +77,7 @@ pub fn handle_intents(
                 }
                 outbox.0.push((player, update));
             }
-            // Movement arrives with the world.
-            PlayerIntent::MoveTo(_) => {}
+            PlayerIntent::Move { seq, path } => moves.0.push((player, seq, path)),
         }
     }
 }

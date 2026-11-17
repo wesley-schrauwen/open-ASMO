@@ -14,6 +14,7 @@ pub enum PlayerIntent {
     /// A character creation request. `seq` counts up per client; the host echoes the last one
     /// it applied so the client can replay the requests still in flight on top.
     Character { seq: u32, request: CharacterRequest },
-    /// Move the player's PC to a tile.
-    MoveTo(TileLoc),
+    /// The path the client is walking its PC along, from its current tile (or one step ahead
+    /// of it) to the goal. `seq` counts up per client and comes back with a correction.
+    Move { seq: u32, path: Vec<TileLoc> },
 }
