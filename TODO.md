@@ -21,7 +21,8 @@ Things to pick up later. Larger plans live in `plans/`; project state and findin
   blocked by a PC stops for 5 s (150 ticks), then replans from where it stands; PCs replan at
   once (`plans/world_milestone.md`, "Pathfinding and movement validation"). Open: whether NPCs
   blocked by NPCs also pause, and what happens if the PC is still in the way after the pause
-  (replan round it, or wait again).
+  (replan round it, or wait again). Also: an NPC sharing a tile with a PC walks to the nearest
+  free tile once nothing on it is moving.
 - **Sector streaming on the host:** sectors are loaded around each PC when it spawns
   (`SECTOR_RADIUS` = 1, a 3 x 3 block) and never unloaded. Load as PCs move, and unload what no
   PC is near.

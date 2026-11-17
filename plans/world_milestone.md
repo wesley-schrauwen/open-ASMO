@@ -301,6 +301,9 @@ Not done, or done differently from the plan:
 - **NPCs give way to PCs (owner's rule, for when NPCs move).** PCs do not block for each other
   out of combat, but they do for NPCs: when an NPC's next step is blocked by a PC, the NPC stops all movement for 5 s (150 ticks), then plans a new route from
   where it stands. PCs keep replanning at once. The pause is not built: there are no NPCs yet.
+- **NPCs step out of a shared tile (owner's rule).** Out of combat a PC may end up on an NPC's
+  tile. Once nothing on that tile is moving, the NPC walks to the nearest tile no actor stands
+  on. The host plans that step, since it owns NPCs.
 - **No tether and no combat rules** yet: the check is walkable tiles and speed only.
 - **A move is not stamped with a tick,** and the relayed `Move` has no `seq`.
 
