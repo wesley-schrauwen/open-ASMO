@@ -628,6 +628,7 @@ fn place_actors(
 ) {
     let Some(client) = client else { return };
     let Some(origin) = client.origin else { return };
+    let depth_origin = client.depth_origin.unwrap_or(origin);
     for (actor, mut animation, mut transform) in &mut actors {
         let here = tile_to_world(actor.at, origin);
         let pos = here + actor.drawn_offset();
@@ -635,7 +636,7 @@ fn place_actors(
             Some(&next) if tile_to_world(next, origin).y < here.y => next,
             _ => actor.at,
         };
-        transform.translation = pos.extend(object_depth(depth_tile, origin, false, DEPTH_TILE_ORDER - 1));
+        transform.translation = pos.extend(object_depth(depth_tile, depth_origin, false, DEPTH_TILE_ORDER - 1));
         let art = actor.current_art();
         let Some(mut path) = client.art_path(art) else { continue };
         // A body with no art for this animation (two have no standing art) shows its walk.

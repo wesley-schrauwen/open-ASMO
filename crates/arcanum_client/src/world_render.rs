@@ -37,7 +37,7 @@ impl Plugin for WorldRenderPlugin {
             .init_resource::<MapDeltas>()
             .add_systems(
                 Update,
-                (load_sectors, apply_map_deltas, drop_far_sectors, draw_sectors, animate_doors, show_tiles, follow_pc).chain().run_if(in_state(AppState::InGame)),
+                (load_sectors, rebase_depth, apply_map_deltas, drop_far_sectors, draw_sectors, animate_doors, show_tiles, follow_pc).chain().run_if(in_state(AppState::InGame)),
             );
     }
 }
@@ -49,6 +49,9 @@ pub struct ClientMap {
     /// The tile at world position (0, 0): the corner of the PC's first sector. Map positions
     /// run to millions of pixels, too large for `f32` world coordinates to stay exact.
     pub origin: Option<TileLoc>,
+    /// The tile [`object_depth`] counts from. It starts at `origin` and moves to the PC when the
+    /// PC gets halfway to the edge of [`DEPTH_REACH`] ([`rebase_depth`]).
+    pub depth_origin: Option<TileLoc>,
     /// `None` until loaded; `Err` once it failed (reported once).
     art: Option<Result<ArtIndex, String>>,
     /// Sectors whose tiles are spawned.
@@ -75,6 +78,9 @@ pub struct MapObject {
     /// The art id shown, its `.art`, and how its hotspot is placed.
     pub art: ArtId,
     pub frames: Handle<ArtFrames>,
+    /// Drawn in the flat class, and its place among its tile's objects: its depth's parts.
+    pub flat: bool,
+    pub tile_order: usize,
 }
 
 /// Changes to the map's objects from the host, waiting for the world to apply them.
@@ -209,6 +215,7 @@ fn load_sectors(mut client: ResMut<ClientMap>, map: Res<LocalMap>, pc: Res<Local
         client.drawn.clear();
         let corner = at.sector();
         client.origin = Some(TileLoc { x: corner.x() * SECTOR_SIZE, y: corner.y() * SECTOR_SIZE });
+        client.depth_origin = client.origin;
     }
     if client.art.is_none() {
         let art = ArtIndex::load(|p| vfs.read(p).ok()).map_err(|e| e.to_string());
@@ -327,6 +334,7 @@ impl ClientMap {
 fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: Res<AssetServer>) {
     let client = &mut *client;
     let (Some(Ok(art)), Some(origin)) = (&client.art, client.origin) else { return };
+    let depth_origin = client.depth_origin.unwrap_or(origin);
     let new: Vec<SectorId> = client.map.sectors.keys().filter(|id| !client.drawn.contains(id)).copied().collect();
     for id in new {
         let sector = &client.map.sectors[&id];
@@ -385,9 +393,9 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
             let offset = Vec2::new(int("offset_x").unwrap_or(0) as f32, -(int("offset_y").unwrap_or(0) as f32));
             let at = tile_to_world(location, origin) + offset;
             commands.spawn((
-                MapObject { location, object_type: object.object_type, id: object_id, art: aid, frames: handle.clone() },
+                MapObject { location, object_type: object.object_type, id: object_id, art: aid, frames: handle.clone(), flat: flags & FLAT_FLAG != 0, tile_order },
                 Sprite::default(),
-                Transform::from_translation(at.extend(object_depth(location, origin, flags & FLAT_FLAG != 0, tile_order))),
+                Transform::from_translation(at.extend(object_depth(location, depth_origin, flags & FLAT_FLAG != 0, tile_order))),
                 Visibility::Hidden,
                 PendingArt { art: handle, rotation: object_rotation(aid), frame: object_frame(aid), hotspot: Some(ObjectArt::of(aid)) },
                 DespawnOnExit(AppState::InGame),
@@ -412,13 +420,30 @@ pub const DEPTH_TILE_ORDER: usize = 8;
 /// The camera's depth range in the world: wide enough for every [`object_depth`].
 pub const DEPTH_RANGE: f32 = (1 << 24) as f32;
 
+/// Moves [`ClientMap::depth_origin`] to the local PC once the PC is half of [`DEPTH_REACH`]
+/// from it (in screen rows or places along a row), and gives every object its depth again, so
+/// the order holds however far the PC walks.
+fn rebase_depth(mut client: ResMut<ClientMap>, pc: Res<LocalPc>, mut objects: Query<(&MapObject, &mut Transform)>) {
+    let (Some((_, at)), Some(depth_origin)) = (pc.0, client.depth_origin) else { return };
+    let dx = i64::from(at.x) - i64::from(depth_origin.x);
+    let dy = i64::from(at.y) - i64::from(depth_origin.y);
+    if (dx + dy).abs() < DEPTH_REACH / 2 && (dy - dx).abs() < DEPTH_REACH / 2 {
+        return;
+    }
+    client.depth_origin = Some(at);
+    for (object, mut transform) in &mut objects {
+        transform.translation.z = object_depth(object.location, at, object.flat, object.tile_order);
+    }
+}
+
 /// Draw depth of an object. The original sorts objects into classes (flat ones first, at
 /// 200,000,000 + n; the rest at 600,000,000 + n) and, inside a class, keeps the order it scans
 /// tiles in, a screen row at a time, and each tile's objects in list order (0x43b390, comparator
 /// 0x443600). Walls and the furniture against them often share a tile, so the list order
 /// matters. Here the depth is a whole number below 2^24, so `f32` holds it exactly: class
 /// (1 bit), the tile's screen row `x + y` (10 bits), its place along the row `y - x` (10 bits),
-/// both within [`DEPTH_REACH`] of the origin (further is clamped), and the object's place among
+/// both within [`DEPTH_REACH`] of the origin (further is clamped; the origin follows the PC,
+/// [`rebase_depth`]), and the object's place among
 /// its tile's objects in the sector's list (3 bits), plus one so objects stay in front of the
 /// ground at 0. The row-by-row scan is inferred from the loop, not proven.
 pub fn object_depth(at: TileLoc, origin: TileLoc, flat: bool, tile_order: usize) -> f32 {
@@ -548,7 +573,7 @@ mod tests {
         app.insert_resource(client).insert_resource(LocalPc(Some((arcanum_sim::NetId(0), t(5 * 64 + 1, 70)))));
         let near = app.world_mut().spawn(GroundTile(t(4 * 64, 70))).id();
         let far = app.world_mut().spawn(GroundTile(t(64, 70))).id();
-        let far_object = app.world_mut().spawn(MapObject { location: t(2 * 64 + 5, 70), object_type: TYPE_SCENERY, id: None, art: ArtId(0), frames: Handle::default() }).id();
+        let far_object = app.world_mut().spawn(MapObject { location: t(2 * 64 + 5, 70), object_type: TYPE_SCENERY, id: None, art: ArtId(0), frames: Handle::default(), flat: false, tile_order: 0 }).id();
         app.add_systems(Update, drop_far_sectors);
         app.update();
         let client = app.world().resource::<ClientMap>();
@@ -559,5 +584,29 @@ mod tests {
         assert!(app.world().get_entity(near).is_ok());
         assert!(app.world().get_entity(far).is_err());
         assert!(app.world().get_entity(far_object).is_err());
+    }
+
+    #[test]
+    fn the_depth_origin_follows_a_pc_that_walks_far() {
+        let mut client = ClientMap::default();
+        client.origin = Some(t(1000, 1000));
+        client.depth_origin = client.origin;
+        let mut app = App::new();
+        app.insert_resource(client).insert_resource(LocalPc(Some((arcanum_sim::NetId(0), t(1100, 1100)))));
+        let object = |at: TileLoc| MapObject { location: at, object_type: TYPE_SCENERY, id: None, art: ArtId(0), frames: Handle::default(), flat: false, tile_order: 0 };
+        // Two objects near where the PC will be, in one column, one in front of the other.
+        let behind = app.world_mut().spawn((object(t(1300, 1300)), Transform::default())).id();
+        let front = app.world_mut().spawn((object(t(1301, 1301)), Transform::default())).id();
+        app.add_systems(Update, rebase_depth);
+        app.update();
+        assert_eq!(app.world().resource::<ClientMap>().depth_origin, Some(t(1000, 1000)), "200 rows away: not yet");
+        app.world_mut().resource_mut::<LocalPc>().0 = Some((arcanum_sim::NetId(0), t(1300, 1300)));
+        app.update();
+        assert_eq!(app.world().resource::<ClientMap>().depth_origin, Some(t(1300, 1300)));
+        let z = |e| app.world().get::<Transform>(e).unwrap().translation.z;
+        assert!(z(behind) < z(front), "in order again: {} {}", z(behind), z(front));
+        // From the old origin both would have been clamped to the same row.
+        let o = t(1000, 1000);
+        assert_eq!(object_depth(t(1300, 1300), o, false, 0), object_depth(t(1301, 1301), o, false, 0));
     }
 }

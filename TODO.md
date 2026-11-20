@@ -24,12 +24,9 @@ Things to pick up later. Larger plans live in `plans/`; project state and findin
   - wall cutaway near the PC;
   - roofs (pass 0x439140);
   - shadows, overlays and blit effects (`blit_flags`, `blit_scale`, flag 0x80);
-  - prototype art for objects with no `current_aid`;
-  - re-origin of the depth key when the PC goes far (order holds within about 256 tiles).
 - **Streaming leftovers:** NPC state is lost when their sector unloads (nothing changes it yet);
   the client loads only around its own PC, so other players' PCs far away walk over nothing
-  drawn (they are off screen anyway); the depth key's origin is not moved as the PC travels
-  (order holds within about 256 tiles of the first sector).
+  drawn (they are off screen anyway).
 
 ## App
 

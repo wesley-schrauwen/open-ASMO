@@ -656,8 +656,8 @@ Not done:
 - **Checked on the real start map:** the PC walked about 60 tiles to (92900, 82640), across two
   sector borders, with no correction and no map errors.
 
-Not done: NPC state survives nothing (it never changes yet); the depth key's origin stays at
-the first sector (`TODO.md` → World).
+Not done: NPC state survives nothing (it never changes yet). (The depth key's origin follows
+the PC since "Draw order far from the start" below.)
 
 ## Doors (after sector streaming)
 
@@ -752,6 +752,17 @@ The original's clock module (tick 0x45b370, accessors 0x45aaa0..0x45ab40, init 0
 Not done: lighting by hour (the original's day for most uses is 6:00 to 17:59, 0x45acf0);
 waiting and resting (jumps of an hour, 0x57b7f0); time passing per action in combat; a clock
 on screen.
+
+## Draw order far from the start (after the clock)
+
+- Object depth packs the screen row and the place along it into 10 bits each, within 512 of an
+  origin tile (`DEPTH_REACH`). With streaming a PC can walk past that, and objects beyond it
+  were clamped to the same row.
+- `ClientMap::depth_origin` is now separate from the position origin. When the local PC gets
+  halfway to the edge (256 rows or places), `rebase_depth` moves it to the PC and gives every
+  map object its depth again (each `MapObject` keeps its flat class and place on its tile).
+  Actors take their depth from it every frame. Sprite positions and the camera are unchanged:
+  `f32` positions relative to the first sector stay exact for millions of pixels.
 
 ## Builder's calls (proposed by Claude, not owner decisions)
 
