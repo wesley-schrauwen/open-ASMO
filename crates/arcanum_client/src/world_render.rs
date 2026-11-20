@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use arcanum_formats::art_id::{ArtId, ArtIndex};
 use arcanum_formats::map::{SECTOR_TILES as SECTOR_SIZE, SectorId, TileLoc};
 use arcanum_formats::object::{TYPE_CONTAINER, TYPE_GENERIC, TYPE_PORTAL, TYPE_SCENERY, TYPE_WALL, TYPE_WEAPON};
-use arcanum_sim::{KEEP_RADIUS, LoadedMap, object_location, sector_within};
+use arcanum_sim::{KEEP_RADIUS, LedgerDelta, LoadedMap, MapObjectId, object_location, open_frames, portal_frame, sector_within, with_frame};
 use bevy::image::{ImageFilterMode, ImageSampler};
 use bevy::prelude::*;
 
@@ -34,7 +34,11 @@ impl Plugin for WorldRenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(AppState::InGame), enter_world)
             .add_systems(OnExit(AppState::InGame), leave_world)
-            .add_systems(Update, (load_sectors, drop_far_sectors, draw_sectors, show_tiles, follow_pc).chain().run_if(in_state(AppState::InGame)));
+            .init_resource::<MapDeltas>()
+            .add_systems(
+                Update,
+                (load_sectors, apply_map_deltas, drop_far_sectors, draw_sectors, animate_doors, show_tiles, follow_pc).chain().run_if(in_state(AppState::InGame)),
+            );
     }
 }
 
@@ -62,10 +66,34 @@ pub struct ClientMap {
 pub struct GroundTile(pub TileLoc);
 
 /// A wall, portal, scenery, container or item object from the map.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Component, Debug, Clone, PartialEq)]
 pub struct MapObject {
     pub location: TileLoc,
     pub object_type: u32,
+    /// Its place in its sector's list; `None` for the `.mob` objects.
+    pub id: Option<MapObjectId>,
+    /// The art id shown, its `.art`, and how its hotspot is placed.
+    pub art: ArtId,
+    pub frames: Handle<ArtFrames>,
+}
+
+/// Changes to the map's objects from the host, waiting for the world to apply them.
+#[derive(Resource, Debug, Default)]
+pub struct MapDeltas(pub Vec<LedgerDelta>);
+
+impl MapDeltas {
+    /// Whether this module handles `delta`.
+    pub fn wants(delta: &LedgerDelta) -> bool {
+        matches!(delta, LedgerDelta::MapChanges { .. } | LedgerDelta::PortalChanged { .. })
+    }
+}
+
+/// A door playing its frames to `frames`' end, one each `period` seconds.
+#[derive(Component, Debug)]
+pub struct DoorAnimation {
+    pub frames: Vec<u32>,
+    pub period: f32,
+    pub elapsed: f32,
 }
 
 /// A sprite waiting for its `.art` to load: frame `frame` of rotation `rotation` of `art`.
@@ -221,6 +249,70 @@ fn drop_far_sectors(
     }
 }
 
+/// Applies the host's changes to the client's copy of the map (once it is open), and starts the
+/// sprites of doors that changed playing their frames.
+fn apply_map_deltas(mut commands: Commands, mut deltas: ResMut<MapDeltas>, mut client: ResMut<ClientMap>, frames: Res<Assets<ArtFrames>>, mut objects: Query<(Entity, &mut MapObject)>) {
+    if deltas.0.is_empty() || client.map.name.is_none() {
+        return;
+    }
+    for delta in std::mem::take(&mut deltas.0) {
+        match delta {
+            LedgerDelta::MapChanges { changes } => {
+                client.map.changes = changes;
+                let loaded: Vec<_> = client.map.sectors.keys().copied().collect();
+                for id in loaded {
+                    client.map.apply_changes(id);
+                }
+                // Loaded door sprites jump to their state.
+                for (entity, mut object) in &mut objects {
+                    let Some(door) = object.id.filter(|d| client.map.changes.contains_key(&d.sector)) else { continue };
+                    let Some(aid) = client.map.map_object(door).and_then(|o| client.map.prototypes.art_id(o)) else { continue };
+                    if aid != object.art {
+                        object.art = aid;
+                        commands.entity(entity).insert(PendingArt { art: object.frames.clone(), rotation: object_rotation(aid), frame: object_frame(aid), hotspot: Some(ObjectArt::of(aid)) });
+                    }
+                }
+            }
+            LedgerDelta::PortalChanged { door, open } => {
+                client.map.set_portal(door, open);
+                let Some((entity, _)) = objects.iter().find(|(_, o)| o.id == Some(door)) else { continue };
+                let Ok((_, object)) = objects.get(entity) else { continue };
+                let mut sequence = open_frames(object.art);
+                if !open {
+                    // Back through the open frames to 0, from the one before the current.
+                    let current = portal_frame(object.art);
+                    sequence.retain(|&f| f < current);
+                    sequence.reverse();
+                    sequence.push(0);
+                }
+                let rate = frames.get(&object.frames).map_or(0, |f| f.frame_rate);
+                let period = if rate > 0 { 1.0 / rate as f32 } else { 0.1 };
+                commands.entity(entity).insert(DoorAnimation { frames: sequence, period, elapsed: period });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Steps door sprites through their frames.
+fn animate_doors(mut commands: Commands, time: Res<Time>, mut doors: Query<(Entity, &mut DoorAnimation, &mut MapObject)>) {
+    for (entity, mut animation, mut object) in &mut doors {
+        animation.elapsed += time.delta_secs();
+        if animation.elapsed < animation.period {
+            continue;
+        }
+        animation.elapsed = 0.0;
+        if animation.frames.is_empty() {
+            commands.entity(entity).remove::<DoorAnimation>();
+            continue;
+        }
+        let frame = animation.frames.remove(0);
+        object.art = with_frame(object.art, frame);
+        let aid = object.art;
+        commands.entity(entity).insert(PendingArt { art: object.frames.clone(), rotation: object_rotation(aid), frame: frame as usize, hotspot: Some(ObjectArt::of(aid)) });
+    }
+}
+
 impl ClientMap {
     /// The `.art` file of art id `id`, once the art index is loaded.
     pub fn art_path(&self, id: ArtId) -> Option<String> {
@@ -266,7 +358,8 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
         let protos = &client.map.prototypes;
         // The sector's own objects, then the map's mobile objects on it (containers and items;
         // the original's order between the two is not traced).
-        for object in sector.objects.iter().chain(client.map.mobiles.get(&id).into_iter().flatten()) {
+        let own = sector.objects.iter().enumerate().map(|(i, o)| (Some(MapObjectId { sector: id, index: i as u32 }), o));
+        for (object_id, object) in own.chain(client.map.mobiles.get(&id).into_iter().flatten().map(|o| (None, o))) {
             // Fields an object does not store are its prototype's.
             let int = |name| protos.int(object, name);
             let flags = int("flags").unwrap_or(0);
@@ -292,7 +385,7 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
             let offset = Vec2::new(int("offset_x").unwrap_or(0) as f32, -(int("offset_y").unwrap_or(0) as f32));
             let at = tile_to_world(location, origin) + offset;
             commands.spawn((
-                MapObject { location, object_type: object.object_type },
+                MapObject { location, object_type: object.object_type, id: object_id, art: aid, frames: handle.clone() },
                 Sprite::default(),
                 Transform::from_translation(at.extend(object_depth(location, origin, flags & FLAT_FLAG != 0, tile_order))),
                 Visibility::Hidden,
@@ -455,7 +548,7 @@ mod tests {
         app.insert_resource(client).insert_resource(LocalPc(Some((arcanum_sim::NetId(0), t(5 * 64 + 1, 70)))));
         let near = app.world_mut().spawn(GroundTile(t(4 * 64, 70))).id();
         let far = app.world_mut().spawn(GroundTile(t(64, 70))).id();
-        let far_object = app.world_mut().spawn(MapObject { location: t(2 * 64 + 5, 70), object_type: TYPE_SCENERY }).id();
+        let far_object = app.world_mut().spawn(MapObject { location: t(2 * 64 + 5, 70), object_type: TYPE_SCENERY, id: None, art: ArtId(0), frames: Handle::default() }).id();
         app.add_systems(Update, drop_far_sectors);
         app.update();
         let client = app.world().resource::<ClientMap>();

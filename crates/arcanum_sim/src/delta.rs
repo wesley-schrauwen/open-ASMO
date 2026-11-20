@@ -10,7 +10,11 @@
 use arcanum_formats::map::TileLoc;
 use serde::{Deserialize, Serialize};
 
-use crate::{Creation, NetId, PlayerId};
+use std::collections::BTreeMap;
+
+use arcanum_formats::map::SectorId;
+
+use crate::{Creation, MapObjectId, NetId, PlayerId, SectorDelta};
 
 /// A host simulation step number.
 pub type Tick = u64;
@@ -81,6 +85,11 @@ pub enum LedgerDelta {
     /// The same as a `StateSync`, but sent reliably, to a client that reported it is far
     /// behind ([`PlayerIntent::SyncAck`](crate::PlayerIntent::SyncAck)).
     Resync { number: u32, pcs: Vec<PcState> },
+    /// Every change to the map's objects so far (doors opened or closed), sent to a player
+    /// after `EnterMap`: the client applies them to its own copy of the map.
+    MapChanges { changes: BTreeMap<SectorId, SectorDelta> },
+    /// A door opened or closed ([`crate::doors`]).
+    PortalChanged { door: MapObjectId, open: bool },
     /// An entity is gone.
     Despawn { net_id: NetId },
     /// The host finished this tick.

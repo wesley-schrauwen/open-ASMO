@@ -58,6 +58,7 @@ pub fn handle_intents(
     mut world: ResMut<WorldState>,
     mut moves: ResMut<MoveRequests>,
     mut clock: ResMut<crate::SyncClock>,
+    mut uses: ResMut<crate::UseRequests>,
 ) {
     for (player, intent) in inbox.0.drain(..) {
         match intent {
@@ -81,6 +82,7 @@ pub fn handle_intents(
             }
             PlayerIntent::Move { seq, path } => moves.0.push((player, seq, path)),
             PlayerIntent::SyncAck { number } => clock.acked(player, number),
+            PlayerIntent::UsePortal { door, seq } => uses.0.push((player, door, seq)),
         }
     }
 }

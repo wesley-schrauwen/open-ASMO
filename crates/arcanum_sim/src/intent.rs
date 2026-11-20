@@ -20,6 +20,10 @@ pub enum PlayerIntent {
     /// in each [`StateSync`](crate::LedgerDelta::StateSync). Sent unreliably: the client sends
     /// it again until a sync shows it was taken.
     Move { seq: u32, path: Vec<TileLoc> },
+    /// Open or close a door. The PC must be within [`USE_RANGE`](crate::USE_RANGE) of it: the
+    /// host waits while the PC walks there on move `seq` (or the last one) and drops the request
+    /// if it stops short or a newer move comes.
+    UsePortal { door: crate::MapObjectId, seq: u32 },
     /// The number of the last state sync the client applied. Sent unreliably, about twice a
     /// second; a client far behind gets a [`Resync`](crate::LedgerDelta::Resync).
     SyncAck { number: u32 },

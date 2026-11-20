@@ -12,8 +12,8 @@
 //!   only diagonal steps; pieces 22, 25, 26 and 29-32 (`d3a` ... `d6d`) never block. Most of them
 //!   share their edge with a portal, which decides.
 //! - **Portals.** An open portal (art bit 0x200, or a frame in bits 14-18) does not block. A
-//!   closed one blocks if jammed (0x2), magically held (0x4) or locked (0x1); otherwise the PC
-//!   walks through, as the original opens it on the way.
+//!   closed one blocks if jammed (0x2; windows), magically held (0x4) or locked
+//!   ([`crate::doors::locked`]); otherwise the PC walks through, as the original opens it on the way.
 //! - Objects destroyed (0x1) or off (0x2) block nothing; nor do walls under `PASSWALLED` (spell
 //!   flag 0x100000).
 //!
@@ -99,7 +99,8 @@ pub fn object_blocks(object: &Object, prototypes: &Prototypes) -> Blocks {
         TYPE_PORTAL => {
             let Some(art) = prototypes.art_id(object) else { return Blocks::Nothing };
             let open = art.0 & 0x200 != 0 || (art.0 >> 14) & 0x1f != 0;
-            let barred = int("portal_flags") & (OPF_LOCKED | OPF_JAMMED | OPF_MAGICALLY_HELD) != 0;
+            let flags = int("portal_flags");
+            let barred = flags & (OPF_JAMMED | OPF_MAGICALLY_HELD) != 0 || crate::doors::locked(flags);
             if !open && barred { Blocks::Edge(edge_of(art)) } else { Blocks::Nothing }
         }
         TYPE_CONTAINER | TYPE_SCENERY | TYPE_PROJECTILE | TYPE_TRAP if int("flags") & OF_NO_BLOCK == 0 => Blocks::Tile,

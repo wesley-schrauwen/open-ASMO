@@ -120,6 +120,7 @@ pub fn start_host(world: &mut World) {
     world.insert_resource(LocalPc::default());
     world.insert_resource(LocalMap::default());
     world.insert_resource(ActorDeltas::default());
+    world.insert_resource(crate::world_render::MapDeltas::default());
 }
 
 /// Starts a host in this process, listening on the LAN if asked, and connects `player` to it.
@@ -200,6 +201,7 @@ fn receive_deltas(
     mut pc: ResMut<LocalPc>,
     mut map: ResMut<LocalMap>,
     mut actors: Option<ResMut<ActorDeltas>>,
+    mut map_deltas: Option<ResMut<crate::world_render::MapDeltas>>,
     data: Option<Res<CreationData>>,
 ) {
     let Some(link) = link else { return };
@@ -229,6 +231,11 @@ fn receive_deltas(
             && ActorDeltas::wants(delta)
         {
             actors.0.push(delta.clone());
+        }
+        if let Some(map_deltas) = map_deltas.as_mut()
+            && crate::world_render::MapDeltas::wants(delta)
+        {
+            map_deltas.0.push(delta.clone());
         }
     }
 }

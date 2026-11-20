@@ -659,6 +659,54 @@ Not done:
 Not done: NPC state survives nothing (it never changes yet); the depth key's origin stays at
 the first sector (`TODO.md` → World).
 
+## Doors (after sector streaming)
+
+The first interaction with the world, and the first shared map state. The rules are the
+original's (`ag_use_object` 0x26 → `ag_open_door` / `ag_close_door`, frame steps 0x4f0950 /
+0x4f0a90, lock check 0x4aeb70 / 0x441d40); `arcanum_sim::doors`.
+
+- **Clicks** (`actors.rs`, `picking.rs`): an object under the cursor is tested pixel by pixel
+  before the ground; the topmost wins. Walls are passed over: one beside a door is drawn over
+  part of it, and walls take no clicks (the original's rule is not traced). Only doors can be
+  used so far; a click on any other object is a ground click.
+- **Approach:** the PC walks to within 2 tiles of the door (either axis; `ag_move_near_obj`,
+  range 2 for portals): the path to the door's tile cut at the first tile in range, else to
+  the nearest free tile in range. The client sends the move and `UsePortal { door, seq }`.
+  The host keeps the use (`PendingUse`) until its PC is in range, and drops it if the PC stops
+  short or a newer move comes.
+- **Open and close:**
+  - A closed door opens unless jammed, magically held or locked.
+  - An open one closes unless magically held.
+  - Locks follow 0x441d40: busted and never-locked doors are open; day and night locks count only
+    in their hours (no clock yet: always day); otherwise the `LOCKED` bit.
+  - Windows are portals flagged jammed, so they never open. On the start map 750 of 1588
+    portals are jammed, and wall pieces `w…` hold them.
+  - There are no keys yet.
+- **Frames:** only the door's art frame changes. Closed is 0; open is 1 for a plain door, or
+  the last swing frame (bit 10 set: 4-6 for rotations 0 and 6, else 1-3). Blocking follows the
+  frame. Clients play the frames (at the art's frame rate) and the host sets the end state at
+  once.
+- **Auto-close:** a door opened without `STICKY` (0x100) closes itself 1.5 s later, once no PC
+  or NPC is within 2 tiles of it.
+- **Shared state:**
+  - Every player gets `PortalChanged { door, open }`.
+  - The change goes into the save's sector changes (`SectorDelta::portals`, by index in the
+    sector's object list: `MapObjectId`).
+  - `LoadedMap::changes` applies them to each sector as it loads, so a saved open door stays
+    open.
+  - A player entering the world gets them all (`MapChanges`) after `EnterMap`.
+- **Checked on real data:** at the Shrouded Hills house (start `90336,84128`), a debug click
+  on the door at (90338, 84130) (flags 0x41: locked at night) opened it, and the save recorded
+  it. The animation was not seen: the display was off.
+
+Not done:
+
+- Keys and lockpicking; the game clock for day and night locks.
+- Door sounds (portal field 0x21 + 0 open, 1 close, 2 refused).
+- Scripts that veto a use.
+- NPCs opening doors.
+- Using other objects (containers, NPCs, items).
+
 ## Builder's calls (proposed by Claude, not owner decisions)
 
 - `arcanum_sim` uses `bevy_ecs` (and `bevy_app` for scheduling) with no rendering, audio or

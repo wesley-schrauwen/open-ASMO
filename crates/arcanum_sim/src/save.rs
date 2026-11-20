@@ -40,9 +40,28 @@ pub struct PlayerSave {
     pub position: TileLoc,
 }
 
-/// What changed in one sector. Empty until objects can change (moved, taken, killed).
+/// What changed in one sector since the original data. Objects are named by their place in the
+/// sector's object list ([`MapObjectId`]).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SectorDelta {}
+pub struct SectorDelta {
+    /// Portals opened (true) or closed (false), by index in the sector's list.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub portals: BTreeMap<u32, bool>,
+}
+
+impl SectorDelta {
+    pub fn is_empty(&self) -> bool {
+        self.portals.is_empty()
+    }
+}
+
+/// An object of a sector file, by its place in the sector's object list (the list never
+/// changes: the files are the original data).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct MapObjectId {
+    pub sector: SectorId,
+    pub index: u32,
+}
 
 /// Why a save could not be read or written.
 #[derive(Debug)]
@@ -183,7 +202,7 @@ mod tests {
         assert!(state.add_player(Some(&start()), PlayerId(7), blueprint("Virgil")));
         let mut save = state.0.unwrap();
         save.tick = 42;
-        save.sector_changes.insert(SectorId::new(3, 4), SectorDelta::default());
+        save.sector_changes.insert(SectorId::new(3, 4), SectorDelta { portals: BTreeMap::from([(7, true), (9, false)]) });
         assert_eq!(WorldSave::from_bytes(&save.to_bytes()).unwrap(), save);
     }
 

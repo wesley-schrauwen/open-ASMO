@@ -25,7 +25,8 @@ use std::collections::{HashMap, VecDeque};
 
 use arcanum_formats::art_id::{ANIM_WALK, ArtId, ArtKind, CritterArt};
 use arcanum_formats::map::TileLoc;
-use arcanum_sim::{Gait, LedgerDelta, NetId, PcState, PlayerIntent, find_path, rotation_of_step, sync_is_newer, walk_art};
+use arcanum_formats::object::{TYPE_PORTAL, TYPE_WALL};
+use arcanum_sim::{Gait, LedgerDelta, MapObjectId, NetId, PcState, PlayerIntent, USE_RANGE, Walkable, find_path, rotation_of_step, sync_is_newer, walk_art};
 use bevy::prelude::*;
 
 use crate::animation::ArtAnimation;
@@ -34,7 +35,7 @@ use crate::isometric::{tile_to_world, world_to_tile};
 use crate::main_menu::AppState;
 use crate::sim_bridge::{HostLink, LocalPc};
 use crate::vfs_asset::VfsResource;
-use crate::world_render::{ClientMap, DEPTH_TILE_ORDER, object_depth};
+use crate::world_render::{ClientMap, DEPTH_TILE_ORDER, MapObject, object_depth};
 
 pub struct ActorsPlugin;
 
@@ -96,6 +97,8 @@ pub struct WalkLocalPc {
     last_goal: Option<(TileLoc, bool)>,
     /// The newest move, until a sync shows the host took it, and seconds since it was sent.
     pending: Option<(PlayerIntent, f32)>,
+    /// A door to use, and its tile: the PC walks to within [`USE_RANGE`] of it first.
+    pub door: Option<(MapObjectId, TileLoc)>,
 }
 
 impl WalkLocalPc {
@@ -133,6 +136,14 @@ impl WalkLocalPc {
     fn click(&mut self, goal: TileLoc) {
         self.goal = Some(goal);
         self.last_goal = None;
+        self.door = None;
+    }
+
+    /// The player clicked door `door` on tile `at`.
+    fn click_door(&mut self, door: MapObjectId, at: TileLoc) {
+        self.goal = None;
+        self.last_goal = None;
+        self.door = Some((door, at));
     }
 }
 
@@ -372,7 +383,7 @@ fn apply_actor_deltas(
 }
 
 /// A click to make once the world is up, at this window position (logical pixels): for
-/// screenshot checks, which take no input. It waits `frames` frames after the sectors are in,
+/// screenshot checks, which take no input. It waits `frames` frames after the sectors are in (90 from `DEBUG_ARCANUM_CLICK`),
 /// for the camera to reach the PC.
 #[derive(Resource, Debug, Clone, Copy)]
 pub struct DebugClick {
@@ -392,6 +403,8 @@ fn click_to_move(
     cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
     client: Option<Res<ClientMap>>,
     mut walk: ResMut<WalkLocalPc>,
+    objects: Query<(Entity, &Sprite, &bevy::sprite::Anchor, &GlobalTransform, &MapObject)>,
+    images: Res<Assets<Image>>,
 ) {
     let Some(origin) = client.filter(|c| !c.map.sectors.is_empty()).and_then(|c| c.origin) else { return };
     let cursor = match debug {
@@ -410,6 +423,19 @@ fn click_to_move(
         None => return,
     };
     let Some(world) = cameras.iter().find_map(|(camera, at)| camera.viewport_to_world_2d(at, cursor).ok()) else { return };
+    // An object under the cursor comes first (0x4f28a0); only doors can be used so far, and a
+    // click on anything else is a click on the ground. Walls are passed over: a wall beside a
+    // door is drawn over part of it, and walls take no clicks (not traced in the original).
+    let candidates = objects.iter().filter(|o| o.4.object_type != TYPE_WALL).map(|(e, s, a, t, _)| (e, s, a, t));
+    let hit = crate::picking::pick(world, candidates, &images);
+    if let Some((_, _, _, _, object)) = hit.and_then(|e| objects.get(e).ok())
+        && object.object_type == TYPE_PORTAL
+        && let Some(door) = object.id
+    {
+        debug!("click at {cursor} is on door {door:?}");
+        walk.click_door(door, object.location);
+        return;
+    }
     if let Some(goal) = world_to_tile(world, origin) {
         debug!("click at {cursor} goes to {goal:?}");
         walk.click(goal);
@@ -419,31 +445,56 @@ fn click_to_move(
 /// Plans the local PC's path to [`WalkLocalPc::goal`] on the client's map, walks it and sends it
 /// to the host.
 fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>>, pc: Res<LocalPc>, link: Option<Res<HostLink>>, mut actors: Query<&mut Actor>) {
-    let Some(goal) = walk.goal else { return };
+    if walk.goal.is_none() && walk.door.is_none() {
+        return;
+    }
     let (Some(client), Some((net_id, _))) = (client, pc.0) else { return };
     if client.map.sectors.is_empty() {
         return;
     }
     let Some(mut actor) = actors.iter_mut().find(|a| a.net_id == net_id) else { return };
-    walk.goal = None;
+    let goal = walk.goal.take();
+    let door = walk.door.take();
     // Mid-step, the path starts from the tile being stepped onto.
     let from = actor.steps.front().copied().unwrap_or(actor.at);
-    let path = match find_path(&client.map, from, goal) {
-        Ok(path) => path,
-        Err(e) => {
-            warn!("no path to {goal:?}: {e:?}");
-            return;
+    let send = |intent: PlayerIntent| {
+        if let Some(link) = &link
+            && let Err(e) = link.0.send_intent(intent)
+        {
+            warn!("cannot reach the host: {e}");
         }
     };
+    let path = match (goal, door) {
+        (_, Some((door, at))) if within(from, at, USE_RANGE) => {
+            // Already near enough: use it from here.
+            send(PlayerIntent::UsePortal { door, seq: walk.seq });
+            return;
+        }
+        (_, Some((_, at))) => match path_near(&client.map, from, at) {
+            Some(path) => path,
+            None => {
+                warn!("no way to the door at {at:?}");
+                return;
+            }
+        },
+        (Some(goal), None) => match find_path(&client.map, from, goal) {
+            Ok(path) => path,
+            Err(e) => {
+                warn!("no path to {goal:?}: {e:?}");
+                return;
+            }
+        },
+        (None, None) => return,
+    };
+    let goal = path.last().copied().unwrap_or(from);
     let seq = walk.sending(goal);
     let mut sent = vec![from];
     sent.extend(&path);
     let intent = PlayerIntent::Move { seq, path: sent };
     walk.pending = Some((intent.clone(), 0.0));
-    if let Some(link) = link
-        && let Err(e) = link.0.send_intent(intent)
-    {
-        warn!("cannot reach the host: {e}");
+    send(intent);
+    if let Some((door, _)) = door {
+        send(PlayerIntent::UsePortal { door, seq });
     }
     if actor.steps.front() == Some(&from) {
         // Finish the step under way, then follow the new path.
@@ -452,6 +503,35 @@ fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>
     } else {
         actor.walk(path);
     }
+}
+
+/// Whether `a` and `b` are within `range` tiles of each other on both axes.
+fn within(a: TileLoc, b: TileLoc, range: u32) -> bool {
+    a.x.abs_diff(b.x) <= range && a.y.abs_diff(b.y) <= range
+}
+
+/// A path from `from` that ends within [`USE_RANGE`] of `target` (`ag_move_near_obj`): the path
+/// to `target` cut at its first tile in range, or else the path to the nearest free tile in
+/// range.
+fn path_near(map: &impl Walkable, from: TileLoc, target: TileLoc) -> Option<Vec<TileLoc>> {
+    if within(from, target, USE_RANGE) {
+        return Some(Vec::new());
+    }
+    let cut = |path: Vec<TileLoc>| {
+        let end = path.iter().position(|&t| within(t, target, USE_RANGE)).map_or(path.len(), |i| i + 1);
+        path[..end].to_vec()
+    };
+    if let Ok(path) = find_path(map, from, target) {
+        return Some(cut(path));
+    }
+    let r = USE_RANGE as i32;
+    let mut near: Vec<TileLoc> = (-r..=r)
+        .flat_map(|dy| (-r..=r).map(move |dx| (dx, dy)))
+        .filter_map(|(dx, dy)| Some(TileLoc { x: target.x.checked_add_signed(dx)?, y: target.y.checked_add_signed(dy)? }))
+        .filter(|&t| map.walkable(t))
+        .collect();
+    near.sort_by_key(|t| (t.x.abs_diff(from.x).max(t.y.abs_diff(from.y)), t.y, t.x));
+    near.into_iter().find_map(|t| find_path(map, from, t).ok())
 }
 
 /// Sends the newest move again every [`MOVE_RESEND_SECS`] until a sync shows the host took it.
@@ -658,5 +738,29 @@ mod tests {
         assert!(a.follow(&host(t(20, 20), &[], 3)));
         assert_eq!((a.at, a.walking()), (t(20, 20), false));
         assert_ne!(a.slide, Vec2::ZERO);
+    }
+
+    struct Open(u32);
+
+    impl Walkable for Open {
+        fn walkable(&self, at: TileLoc) -> bool {
+            at.x < self.0 && at.y < self.0
+        }
+    }
+
+    #[test]
+    fn a_door_is_approached_to_within_range() {
+        let path = path_near(&Open(30), t(0, 0), t(10, 0)).unwrap();
+        assert_eq!(path.last(), Some(&t(8, 0)), "stops two tiles short: {path:?}");
+        assert_eq!(path_near(&Open(30), t(9, 1), t(10, 0)).unwrap().len(), 0, "already in range: {:?}", path_near(&Open(30), t(9, 1), t(10, 0)));
+        // A door tile that cannot be stood on is still approached.
+        struct Blocked;
+        impl Walkable for Blocked {
+            fn walkable(&self, at: TileLoc) -> bool {
+                at.x < 30 && at.y < 30 && at != TileLoc { x: 10, y: 0 }
+            }
+        }
+        let path = path_near(&Blocked, t(0, 0), t(10, 0)).unwrap();
+        assert!(within(*path.last().unwrap(), t(10, 0), USE_RANGE), "{path:?}");
     }
 }

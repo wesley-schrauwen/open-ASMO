@@ -11,7 +11,7 @@ Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2; t
   → #27 → #28 → #29 → #30 → #31 → #32 → #33 (`feat/art-animation`) → #34
   (`feat/click-to-move`) → #35 (`feat/udp-join`) → #36
   (`feat/object-blocking`) → #37 (`feat/npcs`) → #38
-  (`feat/ground-objects`) → sector streaming (`feat/sector-streaming`, the newest). Merging #26 into
+  (`feat/ground-objects`) → #39 (`feat/sector-streaming`) → doors (`feat/doors`, the newest). Merging #26 into
   `main` brings in #10-#25 as well. Then **retarget each next PR to `main` before merging it**.
 - **World milestone:** `plans/world_milestone.md` is the plan and records each step as built
   (differences from the plan, what is not done). Steps 1-8 are done: map readers (#19), the
@@ -22,7 +22,7 @@ Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2; t
   (#34, Milestone A), LAN play (TCP for what must arrive, UDP state syncs) with a second
   client joining (#35, Milestone A2), and object blocking from the original's rules with every
   prototype read (#36), NPCs standing on the map (#37),
-  containers and items on the ground (#38), and sector streaming (`feat/sector-streaming`). The milestone plan is complete; what is left is
+  containers and items on the ground (#38), sector streaming (#39), and doors (`feat/doors`). The milestone plan is complete; what is left is
   listed under each step's "Not done" and in `TODO.md` → World.
 - **World debug start:** `DEBUG_ARCANUM_SCREEN=ingame` (character "Debug"), optionally
   `DEBUG_ARCANUM_START=x,y` (e.g. `90330,84122`, a Shrouded Hills house) and
@@ -88,7 +88,7 @@ a text field).
 | Fonts | Game bitmap fonts decoded and rendered (`BitmapText`, multi-line: wrap, `\n`, tab indents, whole-line clipping). Menu uses `Morph30Font`/`morph15font`; character screens add `Flare12Font` (`UiFont::Body`) with the original white/red tints. Override TTF still wins if present; built-in font as last resort. |
 | Game data formats | `.mes`, `.art`, fonts, `.dat`; objects (`arcanum_formats::object`: prototypes and instances, PC field tables from the engine's names); maps/sectors (#19). |
 | Resolutions | Done. 720p–8K, 4:3–2.4:1, `UiScale` from a 1080 baseline. |
-| Tests | 403 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
+| Tests | 411 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
 | Everything else | Not started: game screens, critter art, NPCs, dialogue, scripts, combat, UDP. |
 
 ### Git state
@@ -196,7 +196,7 @@ cargo test --workspace                              # real-data tests skip witho
 | `DEBUG_ARCANUM_SCREENSHOT` | Path; saves the window once the menu (or Options) is ready, then exits. Used to verify rendering. |
 | `DEBUG_ARCANUM_START` | `x,y` tile; new games start there on the start map instead of 92958,82592. |
 | `DEBUG_ARCANUM_WALK` | `x,y` tile; the PC walks there on entering the world. |
-| `DEBUG_ARCANUM_CLICK` | `x,y` window position (logical pixels); left-clicks it once the world is up. |
+| `DEBUG_ARCANUM_CLICK` | `x,y` window position (logical pixels); left-clicks it 90 frames after the world's sectors are in. The window is 960 x 540 logical when the display is off. |
 | `DEBUG_ARCANUM_LISTEN` | `host:port`; the in-process host also takes LAN players (TCP and UDP on that port). |
 | `DEBUG_ARCANUM_JOIN` | `host:port`; New Game joins that host instead of starting one. |
 | `DEBUG_ARCANUM_SCREEN` | `ingame` (character "Debug", through loading into the world), `options`, `singleplayer`, `newgamechoice`, `newgame`, `createcharacter`, `charactereditor`, `loadgame` (with example saves) or `loading` (held for 60 s) opens straight onto that screen (for screenshots). Screenshots are taken 60 frames after the screen is ready; earlier captures came out black. |
@@ -374,6 +374,17 @@ Recovered by inspecting data and by reverse engineering `Arcanum.exe` with the R
 - **NPCs**: `.mob` files (`G_<guid>.mob`) hold the map's NPCs, containers and items; carried
   ones have `OF_INVENTORY` (0x1000). The host spawns NPCs per loaded sector
   (`arcanum_sim::spawn_npcs`).
+- **Doors** (`arcanum_sim::doors`; details in `plans/world_milestone.md` → "Doors"):
+  - Goals: ids are table index + 3 (names at 0x5a1658): use_object 0x26, open_door 0x0b,
+    close_door 0x31, animate_door_open 0x46 / closed 0x47, pend_closing_door 0x48.
+  - Goal nodes are at `PTR_DAT_005b03d0[id]`.
+  - Use range is 2 tiles for portals and 1 for containers and critters (0x428930).
+  - Open frames: plain 1; swing (bit 10) 4-6 for rotations 0 and 6, else 1-3. Closed is 0.
+  - Doors close themselves after 1500 ms unless `STICKY`, waiting while a critter is near.
+  - Lock check 0x441d40 (busted, never locked, day/night, else `LOCKED`); pass check 0x4aeb70
+    (key in field 0x30).
+  - Windows are jammed portals.
+  - Multiplayer in the original: the client sends goal pushes (message type 5).
 - **Critters on screen** (`art_id::CritterArt`, `arcanum_sim::gait`, `actors.rs`; details and
   addresses in `plans/world_milestone.md` → step 6). Art id fields: gender 27, body 24-26
   (`hm df gh hg ef`), armour 20-23 (`uw v1 la cm pm rb pc bn cd`), s/x flag 19, frame 14-18,
@@ -709,7 +720,7 @@ called it unused.)
 ## Suggested next steps
 
 0. World: what each world step left (`plans/world_milestone.md`, `TODO.md` → World): NPCs
-   moving, taking and dropping items (host deltas for sector changes), doors opening, tile art blocking, wall cutaway and roofs, reconnecting to a LAN game, the host/join menus.
+   moving, taking and dropping items (sector changes, as doors do), keys and lockpicking, tile art blocking, wall cutaway and roofs, reconnecting to a LAN game, the host/join menus.
 1. Check the stats page by eye (see Handoff), then its remaining parts: the skills / tech /
    spells tabs (top-right buttons and the right-hand panel), portrait, alignment gauge, hover
    help (charedit 100-140); then the original's window 15 between the editor and the game.

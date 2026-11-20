@@ -157,7 +157,7 @@ pub struct Walking {
 #[derive(Resource, Debug, Default)]
 pub struct MoveRequests(pub Vec<(PlayerId, u32, Vec<TileLoc>)>);
 
-type MoverQuery<'a> = (Entity, &'a NetId, &'a Position, &'a PlayerControlled, Option<&'a Walking>, Option<&'a mut LastMove>);
+type MoverQuery<'a> = (Entity, &'a NetId, &'a Position, &'a PlayerControlled, Option<&'a Walking>, Option<&'a mut LastMove>, Option<&'a crate::PendingUse>);
 type SyncedQuery<'a> = (&'a NetId, &'a Position, Option<&'a Walking>, Option<&'a LastMove>);
 
 /// Checks each move request against the player's PC. Accepted: the PC walks the path.
@@ -177,7 +177,7 @@ pub fn apply_moves(
 ) {
     for (player, seq, path) in requests.0.drain(..) {
         let Some(SessionPlayer::InWorld(net_id)) = session.players.get(&player) else { continue };
-        let Some((entity, _, &Position(at), _, walking, last)) = pcs.iter_mut().find(|pc| pc.1 == net_id) else { continue };
+        let Some((entity, _, &Position(at), _, walking, last, pending)) = pcs.iter_mut().find(|pc| pc.1 == net_id) else { continue };
         if last.as_ref().is_some_and(|l| seq <= l.0) {
             continue;
         }
@@ -188,6 +188,10 @@ pub fn apply_moves(
             }
         }
         clock.due = true;
+        // A door use waiting for an older move is dropped: the player went elsewhere.
+        if pending.is_some_and(|p| p.seq < seq) {
+            commands.entity(entity).remove::<crate::PendingUse>();
+        }
         // The path may lead into sectors not loaded yet: load them to check it.
         let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
         let mut sectors: Vec<_> = path.iter().map(|t| t.sector()).collect();
