@@ -32,7 +32,9 @@ fn vfs() -> Option<Vfs> {
 fn new_games_start_where_the_original_does() {
     let Some(vfs) = vfs() else { return };
     let start = StartMap::load(&vfs).unwrap();
-    assert_eq!(start, StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 } });
+    // The clock from rules/gameinit.mes: 1885, 15:00 ("Currently 3pm, WAS 10am").
+    let clock = arcanum_sim::GameStart { year: 1885, hour: 15 };
+    assert_eq!(start, StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 }, clock });
 }
 
 #[test]

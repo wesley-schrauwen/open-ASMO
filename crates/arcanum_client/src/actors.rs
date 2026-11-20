@@ -26,7 +26,7 @@ use std::collections::{HashMap, VecDeque};
 use arcanum_formats::art_id::{ANIM_WALK, ArtId, ArtKind, CritterArt};
 use arcanum_formats::map::TileLoc;
 use arcanum_formats::object::{TYPE_PORTAL, TYPE_WALL};
-use arcanum_sim::{Gait, LedgerDelta, MapObjectId, NetId, PcState, PlayerIntent, USE_RANGE, Walkable, find_path, rotation_of_step, sync_is_newer, walk_art};
+use arcanum_sim::{Gait, GameTime, LedgerDelta, MapObjectId, NetId, PcState, PlayerIntent, USE_RANGE, Walkable, find_path, rotation_of_step, sync_is_newer, walk_art};
 use bevy::prelude::*;
 
 use crate::animation::ArtAnimation;
@@ -44,10 +44,11 @@ impl Plugin for ActorsPlugin {
         app.init_resource::<ActorDeltas>()
             .init_resource::<WalkLocalPc>()
             .init_resource::<SyncState>()
+            .init_resource::<WorldClock>()
             .add_systems(OnExit(AppState::InGame), forget_actors)
             .add_systems(
                 Update,
-                (click_to_move, apply_actor_deltas, start_local_walk, resend_move, ack_syncs, walk_actors, place_actors).chain().run_if(in_state(AppState::InGame)),
+                (click_to_move, apply_actor_deltas, run_clock, start_local_walk, resend_move, ack_syncs, walk_actors, place_actors).chain().run_if(in_state(AppState::InGame)),
             );
     }
 }
@@ -67,6 +68,43 @@ impl ActorDeltas {
 pub const SYNC_ACK_SECS: f32 = 0.5;
 /// Seconds before a move the host has not taken is sent again.
 pub const MOVE_RESEND_SECS: f32 = 0.2;
+
+/// The game clock as this client knows it: the time from the newest sync, run on at the game's
+/// speed until the next. It decides which day and night locks hold on the client's map.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq)]
+pub struct WorldClock {
+    pub now: Option<GameTime>,
+    /// Game milliseconds not yet added.
+    carry: f64,
+}
+
+impl WorldClock {
+    /// Runs on by `dt` real seconds.
+    pub fn advance(&mut self, dt: f64) {
+        let Some(now) = self.now.as_mut() else { return };
+        self.carry += dt * 1000.0 * f64::from(arcanum_sim::GAME_SPEED);
+        let whole = self.carry.floor();
+        self.carry -= whole;
+        *now = now.plus_ms(whole as u64);
+    }
+
+    /// Takes the host's time.
+    pub fn set(&mut self, time: GameTime) {
+        self.now = Some(time);
+        self.carry = 0.0;
+    }
+}
+
+/// Runs the client's clock on and has its map's day and night locks follow it.
+fn run_clock(time: Res<Time>, mut clock: ResMut<WorldClock>, client: Option<ResMut<ClientMap>>) {
+    clock.advance(f64::from(time.delta_secs()));
+    if let (Some(now), Some(mut client)) = (clock.now, client) {
+        let day = arcanum_sim::lock_day(now.hour());
+        if client.map.lock_day != day {
+            client.map.set_lock_day(day);
+        }
+    }
+}
 
 /// The newest state sync applied, and when it was last reported.
 #[derive(Resource, Debug, Default)]
@@ -309,8 +347,9 @@ fn with_anim_bits(art: ArtId, anim: u32, rotation: u32) -> ArtId {
     ArtId((art.0 & !(0x1f << 6 | 7 << 11 | 0x1f << 14)) | anim << 6 | (rotation & 7) << 11)
 }
 
-fn forget_actors(mut deltas: ResMut<ActorDeltas>, mut walk: ResMut<WalkLocalPc>, mut sync: ResMut<SyncState>) {
+fn forget_actors(mut deltas: ResMut<ActorDeltas>, mut walk: ResMut<WalkLocalPc>, mut sync: ResMut<SyncState>, mut clock: ResMut<WorldClock>) {
     deltas.0.clear();
+    *clock = WorldClock::default();
     *walk = WalkLocalPc::default();
     *sync = SyncState::default();
 }
@@ -323,6 +362,7 @@ fn apply_actor_deltas(
     pc: Res<LocalPc>,
     mut walk: ResMut<WalkLocalPc>,
     mut sync: ResMut<SyncState>,
+    mut clock: ResMut<WorldClock>,
     mut actors: Query<(Entity, &mut Actor)>,
 ) {
     if deltas.0.is_empty() {
@@ -356,10 +396,11 @@ fn apply_actor_deltas(
                     .id();
                 by_id.insert(net_id, entity);
             }
-            LedgerDelta::StateSync { number, pcs } | LedgerDelta::Resync { number, pcs } => {
+            LedgerDelta::StateSync { number, time, pcs } | LedgerDelta::Resync { number, time, pcs } => {
                 if !sync.take(number) {
                     continue;
                 }
+                clock.set(time);
                 for host in &pcs {
                     let Some(Ok((_, mut a))) = by_id.get(&host.net_id).map(|&e| actors.get_mut(e)) else { continue };
                     if Some(host.net_id) != local {
@@ -762,5 +803,18 @@ mod tests {
         }
         let path = path_near(&Blocked, t(0, 0), t(10, 0)).unwrap();
         assert!(within(*path.last().unwrap(), t(10, 0), USE_RANGE), "{path:?}");
+    }
+
+    #[test]
+    fn the_client_clock_runs_on_at_game_speed_between_syncs() {
+        let mut clock = WorldClock::default();
+        clock.advance(1.0);
+        assert_eq!(clock.now, None, "nothing before the first sync");
+        clock.set(GameTime::at_hour(15));
+        for _ in 0..60 {
+            clock.advance(1.0 / 60.0);
+        }
+        let ms = clock.now.unwrap().ms - 15 * arcanum_sim::HOUR_MS;
+        assert!((7990..=8000).contains(&ms), "{ms}");
     }
 }

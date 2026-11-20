@@ -522,7 +522,7 @@ mod tests {
     }
 
     fn sync(number: u32) -> LedgerDelta {
-        LedgerDelta::StateSync { number, pcs: vec![PcState { net_id: NetId(0), position: TileLoc { x: 1, y: 2 }, path: vec![], seq: 0 }] }
+        LedgerDelta::StateSync { number, time: Default::default(), pcs: vec![PcState { net_id: NetId(0), position: TileLoc { x: 1, y: 2 }, path: vec![], seq: 0 }] }
     }
 
     #[test]
@@ -558,6 +558,7 @@ mod tests {
         // An unreliable message too big for a datagram goes over TCP.
         let big = LedgerDelta::StateSync {
             number: 8,
+            time: Default::default(),
             pcs: (0..50).map(|n| PcState { net_id: NetId(n), position: TileLoc { x: 100_000, y: 100_000 }, path: vec![TileLoc { x: 100_001, y: 100_001 }; 10], seq: 1 }).collect(),
         };
         host.send_delta(p, big.clone()).unwrap();

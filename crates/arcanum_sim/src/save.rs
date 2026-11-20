@@ -31,6 +31,16 @@ pub struct WorldSave {
     pub players: BTreeMap<PlayerId, PlayerSave>,
     /// Changes to sectors since the original data (none on a new game).
     pub sector_changes: BTreeMap<SectorId, SectorDelta>,
+    /// The game clock when saved.
+    #[serde(default)]
+    pub time: crate::GameTime,
+    /// The calendar's first year (day 0 is 1 January of it).
+    #[serde(default = "default_first_year")]
+    pub first_year: u32,
+}
+
+fn default_first_year() -> u32 {
+    crate::GameStart::default().year
 }
 
 /// One player's character in the session.
@@ -87,7 +97,15 @@ impl std::error::Error for SaveError {}
 impl WorldSave {
     /// A new game on `start`, with no players yet.
     pub fn new_game(start: &StartMap) -> Self {
-        Self { version: SAVE_VERSION, tick: 0, map: start.map.clone(), players: BTreeMap::new(), sector_changes: BTreeMap::new() }
+        Self {
+            version: SAVE_VERSION,
+            tick: 0,
+            map: start.map.clone(),
+            players: BTreeMap::new(),
+            sector_changes: BTreeMap::new(),
+            time: crate::GameTime::at_hour(start.clock.hour),
+            first_year: start.clock.year,
+        }
     }
 
     /// The encoded save. JSON for now; the one place to change the format.
@@ -120,6 +138,8 @@ impl WorldSave {
 pub struct StartMap {
     pub map: String,
     pub position: TileLoc,
+    /// The year and hour the clock starts at (`rules/gameinit.mes`).
+    pub clock: crate::GameStart,
 }
 
 impl StartMap {
@@ -129,7 +149,7 @@ impl StartMap {
         let mes = MesFile::parse(&data).map_err(|e| format!("{MAP_LIST}: {e}"))?;
         let list = parse_map_list(&mes).map_err(|e| format!("{MAP_LIST}: {e}"))?;
         let start = start_map(&list).ok_or_else(|| format!("{MAP_LIST}: no START_MAP entry"))?;
-        Ok(Self { map: start.name.clone(), position: start.start })
+        Ok(Self { map: start.name.clone(), position: start.start, clock: crate::GameStart::load(vfs) })
     }
 }
 
@@ -167,12 +187,12 @@ pub struct SaveStatus {
 }
 
 /// Writes the save whenever the world state changed this tick.
-pub fn write_save(world: Res<WorldState>, file: Option<Res<SaveFile>>, tick: Res<SimTick>, mut status: ResMut<SaveStatus>) {
+pub fn write_save(world: Res<WorldState>, file: Option<Res<SaveFile>>, tick: Res<SimTick>, clock: Res<crate::GameClock>, mut status: ResMut<SaveStatus>) {
     let (Some(save), Some(file)) = (&world.0, file) else { return };
     if !world.is_changed() {
         return;
     }
-    let save = WorldSave { tick: tick.0, ..save.clone() };
+    let save = WorldSave { tick: tick.0, time: clock.now, ..save.clone() };
     match save.write(&file.0) {
         Ok(()) => {
             status.writes += 1;
@@ -189,7 +209,7 @@ mod tests {
     use super::*;
 
     fn start() -> StartMap {
-        StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 } }
+        StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 }, clock: Default::default() }
     }
 
     fn blueprint(name: &str) -> CharacterBlueprint {

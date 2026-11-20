@@ -156,7 +156,7 @@ mod tests {
         use arcanum_formats::map::TileLoc;
         let dir = tempfile::tempdir().unwrap();
         let file = crate::SaveFile::in_dir(dir.path(), 5);
-        let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 } };
+        let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 }, clock: Default::default() };
         let mut sim = started();
         sim.app.insert_resource(start.clone()).insert_resource(file.clone());
         ticked(&mut sim, vec![
