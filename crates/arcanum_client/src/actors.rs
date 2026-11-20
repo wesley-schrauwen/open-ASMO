@@ -61,7 +61,7 @@ pub struct ActorDeltas(pub Vec<LedgerDelta>);
 impl ActorDeltas {
     /// Whether this module handles `delta`.
     pub fn wants(delta: &LedgerDelta) -> bool {
-        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. } | LedgerDelta::PartyLeader { .. })
+        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. } | LedgerDelta::PartyLeader { .. } | LedgerDelta::PcStatus { .. })
     }
 }
 
@@ -74,6 +74,8 @@ pub struct Party {
     pub pace: Option<Gait>,
     /// Art and speed stat of every actor spawned, to work out the pace from.
     known: HashMap<NetId, (ArtId, i32)>,
+    /// Each PC's name, portrait and gauges, for the in-game interface ([`crate::hud`]).
+    pub status: HashMap<NetId, arcanum_sim::PcStatus>,
 }
 
 /// Puts every PC on the party's pace (out of combat; there is no combat yet).
@@ -430,6 +432,9 @@ fn apply_actor_deltas(
                     .id();
                 by_id.insert(net_id, entity);
             }
+            LedgerDelta::PcStatus { net_id, status } => {
+                party.status.insert(net_id, status);
+            }
             LedgerDelta::PartyLeader { net_id } => {
                 let Some(&(art, speed)) = party.known.get(&net_id) else { continue };
                 let pace = match vfs.as_ref().and_then(|v| v.0.read().ok()) {
@@ -501,7 +506,10 @@ fn click_to_move(
             click.at
         }
         None if buttons.just_pressed(MouseButton::Left) && !keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) => {
-            let Some(cursor) = windows.iter().find_map(Window::cursor_position) else { return };
+            let Some((cursor, size)) = windows.iter().find_map(|w| w.cursor_position().map(|c| (c, w.size()))) else { return };
+            if crate::hud::covers(size, cursor) {
+                return;
+            }
             cursor
         }
         None => return,
@@ -866,7 +874,7 @@ mod tests {
     fn pcs_take_the_party_pace_and_npcs_keep_their_own() {
         let leader = Gait::human(25);
         let mut app = App::new();
-        app.insert_resource(Party { leader: Some(NetId(0)), pace: Some(leader), known: HashMap::new() });
+        app.insert_resource(Party { leader: Some(NetId(0)), pace: Some(leader), ..default() });
         let slow = Gait { frame_millis: 58, pixels_per_frame: Gait::HUMAN_PIXELS.map(|p| p * 0.6) };
         let pc = app.world_mut().spawn(Actor { gait: slow, own_gait: slow, ..actor() }).id();
         let npc = app.world_mut().spawn(Actor { gait: slow, own_gait: slow, pc: false, ..actor() }).id();

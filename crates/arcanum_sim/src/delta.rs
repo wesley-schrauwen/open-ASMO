@@ -63,6 +63,34 @@ impl ActorState {
     }
 }
 
+/// A pool with a current and a highest value (hit points, fatigue).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Pool {
+    pub current: i32,
+    pub max: i32,
+}
+
+impl Pool {
+    pub fn full(max: i32) -> Self {
+        Self { current: max, max }
+    }
+
+    /// How full, from 0 to 1 (0 when the highest value is not positive).
+    pub fn fraction(self) -> f32 {
+        if self.max <= 0 { 0.0 } else { (self.current as f32 / self.max as f32).clamp(0.0, 1.0) }
+    }
+}
+
+/// What the in-game interface shows of a PC.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PcStatus {
+    pub name: String,
+    /// The portrait's file stem under `portrait/` (`portrait/gameport.mes`), if it has one.
+    pub portrait: Option<String>,
+    pub hit_points: Pool,
+    pub fatigue: Pool,
+}
+
 /// A change to shared state, sent from the host to clients.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LedgerDelta {
@@ -93,6 +121,10 @@ pub enum LedgerDelta {
     /// This PC leads the party: out of combat every member moves at its speed, capped
     /// ([`PartyPace`](crate::PartyPace)). Sent to each player once it is known.
     PartyLeader { net_id: NetId },
+    /// What a PC's portrait and gauges show (the in-game interface): sent to every player with
+    /// the PC's `Spawn`, and again when it changes. Nothing changes it yet: no damage or fatigue
+    /// is taken, so the gauges are full.
+    PcStatus { net_id: NetId, status: PcStatus },
     /// An entity is gone.
     Despawn { net_id: NetId },
     /// The host finished this tick.

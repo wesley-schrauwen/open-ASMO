@@ -21,7 +21,7 @@ use arcanum_rules::{CharacterSheet, MALE};
 use arcanum_vfs::Vfs;
 use bevy_ecs::prelude::*;
 
-use crate::{EntityKind, Gait, LedgerDelta, NetId, NetIds, Outbox, PlayerId, Session, SessionPlayer, SimRules, WorldState, pc_art};
+use crate::{EntityKind, Gait, LedgerDelta, NetId, NetIds, Outbox, PcStatus, PlayerId, Pool, Session, SessionPlayer, SimRules, WorldState, pc_art};
 
 /// Sectors loaded on each side of a PC's sector (1 = a 3 x 3 block).
 pub const SECTOR_RADIUS: u32 = 1;
@@ -389,6 +389,18 @@ pub fn load_prototypes(vfs: &Vfs) -> (Prototypes, Vec<String>) {
     (prototypes, errors)
 }
 
+/// What the in-game interface shows of a PC with `sheet`: its name, portrait and full pools
+/// (nothing takes damage or fatigue yet).
+pub fn pc_status(rules: &arcanum_rules::RulesData, sheet: &CharacterSheet) -> PcStatus {
+    let derived = rules.derived(sheet);
+    PcStatus {
+        name: sheet.name.clone(),
+        portrait: rules.portrait(sheet).map(str::to_string),
+        hit_points: Pool::full(derived.hit_points),
+        fatigue: Pool::full(derived.fatigue),
+    }
+}
+
 /// Boots and grows the world from the [`WorldState`]: see the module docs. Each new PC is
 /// announced with a `Spawn` to every player in the session, and the new PC's player is also
 /// told about the PCs already there; the state sync at the end of the tick says where they
@@ -405,7 +417,7 @@ pub fn boot_world(
     rules: Res<SimRules>,
     mut clock: ResMut<crate::SyncClock>,
     mut clock_time: ResMut<crate::GameClock>,
-    pcs: Query<(&NetId, &PlayerControlled, &Position, &Appearance)>,
+    pcs: Query<(&NetId, &PlayerControlled, &Position, &Appearance, &Sheet)>,
     npcs: Query<(&NetId, &Npc, &Position, &Appearance)>,
 ) {
     let Some(save) = &world.0 else { return };
@@ -418,7 +430,8 @@ pub fn boot_world(
         *clock_time = crate::GameClock::at(save.time);
         map.lock_day = crate::lock_day(save.time.hour());
     }
-    let mut existing: Vec<(NetId, PlayerId, TileLoc, Appearance)> = pcs.iter().map(|(id, p, pos, look)| (*id, p.0, pos.0, *look)).collect();
+    let mut existing: Vec<(NetId, PlayerId, TileLoc, Appearance, PcStatus)> =
+        pcs.iter().map(|(id, p, pos, look, sheet)| (*id, p.0, pos.0, *look, pc_status(&rules.0, &sheet.0))).collect();
     for (&player, saved) in &save.players {
         if existing.iter().any(|(_, p, ..)| *p == player) {
             continue;
@@ -436,18 +449,21 @@ pub fn boot_world(
             outbox.0.push((player, LedgerDelta::MapChanges { changes: save.sector_changes.clone() }));
         }
         let spawn = look.spawn(net_id, EntityKind::Pc { player }, saved.position);
+        let status = pc_status(&rules.0, sheet);
         for &other in session.players.keys() {
             outbox.0.push((other, spawn.clone()));
+            outbox.0.push((other, LedgerDelta::PcStatus { net_id, status: status.clone() }));
         }
-        for &(id, other, position, other_look) in &existing {
-            outbox.0.push((player, other_look.spawn(id, EntityKind::Pc { player: other }, position)));
+        for (id, other, position, other_look, other_status) in &existing {
+            outbox.0.push((player, other_look.spawn(*id, EntityKind::Pc { player: *other }, *position)));
+            outbox.0.push((player, LedgerDelta::PcStatus { net_id: *id, status: other_status.clone() }));
         }
         let mut npcs: Vec<_> = npcs.iter().collect();
         npcs.sort_by_key(|n| *n.0);
         for (&id, npc, &Position(position), look) in npcs {
             outbox.0.push((player, look.spawn(id, EntityKind::Npc { prototype: npc.prototype }, position)));
         }
-        existing.push((net_id, player, saved.position, look));
+        existing.push((net_id, player, saved.position, look, status));
         // The newcomer learns where everyone is walking from a sync at the end of this tick.
         clock.due = true;
     }
@@ -576,6 +592,21 @@ mod tests {
         let deltas = sim.take_deltas();
         let spawns = |to: u64| deltas.iter().filter(|(p, d)| p.0 == to && matches!(d, LedgerDelta::Spawn { kind: EntityKind::Pc { .. }, .. })).count();
         assert_eq!((spawns(1), spawns(2)), (2, 2), "{deltas:?}");
+        // Each player learns every PC's name and gauges.
+        for to in [1, 2] {
+            let names: BTreeSet<&str> = deltas
+                .iter()
+                .filter_map(|(p, d)| match d {
+                    LedgerDelta::PcStatus { status, .. } if p.0 == to => {
+                        assert!(status.hit_points.max > 0 && status.hit_points.current == status.hit_points.max, "{status:?}");
+                        assert!(status.fatigue.max > 0 && status.fatigue.fraction() == 1.0, "{status:?}");
+                        Some(status.name.as_str())
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(names, BTreeSet::from(["A", "B"]), "player {to}");
+        }
         let enter = LedgerDelta::EnterMap { map: MAP.into() };
         for to in [1, 2] {
             let first = deltas.iter().position(|(p, d)| p.0 == to && *d == enter);
