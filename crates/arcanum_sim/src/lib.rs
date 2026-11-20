@@ -9,6 +9,7 @@
 //! [`PlayerIntent`]s and sends [`LedgerDelta`]s. The client never changes shared state
 //! directly.
 
+pub mod blocking;
 pub mod creation;
 pub mod delta;
 pub mod gait;
@@ -22,6 +23,7 @@ pub mod save;
 pub mod session;
 pub mod world;
 
+pub use blocking::*;
 pub use creation::*;
 pub use delta::*;
 pub use gait::*;

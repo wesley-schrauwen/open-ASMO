@@ -193,3 +193,26 @@ fn every_pre_made_character_file_parses_to_the_last_byte() {
         assert_eq!(count, 12);
     }
 }
+
+#[test]
+fn every_prototype_parses_to_the_last_byte() {
+    let Ok(rd) = std::fs::read_dir(game_dir().join("data/proto")) else {
+        eprintln!("skipping: data/proto not found");
+        return;
+    };
+    let mut by_type = std::collections::BTreeMap::<u32, usize>::new();
+    let mut failed = Vec::new();
+    for path in rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pro"))) {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        match Object::parse_prototype(&std::fs::read(&path).unwrap()) {
+            Ok(obj) => {
+                let number: u32 = name[..6].parse().unwrap();
+                assert_eq!(obj.id.prototype(), Some(number), "{name}");
+                *by_type.entry(obj.object_type).or_default() += 1;
+            }
+            Err(e) => failed.push(format!("{name}: {e}")),
+        }
+    }
+    eprintln!("prototypes by type: {by_type:?}");
+    assert!(failed.is_empty(), "{} failed, e.g. {:?}", failed.len(), &failed[..failed.len().min(5)]);
+}

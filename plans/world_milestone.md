@@ -244,7 +244,8 @@ Not done, or done differently from the plan:
 Not done, or done differently from the plan:
 
 - **Tile masks only.** `LoadedMap::tile_mask_blocked` reads the sectors' tile blocking masks;
-  object blocking is not decoded (`TODO.md` → World).
+  object blocking is not decoded (`TODO.md` → World). (Object blocking came after step 8; see
+  "Object blocking" below.)
 - **No streaming:** sectors load when a PC spawns and are never unloaded (`TODO.md` → World).
 - **The save is not updated from the entities.** Positions in the save are the start
   positions; once PCs move (step 4's movement), the save must be written from the entities.
@@ -288,10 +289,10 @@ Not done, or done differently from the plan:
 
 - **The tile mask blocks nothing around the start.** None of the 41 x 41 tiles round the start
   position is mask-blocked, so until object blocking is decoded the host lets a PC walk through
-  the wreckage and scenery there (`TODO.md` → World).
+  the wreckage and scenery there. (Done after step 8: "Object blocking" below.)
 - **Walking speed** was a placeholder (3.5 tiles/s); step 6 replaced it with the walk art's
-  timing (below). The 10/14 costs and the no-corner-cutting rule are not checked against the
-  original.
+  timing (below). The 10/14 costs are not checked against the original. The no-corner-cutting
+  rule was replaced by the original's edge rule ("Object blocking" below).
 - **No combat yet,** so nothing blocks but the map: `Occupied` is written and unused.
 - **Corrections, for the client (step 7) and remote play:** the client slides to a corrected
   tile rather than jumping, and ignores a correction whose `seq` is older than its last `Move`
@@ -532,6 +533,45 @@ Not done, or done differently from the plan:
   logged.
 - **No discovery or NAT traversal.**
 - **JSON on the wire.** A binary encoding can replace it inside `lan.rs`.
+
+## Object blocking (after Milestone A2)
+
+Movement validation is trusted only once the map's objects block, so this came next. The rules
+are the original's walking (pathfinder 0x41f3c0, tile check 0x4d7110, edge check 0x43fe00), in
+`arcanum_sim::blocking`, shared by host and client through `LoadedMap`:
+
+- **Prototypes.** `Object::parse_prototype` now reads every type; all 1423 `data/proto` files
+  parse to the last byte. `Prototypes` gives an object's field, or its prototype's when the
+  object does not store it. `LoadedMap::open` reads them once. Every object on the start map has
+  its prototype as a loose `.pro`.
+- **Tiles:**
+  - Scenery, containers, projectiles and traps block their tile unless flagged `NO_BLOCK`
+    (0x400).
+  - Destroyed or off objects (0x1, 0x2) block nothing.
+  - Critters block only in combat, which is also the owner's rule.
+- **Edges:**
+  - Walls and portals block the edge their rotation faces (even rotations count as the next odd
+    one), both ways.
+  - A diagonal step needs both L-shaped routes clear of edges. The corner tiles themselves are
+    not checked, so a diagonal may pass between two blocked tiles, as in the original; this
+    replaces the earlier no-corner-cutting rule.
+- **Door openings.** Wall pieces 10, 13, 14 and 17-19 (`w…`) block only diagonals; 22, 25, 26
+  and 29-32 (`d…`) never block. On the start map these are the only pieces that share an edge
+  with a portal (real-data test).
+- **Portals:**
+  - An open portal (art bit 0x200, or a frame in bits 14-18) does not block.
+  - A closed one blocks if locked, jammed or magically held. Otherwise the PC walks through,
+    since the original opens it on the way.
+- **Client art.** The client also takes an object's art, flags and offsets from its prototype
+  when the object has none. Near the start, nothing changed on screen.
+- **Checked on real data:**
+  - Near the start, 28 of the 41 x 41 tiles are blocked (the wreck and scenery), and every
+    reachable tile gets a path the host accepts.
+  - In a Shrouded Hills house, 364 wall edges each stop a step both ways, and the way out goes
+    through the door (22 steps against 12 in a straight line).
+
+Not done: tile art flags (probably water), the lock and key check, doors opening and closing,
+and NPCs that cannot open doors (`TODO.md` → World).
 
 ## Builder's calls (proposed by Claude, not owner decisions)
 

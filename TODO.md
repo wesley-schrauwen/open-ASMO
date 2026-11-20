@@ -11,12 +11,10 @@ Things to pick up later. Larger plans live in `plans/`; project state and findin
 
 ## World
 
-- **Object blocking on the host:** `arcanum_sim::LoadedMap` has only the sectors' tile blocking
-  masks. Walls, scenery and closed portals block too (their objects and prototype flags), but
-  object blocking is not decoded yet, so the mask alone cannot decide where a PC can walk.
-  Needed before movement validation is trusted (`plans/world_milestone.md`, step 4). Around
-  the real start position the mask blocks none of the 41 x 41 tiles, so today the host accepts
-  walking through everything there.
+- **Blocking leftovers** (`arcanum_sim::blocking`): tile art flags (the original also blocks
+  some ground tiles, probably water, from per-tile tables at 0x603af4 and nearby, not decoded); the lock
+  and key check (0x4aeca0: today every locked door blocks); doors opening and closing (their
+  state never changes yet); NPCs that cannot open doors (pathflag 0x2).
 - **NPCs pause when a PC blocks them:** when NPC movement comes, an NPC whose next step is
   blocked by a PC stops for 5 s (150 ticks), then replans from where it stands; PCs replan at
   once (`plans/world_milestone.md`, "Pathfinding and movement validation"). Open: whether NPCs

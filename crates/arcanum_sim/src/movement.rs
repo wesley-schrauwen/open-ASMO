@@ -319,9 +319,9 @@ mod tests {
         assert_eq!(check_path(&map, t(0, 0), &[t(2, 2), t(3, 2)]), Err(MoveRefusal::TooFar));
         assert_eq!(check_path(&map, t(0, 0), &[t(1, 0), t(2, 0)]), Err(MoveRefusal::Blocked(t(2, 0))));
         assert_eq!(check_path(&map, t(0, 0), &[t(1, 0), t(3, 0)]), Err(MoveRefusal::Blocked(t(3, 0))), "a jump");
-        assert_eq!(check_path(&map, t(1, 2), &[t(2, 2), t(3, 1)]), Err(MoveRefusal::Blocked(t(3, 1))), "cuts past (2, 1)");
+        assert_eq!(check_path(&map, t(1, 2), &[t(2, 2), t(3, 1)]), Ok(vec![t(2, 2), t(3, 1)]), "past (2, 1): only edges stop diagonals");
         assert_eq!(check_path(&map, t(1, 1), &[t(1, 2), t(2, 2), t(3, 2), t(3, 1)]), Ok(vec![t(1, 2), t(2, 2), t(3, 2), t(3, 1)]));
         assert_eq!(check_path(&map, t(1, 2), &[t(2, 1)]), Err(MoveRefusal::Blocked(t(2, 1))));
-        assert_eq!(check_path(&map, t(1, 1), &[t(2, 2)]), Err(MoveRefusal::Blocked(t(2, 2))), "cuts past (2, 1)");
+        assert_eq!(check_path(&map, t(1, 1), &[t(2, 2)]), Ok(vec![t(2, 2)]), "past (2, 1)");
     }
 }

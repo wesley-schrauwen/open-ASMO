@@ -5,14 +5,16 @@
 //! PC. A new game and a loaded save boot the same way. A player is told the map's name
 //! (`EnterMap`) before their PC's `Spawn`.
 //!
-//! Blocking: only the sectors' tile blocking masks are loaded. Walls, scenery and closed portals
-//! block too, but object blocking is not decoded yet.
+//! Blocking: the sectors' tile blocking masks, and what their objects block
+//! ([`ObjectBlocking`](crate::ObjectBlocking)), with fields the objects do not store taken from
+//! their prototypes.
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, RwLock};
 
 use arcanum_formats::art_id::ArtId;
 use arcanum_formats::map::{MapProperties, SectorId, TileLoc};
+use arcanum_formats::object::{Object, Prototypes};
 use arcanum_formats::sector::Sector;
 use arcanum_rules::{CharacterSheet, MALE};
 use arcanum_vfs::Vfs;
@@ -65,13 +67,23 @@ pub struct LoadedMap {
     pub absent: BTreeSet<SectorId>,
     /// Files that exist but could not be read, as `path: error`.
     pub errors: Vec<String>,
+    /// The object prototypes (`proto/*.pro`), for fields the map's objects do not store.
+    pub prototypes: Arc<Prototypes>,
+    /// What the loaded sectors' objects block.
+    pub blocking: crate::ObjectBlocking,
 }
 
 impl LoadedMap {
-    /// Starts over on `name`, reading its `map.prp`.
+    /// Starts over on `name`, reading its `map.prp`. The prototypes are read once and kept.
     pub fn open(&mut self, vfs: Option<&Vfs>, name: &str) {
-        *self = Self { name: Some(name.to_string()), ..Self::default() };
+        let prototypes = std::mem::take(&mut self.prototypes);
+        *self = Self { name: Some(name.to_string()), prototypes, ..Self::default() };
         let Some(vfs) = vfs else { return };
+        if self.prototypes.is_empty() {
+            let (prototypes, errors) = load_prototypes(vfs);
+            self.prototypes = Arc::new(prototypes);
+            self.errors.extend(errors);
+        }
         let path = format!("maps/{name}/map.prp");
         if !vfs.exists(&path) {
             return;
@@ -100,6 +112,7 @@ impl LoadedMap {
                 }
                 match vfs.read(&path).map_err(|e| e.to_string()).and_then(|d| Sector::parse(&d).map_err(|e| e.to_string())) {
                     Ok(sector) => {
+                        self.blocking.add(&sector.objects, &self.prototypes);
                         self.sectors.insert(id, sector);
                     }
                     Err(e) => {
@@ -117,6 +130,27 @@ impl LoadedMap {
         let (x, y) = at.tile_in_sector();
         self.sectors.get(&at.sector())?.tile_mask_blocked(x, y)
     }
+}
+
+/// Folder of the object prototypes (the game's loose `data/proto`, mounted at the VFS root).
+pub const PROTO_DIR: &str = "proto";
+
+/// Reads every prototype in [`PROTO_DIR`]. Returns them with the files that could not be read,
+/// as `path: error`.
+pub fn load_prototypes(vfs: &Vfs) -> (Prototypes, Vec<String>) {
+    let mut prototypes = Prototypes::default();
+    let mut errors = Vec::new();
+    for path in vfs.list_dir(PROTO_DIR).unwrap_or_default().into_iter().filter(|p| p.to_ascii_lowercase().ends_with(".pro")) {
+        match vfs.read(&path).map_err(|e| e.to_string()).and_then(|d| Object::parse_prototype(&d).map_err(|e| e.to_string())) {
+            Ok(p) => {
+                if !prototypes.insert(p) {
+                    errors.push(format!("{path}: no prototype number"));
+                }
+            }
+            Err(e) => errors.push(format!("{path}: {e}")),
+        }
+    }
+    (prototypes, errors)
 }
 
 /// Boots and grows the world from the [`WorldState`]: see the module docs. Each new PC is

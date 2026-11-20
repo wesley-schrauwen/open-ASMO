@@ -23,6 +23,8 @@ fn vfs() -> Option<Vfs> {
     }
     vfs.mount_archive(modules.join("Arcanum.dat")).unwrap();
     vfs.mount_archives_in(&game).unwrap();
+    // The loose prototypes and pre-made characters, as the game mounts them.
+    vfs.mount_dir(game.join("data"));
     Some(vfs)
 }
 
@@ -103,6 +105,57 @@ fn paths_on_the_start_map_pass_the_hosts_check() {
             }
         }
     }
-    eprintln!("{found} tiles reached, {blocked} mask-blocked, of 41 x 41 around the start");
+    let edges: usize = map.blocking.edges.values().map(|e| e.count_ones() as usize).sum();
+    eprintln!(
+        "{found} tiles reached, {blocked} blocked, of 41 x 41 around the start; loaded: {} prototypes, {} tiles and {edges} edges blocked by objects, errors {:?}",
+        map.prototypes.len(),
+        map.blocking.tiles.len(),
+        map.errors
+    );
+    assert!(map.errors.is_empty(), "{:?}", map.errors);
+    assert!(map.prototypes.len() > 1000);
     assert!(found > 100, "{found}");
+    assert!(blocked > 0, "the wreck and the scenery round the start block");
+}
+
+/// In a Shrouded Hills house, walls block by edge: no path crosses one, and the way in and out
+/// is through the doors.
+#[test]
+fn house_walls_block_and_doors_let_through() {
+    use arcanum_formats::map::{MAP_LIST, parse_map_list, start_map};
+    use arcanum_formats::mes::MesFile;
+    use arcanum_sim::{LoadedMap, Walkable, find_path, step_allowed};
+
+    let Some(vfs) = vfs() else { return };
+    let list = parse_map_list(&MesFile::parse(&vfs.read(MAP_LIST).unwrap()).unwrap()).unwrap();
+    let name = start_map(&list).unwrap().name.clone();
+    let mut map = LoadedMap::default();
+    map.open(Some(&vfs), &name);
+    let inside = TileLoc { x: 90330, y: 84122 };
+    map.load_around(Some(&vfs), inside);
+    let edges: usize = map.blocking.edges.values().map(|e| e.count_ones() as usize).sum();
+    let doors: usize = map.blocking.diagonal_edges.values().map(|e| e.count_ones() as usize).sum();
+    eprintln!("{edges} wall edges, {doors} door-opening edges, {} blocked tiles", map.blocking.tiles.len());
+    assert!(edges > 100, "{edges}");
+    // Every wall edge stops a step across it, both ways.
+    let mut checked = 0;
+    for (&at, &mask) in &map.blocking.edges {
+        for dir in (1..8).step_by(2) {
+            if mask >> dir & 1 == 0 {
+                continue;
+            }
+            let (dx, dy) = arcanum_sim::DIRECTIONS[dir];
+            let next = TileLoc { x: at.x.wrapping_add_signed(dx), y: at.y.wrapping_add_signed(dy) };
+            assert!(!step_allowed(&map, at, next) && !step_allowed(&map, next, at), "{at:?} dir {dir}");
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, edges);
+    // From inside the house to well outside: there is a way (through a door).
+    // The tile itself has furniture on it: start from a free one next to it.
+    let inside = (0..9u32).map(|i| TileLoc { x: inside.x + i % 3 - 1, y: inside.y + i / 3 - 1 }).find(|&t| map.walkable(t)).expect("a free tile");
+    let outside = TileLoc { x: inside.x + 12, y: inside.y + 12 };
+    let path = find_path(&map, inside, outside);
+    eprintln!("inside to outside: {:?} steps", path.as_ref().map(Vec::len));
+    assert!(path.is_ok(), "{path:?}");
 }

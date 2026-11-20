@@ -1,7 +1,7 @@
 # Project notes (handoff)
 
 Working notes for whoever picks this up next, human or agent. Read this first, then `README.md`.
-Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2).
+Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2; object blocking next PR).
 
 ## Handoff: start here
 
@@ -9,17 +9,19 @@ Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2).
   into its parent branch, so none of them reached `main` (the same mistake #8 fixed once).
   The open stack is #26 (`feat/sim-net-scaffold`, base `main`, contains everything up to #25)
   → #27 → #28 → #29 → #30 → #31 → #32 → #33 (`feat/art-animation`) → #34
-  (`feat/click-to-move`) → step 8 (`feat/udp-join`, the newest). Merging #26 into
+  (`feat/click-to-move`) → #35 (`feat/udp-join`) → object blocking
+  (`feat/object-blocking`, the newest). Merging #26 into
   `main` brings in #10-#25 as well. Then **retarget each next PR to `main` before merging it**.
 - **World milestone:** `plans/world_milestone.md` is the plan and records each step as built
-  (differences from the plan, what is not done). Steps 1-5 are done: map readers (#19), the
+  (differences from the plan, what is not done). Steps 1-8 are done: map readers (#19), the
   `arcanum_sim`/`arcanum_net` crates (#26), creation through the host and the initial save
   (#27, #28), the host boots the map from the save (#29), pathfinding and movement validation
   (#30), the client draws ground tiles (#31) and walls, portals and scenery (#32), the PC
   stands and walks with the original's art and timing (#33), and click to move with corrections
-  (#34, Milestone A), and LAN play (TCP for what must arrive, UDP state syncs) with a second client joining (step 8,
-  `feat/udp-join`, Milestone A2). The milestone plan is complete; what is left is listed under
-  each step's "Not done".
+  (#34, Milestone A), LAN play (TCP for what must arrive, UDP state syncs) with a second
+  client joining (#35, Milestone A2), and object blocking from the original's rules with every
+  prototype read (`feat/object-blocking`). The milestone plan is complete; what is left is
+  listed under each step's "Not done" and in `TODO.md` → World.
 - **World debug start:** `DEBUG_ARCANUM_SCREEN=ingame` (character "Debug"), optionally
   `DEBUG_ARCANUM_START=x,y` (e.g. `90330,84122`, a Shrouded Hills house) and
   `DEBUG_ARCANUM_WALK=x,y` (the PC walks there) or `DEBUG_ARCANUM_CLICK=x,y` (a left click at
@@ -84,7 +86,7 @@ a text field).
 | Fonts | Game bitmap fonts decoded and rendered (`BitmapText`, multi-line: wrap, `\n`, tab indents, whole-line clipping). Menu uses `Morph30Font`/`morph15font`; character screens add `Flare12Font` (`UiFont::Body`) with the original white/red tints. Override TTF still wins if present; built-in font as last resort. |
 | Game data formats | `.mes`, `.art`, fonts, `.dat`; objects (`arcanum_formats::object`: prototypes and instances, PC field tables from the engine's names); maps/sectors (#19). |
 | Resolutions | Done. 720p–8K, 4:3–2.4:1, `UiScale` from a 1080 baseline. |
-| Tests | 387 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
+| Tests | 394 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
 | Everything else | Not started: game screens, critter art, NPCs, dialogue, scripts, combat, UDP. |
 
 ### Git state
@@ -343,6 +345,16 @@ Recovered by inspecting data and by reverse engineering `Arcanum.exe` with the R
     - Wall cutaway: type-0 objects with field 0x27 & 6, wall rotation in {0, 1, 6, 7}, and
       0x439fa0(loc) set are skipped. This is presumably the cutaway near the PC.
     - Scale: field `blit_scale` is a percent, and flag 0x80 doubles the rect.
+- **Blocking** (`arcanum_sim::blocking`; details in `plans/world_milestone.md` → "Object
+  blocking"):
+  - Path driver 0x41f3c0 (A* 0x41f9f0); tile check 0x4d7110 (sector mask, then tile art flags);
+    edge check 0x43fe00; object list per tile 0x4407c0 (skips flags & 3).
+  - Directions (0x4b8ff0) match critter rotations: 0 (-1,-1), 1 (-1,0), 2 (-1,+1), 3 (0,+1),
+    4 (+1,+1), 5 (+1,0), 6 (+1,-1), 7 (0,-1).
+  - `OF_` flags: DESTROYED 0x1, OFF 0x2, FLAT 0x4, DONTDRAW 0x100, NO_BLOCK 0x400.
+  - `OPF_` flags: LOCKED 0x1, JAMMED 0x2, MAGICALLY_HELD 0x4, NEVER_LOCKED 0x8, ALWAYS_LOCKED 0x10.
+  - `OSF_PASSWALLED` 0x100000. Wall art piece = bits 14-19.
+  - Every object's missing fields come from `proto/*.pro` (all types parse).
 - **Critters on screen** (`art_id::CritterArt`, `arcanum_sim::gait`, `actors.rs`; details and
   addresses in `plans/world_milestone.md` → step 6). Art id fields: gender 27, body 24-26
   (`hm df gh hg ef`), armour 20-23 (`uw v1 la cm pm rb pc bn cd`), s/x flag 19, frame 14-18,
@@ -656,14 +668,6 @@ called it unused.)
 
 ## Known issues / backlog (not started)
 
-- Sector objects: instance fields fall back to the prototype when the instance bitmap omits them
-  (3,799 of 121,185 start-map scenery objects have no `current_aid`). `Object::parse_prototype`
-  only supports pc. Wall, portal and scenery prototype parsing is needed before the art step
-  (so every object resolves art) and the blocking step (prototype flags).
-- Blocking: `Sector::blocked` is only the tile blocking mask (`None` for version < 4: 32 of 621
-  start-map sectors; sparse: 172 of 621 set any bit, the start sector none). Objects (walls,
-  scenery, closed portals) block as well and are not decoded for blocking yet.
-
 - Sprites use linear filtering, so scaled 800x600 art looks soft. Consider nearest or a scaler.
 - Windows narrower than 4:3 crop the menu art (they are rejected by resolution validation anyway).
 - Label positions in `main_menu.rs` are hand-tuned constants for the original art.
@@ -685,9 +689,9 @@ called it unused.)
 
 ## Suggested next steps
 
-0. World milestone (`plans/world_milestone.md`): step 7 click to move (Milestone A; the
-   client side of walking exists as `WalkLocalPc`), step 8 UDP and a second client (A2). Object blocking on the
-   host is needed before movement validation is trusted (`TODO.md` → World).
+0. World: what each world step left (`plans/world_milestone.md`, `TODO.md` → World): NPCs
+   (spawned from the map's `.mob` files, then moving), doors opening, tile art blocking, sector
+   streaming, wall cutaway and roofs, reconnecting to a LAN game, the host/join menus.
 1. Check the stats page by eye (see Handoff), then its remaining parts: the skills / tech /
    spells tabs (top-right buttons and the right-hand panel), portrait, alignment gauge, hover
    help (charedit 100-140); then the original's window 15 between the editor and the game.
