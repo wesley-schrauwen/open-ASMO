@@ -27,11 +27,10 @@ Things to pick up later. Larger plans live in `plans/`; project state and findin
   - shadows, overlays and blit effects (`blit_flags`, `blit_scale`, flag 0x80);
   - prototype art for objects with no `current_aid`;
   - re-origin of the depth key when the PC goes far (order holds within about 256 tiles).
-- **Client sector unloading:** the client reads sectors round the PC as it moves and never
-  drops them or their tile sprites (`world_render`).
-- **Sector streaming on the host:** sectors are loaded around each PC when it spawns
-  (`SECTOR_RADIUS` = 1, a 3 x 3 block) and never unloaded. Load as PCs move, and unload what no
-  PC is near.
+- **Streaming leftovers:** NPC state is lost when their sector unloads (nothing changes it yet);
+  the client loads only around its own PC, so other players' PCs far away walk over nothing
+  drawn (they are off screen anyway); the depth key's origin is not moved as the PC travels
+  (order holds within about 256 tiles of the first sector).
 
 ## App
 

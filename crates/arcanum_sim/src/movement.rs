@@ -168,7 +168,8 @@ type SyncedQuery<'a> = (&'a NetId, &'a Position, Option<&'a Walking>, Option<&'a
 pub fn apply_moves(
     mut commands: Commands,
     mut requests: ResMut<MoveRequests>,
-    map: Res<LoadedMap>,
+    mut map: ResMut<LoadedMap>,
+    vfs: Option<Res<crate::SimVfs>>,
     session: Res<Session>,
     mut clock: ResMut<SyncClock>,
     mut world: ResMut<WorldState>,
@@ -187,6 +188,14 @@ pub fn apply_moves(
             }
         }
         clock.due = true;
+        // The path may lead into sectors not loaded yet: load them to check it.
+        let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
+        let mut sectors: Vec<_> = path.iter().map(|t| t.sector()).collect();
+        sectors.dedup();
+        for id in sectors {
+            map.load_sector(vfs_guard.as_deref(), id);
+        }
+        drop(vfs_guard);
         match check_path(&*map, at, &path).or_else(|refusal| continue_route(&*map, walking.map(|w| &w.steps), &path).ok_or(refusal)) {
             Ok(steps) if !steps.is_empty() => {
                 // The step under way goes on where it was if the new path takes it too.

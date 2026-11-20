@@ -10,8 +10,8 @@ Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2; t
   The open stack is #26 (`feat/sim-net-scaffold`, base `main`, contains everything up to #25)
   → #27 → #28 → #29 → #30 → #31 → #32 → #33 (`feat/art-animation`) → #34
   (`feat/click-to-move`) → #35 (`feat/udp-join`) → #36
-  (`feat/object-blocking`) → #37 (`feat/npcs`) →
-  ground objects (`feat/ground-objects`, the newest). Merging #26 into
+  (`feat/object-blocking`) → #37 (`feat/npcs`) → #38
+  (`feat/ground-objects`) → sector streaming (`feat/sector-streaming`, the newest). Merging #26 into
   `main` brings in #10-#25 as well. Then **retarget each next PR to `main` before merging it**.
 - **World milestone:** `plans/world_milestone.md` is the plan and records each step as built
   (differences from the plan, what is not done). Steps 1-8 are done: map readers (#19), the
@@ -21,8 +21,8 @@ Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2; t
   stands and walks with the original's art and timing (#33), and click to move with corrections
   (#34, Milestone A), LAN play (TCP for what must arrive, UDP state syncs) with a second
   client joining (#35, Milestone A2), and object blocking from the original's rules with every
-  prototype read (#36), NPCs standing on the map (#37), and
-  containers and items on the ground (`feat/ground-objects`). The milestone plan is complete; what is left is
+  prototype read (#36), NPCs standing on the map (#37),
+  containers and items on the ground (#38), and sector streaming (`feat/sector-streaming`). The milestone plan is complete; what is left is
   listed under each step's "Not done" and in `TODO.md` → World.
 - **World debug start:** `DEBUG_ARCANUM_SCREEN=ingame` (character "Debug"), optionally
   `DEBUG_ARCANUM_START=x,y` (e.g. `90330,84122`, a Shrouded Hills house) and
@@ -88,7 +88,7 @@ a text field).
 | Fonts | Game bitmap fonts decoded and rendered (`BitmapText`, multi-line: wrap, `\n`, tab indents, whole-line clipping). Menu uses `Morph30Font`/`morph15font`; character screens add `Flare12Font` (`UiFont::Body`) with the original white/red tints. Override TTF still wins if present; built-in font as last resort. |
 | Game data formats | `.mes`, `.art`, fonts, `.dat`; objects (`arcanum_formats::object`: prototypes and instances, PC field tables from the engine's names); maps/sectors (#19). |
 | Resolutions | Done. 720p–8K, 4:3–2.4:1, `UiScale` from a 1080 baseline. |
-| Tests | 400 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
+| Tests | 403 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
 | Everything else | Not started: game screens, critter art, NPCs, dialogue, scripts, combat, UDP. |
 
 ### Git state
@@ -709,8 +709,7 @@ called it unused.)
 ## Suggested next steps
 
 0. World: what each world step left (`plans/world_milestone.md`, `TODO.md` → World): NPCs
-   moving, taking and dropping items (host deltas for sector changes), doors opening, tile art blocking, sector
-   streaming, wall cutaway and roofs, reconnecting to a LAN game, the host/join menus.
+   moving, taking and dropping items (host deltas for sector changes), doors opening, tile art blocking, wall cutaway and roofs, reconnecting to a LAN game, the host/join menus.
 1. Check the stats page by eye (see Handoff), then its remaining parts: the skills / tech /
    spells tabs (top-right buttons and the right-hand panel), portrait, alignment gauge, hover
    help (charedit 100-140); then the original's window 15 between the editor and the game.
