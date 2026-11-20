@@ -2398,6 +2398,60 @@ fn world_fixture() -> (Fixture, String) {
 }
 
 #[test]
+fn the_character_screen_spends_points_in_the_world_through_the_host() {
+    use arcanum_client::character_editor::{CharacterPanel, CharacterPanelScreen, EditorAction, EditorText};
+    use arcanum_client::sim_bridge::LocalPc;
+
+    let (fx, _) = world_fixture();
+    let mut app = ready_menu(&fx);
+    app.add_plugins((arcanum_client::actors::ActorsPlugin, arcanum_client::hud::HudPlugin)).init_resource::<ButtonInput<MouseButton>>();
+    with_pickable_premades(&mut app);
+    activate(&mut app, MenuAction::SinglePlayer);
+    app.update();
+    activate(&mut app, MenuAction::NewGame);
+    app.update();
+    activate(&mut app, MenuAction::PickCharacter);
+    app.update();
+    press_new_game(&mut app, NewGameAction::Next);
+    update_until(&mut app, |app| state(app) == AppState::InGame && app.world().resource::<arcanum_client::pc_sheet::SheetHost>().sheet().is_some());
+    let max_hp = |app: &mut App| {
+        let pc = app.world().resource::<LocalPc>().0.unwrap().0;
+        app.world().resource::<arcanum_client::actors::Party>().status.get(&pc).map(|s| s.hit_points.max)
+    };
+    update_until(&mut app, |app| max_hp(app).is_some());
+    let before = max_hp(&mut app).unwrap();
+
+    // The top bar's character button opens it.
+    let button = {
+        let world = app.world_mut();
+        world.query::<(Entity, &arcanum_client::hud::HudAction)>().iter(world).next().unwrap().0
+    };
+    app.world_mut().trigger(Activate { entity: button });
+    app.update();
+    app.update();
+    assert!(app.world().resource::<CharacterPanel>().open);
+    let points = editor_text(&mut app, EditorText::Points);
+    press_editor(&mut app, EditorAction::HitPoints(1));
+    assert_ne!(editor_text(&mut app, EditorText::Points), points, "a point spent at once");
+    // The host takes it: every player's gauges show the higher maximum.
+    update_until(&mut app, |app| max_hp(app) == Some(before + 4));
+    // Minus takes it back while the screen is open.
+    press_editor(&mut app, EditorAction::HitPoints(-1));
+    update_until(&mut app, |app| max_hp(app) == Some(before));
+    press_editor(&mut app, EditorAction::HitPoints(1));
+    update_until(&mut app, |app| max_hp(app) == Some(before + 4));
+
+    // Escape closes the screen, not the game; the point stays.
+    press_escape(&mut app);
+    assert_eq!(state(&app), AppState::InGame);
+    assert!(!app.world().resource::<CharacterPanel>().open);
+    let world = app.world_mut();
+    assert_eq!(world.query_filtered::<(), With<CharacterPanelScreen>>().iter(world).count(), 0);
+    let sheet = app.world().resource::<arcanum_client::pc_sheet::SheetHost>().sheet().unwrap().clone();
+    assert_eq!((sheet.draft.hit_points, sheet.hp_points), (0, 1), "kept on closing");
+}
+
+#[test]
 fn the_world_draws_the_ground_round_the_pc() {
     use arcanum_client::isometric::tile_to_world;
     use arcanum_client::world_render::{ClientMap, GroundTile};

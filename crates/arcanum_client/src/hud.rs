@@ -18,7 +18,8 @@
 //!
 //! Owner's layout (2026-11-21): the world fills the window; the two bars are centred on its
 //! top and bottom edges, in original pixels scaled like the menus, so a wide window shows world
-//! beside them. Clicks on the bars do not reach the world ([`covers`]).
+//! beside them. Clicks on the bars, and on the character screen while it is open, do not reach the world
+//! ([`covers`]).
 //!
 //! Not built: what the buttons and slots do (they only show their hover and pressed frames),
 //! the message box, the ammo icon and the magick
@@ -26,7 +27,7 @@
 
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
-use bevy::ui_widgets::Button;
+use bevy::ui_widgets::{ActivateOnPress, Button};
 
 use crate::actors::Party;
 use arcanum_sim::Pool;
@@ -66,6 +67,13 @@ const BOTTOM_BUTTONS: [(&str, Vec2); 4] = [
 /// Hotkey slots 1-9 and 0, left to right.
 const HOTKEY_X: [f32; 10] = [198.0, 237.0, 276.0, 315.0, 354.0, 418.0, 456.0, 495.0, 534.0, 573.0];
 const HOTKEY_Y: f32 = 445.0;
+
+/// What a bar button does (the rest do nothing yet).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HudAction {
+    /// Opens or closes the character screen ([`crate::character_editor::CharacterPanel`]).
+    Character,
+}
 
 /// Which pool a vial shows.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -111,15 +119,18 @@ fn bar(top: bool, height: f32) -> impl Bundle {
 /// An art button at `rect` (bar coordinates): normal, pressed and hover frames. It does nothing
 /// yet.
 fn hud_button(frames: Handle<ArtFrames>, rect: Rect) -> impl Bundle {
-    (Button, Hovered::default(), FrameButton::arrow(frames), ImageNode::default(), at(rect))
+    (Button, ActivateOnPress, Hovered::default(), FrameButton::arrow(frames), ImageNode::default(), at(rect))
 }
 
 fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
     commands
         .spawn((DespawnOnExit(AppState::InGame), bar(true, TOP_HEIGHT), ImageNode::new(assets.load(interface::HUD_TOP))))
         .with_children(|top| {
-            for (file, x) in TOP_BUTTONS {
-                top.spawn(hud_button(assets.load(art(file)), rect(Vec2::new(x, 2.0), Vec2::splat(34.0))));
+            for (i, (file, x)) in TOP_BUTTONS.into_iter().enumerate() {
+                let mut button = top.spawn(hud_button(assets.load(art(file)), rect(Vec2::new(x, 2.0), Vec2::splat(34.0))));
+                if i == 0 {
+                    button.insert(HudAction::Character);
+                }
             }
             for n in 0..5 {
                 top.spawn((ImageNode::new(assets.load(art(&format!("SplSlt{}.ART", n + 1)))), at(rect(Vec2::new(281.0 + 50.0 * n as f32, 3.0), Vec2::splat(32.0)))));
@@ -230,10 +241,11 @@ fn show_vials(
 
 /// Whether the bars cover `cursor` (logical window pixels) in a `window_size` window: there a
 /// click is the interface's, not the world's.
-pub fn covers(window_size: Vec2, cursor: Vec2) -> bool {
+/// With `panel_open`, the character screen between them covers the 800x400 band too.
+pub fn covers(window_size: Vec2, cursor: Vec2, panel_open: bool) -> bool {
     let scale = window_size.y / 600.0;
     let half = BAR_WIDTH / 2.0 * scale;
-    (cursor.x - window_size.x / 2.0).abs() <= half && (cursor.y < TOP_HEIGHT * scale || cursor.y >= window_size.y - BOTTOM_HEIGHT * scale)
+    (cursor.x - window_size.x / 2.0).abs() <= half && (panel_open || cursor.y < TOP_HEIGHT * scale || cursor.y >= window_size.y - BOTTOM_HEIGHT * scale)
 }
 
 #[cfg(test)]
@@ -260,11 +272,15 @@ mod tests {
     fn the_bars_take_clicks_only_where_they_are() {
         let window = Vec2::new(1920.0, 1080.0);
         // 1.8 window pixels per original pixel: the bars span x 240..1680.
+        let covers = |w, c| super::covers(w, c, false);
         assert!(covers(window, Vec2::new(960.0, 10.0)));
         assert!(covers(window, Vec2::new(250.0, 1070.0)));
         assert!(!covers(window, Vec2::new(100.0, 1070.0)), "beside the bottom bar: world");
         assert!(!covers(window, Vec2::new(960.0, 540.0)));
         assert!(covers(window, Vec2::new(960.0, 1080.0 - 159.0 * 1.8 + 1.0)));
         assert!(!covers(window, Vec2::new(960.0, 1080.0 - 159.0 * 1.8 - 1.0)));
+        // The character screen takes the band between them, not beside it.
+        assert!(super::covers(window, Vec2::new(960.0, 540.0), true));
+        assert!(!super::covers(window, Vec2::new(100.0, 540.0), true));
     }
 }

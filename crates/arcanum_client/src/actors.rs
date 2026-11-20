@@ -61,7 +61,7 @@ pub struct ActorDeltas(pub Vec<LedgerDelta>);
 impl ActorDeltas {
     /// Whether this module handles `delta`.
     pub fn wants(delta: &LedgerDelta) -> bool {
-        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. } | LedgerDelta::PartyLeader { .. } | LedgerDelta::PcStatus { .. })
+        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. } | LedgerDelta::PartyLeader { .. } | LedgerDelta::PcStatus { .. } | LedgerDelta::Speed { .. })
     }
 }
 
@@ -435,6 +435,23 @@ fn apply_actor_deltas(
             LedgerDelta::PcStatus { net_id, status } => {
                 party.status.insert(net_id, status);
             }
+            LedgerDelta::Speed { net_id, speed } => {
+                let Some(known) = party.known.get_mut(&net_id) else { continue };
+                known.1 = speed;
+                let art = known.0;
+                let load = |speed| match vfs.as_ref().and_then(|v| v.0.read().ok()) {
+                    Some(vfs) => Gait::load(art, speed, |p| vfs.read(p).ok()),
+                    None => Gait::load(art, speed, |_| None),
+                };
+                if let Some(Ok((_, mut a))) = by_id.get(&net_id).map(|&e| actors.get_mut(e)) {
+                    a.own_gait = load(speed);
+                    a.gait = a.own_gait;
+                }
+                // The leader's speed sets the party's pace (`pace_party` applies it).
+                if party.leader == Some(net_id) {
+                    party.pace = Some(load(arcanum_sim::party_speed(speed)));
+                }
+            }
             LedgerDelta::PartyLeader { net_id } => {
                 let Some(&(art, speed)) = party.known.get(&net_id) else { continue };
                 let pace = match vfs.as_ref().and_then(|v| v.0.read().ok()) {
@@ -494,6 +511,7 @@ fn click_to_move(
     mut walk: ResMut<WalkLocalPc>,
     objects: Query<(Entity, &Sprite, &bevy::sprite::Anchor, &GlobalTransform, &MapObject)>,
     images: Res<Assets<Image>>,
+    panel: Option<Res<crate::character_editor::CharacterPanel>>,
 ) {
     let Some(origin) = client.filter(|c| !c.map.sectors.is_empty()).and_then(|c| c.origin) else { return };
     let cursor = match debug {
@@ -507,7 +525,7 @@ fn click_to_move(
         }
         None if buttons.just_pressed(MouseButton::Left) && !keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) => {
             let Some((cursor, size)) = windows.iter().find_map(|w| w.cursor_position().map(|c| (c, w.size()))) else { return };
-            if crate::hud::covers(size, cursor) {
+            if crate::hud::covers(size, cursor, panel.is_some_and(|p| p.open)) {
                 return;
             }
             cursor

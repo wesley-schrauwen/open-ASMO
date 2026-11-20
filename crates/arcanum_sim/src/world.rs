@@ -450,6 +450,8 @@ pub fn boot_world(
         }
         let spawn = look.spawn(net_id, EntityKind::Pc { player }, saved.position);
         let status = pc_status(&rules.0, sheet);
+        // Its player gets the whole sheet, for the character screen.
+        outbox.0.push((player, LedgerDelta::SheetUpdate { ack: 0, sheet: sheet.clone() }));
         for &other in session.players.keys() {
             outbox.0.push((other, spawn.clone()));
             outbox.0.push((other, LedgerDelta::PcStatus { net_id, status: status.clone() }));
@@ -477,7 +479,7 @@ mod tests {
     use arcanum_rules::{CharacterBlueprint, RulesData};
 
     use super::*;
-    use crate::{PlayerSave, SimApp, WorldSave};
+    use crate::{PlayerIntent, PlayerSave, SheetRequest, SimApp, WorldSave};
 
     const MAP: &str = "Test";
 
@@ -582,6 +584,42 @@ mod tests {
         assert_eq!(map.absent.len() + map.sectors.len(), 4, "a 2 x 2 block at the corner");
         assert_eq!(map.sectors.len(), 1, "(1, 1) is within reach");
         assert_eq!(pcs(&mut sim).len(), 1);
+    }
+
+    #[test]
+    fn the_character_screen_spends_points_through_the_host() {
+        use arcanum_rules::{CharacterAction, Pool};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut s = save(&[(1, "A", TileLoc { x: 70, y: 70 }), (2, "B", TileLoc { x: 71, y: 70 })]);
+        s.players.get_mut(&PlayerId(1)).unwrap().blueprint.sheet.unspent = 2;
+        let mut sim = booted(dir.path(), s);
+        sim.take_deltas();
+        let request = |seq, request| (PlayerId(1), PlayerIntent::Sheet { seq, request });
+        sim.receive([
+            request(1, SheetRequest::Open),
+            request(2, SheetRequest::Action(CharacterAction::AdjustPool(Pool::HitPoints, 1))),
+            request(3, SheetRequest::Action(CharacterAction::SetName("Z".into()))),
+            request(4, SheetRequest::Close),
+        ]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        let acks: Vec<u32> = deltas.iter().filter_map(|(p, d)| match d {
+            LedgerDelta::SheetUpdate { ack, .. } if p.0 == 1 => Some(*ack),
+            _ => None,
+        }).collect();
+        assert_eq!(acks, [1, 2, 3, 4], "every request answered, refused or not");
+        assert!(!deltas.iter().any(|(p, d)| p.0 == 2 && matches!(d, LedgerDelta::SheetUpdate { .. })), "only to its player");
+        // Both players see the higher maximum.
+        for to in [1, 2] {
+            let max = deltas.iter().rev().find_map(|(p, d)| match d {
+                LedgerDelta::PcStatus { status, .. } if p.0 == to => Some(status.hit_points.max),
+                _ => None,
+            });
+            assert!(max.is_some_and(|m| m > 0), "player {to}: {deltas:?}");
+        }
+        let saved = &sim.app.world().resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(1)].blueprint.sheet;
+        assert_eq!((saved.hp_points, saved.unspent, saved.name.as_str()), (1, 1, "A"), "kept in the save, the name refused");
     }
 
     #[test]

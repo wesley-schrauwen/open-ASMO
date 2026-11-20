@@ -125,6 +125,11 @@ pub enum LedgerDelta {
     /// the PC's `Spawn`, and again when it changes. Nothing changes it yet: no damage or fatigue
     /// is taken, so the gauges are full.
     PcStatus { net_id: NetId, status: PcStatus },
+    /// The host's copy of the player's own PC's sheet after the sheet request numbered `ack`
+    /// (applied or refused). The client takes it and replays its later requests on top.
+    SheetUpdate { ack: u32, sheet: arcanum_rules::CharacterSheet },
+    /// A PC's speed stat changed (it raised its dexterity): clients time its walk from it.
+    Speed { net_id: NetId, speed: i32 },
     /// An entity is gone.
     Despawn { net_id: NetId },
     /// The host finished this tick.
