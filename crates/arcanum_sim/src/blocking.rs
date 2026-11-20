@@ -31,6 +31,8 @@ use arcanum_formats::object::{Object, Prototypes, TYPE_CONTAINER, TYPE_PORTAL, T
 pub const OF_DESTROYED: i32 = 0x1;
 /// `flags`: off.
 pub const OF_OFF: i32 = 0x2;
+/// `flags`: carried, or inside a container.
+pub const OF_INVENTORY: i32 = 0x1000;
 /// `flags`: does not block.
 pub const OF_NO_BLOCK: i32 = 0x400;
 /// `spell_flags`: walls do not block (Passwall).

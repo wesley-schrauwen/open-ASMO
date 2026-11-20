@@ -25,7 +25,9 @@
 //! | 9 | light | 0x4ed250 |
 //! | 0xA | roof | 0x4ed370 |
 //! | 0xB | facade (sector tiles that are not terrain) | 0x4ec3f0 |
-//! | 0xC, 0xD, 0xE | monster, unique npc, eye candy | not decoded |
+//! | 0xC | monster | 0x41dd45: `art/monster/<name>/<name><armour><x|s><weapon><anim>.art` |
+//! | 0xD | unique npc | 0x41dbfc: `art/unique_npc/<name>/<name><x|s><weapon><anim>.art` |
+//! | 0xE | eye candy | not decoded |
 //!
 //! Item, container, monster, unique npc, interface and eye candy ids decode to a kind only; [`ArtIndex::path`] returns `None` for them (their rules are not verified against data).
 //!
@@ -122,6 +124,8 @@ pub const ART_INDEX_FILES: &[&str] = &[
     "art/facade/facadename.mes",
     "art/roof/roofname.mes",
     "art/light/light.mes",
+    "art/monster/monster.mes",
+    "art/unique_npc/unique_npc.mes",
 ];
 
 /// Wall piece names, indexed by bits 14..19 (table at 0x5bb6b0).
@@ -383,6 +387,21 @@ pub struct ArtIndex {
     facades: Vec<String>,
     roofs: Vec<String>,
     lights: HashMap<u32, String>,
+    /// Monster names (`art/monster/monster.mes`), by number.
+    monsters: HashMap<u32, String>,
+    /// Unique NPC names (`art/unique_npc/unique_npc.mes`), by number.
+    unique_npcs: HashMap<u32, String>,
+}
+
+/// The file name tail shared by monster and unique NPC art (path builders 0x41dd45, 0x41dbfc):
+/// `<x|s><weapon><anim>`, from bits 19, 0-3 and 6-10 as for critters.
+fn creature_tail(id: ArtId) -> String {
+    let flag_s = id.0 >> 19 & 1 == 1;
+    let weapon = id.0 & 0xf;
+    let anim = (id.0 >> 6) & 0x1f;
+    let s = if flag_s { 's' } else { 'x' };
+    let weapon = if weapon == 7 && flag_s { 'd' } else { CRITTER_WEAPONS.get(weapon as usize).map_or('?', |&c| c as char) };
+    format!("{s}{weapon}{}", (b'a' + anim as u8) as char)
 }
 
 /// The entries of a `.mes` file in key order.
@@ -437,6 +456,12 @@ impl ArtIndex {
         for (key, text) in sorted(&mes("art/light/light.mes")?) {
             index.lights.insert(key, text.trim().to_string());
         }
+        for (key, text) in sorted(&mes("art/monster/monster.mes")?) {
+            index.monsters.insert(key, text.trim().to_ascii_lowercase());
+        }
+        for (key, text) in sorted(&mes("art/unique_npc/unique_npc.mes")?) {
+            index.unique_npcs.insert(key, text.trim().to_ascii_lowercase());
+        }
         Ok(index)
     }
 
@@ -469,6 +494,17 @@ impl ArtIndex {
                 })
             }
             ArtKind::Critter => Some(CritterArt::from_id(id).path()),
+            // Number bits 23-27, armour 20-22 (`xx` for animation 24), then as critters.
+            ArtKind::Monster => {
+                let name = self.monsters.get(&((id.0 >> 23) & 0x1f))?;
+                let armour = if (id.0 >> 6) & 0x1f == 24 { "xx" } else { CRITTER_ARMOUR.get(((id.0 >> 20) & 7) as usize).copied().unwrap_or("??") };
+                Some(format!("art/monster/{name}/{name}{armour}{}.art", creature_tail(id)))
+            }
+            // Number bits 20-27, no armour.
+            ArtKind::UniqueNpc => {
+                let name = self.unique_npcs.get(&((id.0 >> 20) & 0xff))?;
+                Some(format!("art/unique_npc/{name}/{name}{}.art", creature_tail(id)))
+            }
             _ => None,
         }
     }
@@ -576,6 +612,8 @@ mod tests {
     }
     const ROOF: &str = "{0}{rf0}\n{1}{rf1}\n";
     const LIGHT: &str = "{80}{lgt}\n";
+    const MONSTER: &str = "{0}{wlf}\n{9}{bun}\n";
+    const UNIQUE_NPC: &str = "{5} {ghmst}\n{17} {hmfc2}\n";
 
     fn index() -> ArtIndex {
         let facade = facade_mes();
@@ -587,6 +625,8 @@ mod tests {
             ("art/facade/facadename.mes", facade.as_str()),
             ("art/roof/roofname.mes", ROOF),
             ("art/light/light.mes", LIGHT),
+            ("art/monster/monster.mes", MONSTER),
+            ("art/unique_npc/unique_npc.mes", UNIQUE_NPC),
         ]);
         ArtIndex::load(|p| files.get(p).map(|s| s.as_bytes().to_vec())).unwrap()
     }
@@ -703,9 +743,21 @@ mod tests {
     fn no_art_and_undecoded_kinds_are_none() {
         let i = index();
         assert_eq!(p(&i, ArtId::NONE), None);
-        for t in [5u32, 6, 7, 8, 0xC, 0xD, 0xE, 0xF] {
+        for t in [5u32, 6, 7, 8, 0xE, 0xF] {
             assert_eq!(p(&i, ArtId(t << 28 | 0x1234)), None, "type {t}");
         }
+    }
+
+    #[test]
+    fn monster_and_unique_npc_id_to_path() {
+        let i = index();
+        // From the start map's .mob files.
+        assert_eq!(p(&i, ArtId(0xd050_29c0)).as_deref(), Some("art/unique_npc/ghmst/ghmstxah.art"));
+        assert_eq!(p(&i, ArtId(0xd110_1810)).as_deref(), Some("art/unique_npc/hmfc2/hmfc2xaa.art"));
+        // Monster 9, armour 0, walking (anim 1), with the s flag.
+        assert_eq!(p(&i, ArtId(0xC000_0000 | 9 << 23 | 1 << 19 | 1 << 6)).as_deref(), Some("art/monster/bun/bunuwsab.art"));
+        assert_eq!(p(&i, ArtId(0xC000_0000 | 24 << 6)).as_deref(), Some("art/monster/wlf/wlfxxxay.art"), "animation 24");
+        assert_eq!(p(&i, ArtId(0xC000_0000 | 3 << 23)), None, "not in monster.mes");
     }
 
     #[test]

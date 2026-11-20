@@ -183,6 +183,16 @@ fn load_sectors(mut client: ResMut<ClientMap>, map: Res<LocalMap>, pc: Res<Local
     }
 }
 
+impl ClientMap {
+    /// The `.art` file of art id `id`, once the art index is loaded.
+    pub fn art_path(&self, id: ArtId) -> Option<String> {
+        match &self.art {
+            Some(Ok(index)) => index.path(id),
+            _ => None,
+        }
+    }
+}
+
 /// Spawns a sprite for every ground tile of each loaded sector not yet drawn.
 fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: Res<AssetServer>) {
     let client = &mut *client;

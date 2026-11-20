@@ -1,7 +1,7 @@
 # Project notes (handoff)
 
 Working notes for whoever picks this up next, human or agent. Read this first, then `README.md`.
-Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2; object blocking next PR).
+Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2; then object blocking and NPCs).
 
 ## Handoff: start here
 
@@ -9,8 +9,8 @@ Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2; o
   into its parent branch, so none of them reached `main` (the same mistake #8 fixed once).
   The open stack is #26 (`feat/sim-net-scaffold`, base `main`, contains everything up to #25)
   → #27 → #28 → #29 → #30 → #31 → #32 → #33 (`feat/art-animation`) → #34
-  (`feat/click-to-move`) → #35 (`feat/udp-join`) → object blocking
-  (`feat/object-blocking`, the newest). Merging #26 into
+  (`feat/click-to-move`) → #35 (`feat/udp-join`) → #36
+  (`feat/object-blocking`) → NPCs (`feat/npcs`, the newest). Merging #26 into
   `main` brings in #10-#25 as well. Then **retarget each next PR to `main` before merging it**.
 - **World milestone:** `plans/world_milestone.md` is the plan and records each step as built
   (differences from the plan, what is not done). Steps 1-8 are done: map readers (#19), the
@@ -20,7 +20,7 @@ Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2; o
   stands and walks with the original's art and timing (#33), and click to move with corrections
   (#34, Milestone A), LAN play (TCP for what must arrive, UDP state syncs) with a second
   client joining (#35, Milestone A2), and object blocking from the original's rules with every
-  prototype read (`feat/object-blocking`). The milestone plan is complete; what is left is
+  prototype read (#36), and NPCs standing on the map (`feat/npcs`). The milestone plan is complete; what is left is
   listed under each step's "Not done" and in `TODO.md` → World.
 - **World debug start:** `DEBUG_ARCANUM_SCREEN=ingame` (character "Debug"), optionally
   `DEBUG_ARCANUM_START=x,y` (e.g. `90330,84122`, a Shrouded Hills house) and
@@ -86,7 +86,7 @@ a text field).
 | Fonts | Game bitmap fonts decoded and rendered (`BitmapText`, multi-line: wrap, `\n`, tab indents, whole-line clipping). Menu uses `Morph30Font`/`morph15font`; character screens add `Flare12Font` (`UiFont::Body`) with the original white/red tints. Override TTF still wins if present; built-in font as last resort. |
 | Game data formats | `.mes`, `.art`, fonts, `.dat`; objects (`arcanum_formats::object`: prototypes and instances, PC field tables from the engine's names); maps/sectors (#19). |
 | Resolutions | Done. 720p–8K, 4:3–2.4:1, `UiScale` from a 1080 baseline. |
-| Tests | 394 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
+| Tests | 397 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
 | Everything else | Not started: game screens, critter art, NPCs, dialogue, scripts, combat, UDP. |
 
 ### Git state
@@ -355,6 +355,17 @@ Recovered by inspecting data and by reverse engineering `Arcanum.exe` with the R
   - `OPF_` flags: LOCKED 0x1, JAMMED 0x2, MAGICALLY_HELD 0x4, NEVER_LOCKED 0x8, ALWAYS_LOCKED 0x10.
   - `OSF_PASSWALLED` 0x100000. Wall art piece = bits 14-19.
   - Every object's missing fields come from `proto/*.pro` (all types parse).
+- **Monsters and unique NPCs** (art types 0xC, 0xD; path builders 0x41dd45, 0x41dbfc;
+  normaliser per type 0x41d510, jump table 0x41da04):
+  - Monster: name `art/monster/monster.mes` by bits 23-27; armour bits 20-22 (`xx` for
+    animation 24); `art/monster/<n>/<n><armour><x|s><weapon><anim>.art`.
+  - Unique NPC: name `art/unique_npc/unique_npc.mes` by bits 20-27;
+    `art/unique_npc/<n>/<n><x|s><weapon><anim>.art`.
+  - Animation fallback: remap rules at 0x5a106c (mask), 0x5a10b8 (from), 0x5a1104 (weapon),
+    0x5a1150 (to), with availability masks 0x5d5600-0x5d5618; not reproduced.
+- **NPCs**: `.mob` files (`G_<guid>.mob`) hold the map's NPCs, containers and items; carried
+  ones have `OF_INVENTORY` (0x1000). The host spawns NPCs per loaded sector
+  (`arcanum_sim::spawn_npcs`).
 - **Critters on screen** (`art_id::CritterArt`, `arcanum_sim::gait`, `actors.rs`; details and
   addresses in `plans/world_milestone.md` → step 6). Art id fields: gender 27, body 24-26
   (`hm df gh hg ef`), armour 20-23 (`uw v1 la cm pm rb pc bn cd`), s/x flag 19, frame 14-18,
@@ -690,7 +701,7 @@ called it unused.)
 ## Suggested next steps
 
 0. World: what each world step left (`plans/world_milestone.md`, `TODO.md` → World): NPCs
-   (spawned from the map's `.mob` files, then moving), doors opening, tile art blocking, sector
+   moving, containers and ground items (their art paths: item 6, container 7), doors opening, tile art blocking, sector
    streaming, wall cutaway and roofs, reconnecting to a LAN game, the host/join menus.
 1. Check the stats page by eye (see Handoff), then its remaining parts: the skills / tech /
    spells tabs (top-right buttons and the right-hand panel), portrait, alignment gauge, hover

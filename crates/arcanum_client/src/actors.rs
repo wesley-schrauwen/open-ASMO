@@ -23,9 +23,9 @@
 
 use std::collections::{HashMap, VecDeque};
 
-use arcanum_formats::art_id::{ANIM_STAND, ArtId, CritterArt};
+use arcanum_formats::art_id::{ANIM_WALK, ArtId, ArtKind, CritterArt};
 use arcanum_formats::map::TileLoc;
-use arcanum_sim::{Gait, LedgerDelta, NetId, PcState, PlayerIntent, find_path, rotation_of_step, sync_is_newer, walk_art, with_anim};
+use arcanum_sim::{Gait, LedgerDelta, NetId, PcState, PlayerIntent, find_path, rotation_of_step, sync_is_newer, walk_art};
 use bevy::prelude::*;
 
 use crate::animation::ArtAnimation;
@@ -269,11 +269,33 @@ impl Actor {
         self.slide = if left <= 0.0 { Vec2::ZERO } else { self.slide.normalize() * left };
     }
 
-    /// The art to show now: walking or standing, in the current rotation.
+    /// The art to show now: the walk animation while walking, else the art it was spawned with
+    /// (an NPC may stand in another animation, such as lying wounded), in the current rotation.
+    /// Critters, monsters and unique NPCs share the animation and rotation bits; other art (an
+    /// NPC drawn as scenery) is shown as it is.
     pub fn current_art(&self) -> ArtId {
-        let anim = if self.walking() { walk_art(self.art) } else { with_anim(self.art, ANIM_STAND) };
-        CritterArt { rotation: self.rotation as u32, ..CritterArt::from_id(anim) }.id()
+        match self.art.kind() {
+            ArtKind::Critter => {
+                let art = if self.walking() { walk_art(self.art) } else { self.art };
+                CritterArt { rotation: self.rotation as u32, ..CritterArt::from_id(art) }.id()
+            }
+            ArtKind::Monster | ArtKind::UniqueNpc => {
+                let anim = if self.walking() { ANIM_WALK } else { (self.art.0 >> 6) & 0x1f };
+                with_anim_bits(self.art, anim, self.rotation as u32)
+            }
+            _ => self.art,
+        }
     }
+
+    /// The frame to hold while standing: the one its art id names.
+    pub fn standing_frame(&self) -> usize {
+        ((self.art.0 >> 14) & 0x1f) as usize
+    }
+}
+
+/// `art` with animation `anim`, rotation `rotation` and frame 0.
+fn with_anim_bits(art: ArtId, anim: u32, rotation: u32) -> ArtId {
+    ArtId((art.0 & !(0x1f << 6 | 7 << 11 | 0x1f << 14)) | anim << 6 | (rotation & 7) << 11)
 }
 
 fn forget_actors(mut deltas: ResMut<ActorDeltas>, mut walk: ResMut<WalkLocalPc>, mut sync: ResMut<SyncState>) {
@@ -286,7 +308,6 @@ fn forget_actors(mut deltas: ResMut<ActorDeltas>, mut walk: ResMut<WalkLocalPc>,
 fn apply_actor_deltas(
     mut commands: Commands,
     mut deltas: ResMut<ActorDeltas>,
-    assets: Res<AssetServer>,
     vfs: Option<Res<VfsResource>>,
     pc: Res<LocalPc>,
     mut walk: ResMut<WalkLocalPc>,
@@ -311,11 +332,10 @@ fn apply_actor_deltas(
                 };
                 let rotation = CritterArt::from_id(art).rotation as usize;
                 let actor = Actor { net_id, art, gait, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO };
-                let path = CritterArt::from_id(actor.current_art()).path();
-                let handle: Handle<ArtFrames> = assets.load(path);
+                // The art is set once the art index is in (`place_actors`).
                 let entity = commands
                     .spawn((
-                        ArtAnimation::new(handle, rotation),
+                        ArtAnimation::new(Handle::default(), rotation),
                         actor,
                         Sprite::default(),
                         bevy::sprite::Anchor::CENTER,
@@ -478,8 +498,15 @@ fn walk_actors(time: Res<Time>, mut pc: ResMut<LocalPc>, mut actors: Query<&mut 
 }
 
 /// Puts each actor's sprite between its tiles and gives it the right art.
-fn place_actors(client: Option<Res<ClientMap>>, assets: Res<AssetServer>, mut actors: Query<(&Actor, &mut ArtAnimation, &mut Transform)>) {
-    let Some(origin) = client.and_then(|c| c.origin) else { return };
+fn place_actors(
+    client: Option<Res<ClientMap>>,
+    assets: Res<AssetServer>,
+    vfs: Option<Res<VfsResource>>,
+    mut exists: Local<HashMap<String, bool>>,
+    mut actors: Query<(&Actor, &mut ArtAnimation, &mut Transform)>,
+) {
+    let Some(client) = client else { return };
+    let Some(origin) = client.origin else { return };
     for (actor, mut animation, mut transform) in &mut actors {
         let here = tile_to_world(actor.at, origin);
         let pos = here + actor.drawn_offset();
@@ -488,11 +515,27 @@ fn place_actors(client: Option<Res<ClientMap>>, assets: Res<AssetServer>, mut ac
             _ => actor.at,
         };
         transform.translation = pos.extend(object_depth(depth_tile, origin, false, DEPTH_TILE_ORDER - 1));
-        let path = CritterArt::from_id(actor.current_art()).path();
+        let art = actor.current_art();
+        let Some(mut path) = client.art_path(art) else { continue };
+        // A body with no art for this animation (two have no standing art) shows its walk.
+        let mut there = |p: &String| *exists.entry(p.clone()).or_insert_with(|| vfs.as_ref().and_then(|v| v.0.read().ok()).is_none_or(|v| v.exists(p)));
+        if !there(&path)
+            && matches!(art.kind(), ArtKind::Monster | ArtKind::UniqueNpc)
+            && let Some(walk) = client.art_path(with_anim_bits(art, ANIM_WALK, actor.rotation as u32))
+            && there(&walk)
+        {
+            path = walk;
+        }
         let walking = actor.walking();
         let handle = assets.get_handle::<ArtFrames>(&path).unwrap_or_else(|| assets.load(path));
+        let changed = animation.art != handle;
         animation.set(&handle, actor.rotation);
         animation.frame_millis = walking.then_some(actor.gait.frame_millis);
+        // Standing holds the frame the art id names; walking plays.
+        animation.playing = walking;
+        if !walking && changed {
+            animation.clock.frame = actor.standing_frame();
+        }
     }
 }
 

@@ -20,6 +20,8 @@ pub type Tick = u64;
 pub enum EntityKind {
     /// A player character, controlled by `player`.
     Pc { player: PlayerId },
+    /// A non-player character from the map, made from prototype `prototype`.
+    Npc { prototype: u32 },
 }
 
 /// State sync numbers roll over here.

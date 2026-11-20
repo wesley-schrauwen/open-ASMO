@@ -98,6 +98,9 @@ fn play_animations(
         };
         if animation.playing {
             animation.clock.advance(dt, period, count);
+        } else if animation.clock.frame >= count {
+            // A held frame past the end of this art: its last.
+            animation.clock.frame = count.saturating_sub(1);
         }
         let Some((image, center, size)) = rotation.frame(animation.clock.frame) else { continue };
         if sprite.image != *image {
