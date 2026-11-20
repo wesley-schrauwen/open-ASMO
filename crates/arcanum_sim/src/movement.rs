@@ -14,9 +14,11 @@
 //! share a tile, so a client is never snapped back because another actor moved. In combat they
 //! will block ([`Occupied`]), and the snap-back is enforced; there is no combat yet.
 //!
-//! The host walks the PC itself, so a client cannot go faster than the host allows: a client
-//! that runs ahead sends a path that starts too far from where the host has the PC, and is
-//! corrected.
+//! The host walks the PC itself, so a client cannot go faster than the host allows. The client
+//! walks at once and the host only once the move arrives, so with latency the client is ahead:
+//! a new path may also start anywhere on the route the host is still walking. The host walks on
+//! to that tile and continues along the new path, at its own pace. A path starting anywhere
+//! else, not on or next to the host's tile, is corrected.
 
 use std::collections::{HashSet, VecDeque};
 
@@ -75,6 +77,15 @@ pub fn check_path(map: &impl Walkable, from: TileLoc, path: &[TileLoc]) -> Resul
     Ok(steps)
 }
 
+/// A path that starts on `route` (the steps a walking PC still has): the route up to that tile,
+/// then the path's checked steps. `None` if it does not start on the route or is refused.
+pub fn continue_route(map: &impl Walkable, route: Option<&VecDeque<TileLoc>>, path: &[TileLoc]) -> Option<Vec<TileLoc>> {
+    let route = route?;
+    let i = route.iter().position(|&t| Some(&t) == path.first())?;
+    let rest = check_path(map, route[i], path).ok()?;
+    Some(route.iter().take(i + 1).copied().chain(rest).collect())
+}
+
 /// A PC walking a checked path.
 #[derive(Component, Debug, Clone, PartialEq)]
 pub struct Walking {
@@ -94,6 +105,7 @@ pub struct MoveRequests(pub Vec<(PlayerId, u32, Vec<TileLoc>)>);
 /// other players get a `Move`. Refused: the PC stops where it is and every player gets a
 /// `MoveCorrection` (the others may have its last path). Requests from players with no PC in
 /// the world are dropped.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_moves(
     mut commands: Commands,
     mut requests: ResMut<MoveRequests>,
@@ -102,11 +114,13 @@ pub fn apply_moves(
     mut outbox: ResMut<Outbox>,
     mut world: ResMut<WorldState>,
     pcs: Query<(Entity, &NetId, &Position, &PlayerControlled)>,
+    walkers: Query<Option<&Walking>>,
 ) {
     for (player, seq, path) in requests.0.drain(..) {
         let Some(SessionPlayer::InWorld(net_id)) = session.players.get(&player) else { continue };
         let Some((entity, &net_id, &Position(at), _)) = pcs.iter().find(|(_, id, _, _)| **id == *net_id) else { continue };
-        match check_path(&*map, at, &path) {
+        let walking = walkers.get(entity).ok().flatten();
+        match check_path(&*map, at, &path).or_else(|refusal| continue_route(&*map, walking.map(|w| &w.steps), &path).ok_or(refusal)) {
             Ok(steps) => {
                 if steps.is_empty() {
                     commands.entity(entity).remove::<Walking>();
@@ -116,7 +130,9 @@ pub fn apply_moves(
                 for &other in session.players.keys().filter(|&&p| p != player) {
                     outbox.0.push((other, relay.clone()));
                 }
-                commands.entity(entity).insert(Walking { seq, steps: steps.into(), progress: 0.0 });
+                // The step under way goes on where it was if the new path takes it too.
+                let progress = walking.filter(|w| w.steps.front() == steps.first()).map_or(0.0, |w| w.progress);
+                commands.entity(entity).insert(Walking { seq, steps: steps.into(), progress });
             }
             Err(_) => {
                 commands.entity(entity).remove::<Walking>();

@@ -121,7 +121,7 @@ impl LoadedMap {
 
 /// Boots and grows the world from the [`WorldState`]: see the module docs. Each new PC is
 /// announced with a `Spawn` to every player in the session, and the new PC's player is also
-/// told about the PCs already there.
+/// told about the PCs already there (with a `Move` for the rest of the path of any walking).
 #[allow(clippy::too_many_arguments)]
 pub fn boot_world(
     mut commands: Commands,
@@ -132,7 +132,7 @@ pub fn boot_world(
     mut session: ResMut<Session>,
     mut outbox: ResMut<Outbox>,
     rules: Res<SimRules>,
-    pcs: Query<(&NetId, &PlayerControlled, &Position, &Appearance)>,
+    pcs: Query<(&NetId, &PlayerControlled, &Position, &Appearance, Option<&crate::Walking>)>,
 ) {
     let Some(save) = &world.0 else { return };
     let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
@@ -140,7 +140,8 @@ pub fn boot_world(
     if map.name.as_deref() != Some(save.map.as_str()) {
         map.open(vfs, &save.map);
     }
-    let mut existing: Vec<(NetId, PlayerId, TileLoc, Appearance)> = pcs.iter().map(|(id, p, pos, look)| (*id, p.0, pos.0, *look)).collect();
+    let mut existing: Vec<(NetId, PlayerId, TileLoc, Appearance, Vec<TileLoc>)> =
+        pcs.iter().map(|(id, p, pos, look, walking)| (*id, p.0, pos.0, *look, walking.map(|w| w.steps.iter().copied().collect()).unwrap_or_default())).collect();
     for (&player, saved) in &save.players {
         if existing.iter().any(|(_, p, ..)| *p == player) {
             continue;
@@ -158,10 +159,13 @@ pub fn boot_world(
         for &other in session.players.keys() {
             outbox.0.push((other, spawn.clone()));
         }
-        for &(id, other, position, other_look) in &existing {
-            outbox.0.push((player, other_look.spawn(id, EntityKind::Pc { player: other }, position)));
+        for (id, other, position, other_look, path) in &existing {
+            outbox.0.push((player, other_look.spawn(*id, EntityKind::Pc { player: *other }, *position)));
+            if !path.is_empty() {
+                outbox.0.push((player, LedgerDelta::Move { net_id: *id, path: path.clone() }));
+            }
         }
-        existing.push((net_id, player, saved.position, look));
+        existing.push((net_id, player, saved.position, look, Vec::new()));
     }
 }
 
@@ -370,7 +374,30 @@ mod tests {
     }
 
     #[test]
-    fn a_client_running_ahead_is_corrected_where_the_host_has_it() {
+    fn a_client_ahead_on_its_route_continues_from_there() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 }), (9, "B", TileLoc { x: 90, y: 90 })]));
+        sim.take_deltas();
+        send_move(&mut sim, 7, 1, &[(71, 80), (72, 80), (73, 80), (74, 80), (75, 80)]);
+        sim.update();
+        walk_ticks(&mut sim, ticks_for(1));
+        assert_eq!(position(&mut sim, 7), TileLoc { x: 71, y: 80 });
+        sim.take_deltas();
+        // The client (ahead: latency) turns off at (74, 80). The host walks there first.
+        send_move(&mut sim, 7, 2, &[(74, 80), (74, 81)]);
+        sim.update();
+        let route: Vec<TileLoc> = [(72, 80), (73, 80), (74, 80), (74, 81)].iter().map(|&(x, y)| TileLoc { x, y }).collect();
+        let deltas = sim.take_deltas();
+        assert!(deltas.iter().all(|(_, d)| !matches!(d, LedgerDelta::MoveCorrection { .. })), "{deltas:?}");
+        assert!(deltas.contains(&(PlayerId(9), LedgerDelta::Move { net_id: NetId(0), path: route })), "{deltas:?}");
+        assert!(position(&mut sim, 7).x < 73, "at the host's pace, not the client's");
+        walk_ticks(&mut sim, ticks_for(3));
+        assert_eq!(position(&mut sim, 7), TileLoc { x: 74, y: 81 });
+    }
+
+    #[test]
+    fn a_client_claiming_to_be_off_its_route_is_corrected_where_the_host_has_it() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());
         let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 })]));
@@ -380,8 +407,8 @@ mod tests {
         walk_ticks(&mut sim, ticks_for(1));
         let host_at = position(&mut sim, 7);
         assert_eq!(host_at, TileLoc { x: 71, y: 80 });
-        // The client claims to be at (74, 80) already.
-        send_move(&mut sim, 7, 2, &[(74, 80), (74, 81)]);
+        // The client claims to be at (74, 82), which is neither near the host nor on the route.
+        send_move(&mut sim, 7, 2, &[(74, 82), (74, 83)]);
         sim.update();
         let deltas = sim.take_deltas();
         let LedgerDelta::MoveCorrection { seq: 2, position: stopped, .. } = deltas[0].1 else { panic!("{deltas:?}") };

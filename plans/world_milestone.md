@@ -1,6 +1,6 @@
 # World milestone: networked world from a save
 
-Status: design approved 2026-11-13, not implemented.
+Status: design approved 2026-11-13; steps 1-8 built (Milestones A and A2), see the sections below.
 
 ## Intent
 
@@ -189,8 +189,8 @@ The in-process host now owns the character; the screens are unchanged.
 
 Not done, or done differently from the plan:
 
-- **The player id is fixed** (`LOCAL_PLAYER`, 1). The random id saved in the player's config
-  comes with joining (step 8).
+- **The player id was fixed** (`LOCAL_PLAYER`, 1). Since step 8 it is a random id saved in the
+  player's config.
 
 Resolved in the next PR (the save): loading waits for the host, and the host is created on
 entering New Game.
@@ -450,6 +450,60 @@ Not done, or done differently from the original:
   lives in the goal runner or pathfinder and is not traced.
 - **No cursor shapes and no viewport rect.** The original takes clicks only inside the game view
   rect (0x603bb0). There is no interface bar yet, so the whole window is the view.
+
+## LAN play: a second client joins (step 8, Milestone A2)
+
+- **`UdpHost` and `UdpClient`** (`arcanum_net::udp`) implement the two transport traits.
+  - Each direction is a reliable, ordered channel: messages are numbered, a packet carries the
+    sender's unacknowledged messages and `ack` (the next number expected), and anything not
+    acknowledged within 150 ms is sent again. The receiver drops duplicates and holds early
+    messages back, so each side sees every message once, in order.
+  - An idle side sends a keepalive every 500 ms. A side not heard from for 10 s is gone.
+  - Encoding: JSON, one packet per datagram, at most 60 000 bytes. A larger message is not
+    sent and is logged. Packets of another protocol version are ignored.
+  - A thread per end owns the socket, so the trait methods never block. Dropping an end sends
+    `Bye`.
+- **Tick stamps are not needed for UDP.** The channel already delivers in order and without
+  duplicates, so `last_confirmed_tick` and the dropping of stale deltas (owed since step 2) are
+  not built.
+- **Joining.** A client's first message is `Hello { player }`, and the host keys it by its
+  address from then on. A second address with the same id replaces the first.
+  - The joiner then makes or picks its character through the same character intents as a local
+    player, so the host never receives a finished sheet. On accept, the host adds the character
+    to its `WorldSave`.
+  - The join snapshot is what booting already sends: `EnterMap`, a `Spawn` for every PC, and now
+    a `Move` with the rest of the path of any PC that is walking.
+  - The joiner's PC starts at the start position. There is no inn yet, and the join-anywhere
+    development setting is in effect.
+- **`LocalHost::listen`** adds a `UdpHost` beside the loopback, so the player who hosts still
+  plays in-process. A player connected in-process cannot also be played over UDP: such intents
+  are dropped.
+- **Player ids** are random, made on first run and saved as `player_id` in `config.toml` (below
+  2^63, as TOML integers are signed). Loading the config now writes it once. A second copy of the
+  game on the same machine needs its own `ARCANUM_CONFIG`.
+- **Latency tolerance.** The client walks at once and the host only when the move arrives, so
+  over the network the client can be several tiles ahead. A new path may now also start on any
+  tile of the route the host is still walking. The host walks on to that tile, then follows
+  the new path at its own pace. A step under way keeps its progress. A path starting anywhere
+  else is still corrected.
+- **Development switches, until the host/join menus exist:**
+  - `DEBUG_ARCANUM_LISTEN=0.0.0.0:7777`: this game takes LAN players.
+  - `DEBUG_ARCANUM_JOIN=<ip>:7777`: join that host instead of running one. Entering New Game
+    connects; going back to the main menu disconnects.
+- **Checked with two processes on one machine.** A host on the start map listened while a
+  joiner (its own config) made a character and walked, and the host also walked. The host's save
+  then held both PCs at the tiles they walked to, and the log showed no corrections. The
+  screenshots came out black (the display was off), so it was not checked by eye.
+
+Not done, or done differently from the plan:
+
+- **No reconnect.** A player who leaves keeps their PC in the host's world, but rejoining with
+  the same id gets no snapshot: the host ignores character requests from a player in the world.
+  Drop-out and reconnect are open (owner).
+- **No authentication.** Any LAN client can claim any player id except the in-process one.
+- **Only a timeout tells a joiner the host is unreachable.** Loading does not show it.
+- **No NAT traversal, discovery or session broadcast.** The joiner types the address.
+- **JSON on the wire** is large but simple. A binary encoding can replace it inside `udp.rs`.
 
 ## Builder's calls (proposed by Claude, not owner decisions)
 

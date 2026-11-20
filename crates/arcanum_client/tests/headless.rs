@@ -294,7 +294,7 @@ fn menu_app(vfs: Vfs) -> App {
         .init_resource::<GameSettings>()
         .add_plugins((TimePlugin, BitmapTextPlugin, FontsPlugin, MenuAudioPlugin, MainMenuPlugin, OptionsPlugin, ScreensPlugin, LoadingPlugin, LoadGamePlugin, NewGamePlugin, arcanum_client::CreateCharacterPlugin, arcanum_client::CharacterEditorPlugin))
         .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(100)))
-        .insert_resource(arcanum_client::sim_bridge::HostSettings { save_dir: None, manual_clock: true, start_at: None })
+        .insert_resource(arcanum_client::sim_bridge::HostSettings { save_dir: None, manual_clock: true, ..Default::default() })
         .add_plugins((arcanum_client::sim_bridge::SimBridgePlugin, arcanum_client::WorldRenderPlugin));
     app
 }
@@ -1616,7 +1616,8 @@ fn leaving_options_saves_the_settings() {
     press(&mut app, OptionsAction::Step { option: OptionId::AutoAttack, delta: 1 });
     press(&mut app, OptionsAction::Tab(OptionsTab::Sound));
     press(&mut app, OptionsAction::Step { option: OptionId::Music, delta: -1 });
-    assert!(!path.exists(), "nothing is written while the screen is open");
+    let id = saved(&path).player_id;
+    assert_eq!(saved(&path), GameSettings { player_id: id, ..default() }, "only the new player id is written while the screen is open");
 
     press(&mut app, OptionsAction::Done);
     app.update();
@@ -1636,7 +1637,8 @@ fn leaving_without_changes_still_writes_the_file() {
     let path = dir.path().join("config.toml");
     let mut app = open_options_saving_to(&path);
     press_escape(&mut app);
-    assert_eq!(saved(&path), GameSettings::default());
+    let s = saved(&path);
+    assert_eq!(s, GameSettings { player_id: s.player_id, ..default() });
 }
 
 #[test]
@@ -1646,7 +1648,7 @@ fn only_a_confirmed_resolution_is_saved() {
 
     let mut app = open_options_saving_to(&path);
     change_resolution(&mut app);
-    assert!(!path.exists(), "not saved while the confirmation is up");
+    assert_eq!(saved(&path).resolution, DisplayResolution::Fhd, "not saved while the confirmation is up");
     press(&mut app, OptionsAction::RevertResolution);
     app.update();
     assert_eq!(saved(&path).resolution, DisplayResolution::Fhd);

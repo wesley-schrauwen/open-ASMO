@@ -209,6 +209,9 @@ pub struct GameSettings {
     pub effects_volume: f32,
     pub voice_volume: f32,
     pub music_volume: f32,
+    // Not on the Options screen
+    /// Who this player is to a host ([`crate::config::new_player_id`]); 0 until one is made.
+    pub player_id: u64,
 }
 
 impl Default for GameSettings {
@@ -225,6 +228,7 @@ impl Default for GameSettings {
             effects_volume: 1.0,
             voice_volume: 1.0,
             music_volume: 1.0,
+            player_id: 0,
         }
     }
 }

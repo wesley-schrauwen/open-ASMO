@@ -38,6 +38,11 @@ impl LoopbackHost {
         self.clients.write().unwrap().insert(player, deltas_tx);
         LoopbackClient { player, intents: self.intents_tx.clone(), deltas: deltas_rx }
     }
+
+    /// Whether `player` has a client end (dropped or not).
+    pub fn has_player(&self, player: PlayerId) -> bool {
+        self.clients.read().unwrap().contains_key(&player)
+    }
 }
 
 impl Default for LoopbackHost {

@@ -16,6 +16,10 @@
 //! invalid is skipped (with a warning) and keeps its default, without losing the others; values
 //! out of range are clamped. The file is written when the player leaves the Options screen,
 //! atomically (a temporary file, then a rename), so a crash never leaves it half-written.
+//!
+//! The file also holds the player's id (`player_id`), which identifies them to hosts. It is
+//! made at random the first time and written at once. Two copies of the game on one machine
+//! share it, so a second one joining a LAN game needs its own file (`ARCANUM_CONFIG`).
 
 use std::fs;
 use std::io::Write;
@@ -99,9 +103,28 @@ pub fn load(path: Option<PathBuf>, overrides: EnvOverrides) -> (GameSettings, Co
             GameSettings::default()
         }
     };
-    let mut settings = saved.clone();
+    let mut config = ConfigFile { path, saved: saved.clone(), overrides, load_warnings };
+    let mut settings = saved;
+    if settings.player_id == 0 {
+        settings.player_id = new_player_id();
+        if let Some(path) = &config.path {
+            match write_atomically(path, &to_toml(&settings)) {
+                Ok(()) => config.saved = settings.clone(),
+                Err(e) => config.load_warnings.push(format!("cannot save the new player id to {}: {e}", path.display())),
+            }
+        }
+    }
     overrides.apply(&mut settings);
-    (settings, ConfigFile { path, saved, overrides, load_warnings })
+    (settings, config)
+}
+
+/// A random player id: never 0 (no id) and below 2^63, as TOML integers are signed.
+pub fn new_player_id() -> u64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
+    hasher.write_u32(std::process::id());
+    (hasher.finish() >> 1).max(1)
 }
 
 /// Settings from `path`; defaults if it is missing or unreadable.
@@ -225,6 +248,7 @@ mod tests {
             effects_volume: 0.4,
             voice_volume: 0.6,
             music_volume: 0.7,
+            player_id: 1 << 62,
         };
         let text = to_toml(&s);
         assert!(text.starts_with("# Open Arcanum settings"));
@@ -267,7 +291,7 @@ mod tests {
         let path = dir.path().join("config.toml");
         fs::write(&path, "resolution = \"huge\"\nmusic_volume = 9\nzoom = 2\n").unwrap();
         let (s, config) = load(Some(path), EnvOverrides::default());
-        assert_eq!(s, GameSettings::default());
+        assert_eq!(s, GameSettings { player_id: s.player_id, ..default() });
         let w = config.load_warnings.join("\n");
         assert_eq!(config.load_warnings.len(), 3, "{w}");
         for expected in ["ignoring resolution", "unknown setting \"zoom\"", "music_volume was out of range"] {
@@ -282,10 +306,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
 
-        // No file: defaults.
+        // No file: defaults, and a new player id, which is written at once.
         let (s, _) = load(Some(path.clone()), EnvOverrides::default());
-        assert_eq!(s, GameSettings::default());
-        assert!(!path.exists(), "loading never writes");
+        assert_eq!(s, GameSettings { player_id: s.player_id, ..default() });
+        assert_eq!(parse(&fs::read_to_string(&path).unwrap(), "test"), s);
 
         fs::write(&path, "resolution = \"2560x1440\"\nmusic_volume = 0.4\n").unwrap();
         let (s, _) = load(Some(path.clone()), EnvOverrides::default());
@@ -295,6 +319,23 @@ mod tests {
         let (s, config) = load(Some(path.clone()), env);
         assert_eq!((s.resolution, s.music_volume), (DisplayResolution::Hd, 0.4), "environment wins");
         assert_eq!(config.saved.resolution, DisplayResolution::Qhd);
+    }
+
+    #[test]
+    fn the_player_id_is_made_once_and_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "music_volume = 0.4\n").unwrap();
+        let (first, _) = load(Some(path.clone()), EnvOverrides::default());
+        assert_ne!(first.player_id, 0);
+        assert!(first.player_id < 1 << 63);
+        assert_eq!(first.music_volume, 0.4, "the file's settings are kept");
+        let (again, _) = load(Some(path.clone()), EnvOverrides::default());
+        assert_eq!(again.player_id, first.player_id);
+        let (none, config) = load(None, EnvOverrides::default());
+        assert_ne!(none.player_id, 0, "made, though it cannot be saved");
+        assert_eq!(config.load_warnings.len(), 1);
+        assert_ne!(new_player_id(), new_player_id());
     }
 
     #[test]
