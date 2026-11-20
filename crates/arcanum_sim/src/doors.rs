@@ -30,7 +30,8 @@ use bevy_ecs::prelude::*;
 
 use crate::{LedgerDelta, LoadedMap, MapObjectId, NetId, Npc, OPF_JAMMED, OPF_LOCKED, OPF_MAGICALLY_HELD, Outbox, PlayerControlled, PlayerId, Position, Session, SessionPlayer, Walking, WorldState};
 
-/// How near (in tiles, either axis) a PC must be to use a door (0x428930: 2 for portals).
+/// How near (in tiles, a radius: [`crate::within_radius`]) a PC must be to use a door
+/// (0x428930: 2 for portals).
 pub const USE_RANGE: u32 = 2;
 /// Ticks an opened door waits before it closes itself (1500 ms).
 pub const AUTO_CLOSE_TICKS: u32 = 45;
@@ -178,7 +179,7 @@ pub struct ClosingDoors(pub BTreeMap<MapObjectId, u32>);
 pub struct UseRequests(pub Vec<(PlayerId, MapObjectId, u32)>);
 
 fn within(a: TileLoc, b: TileLoc, range: u32) -> bool {
-    a.x.abs_diff(b.x) <= range && a.y.abs_diff(b.y) <= range
+    crate::within_radius(a, b, range)
 }
 
 /// Opens or closes `door` for everyone, if it can be. Returns whether it changed.

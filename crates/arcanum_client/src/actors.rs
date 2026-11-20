@@ -546,9 +546,9 @@ fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>
     }
 }
 
-/// Whether `a` and `b` are within `range` tiles of each other on both axes.
+/// Whether `a` and `b` are within `range` tiles of each other (a radius, as the host measures).
 fn within(a: TileLoc, b: TileLoc, range: u32) -> bool {
-    a.x.abs_diff(b.x) <= range && a.y.abs_diff(b.y) <= range
+    arcanum_sim::within_radius(a, b, range)
 }
 
 /// A path from `from` that ends within [`USE_RANGE`] of `target` (`ag_move_near_obj`): the path
@@ -569,7 +569,7 @@ fn path_near(map: &impl Walkable, from: TileLoc, target: TileLoc) -> Option<Vec<
     let mut near: Vec<TileLoc> = (-r..=r)
         .flat_map(|dy| (-r..=r).map(move |dx| (dx, dy)))
         .filter_map(|(dx, dy)| Some(TileLoc { x: target.x.checked_add_signed(dx)?, y: target.y.checked_add_signed(dy)? }))
-        .filter(|&t| map.walkable(t))
+        .filter(|&t| map.walkable(t) && within(t, target, USE_RANGE))
         .collect();
     near.sort_by_key(|t| (t.x.abs_diff(from.x).max(t.y.abs_diff(from.y)), t.y, t.x));
     near.into_iter().find_map(|t| find_path(map, from, t).ok())

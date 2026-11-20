@@ -75,8 +75,11 @@ state to network.
   and the game's rules (line of sight, light, range), never from what a client's window shows:
   screen sizes differ, and the game must not. A client's view matters only for what it is
   sent and for cosmetic, client-only effects.
-- **Distances copy the original** (owner, 2026-11-20). Every radius the host uses (sectors kept
-  loaded and simulated, NPC activity, combat engagement, perception) is the original's.
+- **Distances copy the original** (owner, 2026-11-20). Every radius the host uses (NPC activity,
+  combat engagement, perception, use ranges) is the original's number.
+- **Distances are a radius** (owner, 2026-11-20): `sqrt(dx^2 + dy^2)` in tiles, easier to reason
+  about than the original's square (the larger axis difference). Sector streaming is ours (the
+  original has a demand-loaded cache), and its square blocks of sectors are fine.
 - Multiplayer first; the build order below.
 - **Inns and campfires** are more prominent than in the original. They are where players save,
   where others join, and where a host broadcasts a multiplayer session. For development, a
@@ -676,8 +679,8 @@ original's (`ag_use_object` 0x26 → `ag_open_door` / `ag_close_door`, frame ste
   before the ground; the topmost wins. Walls are passed over: one beside a door is drawn over
   part of it, and walls take no clicks (the original's rule is not traced). Only doors can be
   used so far; a click on any other object is a ground click.
-- **Approach:** the PC walks to within 2 tiles of the door (either axis; `ag_move_near_obj`,
-  range 2 for portals): the path to the door's tile cut at the first tile in range, else to
+- **Approach:** the PC walks to within 2 tiles of the door (a radius since the owner's call;
+  the original's square; `ag_move_near_obj`, range 2 for portals): the path to the door's tile cut at the first tile in range, else to
   the nearest free tile in range. The client sends the move and `UsePortal { door, seq }`.
   The host keeps the use (`PendingUse`) until its PC is in range, and drops it if the PC stops
   short or a newer move comes.
@@ -776,11 +779,15 @@ on screen.
 The owner's rule: the host decides game state from positions and the game's rules, with the
 original's distances (`arcanum_sim::activity`). Found in Arcanum.exe:
 
-- **Distance** is the larger of the two axis differences (0x4b96f0), so "within N" is a square.
+- **Distance** in the original is the larger of the two axis differences (0x4b96f0), a square.
+  Here it is a radius (owner's call): `within_radius`, `tile_distance`, also for doors' use range.
 - **No load radius in the original.** It keeps a 16-sector cache (0x4cf810) and loads whatever
   is touched (0x4d0540), evicting the oldest unlocked sector. What decides game state is the
   activity range below. The host's 3 x 3 block per PC holds everything those rules look at
   (tested): a PC is always at least 64 tiles from the block's edge.
+- **The follower leash** (0x4ad4d0, read in part): on its AI heartbeat, a follower (a companion
+  such as Virgil) more than 30 tiles from its leader is moved next to the leader instead of
+  walking, so companions are not lost. The conditions and the tile it lands on are not traced.
 - **NPC activity** (AI heartbeat 0x4ad200, test 0x4ad420):
   - An NPC thinks (targets, wanders, flees) only within 30 tiles of a PC, and not during
     turn-based combat. Further away its goals are interrupted.
@@ -795,8 +802,7 @@ original's distances (`arcanum_sim::activity`). Found in Arcanum.exe:
 - **Fidgets** (0x4300d0) run only for critters in the 800 x 400 screen rect: cosmetic, so they
   belong to the client.
 
-Not done: the AI itself, combat, perception, fidgets; the follower leash (0x4ad4d0: a
-follower more than 30 tiles from its leader is moved to it).
+Not done: the AI itself, combat, perception, fidgets, the follower leash.
 
 ## Builder's calls (proposed by Claude, not owner decisions)
 

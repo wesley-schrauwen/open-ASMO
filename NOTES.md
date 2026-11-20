@@ -377,7 +377,8 @@ Recovered by inspecting data and by reverse engineering `Arcanum.exe` with the R
 - **NPCs**: `.mob` files (`G_<guid>.mob`) hold the map's NPCs, containers and items; carried
   ones have `OF_INVENTORY` (0x1000). The host spawns NPCs per loaded sector
   (`arcanum_sim::spawn_npcs`).
-- **Distances** (`arcanum_sim::activity`): tile distance is max(|dx|, |dy|) (0x4b96f0). NPC AI
+- **Distances** (`arcanum_sim::activity`): the original's tile distance is max(|dx|, |dy|)
+  (0x4b96f0); ours is a radius, sqrt(dx^2 + dy^2) (owner's call), with the original's numbers. NPC AI
   runs within 30 tiles of a PC (0x4ad420), heartbeat delay `250 + 4750 * min(d, 30) / 30` ms.
   Combat radius `max(10, PE / 2 + 5)` (0x4b7300). Noticing: PE clamped 1..10 (0x4ab460), sight
   0x4af470. Fidgets: screen rect only (0x4300d0). Sector cache: 16 sectors, demand-loaded

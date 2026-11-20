@@ -2,8 +2,10 @@
 //! the host decides game state from positions and the game's rules, with the original's
 //! distances).
 //!
-//! All distances are in tiles, measured as the larger of the two axis differences (0x4b96f0),
-//! so "within N" is a square.
+//! All distances are in tiles, measured as a radius: `sqrt(dx^2 + dy^2)` ([`tile_distance`],
+//! [`within_radius`]). The original uses the larger of the two axis differences (0x4b96f0), a
+//! square; the owner chose a radius as easier to reason about (2026-11-20). The numbers are the
+//! original's.
 //!
 //! - **NPC activity** ([`AI_RANGE`]): an NPC thinks (targets, wanders, flees) only while within
 //!   30 tiles of a PC and no turn-based combat runs (AI heartbeat 0x4ad200, test 0x4ad420).
@@ -31,9 +33,17 @@ pub const AI_RANGE: u32 = 30;
 /// side, so every tile an NPC could think within is loaded.
 const _: () = assert!(crate::SECTOR_RADIUS * arcanum_formats::map::SECTOR_TILES >= AI_RANGE);
 
-/// Tile distance: the larger of the axis differences (0x4b96f0).
+/// Tile distance as a radius, `sqrt(dx^2 + dy^2)`, in whole tiles rounded down (the original's
+/// 0x4b96f0 takes the larger axis difference; see the module docs).
 pub fn tile_distance(a: TileLoc, b: TileLoc) -> u32 {
-    a.x.abs_diff(b.x).max(a.y.abs_diff(b.y))
+    let (dx, dy) = (u64::from(a.x.abs_diff(b.x)), u64::from(a.y.abs_diff(b.y)));
+    (dx * dx + dy * dy).isqrt() as u32
+}
+
+/// Whether `a` and `b` are within `radius` tiles of each other: `dx^2 + dy^2 <= radius^2`.
+pub fn within_radius(a: TileLoc, b: TileLoc, radius: u32) -> bool {
+    let (dx, dy, r) = (u64::from(a.x.abs_diff(b.x)), u64::from(a.y.abs_diff(b.y)), u64::from(radius));
+    dx * dx + dy * dy <= r * r
 }
 
 /// Milliseconds to an NPC's next AI heartbeat when the nearest PC is `distance` tiles away:
@@ -64,7 +74,7 @@ pub fn update_activity(
 ) {
     let pcs: Vec<TileLoc> = pcs.iter().map(|p| p.0).collect();
     for (entity, &Position(at), active) in &npcs {
-        let near = pcs.iter().any(|&pc| tile_distance(pc, at) <= AI_RANGE);
+        let near = pcs.iter().any(|&pc| within_radius(pc, at, AI_RANGE));
         if near && !active {
             commands.entity(entity).insert(Active);
         } else if !near && active {
@@ -82,9 +92,15 @@ mod tests {
     }
 
     #[test]
-    fn distances_are_squares() {
+    fn distances_are_a_radius() {
         assert_eq!(tile_distance(t(10, 10), t(13, 40)), 30);
-        assert_eq!(tile_distance(t(10, 10), t(40, 40)), 30, "a diagonal counts as its longer side");
+        assert_eq!(tile_distance(t(10, 10), t(40, 40)), 42, "a diagonal is longer than its sides");
+        assert!(!within_radius(t(10, 10), t(13, 40), 30), "3 and 30: just over 30");
+        assert!(within_radius(t(10, 10), t(10, 40), 30));
+        assert!(within_radius(t(10, 10), t(31, 31), 30), "21, 21: 29.7");
+        assert!(!within_radius(t(10, 10), t(32, 32), 30), "22, 22: 31.1");
+        assert!(within_radius(t(0, 0), t(18, 24), 30), "18-24-30");
+        assert!(!within_radius(t(0, 0), t(2, 2), 2) && within_radius(t(0, 0), t(1, 1), 2));
     }
 
     #[test]
