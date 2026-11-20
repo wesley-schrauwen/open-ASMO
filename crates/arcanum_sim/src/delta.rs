@@ -90,6 +90,9 @@ pub enum LedgerDelta {
     MapChanges { changes: BTreeMap<SectorId, SectorDelta> },
     /// A door opened or closed ([`crate::doors`]).
     PortalChanged { door: MapObjectId, open: bool },
+    /// This PC leads the party: out of combat every member moves at its speed, capped
+    /// ([`PartyPace`](crate::PartyPace)). Sent to each player once it is known.
+    PartyLeader { net_id: NetId },
     /// An entity is gone.
     Despawn { net_id: NetId },
     /// The host finished this tick.

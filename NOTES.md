@@ -12,7 +12,7 @@ Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2; t
   (`feat/click-to-move`) → #35 (`feat/udp-join`) → #36
   (`feat/object-blocking`) → #37 (`feat/npcs`) → #38
   (`feat/ground-objects`) → #39 (`feat/sector-streaming`) → #40 (`feat/doors`) → #41 (`feat/tile-blocking`) → #42 (`feat/game-clock`) →
-  #43 (`feat/depth-rebase`) → original radii (`feat/original-radii`, the newest). Merging #26 into
+  #43 (`feat/depth-rebase`) → #44 (`feat/original-radii`) → party pace (`feat/party-pace`, the newest). Merging #26 into
   `main` brings in #10-#25 as well. Then **retarget each next PR to `main` before merging it**.
 - **World milestone:** `plans/world_milestone.md` is the plan and records each step as built
   (differences from the plan, what is not done). Steps 1-8 are done: map readers (#19), the
@@ -25,7 +25,8 @@ Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2; t
   prototype read (#36), NPCs standing on the map (#37),
   containers and items on the ground (#38), sector streaming (#39), doors (#40), ground tiles that block (#41),
   the game clock (#42), draw order that
-  follows the PC (#43), and the original's activity distances (`feat/original-radii`). The milestone plan is complete; what is left is
+  follows the PC (#43), the original's distances as a radius (#44),
+  and the party pace (`feat/party-pace`). The milestone plan is complete; what is left is
   listed under each step's "Not done" and in `TODO.md` → World.
 - **World debug start:** `DEBUG_ARCANUM_SCREEN=ingame` (character "Debug"), optionally
   `DEBUG_ARCANUM_START=x,y` (e.g. `90330,84122`, a Shrouded Hills house) and
@@ -91,7 +92,7 @@ a text field).
 | Fonts | Game bitmap fonts decoded and rendered (`BitmapText`, multi-line: wrap, `\n`, tab indents, whole-line clipping). Menu uses `Morph30Font`/`morph15font`; character screens add `Flare12Font` (`UiFont::Body`) with the original white/red tints. Override TTF still wins if present; built-in font as last resort. |
 | Game data formats | `.mes`, `.art`, fonts, `.dat`; objects (`arcanum_formats::object`: prototypes and instances, PC field tables from the engine's names); maps/sectors (#19). |
 | Resolutions | Done. 720p–8K, 4:3–2.4:1, `UiScale` from a 1080 baseline. |
-| Tests | 421 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
+| Tests | 424 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
 | Everything else | Not started: game screens, critter art, NPCs, dialogue, scripts, combat, UDP. |
 
 ### Git state

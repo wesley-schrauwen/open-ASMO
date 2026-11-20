@@ -156,6 +156,7 @@ fn local_host(world: &mut World, player: PlayerId, settings: &HostSettings) -> a
         }
     }
     let link = host.connect(player);
+    host.lead(player);
     world.insert_non_send(LocalHostRes(host));
     link
 }

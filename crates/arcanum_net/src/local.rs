@@ -25,6 +25,11 @@ impl LocalHost {
         self.transport.connect(player)
     }
 
+    /// Makes `player` (the host's own) the party leader.
+    pub fn lead(&mut self, player: PlayerId) {
+        self.sim.app.world_mut().resource_mut::<arcanum_sim::PartyPace>().leader = Some(player);
+    }
+
     /// Takes players on the LAN at `addr` as well (TCP and UDP on one port). Returns the address bound.
     pub fn listen(&mut self, addr: impl ToSocketAddrs) -> io::Result<SocketAddr> {
         let udp = LanHost::bind(addr)?;
