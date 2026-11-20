@@ -1,6 +1,6 @@
 # World milestone: networked world from a save
 
-Status: design approved 2026-11-13, not implemented.
+Status: design approved 2026-11-13; steps 1-8 built (Milestones A and A2), see the sections below.
 
 ## Intent
 
@@ -153,9 +153,9 @@ The crates follow step 2, with these differences:
   with the `PlayerId`) and sends a delta to one player; `ClientTransport` sends its own player's
   intents and receives deltas. With one trait both ends could call every method. `LoopbackHost`
   hands out a `LoopbackClient` per player through `connect`, so one host serves several clients.
-- **Deltas are not yet stamped with a tick.** `LedgerDelta::Tick(n)` marks the end of a host tick
-  instead. Stamping every delta (an envelope with the tick, for `last_confirmed_tick`) is still
-  owed and fits best with `UdpTransport` in step 8, where ordering and duplicates arise.
+- **Deltas are not stamped with a tick.** `LedgerDelta::Tick(n)` marks the end of a host tick
+  instead. Step 8 made stamps unnecessary: reliable deltas go over TCP in order, and state syncs
+  carry their own rolling number.
 - **"Done when" was half met** in the step 2 PR (intents arrived; nothing answered). The
   session below completes it.
 - **No snapshot delta.** `WorldSave` arrives in step 3; the snapshot variant comes with it.
@@ -189,8 +189,8 @@ The in-process host now owns the character; the screens are unchanged.
 
 Not done, or done differently from the plan:
 
-- **The player id is fixed** (`LOCAL_PLAYER`, 1). The random id saved in the player's config
-  comes with joining (step 8).
+- **The player id was fixed** (`LOCAL_PLAYER`, 1). Since step 8 it is a random id saved in the
+  player's config.
 
 Resolved in the next PR (the save): loading waits for the host, and the host is created on
 entering New Game.
@@ -271,6 +271,7 @@ Not done, or done differently from the plan:
   before taking it, since doors close while a path is walked. The host never plans a PC's path
   (owner's call: the client plans, the host validates). On a blocked step the PC stops and
   every player gets a `MoveCorrection`; the client replans from there.
+  (Step 8 replaced `Move` and `MoveCorrection` with numbered state syncs; see there.)
 - **Actors block only in combat** (owner's call). Out of combat, PCs and NPCs do not block PCs:
   they walk through each other and may share a tile, so a client is never snapped back because
   another actor moved. In combat actors block (`Occupied`, which the corner rule counts too) and
@@ -451,6 +452,87 @@ Not done, or done differently from the original:
 - **No cursor shapes and no viewport rect.** The original takes clicks only inside the game view
   rect (0x603bb0). There is no interface bar yet, so the whole window is the view.
 
+## LAN play: a second client joins (step 8, Milestone A2)
+
+**Owner's decisions (2026-11-20):**
+- UDP is fire and forget, not a reliable channel. Messages that must arrive go over TCP; out
+  of combat, movement is unreliable with regular state syncs.
+- The client regularly reports the number of the sync it is on (a rolling number). A client far
+  behind gets a resync.
+- Every so often there is a resync by default: a keyframe.
+- Syncs are ordered: only the newest is ever applied, and nothing reverts.
+
+**As built:**
+- **Delivery per message.** `LedgerDelta::reliable` and `PlayerIntent::reliable` say which
+  delivery a message needs.
+  - Unreliable: `StateSync`, `Move`, `SyncAck`.
+  - Reliable: everything else (joining, character creation, `EnterMap`, spawns, `Resync`, and
+    later combat and shared things).
+  - The loopback delivers everything; the LAN transport routes by this.
+- **`LanHost` and `LanClient`** (`arcanum_net::lan`):
+  - Reliable messages go over one TCP connection per client, length-prefixed JSON with Nagle
+    off. Unreliable ones go as single UDP datagrams of at most 1200 bytes, with no resend.
+  - An unreliable message too large for a datagram goes over TCP.
+  - TCP and UDP share one port number.
+  - The client's `Hello { protocol, player }` gets `Welcome { token }`. Datagrams carry the
+    player id and token; the host learns the client's UDP address from them, and the client
+    pings once a second.
+  - A newer connection for a player replaces the older one. A different protocol version is
+    refused.
+  - A thread per end owns the sockets.
+- **State sync** (`arcanum_sim::sync_state`): every PC's tile, remaining path and last move
+  taken (`PcState`). `Move` and `MoveCorrection` are gone.
+  - Sent at once after anything changes. Otherwise every 3 ticks (10 Hz) while a PC walks, and
+    every 30 ticks (1 Hz) when all stand.
+  - Numbered, rolling over at 10 000 (`sync_is_newer` compares across the roll-over).
+  - Every 150 ticks (5 s) it is a keyframe: everyone gets it as a reliable `Resync`.
+  - A player whose acknowledgements are 20 or more syncs behind gets a `Resync` too, at most once
+    every 20 syncs.
+- **Ordering:** the client applies a `StateSync` or `Resync` only if it is newer than the last
+  applied (`SyncState`). A keyframe that arrives over TCP after a newer UDP sync is dropped.
+  The client reports the newest applied (`SyncAck`) every 0.5 s. On the host, moves count only
+  if their `seq` is newer than the last taken (`LastMove`), and acknowledgements only move
+  forward.
+- **Moves:**
+  - The client sends its newest move again every 0.2 s until a sync shows the host took it
+    (the PC's `seq`).
+  - A sync about the local PC that answers the newest move is a correction only if the host's PC
+    will stop somewhere else (a refused move or a blocked step). The PC then takes the host's
+    tile and path, sliding there.
+  - Other PCs follow a sync unless they are within a step of the host on the same route.
+- **Joining:** the joiner makes or picks its character through the usual character intents,
+  and gets `EnterMap` and a `Spawn` for every PC. The sync at the end of that tick says where
+  they are walking. The joiner's PC starts at the start position; there is no inn yet, and the
+  join-anywhere development setting is in effect.
+- **`LocalHost::listen`** adds a `LanHost` beside the loopback. A player in-process cannot also
+  be played over the LAN.
+- **Player ids** are random, made on first run and saved as `player_id` in `config.toml`.
+  Loading the config writes it once. A second copy on one machine needs its own
+  `ARCANUM_CONFIG`.
+- **Latency tolerance:** the host accepts a new path that starts on the route it is still
+  walking. It walks on to that tile, keeps the progress of a step under way, and continues at
+  its own pace. A path starting anywhere else stops the PC.
+- **Development switches until the host/join menus exist:**
+  - `DEBUG_ARCANUM_LISTEN=0.0.0.0:7777`: this game takes LAN players.
+  - `DEBUG_ARCANUM_JOIN=<ip>:7777`: join that host instead of running one.
+- **Checked:**
+  - Two processes on one machine, run three times: the host and the joiner each walked, and the
+    host's save had both on their goal tiles, with no corrections.
+  - The owner also played with both windows.
+
+Not done, or done differently from the plan:
+
+- **Syncs carry the full PC state,** not changes since the last keyframe. The keyframe for now
+  only guarantees delivery.
+- **No reconnect.** A player who leaves keeps their PC, but rejoining with the same id gets no
+  snapshot: the host ignores character requests from a player in the world.
+- **No authentication** beyond the per-connection token. A client can claim any id except the
+  in-process one.
+- **Loading does not show a failed join.** The connection fails in the background and is only
+  logged.
+- **No discovery or NAT traversal.**
+- **JSON on the wire.** A binary encoding can replace it inside `lan.rs`.
+
 ## Builder's calls (proposed by Claude, not owner decisions)
 
 - `arcanum_sim` uses `bevy_ecs` (and `bevy_app` for scheduling) with no rendering, audio or
@@ -461,8 +543,8 @@ Not done, or done differently from the original:
 - Saves are this project's own format (serde), not the original's. They store references into the
   original data (prototype numbers, map names) plus deviations, never copies of original assets.
 - The join snapshot is a `WorldSave`. One serializer serves saving, loading and joining.
-- The client keeps `last_confirmed_tick` and drops stale or duplicate deltas, as in
-  `multiplayer.md`.
+- The client keeps the newest state sync number and drops older syncs (built as the rolling
+  sync number in step 8, in place of `last_confirmed_tick`).
 - Entities are identified across the wire by host-issued ids, never by Bevy `Entity`.
 - Until Steam ids exist, a player is identified by a random id stored in that player's config.
   The host keys session characters by it.

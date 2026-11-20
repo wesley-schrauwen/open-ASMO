@@ -65,7 +65,8 @@ fn main() {
             OptionsPlugin,
             ScreensPlugin,
         ))
-        // The single-player host, in this process. Saves go next to the config file.
+        // The host, in this process unless joining one. Saves go next to the config file.
+        .insert_resource(arcanum_client::sim_bridge::LocalPlayer(arcanum_sim::PlayerId(settings.player_id)))
         .insert_resource(arcanum_client::sim_bridge::HostSettings {
             save_dir: config::path_from_env().and_then(|p| p.parent().map(|d| d.join("saves"))),
             manual_clock: false,
@@ -74,6 +75,10 @@ fn main() {
                 let (x, y) = v.split_once(',')?;
                 Some(arcanum_formats::map::TileLoc { x: x.trim().parse().ok()?, y: y.trim().parse().ok()? })
             }),
+            // LAN play until the host/join menus exist: `DEBUG_ARCANUM_LISTEN=0.0.0.0:7777` lets
+            // others join this game; `DEBUG_ARCANUM_JOIN=<host ip>:7777` joins one.
+            listen: socket_from_env("DEBUG_ARCANUM_LISTEN"),
+            join: socket_from_env("DEBUG_ARCANUM_JOIN"),
         })
         .add_plugins((
             arcanum_client::sim_bridge::SimBridgePlugin,
@@ -133,6 +138,19 @@ fn main() {
             .add_systems(Update, screenshot_and_exit.run_if(screen_ready));
     }
     app.run();
+}
+
+/// A socket address from environment variable `var` (`host:port`); `None` if unset or invalid.
+fn socket_from_env(var: &str) -> Option<std::net::SocketAddr> {
+    use std::net::ToSocketAddrs;
+    let value = std::env::var(var).ok()?;
+    match value.to_socket_addrs().map(|mut a| a.next()) {
+        Ok(Some(addr)) => Some(addr),
+        _ => {
+            eprintln!("{var}={value} is not an address (host:port); ignored");
+            None
+        }
+    }
 }
 
 /// `DEBUG_ARCANUM_SCREEN=ingame`: once the creation data is in, names a character "Debug",

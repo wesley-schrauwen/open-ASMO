@@ -1,17 +1,23 @@
-//! Runs the single-player host in this process and connects the client to it.
+//! Connects the client to a host: one in this process, or one on the LAN.
 //!
-//! The host is a [`LocalHost`] (an `arcanum_sim` app behind a loopback transport), kept as a
-//! non-send resource and updated once a frame. It is created on entering New Game (the choice
-//! menu, the pre-made picker or character creation), with the game's rules and start map, and
-//! dropped on going back to the main or Single Player menu. Each frame the bridge sends the
+//! Normally the host is a [`LocalHost`] (an `arcanum_sim` app behind a loopback transport), kept
+//! as a non-send resource and updated once a frame. With [`HostSettings::listen`] it also takes
+//! players on the LAN. With [`HostSettings::join`] there is no host here: the client talks to one
+//! on the LAN through a [`LanClient`], and makes its character in that host's session as it would
+//! in its own.
+//!
+//! The connection is made on entering New Game (the choice menu, the pre-made picker or
+//! character creation), with the game's rules and start map, and dropped on going back to the
+//! main or Single Player menu. Each frame the bridge sends the
 //! [`CharacterHost`]'s queued intents, updates the host, and hands the deltas that came back to
 //! the [`CharacterHost`]; the local PC's `Spawn` is kept in [`LocalPc`] and its map in [`LocalMap`],
 //! and the deltas about actors wait in [`ActorDeltas`] for the world.
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use arcanum_net::{ClientTransport, LocalHost};
+use arcanum_net::{ClientTransport, LocalHost, LanClient};
 use arcanum_rules::RulesData;
 use arcanum_formats::map::TileLoc;
 use arcanum_sim::{EntityKind, LedgerDelta, NetId, PlayerId, SaveFile, SaveStatus, SimRules, SimVfs, StartMap};
@@ -23,8 +29,18 @@ use crate::create_character::{CreationData, load_creation_data};
 use crate::main_menu::AppState;
 use crate::vfs_asset::VfsResource;
 
-/// The local player's id, until ids come from the player's config.
+/// The player id used when none is set ([`LocalPlayer`]): tests and runs without a config.
 pub const LOCAL_PLAYER: PlayerId = PlayerId(1);
+
+/// Who this client plays as: the id from the player's config.
+#[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalPlayer(pub PlayerId);
+
+impl Default for LocalPlayer {
+    fn default() -> Self {
+        Self(LOCAL_PLAYER)
+    }
+}
 
 /// The client's end of the connection to the host.
 #[derive(Resource)]
@@ -50,6 +66,10 @@ pub struct HostSettings {
     pub manual_clock: bool,
     /// Start new games here instead of the start map's position (debugging).
     pub start_at: Option<TileLoc>,
+    /// Also take players on the LAN at this address.
+    pub listen: Option<SocketAddr>,
+    /// Join the host at this address instead of running one.
+    pub join: Option<SocketAddr>,
 }
 
 pub struct SimBridgePlugin;
@@ -60,6 +80,7 @@ const NEW_GAME_STATES: [AppState; 3] = [AppState::NewGameChoice, AppState::NewGa
 impl Plugin for SimBridgePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<HostSettings>()
+            .init_resource::<LocalPlayer>()
             .init_resource::<CharacterHost>()
             .init_resource::<LocalPc>()
             .init_resource::<LocalMap>()
@@ -72,16 +93,40 @@ impl Plugin for SimBridgePlugin {
     }
 }
 
-/// Starts the host if none is running, with a fresh [`CharacterHost`] to talk to it.
+/// Connects to a host if not connected: starts one here, or joins the one in
+/// [`HostSettings::join`]. A fresh [`CharacterHost`] talks to it.
 pub fn start_host(world: &mut World) {
-    if world.contains_non_send::<LocalHostRes>() {
+    if world.contains_resource::<HostLink>() {
         return;
     }
+    let player = world.get_resource::<LocalPlayer>().copied().unwrap_or_default().0;
+    let settings = world.get_resource::<HostSettings>().cloned().unwrap_or_default();
+    let link: Box<dyn ClientTransport> = match settings.join {
+        Some(addr) => match LanClient::connect(addr, player) {
+            Ok(client) => {
+                info!("joining the host at {addr} as player {}", player.0);
+                Box::new(client)
+            }
+            Err(e) => {
+                warn!("cannot join {addr}: {e}");
+                return;
+            }
+        },
+        None => Box::new(local_host(world, player, &settings)),
+    };
+    world.insert_resource(HostLink(link));
+    // Anything the old CharacterHost had in flight was for a host that is gone.
+    world.insert_resource(CharacterHost::default());
+    world.insert_resource(LocalPc::default());
+    world.insert_resource(LocalMap::default());
+    world.insert_resource(ActorDeltas::default());
+}
+
+/// Starts a host in this process, listening on the LAN if asked, and connects `player` to it.
+fn local_host(world: &mut World, player: PlayerId, settings: &HostSettings) -> arcanum_net::LoopbackClient {
     let rules = world.get_resource::<CreationData>().map(|d| d.rules.clone()).unwrap_or_default();
     let vfs = world.get_resource::<VfsResource>().map(|v| v.0.clone());
     let start = vfs.as_ref().map(|v| v.read().map_err(|e| e.to_string()).and_then(|vfs| StartMap::load(&vfs)));
-    let settings = world.get_resource::<HostSettings>().cloned().unwrap_or_default();
-
     let mut host = LocalHost::new(rules);
     match start {
         Some(Ok(mut start)) => {
@@ -103,14 +148,15 @@ pub fn start_host(world: &mut World) {
     if settings.manual_clock {
         host.sim.use_manual_clock();
     }
-    let link = host.connect(LOCAL_PLAYER);
+    if let Some(addr) = settings.listen {
+        match host.listen(addr) {
+            Ok(bound) => info!("LAN players can join at {bound}"),
+            Err(e) => warn!("cannot listen on {addr}: {e}"),
+        }
+    }
+    let link = host.connect(player);
     world.insert_non_send(LocalHostRes(host));
-    world.insert_resource(HostLink(Box::new(link)));
-    // Anything the old CharacterHost had in flight was for a host that is gone.
-    world.insert_resource(CharacterHost::default());
-    world.insert_resource(LocalPc::default());
-    world.insert_resource(LocalMap::default());
-    world.insert_resource(ActorDeltas::default());
+    link
 }
 
 fn stop_host(world: &mut World) {
@@ -242,7 +288,7 @@ mod tests {
     #[test]
     fn the_accepted_character_is_saved() {
         let dir = tempfile::tempdir().unwrap();
-        let mut app = app(HostSettings { save_dir: Some(dir.path().to_path_buf()), manual_clock: true, start_at: None });
+        let mut app = app(HostSettings { save_dir: Some(dir.path().to_path_buf()), manual_clock: true, ..default() });
         enter(&mut app, AppState::NewGameChoice);
         let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 } };
         app.world_mut().non_send_mut::<LocalHostRes>().0.sim.app.insert_resource(start.clone());
@@ -255,5 +301,51 @@ mod tests {
         assert_eq!(files.len(), 1, "{files:?}");
         let save = WorldSave::read(&files[0]).unwrap();
         assert_eq!((save.map.as_str(), save.players[&LOCAL_PLAYER].position), (start.map.as_str(), start.position));
+    }
+
+    #[test]
+    fn a_client_joins_a_host_on_the_lan() {
+        // The host: another game's, listening on a free port, with someone already in the world.
+        let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 } };
+        let rules = RulesData::default();
+        let mut host = LocalHost::new(rules.clone());
+        host.sim.app.insert_resource(start.clone());
+        let addr = host.listen("127.0.0.1:0").unwrap();
+        let first = host.connect(PlayerId(100));
+        first.send_intent(arcanum_sim::PlayerIntent::Character { seq: 1, request: arcanum_sim::CharacterRequest::Action(CharacterAction::SetName("Host".into())) }).unwrap();
+        first.send_intent(arcanum_sim::PlayerIntent::Character { seq: 2, request: arcanum_sim::CharacterRequest::Accept }).unwrap();
+
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin, SimBridgePlugin))
+            .init_state::<AppState>()
+            .insert_resource(HostSettings { join: Some(addr), ..default() })
+            .insert_resource(LocalPlayer(PlayerId(200)));
+        app.update();
+        enter(&mut app, AppState::NewGameChoice);
+        assert!(!app.world().contains_non_send::<LocalHostRes>(), "no host of its own");
+        assert!(app.world().contains_resource::<HostLink>());
+        make_virgil(&mut app);
+
+        let begun = std::time::Instant::now();
+        while app.world().resource::<LocalPc>().0.is_none() {
+            assert!(begun.elapsed() < std::time::Duration::from_secs(5), "never joined the world");
+            host.update();
+            app.update();
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(app.world().resource::<CharacterHost>().accepted);
+        assert_eq!(app.world().resource::<LocalMap>().0.as_deref(), Some(start.map.as_str()));
+        let session = host.sim.app.world().resource::<Session>();
+        assert!(matches!(session.players[&PlayerId(200)], SessionPlayer::InWorld(_)));
+        // The joiner heard about the PC already there, as well as its own.
+        let spawns: Vec<_> = app.world().resource::<ActorDeltas>().0.iter().filter_map(|d| match d {
+            LedgerDelta::Spawn { kind: EntityKind::Pc { player }, .. } => Some(*player),
+            _ => None,
+        }).collect();
+        assert!(spawns.contains(&PlayerId(100)) && spawns.contains(&PlayerId(200)), "{spawns:?}");
+
+        // Leaving drops the connection.
+        enter(&mut app, AppState::MainMenu);
+        assert!(!app.world().contains_resource::<HostLink>());
     }
 }

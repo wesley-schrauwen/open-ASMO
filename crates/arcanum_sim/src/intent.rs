@@ -15,6 +15,19 @@ pub enum PlayerIntent {
     /// it applied so the client can replay the requests still in flight on top.
     Character { seq: u32, request: CharacterRequest },
     /// The path the client is walking its PC along, from its current tile (or one step ahead
-    /// of it) to the goal. `seq` counts up per client and comes back with a correction.
+    /// of it, or a tile on the route the host is walking) to the goal. `seq` counts up per
+    /// client; the host takes only a move newer than the last it took, and reports that number
+    /// in each [`StateSync`](crate::LedgerDelta::StateSync). Sent unreliably: the client sends
+    /// it again until a sync shows it was taken.
     Move { seq: u32, path: Vec<TileLoc> },
+    /// The number of the last state sync the client applied. Sent unreliably, about twice a
+    /// second; a client far behind gets a [`Resync`](crate::LedgerDelta::Resync).
+    SyncAck { number: u32 },
+}
+
+impl PlayerIntent {
+    /// Whether the intent must arrive, once and in order. Moves and sync acks may be lost.
+    pub fn reliable(&self) -> bool {
+        !matches!(self, Self::Move { .. } | Self::SyncAck { .. })
+    }
 }

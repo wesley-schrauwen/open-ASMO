@@ -121,7 +121,8 @@ impl LoadedMap {
 
 /// Boots and grows the world from the [`WorldState`]: see the module docs. Each new PC is
 /// announced with a `Spawn` to every player in the session, and the new PC's player is also
-/// told about the PCs already there.
+/// told about the PCs already there; the state sync at the end of the tick says where they
+/// are walking.
 #[allow(clippy::too_many_arguments)]
 pub fn boot_world(
     mut commands: Commands,
@@ -132,6 +133,7 @@ pub fn boot_world(
     mut session: ResMut<Session>,
     mut outbox: ResMut<Outbox>,
     rules: Res<SimRules>,
+    mut clock: ResMut<crate::SyncClock>,
     pcs: Query<(&NetId, &PlayerControlled, &Position, &Appearance)>,
 ) {
     let Some(save) = &world.0 else { return };
@@ -162,6 +164,8 @@ pub fn boot_world(
             outbox.0.push((player, other_look.spawn(id, EntityKind::Pc { player: other }, position)));
         }
         existing.push((net_id, player, saved.position, look));
+        // The newcomer learns where everyone is walking from a sync at the end of this tick.
+        clock.due = true;
     }
 }
 
@@ -284,9 +288,11 @@ mod tests {
             let spawn = deltas.iter().position(|(p, d)| p.0 == to && matches!(d, LedgerDelta::Spawn { .. }));
             assert!(first < spawn && first.is_some(), "player {to} learns the map first: {deltas:?}");
         }
+        // Then a sync says where everyone is.
+        assert!(matches!(&deltas.last().unwrap().1, LedgerDelta::StateSync { pcs, .. } if pcs.len() == 2), "{deltas:?}");
         // No PC is spawned twice on later ticks.
         sim.update();
-        assert!(sim.take_deltas().is_empty());
+        assert!(!sim.take_deltas().iter().any(|(_, d)| matches!(d, LedgerDelta::Spawn { .. })));
         assert_eq!(pcs(&mut sim).len(), 2);
     }
 
@@ -329,70 +335,208 @@ mod tests {
         assert_eq!(position(&mut sim, 7), to);
     }
 
+    fn t(x: u32, y: u32) -> TileLoc {
+        TileLoc { x, y }
+    }
+
+    /// PC 0's state in the last sync `player` got, if any.
+    fn synced(deltas: &[(PlayerId, LedgerDelta)], player: u64) -> Option<crate::PcState> {
+        deltas.iter().rev().find_map(|(p, d)| match d {
+            LedgerDelta::StateSync { pcs, .. } if p.0 == player => pcs.iter().find(|s| s.net_id == NetId(0)).cloned(),
+            _ => None,
+        })
+    }
+
+    fn state(position: TileLoc, path: &[(u32, u32)], seq: u32) -> crate::PcState {
+        crate::PcState { net_id: NetId(0), position, path: path.iter().map(|&(x, y)| t(x, y)).collect(), seq }
+    }
+
     #[test]
     fn a_valid_move_walks_the_pc_and_reaches_the_others() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());
-        let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 }), (9, "B", TileLoc { x: 90, y: 90 })]));
+        let mut sim = booted(dir.path(), save(&[(7, "A", t(70, 80)), (9, "B", t(90, 90))]));
         sim.take_deltas();
         send_move(&mut sim, 7, 1, &[(70, 80), (71, 81), (72, 81)]);
         sim.update();
         let deltas = sim.take_deltas();
-        let path = vec![TileLoc { x: 71, y: 81 }, TileLoc { x: 72, y: 81 }];
-        assert_eq!(deltas, vec![(PlayerId(9), LedgerDelta::Move { net_id: NetId(0), path })], "only the other player is told");
-        assert_eq!(position(&mut sim, 7), TileLoc { x: 70, y: 80 }, "not a whole step yet");
+        let walking = state(t(70, 80), &[(71, 81), (72, 81)], 1);
+        for to in [7, 9] {
+            assert_eq!(synced(&deltas, to), Some(walking.clone()), "player {to} hears at once: {deltas:?}");
+        }
+        assert_eq!(position(&mut sim, 7), t(70, 80), "not a whole step yet");
         walk_ticks(&mut sim, ticks_for(2));
-        assert_eq!(position(&mut sim, 7), TileLoc { x: 72, y: 81 });
+        assert_eq!(position(&mut sim, 7), t(72, 81));
         let world = sim.app.world_mut();
         assert_eq!(world.query::<&crate::Walking>().iter(world).count(), 0, "stopped at the end");
+        assert_eq!(synced(&sim.take_deltas(), 9), Some(state(t(72, 81), &[], 1)), "the stop is synced");
         let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
-        assert_eq!(save.players[&PlayerId(7)].position, TileLoc { x: 72, y: 81 }, "the save has where it stopped");
-        assert!(sim.take_deltas().is_empty());
+        assert_eq!(save.players[&PlayerId(7)].position, t(72, 81), "the save has where it stopped");
+    }
+
+    #[test]
+    fn syncs_go_often_while_walking_and_seldom_when_still() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", t(70, 80))]));
+        sim.take_deltas();
+        let count = |sim: &mut SimApp, ticks: u32| {
+            let mut n = 0;
+            for _ in 0..ticks {
+                sim.update();
+                n += sim.take_deltas().iter().filter(|(_, d)| matches!(d, LedgerDelta::StateSync { .. })).count();
+            }
+            n
+        };
+        assert_eq!(count(&mut sim, crate::SYNC_TICKS_IDLE), 1, "once a second when still");
+        send_move(&mut sim, 7, 1, &row(80, 70, 76));
+        assert_eq!(count(&mut sim, 1), 1, "at once for the move");
+        assert_eq!(count(&mut sim, 3 * crate::SYNC_TICKS_MOVING), 3, "ten a second while walking");
+        let mut numbers = Vec::new();
+        for _ in 0..crate::SYNC_TICKS_MOVING * 2 {
+            sim.update();
+            numbers.extend(sim.take_deltas().into_iter().filter_map(|(_, d)| match d {
+                LedgerDelta::StateSync { number, .. } => Some(number),
+                _ => None,
+            }));
+        }
+        assert!(numbers.windows(2).all(|w| w[1] == w[0] + 1), "numbered in turn: {numbers:?}");
+    }
+
+    #[test]
+    fn a_client_far_behind_gets_a_resync() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", t(70, 80)), (9, "B", t(90, 90))]));
+        sim.take_deltas();
+        send_move(&mut sim, 7, 1, &row(80, 70, 76));
+        let mut resyncs = Vec::new();
+        let mut last_number = 0;
+        for _ in 0..crate::SYNC_TICKS_MOVING * (crate::RESYNC_BEHIND + 2) {
+            sim.update();
+            for (to, d) in sim.take_deltas() {
+                match d {
+                    // Player 7 acknowledges every sync; player 9 never does.
+                    LedgerDelta::StateSync { number, .. } if to.0 == 7 => {
+                        last_number = number;
+                        sim.receive([(to, crate::PlayerIntent::SyncAck { number })]);
+                    }
+                    LedgerDelta::Resync { number, .. } => resyncs.push((to.0, number)),
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(resyncs.len(), 1, "once, then it waits: {resyncs:?}");
+        assert_eq!(resyncs[0].0, 9);
+        assert!(last_number > crate::RESYNC_BEHIND);
+    }
+
+    #[test]
+    fn every_player_gets_a_keyframe_regularly() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", t(70, 80)), (9, "B", t(90, 90))]));
+        sim.take_deltas();
+        let mut keyframes = Vec::new();
+        for tick in 0..crate::KEYFRAME_TICKS * 2 {
+            sim.update();
+            for (to, d) in sim.take_deltas() {
+                if let LedgerDelta::Resync { number, .. } = d {
+                    sim.receive([(to, crate::PlayerIntent::SyncAck { number })]);
+                    keyframes.push((tick, to.0));
+                }
+                if let LedgerDelta::StateSync { number, .. } = d {
+                    sim.receive([(to, crate::PlayerIntent::SyncAck { number })]);
+                }
+            }
+        }
+        let ticks: Vec<u32> = keyframes.iter().filter(|k| k.1 == 7).map(|k| k.0).collect();
+        assert_eq!(ticks.len(), 2, "{keyframes:?}");
+        assert_eq!(ticks[1] - ticks[0], crate::KEYFRAME_TICKS);
+        assert_eq!(keyframes.iter().filter(|k| k.1 == 9).count(), 2, "to everyone");
+    }
+
+    #[test]
+    fn old_and_repeated_moves_are_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", t(70, 80))]));
+        sim.take_deltas();
+        send_move(&mut sim, 7, 2, &row(80, 70, 72));
+        sim.update();
+        assert_eq!(synced(&sim.take_deltas(), 7), Some(state(t(70, 80), &[(71, 80), (72, 80)], 2)));
+        // Move 1, overtaken on the way, and a repeat of move 2 arrive late: nothing changes.
+        send_move(&mut sim, 7, 1, &[(70, 80), (70, 81)]);
+        send_move(&mut sim, 7, 2, &row(80, 70, 72));
+        sim.update();
+        assert!(synced(&sim.take_deltas(), 7).is_none(), "no sync: nothing changed");
+        walk_ticks(&mut sim, ticks_for(2));
+        assert_eq!(position(&mut sim, 7), t(72, 80));
     }
 
     #[test]
     fn a_blocked_move_is_corrected() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());
-        let at = TileLoc { x: 66, y: 69 };
+        let at = t(66, 69);
         let mut sim = booted(dir.path(), save(&[(7, "A", at)]));
         sim.take_deltas();
-        // (67, 69) is mask-blocked.
+        // (67, 69) is mask-blocked: the sync for move 4 has the PC standing where it was.
         send_move(&mut sim, 7, 4, &[(66, 69), (67, 69), (68, 69)]);
         sim.update();
-        assert_eq!(sim.take_deltas(), vec![(PlayerId(7), LedgerDelta::MoveCorrection { net_id: NetId(0), seq: 4, position: at })]);
+        assert_eq!(synced(&sim.take_deltas(), 7), Some(state(at, &[], 4)));
         // Out of the loaded sectors: (1, 1) is the only sector with a file.
         send_move(&mut sim, 7, 5, &[(65, 69), (64, 69), (63, 69)]);
         sim.update();
-        assert_eq!(sim.take_deltas(), vec![(PlayerId(7), LedgerDelta::MoveCorrection { net_id: NetId(0), seq: 5, position: at })]);
+        assert_eq!(synced(&sim.take_deltas(), 7), Some(state(at, &[], 5)));
         walk_ticks(&mut sim, ticks_for(3));
         assert_eq!(position(&mut sim, 7), at);
     }
 
     #[test]
-    fn a_client_running_ahead_is_corrected_where_the_host_has_it() {
+    fn a_client_ahead_on_its_route_continues_from_there() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());
-        let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 })]));
+        let mut sim = booted(dir.path(), save(&[(7, "A", t(70, 80)), (9, "B", t(90, 90))]));
         sim.take_deltas();
-        send_move(&mut sim, 7, 1, &[(71, 80), (72, 80), (73, 80), (74, 80), (75, 80)]);
+        send_move(&mut sim, 7, 1, &row(80, 71, 75));
         sim.update();
         walk_ticks(&mut sim, ticks_for(1));
-        let host_at = position(&mut sim, 7);
-        assert_eq!(host_at, TileLoc { x: 71, y: 80 });
-        // The client claims to be at (74, 80) already.
+        assert_eq!(position(&mut sim, 7), t(71, 80));
+        sim.take_deltas();
+        // The client (ahead: latency) turns off at (74, 80). The host walks there first.
         send_move(&mut sim, 7, 2, &[(74, 80), (74, 81)]);
         sim.update();
-        let deltas = sim.take_deltas();
-        let LedgerDelta::MoveCorrection { seq: 2, position: stopped, .. } = deltas[0].1 else { panic!("{deltas:?}") };
-        assert!(stopped.x <= 72, "where the host had it, not where the client said: {stopped:?}");
+        assert_eq!(synced(&sim.take_deltas(), 9), Some(state(t(71, 80), &[(72, 80), (73, 80), (74, 80), (74, 81)], 2)));
+        assert!(position(&mut sim, 7).x < 73, "at the host's pace, not the client's");
+        walk_ticks(&mut sim, ticks_for(3));
+        assert_eq!(position(&mut sim, 7), t(74, 81));
+    }
+
+    #[test]
+    fn a_client_claiming_to_be_off_its_route_is_corrected_where_the_host_has_it() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", t(70, 80))]));
+        sim.take_deltas();
+        send_move(&mut sim, 7, 1, &row(80, 71, 75));
+        sim.update();
+        walk_ticks(&mut sim, ticks_for(1));
+        assert_eq!(position(&mut sim, 7), t(71, 80));
+        // The client claims to be at (74, 82), which is neither near the host nor on the route.
+        send_move(&mut sim, 7, 2, &[(74, 82), (74, 83)]);
+        sim.update();
+        let stopped = synced(&sim.take_deltas(), 7).unwrap();
+        assert_eq!((stopped.path.len(), stopped.seq), (0, 2), "{stopped:?}");
+        assert!(stopped.position.x <= 72, "where the host had it, not where the client said: {stopped:?}");
         walk_ticks(&mut sim, ticks_for(4));
-        assert_eq!(position(&mut sim, 7), stopped, "and it stopped there");
+        assert_eq!(position(&mut sim, 7), stopped.position, "and it stopped there");
         // A path from one step ahead of the host is fine.
-        send_move(&mut sim, 7, 3, &[(stopped.x + 1, 80), (stopped.x + 2, 80)]);
+        let x = stopped.position.x;
+        send_move(&mut sim, 7, 3, &[(x + 1, 80), (x + 2, 80)]);
         sim.update();
         walk_ticks(&mut sim, ticks_for(2));
-        assert_eq!(position(&mut sim, 7), TileLoc { x: stopped.x + 2, y: 80 });
+        assert_eq!(position(&mut sim, 7), t(x + 2, 80));
     }
 
     #[test]
@@ -426,7 +570,6 @@ mod tests {
         }
         assert!(shared, "A stood on B's tile on the way");
         assert_eq!(position(&mut sim, 7), TileLoc { x: 76, y: 80 });
-        assert!(!sim.take_deltas().iter().any(|(_, d)| matches!(d, LedgerDelta::MoveCorrection { .. })));
         // And onto a taken goal.
         send_move(&mut sim, 7, 2, &row(80, 76, 73));
         walk_ticks(&mut sim, ticks_for(3));
@@ -450,9 +593,8 @@ mod tests {
         let stop = TileLoc { x: 73, y: 80 };
         assert_eq!(position(&mut sim, 7), stop);
         let deltas = sim.take_deltas();
-        let correction = LedgerDelta::MoveCorrection { net_id: NetId(0), seq: 1, position: stop };
         for to in [7, 9] {
-            assert!(deltas.contains(&(PlayerId(to), correction.clone())), "player {to}: {deltas:?}");
+            assert_eq!(synced(&deltas, to), Some(state(stop, &[], 1)), "player {to}: {deltas:?}");
         }
         let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
         assert_eq!(save.players[&PlayerId(7)].position, stop);

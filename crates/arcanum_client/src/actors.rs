@@ -1,14 +1,19 @@
 //! Critters on the map: their sprites, stand and walk animations, and walking between tiles.
 //!
-//! The host announces each PC with a `Spawn` (its tile, art id and speed stat) and moves it with
-//! `Move` (other players' PCs) and `MoveCorrection`. The local PC walks on the client at once
-//! ([`WalkLocalPc`], set by a left click on the map): the client sends the path to the host and
-//! walks it without waiting.
+//! The host announces each PC with a `Spawn` (its tile, art id and speed stat), reliably. Where
+//! the PCs are and where they walk comes in state syncs (`StateSync`, unreliable and frequent;
+//! `Resync`, reliable: keyframes and catch-ups). The client applies only a sync newer than the
+//! last it applied ([`SyncState`]) and reports that number to the host twice a second.
 //!
-//! A correction puts the actor on the host's tile, and its sprite slides there from where it was
-//! drawn, at its walking speed, instead of jumping. For the local PC, a correction answering an
-//! older move than the last one sent is ignored (the answer to the newer move decides), and
-//! after a correction the client plans once more to the same goal from the host's tile.
+//! The local PC walks on the client at once ([`WalkLocalPc`], set by a left click on the map):
+//! the client sends the path to the host and walks it without waiting. Moves are unreliable, so
+//! the newest is sent again every [`MOVE_RESEND_SECS`] until a sync shows the host took it.
+//!
+//! A sync about the local PC that answers the newest move is a correction when the host's PC
+//! will stop somewhere else than the client's ([`Actor::sync_local`]). Other PCs follow the
+//! sync unless they are within a step of it on the same route ([`Actor::follow`]). A corrected
+//! actor's sprite slides from where it was drawn, at its walking speed, instead of jumping.
+//! After a correction of the local PC the client plans once more to its goal.
 //!
 //! A walker steps from tile centre to tile centre, each step taking as long as its
 //! [`Gait`] says, which is also the host's timing. Its sprite plays the walk art in the step's
@@ -20,7 +25,7 @@ use std::collections::{HashMap, VecDeque};
 
 use arcanum_formats::art_id::{ANIM_STAND, ArtId, CritterArt};
 use arcanum_formats::map::TileLoc;
-use arcanum_sim::{Gait, LedgerDelta, NetId, PlayerIntent, find_path, rotation_of_step, walk_art, with_anim};
+use arcanum_sim::{Gait, LedgerDelta, NetId, PcState, PlayerIntent, find_path, rotation_of_step, sync_is_newer, walk_art, with_anim};
 use bevy::prelude::*;
 
 use crate::animation::ArtAnimation;
@@ -35,10 +40,14 @@ pub struct ActorsPlugin;
 
 impl Plugin for ActorsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ActorDeltas>().init_resource::<WalkLocalPc>().add_systems(OnExit(AppState::InGame), forget_actors).add_systems(
-            Update,
-            (click_to_move, apply_actor_deltas, start_local_walk, walk_actors, place_actors).chain().run_if(in_state(AppState::InGame)),
-        );
+        app.init_resource::<ActorDeltas>()
+            .init_resource::<WalkLocalPc>()
+            .init_resource::<SyncState>()
+            .add_systems(OnExit(AppState::InGame), forget_actors)
+            .add_systems(
+                Update,
+                (click_to_move, apply_actor_deltas, start_local_walk, resend_move, ack_syncs, walk_actors, place_actors).chain().run_if(in_state(AppState::InGame)),
+            );
     }
 }
 
@@ -49,7 +58,30 @@ pub struct ActorDeltas(pub Vec<LedgerDelta>);
 impl ActorDeltas {
     /// Whether this module handles `delta`.
     pub fn wants(delta: &LedgerDelta) -> bool {
-        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::Move { .. } | LedgerDelta::MoveCorrection { .. } | LedgerDelta::Despawn { .. })
+        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. })
+    }
+}
+
+/// Seconds between sync acknowledgements.
+pub const SYNC_ACK_SECS: f32 = 0.5;
+/// Seconds before a move the host has not taken is sent again.
+pub const MOVE_RESEND_SECS: f32 = 0.2;
+
+/// The newest state sync applied, and when it was last reported.
+#[derive(Resource, Debug, Default)]
+pub struct SyncState {
+    pub last: Option<u32>,
+    since_ack: f32,
+}
+
+impl SyncState {
+    /// Takes sync `number` if it is newer than the last applied. Returns whether to apply it.
+    pub fn take(&mut self, number: u32) -> bool {
+        if self.last.is_some_and(|last| !sync_is_newer(number, last)) {
+            return false;
+        }
+        self.last = Some(number);
+        true
     }
 }
 
@@ -62,23 +94,31 @@ pub struct WalkLocalPc {
     /// The goal of the last move sent, and whether it was already planned again after a
     /// correction.
     last_goal: Option<(TileLoc, bool)>,
+    /// The newest move, until a sync shows the host took it, and seconds since it was sent.
+    pending: Option<(PlayerIntent, f32)>,
 }
 
 impl WalkLocalPc {
-    /// Takes the host's correction of the local PC to `position`, answering move `seq`. Returns
-    /// false if it answers an older move than the last one sent, so is to be ignored. Otherwise,
-    /// the first correction after a move plans again to its goal, from `position`.
-    pub fn corrected(&mut self, seq: u32, position: TileLoc) -> bool {
+    /// Takes the host's account of move `seq`. Returns false if it answers an older move than
+    /// the last one sent, so is to be ignored; otherwise the host has the newest move, which
+    /// need not be sent again.
+    pub fn answered(&mut self, seq: u32) -> bool {
         if seq < self.seq {
             return false;
         }
+        self.pending = None;
+        true
+    }
+
+    /// The host stopped the local PC at `position`, short of where the client is going. The
+    /// first correction after a move plans again to its goal, from `position`.
+    pub fn corrected(&mut self, position: TileLoc) {
         if let Some((goal, false)) = self.last_goal
             && goal != position
         {
             self.goal = Some(goal);
             self.last_goal = Some((goal, true));
         }
-        true
     }
 
     /// Records that move `seq + 1` to `goal` is being sent and returns its number.
@@ -161,6 +201,45 @@ impl Actor {
         }
     }
 
+    /// Where it will stop: the end of its steps, or its tile.
+    pub fn destination(&self) -> TileLoc {
+        self.steps.back().copied().unwrap_or(self.at)
+    }
+
+    /// Follows a host sync for a PC this client does not control. Within a step of the host on
+    /// the same route it walks on as it is; otherwise it takes the host's tile and path,
+    /// sliding there. Returns true if it was moved.
+    pub fn follow(&mut self, host: &PcState) -> bool {
+        if host.destination() == self.destination() {
+            let next = self.steps.front().copied();
+            let close = self.at == host.position || next == Some(host.position) || host.path.first() == Some(&self.at);
+            if close {
+                return false;
+            }
+        }
+        if self.steps.front() == Some(&host.position) {
+            // Still stepping onto the host's tile: finish that step, then the host's path.
+            self.steps.truncate(1);
+            self.steps.extend(host.path.iter().copied());
+            return false;
+        }
+        self.correct(host.position);
+        self.walk(host.path.iter().copied());
+        true
+    }
+
+    /// Checks a host sync for the local PC against where the client is taking it. Returns
+    /// true, having moved to the host's tile and path, if the host's PC will stop somewhere
+    /// else: the move was refused or a step was blocked.
+    pub fn sync_local(&mut self, host: &PcState) -> bool {
+        if host.destination() == self.destination() {
+            return false;
+        }
+        self.correct(host.position);
+        self.walk(host.path.iter().copied());
+        true
+    }
+
     /// Where the actor is drawn relative to the centre of its tile, in world units: between its
     /// tile and the next.
     pub fn drawn_offset(&self) -> Vec2 {
@@ -197,10 +276,10 @@ impl Actor {
     }
 }
 
-fn forget_actors(mut deltas: ResMut<ActorDeltas>, mut walk: ResMut<WalkLocalPc>) {
+fn forget_actors(mut deltas: ResMut<ActorDeltas>, mut walk: ResMut<WalkLocalPc>, mut sync: ResMut<SyncState>) {
     deltas.0.clear();
-    walk.goal = None;
-    walk.last_goal = None;
+    *walk = WalkLocalPc::default();
+    *sync = SyncState::default();
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -211,6 +290,7 @@ fn apply_actor_deltas(
     vfs: Option<Res<VfsResource>>,
     pc: Res<LocalPc>,
     mut walk: ResMut<WalkLocalPc>,
+    mut sync: ResMut<SyncState>,
     mut actors: Query<(Entity, &mut Actor)>,
 ) {
     if deltas.0.is_empty() {
@@ -245,22 +325,20 @@ fn apply_actor_deltas(
                     .id();
                 by_id.insert(net_id, entity);
             }
-            LedgerDelta::Move { net_id, path } if Some(net_id) != local => {
-                if let Some(Ok((_, mut a))) = by_id.get(&net_id).map(|&e| actors.get_mut(e)) {
-                    // The path may start on the actor's tile or the next one along.
-                    let skip = usize::from(path.first() == Some(&a.at));
-                    a.walk(path.into_iter().skip(skip));
+            LedgerDelta::StateSync { number, pcs } | LedgerDelta::Resync { number, pcs } => {
+                if !sync.take(number) {
+                    continue;
                 }
-            }
-            LedgerDelta::MoveCorrection { net_id, position, seq } => {
-                if Some(net_id) == local {
-                    if !walk.corrected(seq, position) {
-                        continue;
+                for host in &pcs {
+                    let Some(Ok((_, mut a))) = by_id.get(&host.net_id).map(|&e| actors.get_mut(e)) else { continue };
+                    if Some(host.net_id) != local {
+                        a.follow(host);
+                    } else if walk.answered(host.seq) && a.sync_local(host) {
+                        info!("the host has the PC at {:?}, going to {:?} (move {})", host.position, host.destination(), host.seq);
+                        if host.path.is_empty() {
+                            walk.corrected(host.position);
+                        }
                     }
-                    info!("the host stopped the PC at {position:?} (move {seq})");
-                }
-                if let Some(Ok((_, mut a))) = by_id.get(&net_id).map(|&e| actors.get_mut(e)) {
-                    a.correct(position);
                 }
             }
             LedgerDelta::Despawn { net_id } => {
@@ -340,8 +418,10 @@ fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>
     let seq = walk.sending(goal);
     let mut sent = vec![from];
     sent.extend(&path);
+    let intent = PlayerIntent::Move { seq, path: sent };
+    walk.pending = Some((intent.clone(), 0.0));
     if let Some(link) = link
-        && let Err(e) = link.0.send_intent(PlayerIntent::Move { seq, path: sent })
+        && let Err(e) = link.0.send_intent(intent)
     {
         warn!("cannot reach the host: {e}");
     }
@@ -351,6 +431,32 @@ fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>
         actor.steps.extend(path);
     } else {
         actor.walk(path);
+    }
+}
+
+/// Sends the newest move again every [`MOVE_RESEND_SECS`] until a sync shows the host took it.
+fn resend_move(time: Res<Time>, mut walk: ResMut<WalkLocalPc>, link: Option<Res<HostLink>>) {
+    let Some((intent, since)) = walk.pending.as_mut() else { return };
+    *since += time.delta_secs();
+    if *since < MOVE_RESEND_SECS {
+        return;
+    }
+    *since = 0.0;
+    if let Some(link) = link {
+        let _ = link.0.send_intent(intent.clone());
+    }
+}
+
+/// Tells the host the newest sync applied, every [`SYNC_ACK_SECS`].
+fn ack_syncs(time: Res<Time>, mut sync: ResMut<SyncState>, link: Option<Res<HostLink>>) {
+    let Some(number) = sync.last else { return };
+    sync.since_ack += time.delta_secs();
+    if sync.since_ack < SYNC_ACK_SECS {
+        return;
+    }
+    sync.since_ack = 0.0;
+    if let Some(link) = link {
+        let _ = link.0.send_intent(PlayerIntent::SyncAck { number });
     }
 }
 
@@ -440,24 +546,74 @@ mod tests {
     }
 
     #[test]
-    fn only_the_newest_move_is_corrected_and_planned_once_more() {
+    fn only_the_newest_move_is_answered_and_planned_once_more() {
         let mut w = WalkLocalPc::default();
         w.click(t(20, 20));
         w.goal = None;
         assert_eq!(w.sending(t(20, 20)), 1);
         assert_eq!(w.sending(t(20, 20)), 2, "a second click before the answer");
-        assert!(!w.corrected(1, t(11, 10)), "answers the older move");
-        assert_eq!(w.goal, None);
-        assert!(w.corrected(2, t(11, 10)));
+        w.pending = Some((PlayerIntent::Move { seq: 2, path: vec![] }, 0.0));
+        assert!(!w.answered(1), "answers the older move");
+        assert!(w.pending.is_some(), "still to be sent again");
+        assert!(w.answered(2));
+        assert!(w.pending.is_none());
+        w.corrected(t(11, 10));
         assert_eq!(w.goal, Some(t(20, 20)), "plans again from the host's tile");
         w.goal = None;
         assert_eq!(w.sending(t(20, 20)), 3);
-        assert!(w.corrected(3, t(12, 10)));
+        w.corrected(t(12, 10));
         assert_eq!(w.goal, None, "only once");
         w.click(t(30, 30));
         w.goal = None;
         w.sending(t(30, 30));
-        assert!(w.corrected(4, t(30, 30)));
+        w.corrected(t(30, 30));
         assert_eq!(w.goal, None, "already at the goal");
+    }
+
+    #[test]
+    fn syncs_apply_only_when_newer_across_the_roll_over() {
+        let mut s = SyncState::default();
+        assert!(s.take(9_998));
+        assert!(!s.take(9_998), "the same");
+        assert!(!s.take(9_990), "older");
+        assert!(s.take(3), "after the roll-over");
+        assert_eq!(s.last, Some(3));
+    }
+
+    fn host(position: TileLoc, path: &[TileLoc], seq: u32) -> PcState {
+        PcState { net_id: NetId(0), position, path: path.to_vec(), seq }
+    }
+
+    #[test]
+    fn the_local_pc_is_corrected_only_when_the_host_stops_it_elsewhere() {
+        let mut a = actor();
+        a.walk([t(11, 10), t(12, 10), t(13, 10)]);
+        a.advance(a.gait.step_seconds(t(10, 10), t(11, 10)) * 1.5);
+        assert_eq!(a.at, t(11, 10));
+        // The host is behind on the same route: fine.
+        assert!(!a.sync_local(&host(t(10, 10), &[t(11, 10), t(12, 10), t(13, 10)], 1)));
+        assert_eq!(a.at, t(11, 10));
+        // The host stopped it at (11, 10): a correction.
+        assert!(a.sync_local(&host(t(11, 10), &[], 1)));
+        assert_eq!((a.at, a.walking()), (t(11, 10), false));
+    }
+
+    #[test]
+    fn other_pcs_follow_the_host_within_a_step() {
+        let mut a = actor();
+        a.walk([t(11, 10), t(12, 10), t(13, 10)]);
+        // A step behind or ahead of the host on the same route: left alone.
+        assert!(!a.follow(&host(t(11, 10), &[t(12, 10), t(13, 10)], 1)));
+        assert_eq!(a.steps.len(), 3);
+        a.advance(a.gait.step_seconds(t(10, 10), t(11, 10)) * 1.01);
+        assert!(!a.follow(&host(t(10, 10), &[t(11, 10), t(12, 10), t(13, 10)], 1)));
+        // The host turned: take its route from where the actor is stepping to.
+        assert!(!a.follow(&host(t(12, 10), &[t(12, 11)], 2)));
+        assert_eq!(a.destination(), t(12, 11));
+        assert_eq!(a.at, t(11, 10), "finishes the step");
+        // Far off: slides to the host's tile.
+        assert!(a.follow(&host(t(20, 20), &[], 3)));
+        assert_eq!((a.at, a.walking()), (t(20, 20), false));
+        assert_ne!(a.slide, Vec2::ZERO);
     }
 }

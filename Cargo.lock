@@ -309,9 +309,13 @@ dependencies = [
 name = "arcanum_net"
 version = "0.1.0"
 dependencies = [
+ "arcanum_formats",
  "arcanum_rules",
  "arcanum_sim",
  "crossbeam-channel",
+ "log",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -3,27 +3,87 @@
 //! Out of combat a client paths and walks its own PC at once, and sends the path as
 //! [`PlayerIntent::Move`](crate::PlayerIntent::Move). The host checks it with [`check_path`]
 //! (the same step rules as [`find_path`](crate::find_path)), then walks the PC along it at its
-//! [`Gait`] and tells the other players with a `Move`. A path it refuses gets
-//! a `MoveCorrection` with the PC's position on the host, and the PC stops there.
+//! [`Gait`]. A path it refuses stops the PC where the host has it.
+//!
+//! Moves arrive unreliably: one may be lost, repeated or overtaken. The host takes a move only
+//! if its `seq` is newer than the last it took from that player ([`LastMove`]).
+//!
+//! Players learn where the PCs are from [`sync_state`]: a [`StateSync`](LedgerDelta::StateSync)
+//! with every PC's tile, remaining path and last move taken, at once after anything changes
+//! and then every [`SYNC_TICKS_MOVING`] ticks while a PC walks, or every [`SYNC_TICKS_IDLE`].
+//! A refused move shows as a PC whose path no longer leads where its client is going; that is
+//! the correction.
 //!
 //! Every step is checked again just before it is taken, against the map: doors close while a
-//! path is walked. The host never plans a PC's path: on a blocked step the PC stops and every
-//! player gets a `MoveCorrection`, and the client plans again from there.
+//! path is walked. The host never plans a PC's path: on a blocked step the PC stops, and the
+//! client plans again from there.
 //!
 //! Out of combat, actors (PCs and NPCs) do not block PCs: they walk through each other and may
 //! share a tile, so a client is never snapped back because another actor moved. In combat they
 //! will block ([`Occupied`]), and the snap-back is enforced; there is no combat yet.
 //!
-//! The host walks the PC itself, so a client cannot go faster than the host allows: a client
-//! that runs ahead sends a path that starts too far from where the host has the PC, and is
-//! corrected.
+//! The host walks the PC itself, so a client cannot go faster than the host allows. The client
+//! walks at once and the host only once the move arrives, so with latency the client is ahead:
+//! a new path may also start anywhere on the route the host is still walking. The host walks on
+//! to that tile and continues along the new path, at its own pace. A path starting anywhere
+//! else, not on or next to the host's tile, is corrected.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use arcanum_formats::map::TileLoc;
 use bevy_ecs::prelude::*;
 
-use crate::{Gait, LedgerDelta, LoadedMap, NetId, Outbox, PlayerControlled, PlayerId, Position, Session, SessionPlayer, TICK_HZ, Walkable, WorldState, adjacent, step_allowed, walk_fps};
+use crate::{Gait, LedgerDelta, LoadedMap, NetId, Outbox, PcState, PlayerControlled, PlayerId, Position, Session, SessionPlayer, TICK_HZ, Walkable, WorldState, adjacent, step_allowed, walk_fps};
+
+/// Ticks between state syncs while any PC walks (10 a second).
+pub const SYNC_TICKS_MOVING: u32 = 3;
+/// Ticks between state syncs while every PC stands (one a second).
+pub const SYNC_TICKS_IDLE: u32 = 30;
+
+/// The `seq` of the last move request the host took for this PC.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LastMove(pub u32);
+
+/// A client this many syncs behind gets a [`Resync`](LedgerDelta::Resync) (2 s while walking).
+pub const RESYNC_BEHIND: u32 = 20;
+/// Ticks between keyframes: every player gets a [`Resync`](LedgerDelta::Resync) this often
+/// regardless (5 s).
+pub const KEYFRAME_TICKS: u32 = 150;
+
+/// When the next state sync goes out, and how far behind each player is.
+#[derive(Resource, Debug, Default)]
+pub struct SyncClock {
+    /// Something changed: sync at the end of this tick.
+    pub due: bool,
+    /// Ticks since the last sync.
+    pub since: u32,
+    /// Ticks since the last keyframe.
+    pub since_keyframe: u32,
+    /// The number of the last sync sent.
+    pub number: u32,
+    /// Per player: the last sync it reported applying (or the first sent to it), and the
+    /// number of the last resync sent to it.
+    pub players: HashMap<PlayerId, (u32, Option<u32>)>,
+}
+
+impl SyncClock {
+    /// `player` reports it applied sync `number`.
+    pub fn acked(&mut self, player: PlayerId, number: u32) {
+        if let Some((last, _)) = self.players.get_mut(&player)
+            && crate::sync_is_newer(number, *last)
+            && !crate::sync_is_newer(number, self.number)
+        {
+            *last = number;
+        }
+    }
+
+    /// Whether `player` should get a resync now: it is [`RESYNC_BEHIND`] syncs behind, and no
+    /// resync was sent in the last [`RESYNC_BEHIND`] syncs.
+    fn needs_resync(&self, player: PlayerId) -> bool {
+        let Some(&(last, resent)) = self.players.get(&player) else { return false };
+        crate::sync_distance(last, self.number) >= RESYNC_BEHIND && resent.is_none_or(|r| crate::sync_distance(r, self.number) >= RESYNC_BEHIND)
+    }
+}
 
 /// The longest path the host takes in one move.
 pub const MAX_PATH_STEPS: usize = 256;
@@ -75,11 +135,18 @@ pub fn check_path(map: &impl Walkable, from: TileLoc, path: &[TileLoc]) -> Resul
     Ok(steps)
 }
 
+/// A path that starts on `route` (the steps a walking PC still has): the route up to that tile,
+/// then the path's checked steps. `None` if it does not start on the route or is refused.
+pub fn continue_route(map: &impl Walkable, route: Option<&VecDeque<TileLoc>>, path: &[TileLoc]) -> Option<Vec<TileLoc>> {
+    let route = route?;
+    let i = route.iter().position(|&t| Some(&t) == path.first())?;
+    let rest = check_path(map, route[i], path).ok()?;
+    Some(route.iter().take(i + 1).copied().chain(rest).collect())
+}
+
 /// A PC walking a checked path.
 #[derive(Component, Debug, Clone, PartialEq)]
 pub struct Walking {
-    /// The `seq` of the move this path came from.
-    pub seq: u32,
     /// Tiles still to step on.
     pub steps: VecDeque<TileLoc>,
     /// Seconds spent on the step to the next tile.
@@ -90,61 +157,59 @@ pub struct Walking {
 #[derive(Resource, Debug, Default)]
 pub struct MoveRequests(pub Vec<(PlayerId, u32, Vec<TileLoc>)>);
 
-/// Checks each move request against the player's PC. Accepted: the PC walks the path and the
-/// other players get a `Move`. Refused: the PC stops where it is and every player gets a
-/// `MoveCorrection` (the others may have its last path). Requests from players with no PC in
-/// the world are dropped.
+type MoverQuery<'a> = (Entity, &'a NetId, &'a Position, &'a PlayerControlled, Option<&'a Walking>, Option<&'a mut LastMove>);
+type SyncedQuery<'a> = (&'a NetId, &'a Position, Option<&'a Walking>, Option<&'a LastMove>);
+
+/// Checks each move request against the player's PC. Accepted: the PC walks the path.
+/// Refused: the PC stops where it is. Either way the move is the PC's [`LastMove`] and a sync
+/// is due. Requests from players with no PC in the world, and moves no newer than the last
+/// taken, are dropped.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_moves(
     mut commands: Commands,
     mut requests: ResMut<MoveRequests>,
     map: Res<LoadedMap>,
     session: Res<Session>,
-    mut outbox: ResMut<Outbox>,
+    mut clock: ResMut<SyncClock>,
     mut world: ResMut<WorldState>,
-    pcs: Query<(Entity, &NetId, &Position, &PlayerControlled)>,
+    mut pcs: Query<MoverQuery>,
 ) {
     for (player, seq, path) in requests.0.drain(..) {
         let Some(SessionPlayer::InWorld(net_id)) = session.players.get(&player) else { continue };
-        let Some((entity, &net_id, &Position(at), _)) = pcs.iter().find(|(_, id, _, _)| **id == *net_id) else { continue };
-        match check_path(&*map, at, &path) {
-            Ok(steps) => {
-                if steps.is_empty() {
-                    commands.entity(entity).remove::<Walking>();
-                    continue;
-                }
-                let relay = LedgerDelta::Move { net_id, path: steps.clone() };
-                for &other in session.players.keys().filter(|&&p| p != player) {
-                    outbox.0.push((other, relay.clone()));
-                }
-                commands.entity(entity).insert(Walking { seq, steps: steps.into(), progress: 0.0 });
+        let Some((entity, _, &Position(at), _, walking, last)) = pcs.iter_mut().find(|pc| pc.1 == net_id) else { continue };
+        if last.as_ref().is_some_and(|l| seq <= l.0) {
+            continue;
+        }
+        match last {
+            Some(mut last) => last.0 = seq,
+            None => {
+                commands.entity(entity).insert(LastMove(seq));
             }
-            Err(_) => {
+        }
+        clock.due = true;
+        match check_path(&*map, at, &path).or_else(|refusal| continue_route(&*map, walking.map(|w| &w.steps), &path).ok_or(refusal)) {
+            Ok(steps) if !steps.is_empty() => {
+                // The step under way goes on where it was if the new path takes it too.
+                let progress = walking.filter(|w| w.steps.front() == steps.first()).map_or(0.0, |w| w.progress);
+                commands.entity(entity).insert(Walking { steps: steps.into(), progress });
+            }
+            // Standing still, or refused.
+            _ => {
                 commands.entity(entity).remove::<Walking>();
                 record_position(&mut world, player, at);
-                let correction = LedgerDelta::MoveCorrection { net_id, seq, position: at };
-                outbox.0.extend(session.players.keys().map(|&p| (p, correction.clone())));
             }
         }
     }
 }
 
-type WalkerQuery<'a> = (Entity, &'a NetId, &'a mut Position, &'a PlayerControlled, Option<&'a Gait>, Option<&'a mut Walking>);
+type WalkerQuery<'a> = (Entity, &'a mut Position, &'a PlayerControlled, Option<&'a Gait>, Option<&'a mut Walking>);
 
-/// Steps walking PCs along their paths, in net id order, checking each step against the map
-/// just before it is taken (see the module docs). A PC that reaches the end or cannot go on stops, and its
-/// position goes into the save.
-pub fn walk(
-    mut commands: Commands,
-    map: Res<LoadedMap>,
-    session: Res<Session>,
-    mut outbox: ResMut<Outbox>,
-    mut world: ResMut<WorldState>,
-    mut pcs: Query<WalkerQuery>,
-) {
-    let mut order: Vec<(NetId, Entity)> = pcs.iter().filter(|pc| pc.5.is_some()).map(|(e, id, ..)| (*id, e)).collect();
-    order.sort();
-    for (net_id, entity) in order {
-        let Ok((_, _, mut position, player, gait, Some(mut walking))) = pcs.get_mut(entity) else { continue };
+/// Steps walking PCs along their paths, checking each step against the map just before it is
+/// taken (see the module docs). A PC that reaches the end or cannot go on stops, its position
+/// goes into the save, and a sync is due.
+pub fn walk(mut commands: Commands, map: Res<LoadedMap>, mut clock: ResMut<SyncClock>, mut world: ResMut<WorldState>, mut pcs: Query<WalkerQuery>) {
+    for (entity, mut position, player, gait, walking) in &mut pcs {
+        let Some(mut walking) = walking else { continue };
         let gait = gait.copied().unwrap_or(Gait::human(walk_fps(8, 0)));
         walking.progress += 1.0 / TICK_HZ;
         let mut stopped = false;
@@ -155,8 +220,6 @@ pub fn walk(
                 break;
             }
             if !step_allowed(&*map, at, next) {
-                let correction = LedgerDelta::MoveCorrection { net_id, seq: walking.seq, position: at };
-                outbox.0.extend(session.players.keys().map(|&p| (p, correction.clone())));
                 stopped = true;
                 break;
             }
@@ -167,7 +230,62 @@ pub fn walk(
         if stopped || walking.steps.is_empty() {
             commands.entity(entity).remove::<Walking>();
             record_position(&mut world, player.0, position.0);
+            clock.due = true;
         }
+    }
+}
+
+/// Sends every player in the world a [`StateSync`](LedgerDelta::StateSync) when one is due:
+/// at the end of a tick in which something changed, else every [`SYNC_TICKS_MOVING`] ticks while
+/// a PC walks and every [`SYNC_TICKS_IDLE`] when none does. Every [`KEYFRAME_TICKS`] the sync
+/// is a keyframe: every player gets it as a reliable [`Resync`](LedgerDelta::Resync). Between
+/// keyframes, a player whose acknowledgements ([`SyncClock::acked`]) are [`RESYNC_BEHIND`]
+/// syncs behind gets one too.
+pub fn sync_state(
+    mut clock: ResMut<SyncClock>,
+    session: Res<Session>,
+    mut outbox: ResMut<Outbox>,
+    pcs: Query<SyncedQuery, With<PlayerControlled>>,
+) {
+    clock.since += 1;
+    clock.since_keyframe += 1;
+    let moving = pcs.iter().any(|pc| pc.2.is_some());
+    let period = if moving { SYNC_TICKS_MOVING } else { SYNC_TICKS_IDLE };
+    let keyframe = clock.since_keyframe >= KEYFRAME_TICKS;
+    if !clock.due && !keyframe && clock.since < period {
+        return;
+    }
+    clock.due = false;
+    clock.since = 0;
+    if keyframe {
+        clock.since_keyframe = 0;
+    }
+    let mut states: Vec<PcState> = pcs
+        .iter()
+        .map(|(&net_id, &Position(position), walking, last)| PcState {
+            net_id,
+            position,
+            path: walking.map(|w| w.steps.iter().copied().collect()).unwrap_or_default(),
+            seq: last.map_or(0, |l| l.0),
+        })
+        .collect();
+    if states.is_empty() {
+        return;
+    }
+    states.sort_by_key(|s| s.net_id);
+    let number = (clock.number + 1) % crate::SYNC_NUMBERS;
+    clock.number = number;
+    let mut players: Vec<PlayerId> = session.players.iter().filter(|(_, s)| matches!(s, SessionPlayer::InWorld(_))).map(|(&p, _)| p).collect();
+    players.sort();
+    for player in players {
+        clock.players.entry(player).or_insert((number, None));
+        let sync = if keyframe || clock.needs_resync(player) {
+            clock.players.get_mut(&player).expect("inserted above").1 = Some(number);
+            LedgerDelta::Resync { number, pcs: states.clone() }
+        } else {
+            LedgerDelta::StateSync { number, pcs: states.clone() }
+        };
+        outbox.0.push((player, sync));
     }
 }
 
