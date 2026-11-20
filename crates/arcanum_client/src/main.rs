@@ -85,6 +85,8 @@ fn main() {
             arcanum_client::WorldRenderPlugin,
             arcanum_client::animation::AnimationPlugin,
             arcanum_client::actors::ActorsPlugin,
+            arcanum_client::hud::HudPlugin,
+            arcanum_client::cursor::CursorPlugin,
         ));
 
     // Debugging aid (screenshots take no clicks): `DEBUG_ARCANUM_WALK=x,y` walks the PC to that

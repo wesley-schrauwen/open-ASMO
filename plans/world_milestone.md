@@ -877,6 +877,33 @@ Not done:
 - No quick-save key, and no Continue on the main menu.
 - Load Game does not join or host a LAN game.
 
+## The in-game interface (after loading a saved game)
+
+- **What the original draws** (Arcanum.exe, found by reverse engineering): two windows, the top
+  bar (0, 0, 800, 41, `IntTop`, art 185) and the bottom bar (0, 441, 800, 159, `IntBotom`, art
+  184), with the world only in the 800x400 band between them (0x557810). The 800x600
+  `intrface.art` (art 3) is never used. Button, slot and vial positions are in `hud.rs`.
+- **Owner's layout (2026-11-21):** the world fills the window; the bars are centred on its top
+  and bottom edges, scaled like the menus, so a wide window shows world beside them.
+- **Vials** (0x54af10): fill = 88 x `100 * current / max` % (50 % when max is 0), rounded down.
+  The empty glass (`clrvial`) fills the top rows; the coloured art's top 8 rows are the
+  liquid's surface, drawn over the glass above the fill line. The current value is printed
+  under each vial as `%03d` (Cloister18Font, 0x54ad00).
+- **Host:** `LedgerDelta::PcStatus` gives every player each PC's name, portrait stem and hit
+  point and fatigue pools, with the PC's `Spawn`. Nothing damages or tires a PC yet, so the
+  pools are full.
+- **Cursor:** `cursor.art` (art 0, hotspot (0, 3)) for the whole game, scaled by whole pixels.
+- **Checked:** a real-data run shows both bars, full vials reading 030, at 2560x1440.
+
+Not done:
+
+- What the buttons and slots do; hover help.
+- The clock (`Clk_timestrip`, moon phases, 0x5522f0), the message box, the ammo icon and count
+  (0x54b3c0), the magick weapon button, and the poisoned (yellow) vial and its number.
+- The vial number colour (not found in the code; the font's white is used).
+- Cursors for actions and objects (0x573640 reads an object's cursor art from field 0x5d).
+- No portrait in the bars: the original has none there (`PcStatus` carries it for the party UI).
+
 ## Builder's calls (proposed by Claude, not owner decisions)
 
 - `arcanum_sim` uses `bevy_ecs` (and `bevy_app` for scheduling) with no rendering, audio or

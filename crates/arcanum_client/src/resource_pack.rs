@@ -89,6 +89,20 @@ pub mod paths {
         pub const DELETE_BUTTON: &str = "art/interface/cncl_big.art";
         /// Info display toggle, 33x33. Frames: off, on.
         pub const TEXT_TOGGLE: &str = "art/interface/TextToggle.ART";
+
+        // The in-game interface (Arcanum.exe window table 0x5c6390, buttons 0x5c6470..0x5c64b0,
+        // top bar buttons and hotkey slots 0x5cb494/0x5cb4bc; see `hud`).
+        /// The in-game top bar, 800x41 (art 185), and bottom bar, 800x159 (art 184).
+        pub const HUD_TOP: &str = "art/interface/IntTop.ART";
+        pub const HUD_BOTTOM: &str = "art/interface/IntBotom.ART";
+        /// Health vial (art 18), the same when poisoned (17), fatigue vial (19), 28x96; the
+        /// empty glass over them (20), 34x90.
+        pub const VIAL_RED: &str = "art/interface/redvial.art";
+        pub const VIAL_YELLOW: &str = "art/interface/yelovial.art";
+        pub const VIAL_BLUE: &str = "art/interface/bluvial.art";
+        pub const VIAL_EMPTY: &str = "art/interface/clrvial.art";
+        /// The default mouse cursor, 24x27, hotspot (0, 3) (art 0).
+        pub const CURSOR: &str = "art/interface/cursor.art";
     }
 
     /// Character portraits (`.bmp`).
@@ -136,6 +150,8 @@ pub mod paths {
         pub const LARGE: &str = "art/interface/Morph30Font.ART";
         /// Hints and small print.
         pub const SMALL: &str = "art/interface/morph15font.art";
+        /// The in-game vials' numbers (interface art 171).
+        pub const HUD_NUMBERS: &str = "art/interface/Cloister18Font.ART";
         /// Running text on the character screens (interface art 229).
         pub const BODY: &str = "art/interface/Flare12Font.art";
         /// TrueType override for UI text. Takes priority over the bitmap fonts when present.
