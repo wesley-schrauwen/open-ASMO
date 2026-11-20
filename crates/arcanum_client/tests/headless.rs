@@ -1817,11 +1817,17 @@ fn saves_are_listed_and_can_be_selected_inspected_and_deleted() {
 }
 
 #[test]
-fn load_goes_through_the_loading_screen() {
+fn load_needs_a_save_file_and_an_unreadable_one_returns_to_the_menu() {
+    // The examples have no file: Load does nothing.
     let mut app = open_load_game(sample_saves());
     press_load_game(&mut app, LoadGameAction::Load);
-    assert_eq!(state(&app), AppState::Loading);
-    update_until(&mut app, |app| state(app) == AppState::InGame);
+    assert_eq!(state(&app), AppState::LoadGame);
+    // A file that does not read: the loading screen gives up.
+    let mut saves = sample_saves();
+    saves.0[0].path = Some(std::path::PathBuf::from("/nonexistent/1.save"));
+    let mut app = open_load_game(saves);
+    press_load_game(&mut app, LoadGameAction::Load);
+    update_until(&mut app, |app| state(app) == AppState::MainMenu);
 }
 
 #[test]

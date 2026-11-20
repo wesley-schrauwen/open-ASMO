@@ -238,7 +238,7 @@ Not done, or done differently from the plan:
 - **Nothing boots from the save yet,** and there is no quick-save key. Step 3's "boot an
   identical sim from it" and the mid-session save come with the host loading the map (step 4),
   when there is state beyond the characters.
-- **Load Game does not list these saves yet.**
+- **Load Game does not list these saves yet.** (Done later: "Loading a saved game".)
 - **A save is written per session,** named by start time, not chosen by the player.
 
 ## The host loads the map (first part of step 4)
@@ -852,6 +852,30 @@ The original's idle AI (heartbeat 0x4ad200, standpoint and wander logic 0x4acdb0
 
 Not done: waypoint patrols (0x4acbb0), seeking darkness (no light model), fidgets, spreading
 out of a shared tile, NPC speed stats (all walk at speed 8), the standpoint marker object.
+
+## Loading a saved game (after NPC wandering)
+
+- **Listing** (`arcanum_sim::list_saves`): every `*.save` in the save folder that reads,
+  newest first. The Load Game screen fills its list from it on entering. Each save shows the
+  local player's PC name and level, the map, and when it was written (UTC). Saves that do not
+  read are logged.
+- **Loading** (`sim_bridge::boot_save`): the selected save boots a host in this process. The
+  host keeps writing that file, as no new session file is made. The clock, positions and door
+  changes go on from the save. A save without the local player's PC, or one that does not read,
+  does not start, and the loading screen returns to the main menu.
+- **Loading screen:** `LoadRequest::after_save_boots` waits for the player's PC to spawn.
+- **Debug:** `DEBUG_ARCANUM_LOAD=newest` loads the newest save at start.
+- **Checked:**
+  - A run walked the PC and saved it at (92955, 82592), 15:00:19.
+  - A second run loaded that save, walked on to (92955, 82596), and wrote back to the same file,
+    with the clock at 15:00:42.
+
+Not done:
+
+- Saves are not named (the PC's name stands in), and there are no portraits or screenshots.
+- Delete removes only the list entry; deleting the file waits for the original's confirmation.
+- No quick-save key, and no Continue on the main menu.
+- Load Game does not join or host a LAN game.
 
 ## Builder's calls (proposed by Claude, not owner decisions)
 

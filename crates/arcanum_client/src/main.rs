@@ -105,6 +105,28 @@ fn main() {
         app.add_systems(OnEnter(AppState::InGame), move |mut commands: Commands| commands.insert_resource(arcanum_client::actors::DebugClick { at, frames: 90 }));
     }
 
+    // Debugging aid: `DEBUG_ARCANUM_LOAD=newest` loads the newest save at start, as Load Game would.
+    if std::env::var("DEBUG_ARCANUM_LOAD").is_ok_and(|v| v == "newest") {
+        app.add_systems(
+            Update,
+            (|mut commands: Commands, settings: Res<arcanum_client::sim_bridge::HostSettings>, mut next: ResMut<NextState<AppState>>, mut done: Local<bool>| {
+                if std::mem::replace(&mut *done, true) {
+                    return;
+                }
+                let newest = settings.save_dir.as_deref().map(arcanum_sim::list_saves).and_then(|(saves, _)| saves.into_iter().next());
+                let Some(newest) = newest else {
+                    warn!("DEBUG_ARCANUM_LOAD: no save to load");
+                    return;
+                };
+                info!("loading {}", newest.path.display());
+                commands.queue(move |world: &mut World| arcanum_client::sim_bridge::boot_save(world, &newest.path));
+                commands.insert_resource(LoadRequest::new(AppState::InGame).after_save_boots());
+                next.set(AppState::Loading);
+            })
+            .run_if(in_state(AppState::MainMenu)),
+        );
+    }
+
     let start = match std::env::var(SCREEN_VAR).unwrap_or_default().to_ascii_lowercase().as_str() {
         "options" => Some(AppState::Options),
         "singleplayer" => Some(AppState::SinglePlayer),
@@ -114,7 +136,7 @@ fn main() {
         "charactereditor" => Some(AppState::CharacterEditor),
         // With example saves, so the list and info display have something to show.
         "loadgame" => {
-            app.insert_resource(sample_saves());
+            app.insert_resource(sample_saves()).insert_resource(arcanum_client::load_game::ExampleSaves);
             Some(AppState::LoadGame)
         }
         // A new game with a default character, straight into the world.
