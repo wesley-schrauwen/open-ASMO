@@ -101,6 +101,9 @@ pub mod paths {
         pub const VIAL_YELLOW: &str = "art/interface/yelovial.art";
         pub const VIAL_BLUE: &str = "art/interface/bluvial.art";
         pub const VIAL_EMPTY: &str = "art/interface/clrvial.art";
+        /// The top bar clock's day strip, 384x29 (art 207), and its centre pointer, 5x29 (art 216).
+        pub const CLOCK_STRIP: &str = "art/interface/Clk_timestrip.ART";
+        pub const CLOCK_POINTER: &str = "art/interface/TimePnts.ART";
         /// The default mouse cursor, 24x27, hotspot (0, 3) (art 0).
         pub const CURSOR: &str = "art/interface/cursor.art";
     }

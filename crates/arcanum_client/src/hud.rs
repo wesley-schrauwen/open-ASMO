@@ -7,7 +7,8 @@
 //!   800x400 band between them (0x557810), and the all-in-one `intrface.art` (art 3) is never
 //!   used.
 //! - Top bar buttons, 34x34 at y 2: character (169) at x 4, log (187) 41, town map (193) 78,
-//!   inventory (186) 115; five maintained-spell slots (188-192) at x 281 + 50 n, y 3.
+//!   inventory (186) 115; five maintained-spell slots (188-192) at x 281 + 50 n, y 3; the
+//!   clock ([`crate::hud_clock`]).
 //! - Bottom bar buttons, 39x39 (table 0x5c6470..0x5c64b0): combat (470) at (86, 457), skills
 //!   (472) at (693, 456), spells (473) at (649, 494), schematics (471) at (693, 539); ten hotkey
 //!   slots, 32x32 at y 445 (0x5cb494, 0x5cb4bc).
@@ -20,7 +21,7 @@
 //! beside them. Clicks on the bars do not reach the world ([`covers`]).
 //!
 //! Not built: what the buttons and slots do (they only show their hover and pressed frames),
-//! the clock (`Clk_timestrip`, 0x5522f0), the message box, the ammo icon and the magick
+//! the message box, the ammo icon and the magick
 //! weapon button, and the poisoned (yellow) health vial (nothing poisons yet).
 
 use bevy::picking::hover::Hovered;
@@ -89,7 +90,7 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::InGame), spawn_hud).add_systems(Update, show_vials.run_if(in_state(AppState::InGame)));
+        app.add_systems(OnEnter(AppState::InGame), spawn_hud).add_systems(Update, (show_vials, crate::hud_clock::show_clock).run_if(in_state(AppState::InGame)));
     }
 }
 
@@ -123,6 +124,7 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
             for n in 0..5 {
                 top.spawn((ImageNode::new(assets.load(art(&format!("SplSlt{}.ART", n + 1)))), at(rect(Vec2::new(281.0 + 50.0 * n as f32, 3.0), Vec2::splat(32.0)))));
             }
+            crate::hud_clock::spawn_clock(top, &assets);
         });
     let local = |r: Rect| Rect { min: r.min - Vec2::new(0.0, BOTTOM_TOP), max: r.max - Vec2::new(0.0, BOTTOM_TOP) };
     commands
