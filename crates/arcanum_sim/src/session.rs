@@ -48,6 +48,7 @@ pub struct Session {
 /// that sees the update for its `Accept` without it knows the host refused. The accepted
 /// character joins the world at the start position. A player who is `Ready` can only start a
 /// new character; one who is `InWorld` can make no character requests.
+#[allow(clippy::too_many_arguments)]
 pub fn handle_intents(
     mut inbox: ResMut<Inbox>,
     mut outbox: ResMut<Outbox>,
@@ -56,6 +57,7 @@ pub fn handle_intents(
     start: Option<Res<StartMap>>,
     mut world: ResMut<WorldState>,
     mut moves: ResMut<MoveRequests>,
+    mut clock: ResMut<crate::SyncClock>,
 ) {
     for (player, intent) in inbox.0.drain(..) {
         match intent {
@@ -78,6 +80,7 @@ pub fn handle_intents(
                 outbox.0.push((player, update));
             }
             PlayerIntent::Move { seq, path } => moves.0.push((player, seq, path)),
+            PlayerIntent::SyncAck { number } => clock.acked(player, number),
         }
     }
 }

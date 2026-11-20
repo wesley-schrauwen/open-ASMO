@@ -2,8 +2,8 @@
 //!
 //! Normally the host is a [`LocalHost`] (an `arcanum_sim` app behind a loopback transport), kept
 //! as a non-send resource and updated once a frame. With [`HostSettings::listen`] it also takes
-//! players over UDP. With [`HostSettings::join`] there is no host here: the client talks to one
-//! on the LAN over a [`UdpClient`], and makes its character in that host's session as it would
+//! players on the LAN. With [`HostSettings::join`] there is no host here: the client talks to one
+//! on the LAN through a [`LanClient`], and makes its character in that host's session as it would
 //! in its own.
 //!
 //! The connection is made on entering New Game (the choice menu, the pre-made picker or
@@ -17,7 +17,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use arcanum_net::{ClientTransport, LocalHost, UdpClient};
+use arcanum_net::{ClientTransport, LocalHost, LanClient};
 use arcanum_rules::RulesData;
 use arcanum_formats::map::TileLoc;
 use arcanum_sim::{EntityKind, LedgerDelta, NetId, PlayerId, SaveFile, SaveStatus, SimRules, SimVfs, StartMap};
@@ -66,7 +66,7 @@ pub struct HostSettings {
     pub manual_clock: bool,
     /// Start new games here instead of the start map's position (debugging).
     pub start_at: Option<TileLoc>,
-    /// Also take players over UDP on this address.
+    /// Also take players on the LAN at this address.
     pub listen: Option<SocketAddr>,
     /// Join the host at this address instead of running one.
     pub join: Option<SocketAddr>,
@@ -102,7 +102,7 @@ pub fn start_host(world: &mut World) {
     let player = world.get_resource::<LocalPlayer>().copied().unwrap_or_default().0;
     let settings = world.get_resource::<HostSettings>().cloned().unwrap_or_default();
     let link: Box<dyn ClientTransport> = match settings.join {
-        Some(addr) => match UdpClient::connect(addr, player) {
+        Some(addr) => match LanClient::connect(addr, player) {
             Ok(client) => {
                 info!("joining the host at {addr} as player {}", player.0);
                 Box::new(client)

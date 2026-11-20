@@ -17,7 +17,7 @@ Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2).
   (#27, #28), the host boots the map from the save (#29), pathfinding and movement validation
   (#30), the client draws ground tiles (#31) and walls, portals and scenery (#32), the PC
   stands and walks with the original's art and timing (#33), and click to move with corrections
-  (#34, Milestone A), and LAN play over UDP with a second client joining (step 8,
+  (#34, Milestone A), and LAN play (TCP for what must arrive, UDP state syncs) with a second client joining (step 8,
   `feat/udp-join`, Milestone A2). The milestone plan is complete; what is left is listed under
   each step's "Not done".
 - **World debug start:** `DEBUG_ARCANUM_SCREEN=ingame` (character "Debug"), optionally
@@ -73,7 +73,7 @@ a text field).
 | `.art` sprites | Frame decode done (raw + RLE, palettes, 8 rotations). Playback (`animation.rs`) for critters. |
 | Bevy integration | Done. VFS is Bevy's default asset source; `.art` → `Image`, `.mes` → `MesAsset`. |
 | Main menu | Play / Options / Credits / Exit Game ("Play" is our label for the original's Single Player). Play menu: New Game, Load Game, Continue (dimmed), Multiplayer (dimmed), Cancel. Each menu's last entry sits at the bottom of the panel. Credits is a placeholder. |
-| Host / sim | `arcanum_sim` (headless Bevy app, 30 Hz tick): session, creation through host actions, `WorldSave` (JSON), map boot, A* pathfinding, move validation and host-side walking. `arcanum_net`: transport traits, loopback, reliable ordered UDP (`udp.rs`), `LocalHost` (loopback plus optional UDP listening). See `plans/world_milestone.md`. |
+| Host / sim | `arcanum_sim` (headless Bevy app, 30 Hz tick): session, creation through host actions, `WorldSave` (JSON), map boot, A* pathfinding, move validation and host-side walking. `arcanum_net`: transport traits, loopback, LAN over TCP + UDP (`lan.rs`: reliable messages over TCP, state syncs and moves as UDP datagrams), `LocalHost` (loopback plus optional LAN listening). Host sends numbered state syncs (10 Hz walking, 1 Hz still, keyframe `Resync` every 5 s, resync for clients 20 behind). See `plans/world_milestone.md`. |
 | World drawing | `world_render.rs` + `isometric.rs`: ground tiles, walls, portals, scenery in the original's order. `actors.rs` + `animation.rs`: PCs with stand/walk animation at the original's speed; left click walks the PC, host corrections slide. No roofs, cutaway, effects or object animation yet. |
 | New Game flow | Choice menu (Pick Character / New Character / Cancel, `MainMenu.mes` 420-422) → pre-made picker (12 characters from their prototypes: portrait, name, gender, race, background title, story) → loading; or → character creation (name text field, portrait/gender/race/background arrows, initial stats, race description or background story) → stats page (spend 5 points on stats, hit points, fatigue; derived stats and resistances) → loading. See the sections below. |
 | Load Game screen | Original art and layout from Arcanum.exe's screen table (0x5c4560): top bar, `SaveLoadBackground`, bottom bar; Back/Load round buttons, Delete, info toggle, hover help in the bottom bar. Lists `SaveGames` (empty until saving exists; `DEBUG_ARCANUM_SCREEN=loadgame` uses example saves). Load goes through the loading screen to the world placeholder. No portraits/screenshots or delete confirmation yet. |
@@ -84,7 +84,7 @@ a text field).
 | Fonts | Game bitmap fonts decoded and rendered (`BitmapText`, multi-line: wrap, `\n`, tab indents, whole-line clipping). Menu uses `Morph30Font`/`morph15font`; character screens add `Flare12Font` (`UiFont::Body`) with the original white/red tints. Override TTF still wins if present; built-in font as last resort. |
 | Game data formats | `.mes`, `.art`, fonts, `.dat`; objects (`arcanum_formats::object`: prototypes and instances, PC field tables from the engine's names); maps/sectors (#19). |
 | Resolutions | Done. 720p–8K, 4:3–2.4:1, `UiScale` from a 1080 baseline. |
-| Tests | 380 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
+| Tests | 387 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
 | Everything else | Not started: game screens, critter art, NPCs, dialogue, scripts, combat, UDP. |
 
 ### Git state
@@ -133,9 +133,9 @@ crates/arcanum_sim/              the host: headless Bevy app, no rendering
   src/save.rs                    WorldSave (save file = Load Game = join snapshot)
   src/world.rs                   boot_world, LoadedMap (sectors round each PC), Walkable
   src/pathfinding.rs             A* over tiles, shared with the client
-  src/movement.rs                check_path, host-side walking, MoveCorrection
+  src/movement.rs                check_path, host-side walking, state syncs and resyncs
   src/gait.rs                    pc_art, walk_fps, Gait (step timing from the walk art)
-crates/arcanum_net/              transports: HostTransport/ClientTransport, loopback, udp, LocalHost
+crates/arcanum_net/              transports: HostTransport/ClientTransport, loopback, lan (TCP+UDP), LocalHost
 crates/arcanum_client/           the Bevy game
   src/main.rs                    app setup; DEBUG_ARCANUM_SCREENSHOT handling
   src/resource_pack.rs           ResourcePack (game dir, override, module) + VFS mount order + `paths::*`
@@ -193,7 +193,7 @@ cargo test --workspace                              # real-data tests skip witho
 | `DEBUG_ARCANUM_START` | `x,y` tile; new games start there on the start map instead of 92958,82592. |
 | `DEBUG_ARCANUM_WALK` | `x,y` tile; the PC walks there on entering the world. |
 | `DEBUG_ARCANUM_CLICK` | `x,y` window position (logical pixels); left-clicks it once the world is up. |
-| `DEBUG_ARCANUM_LISTEN` | `host:port`; the in-process host also takes LAN players over UDP. |
+| `DEBUG_ARCANUM_LISTEN` | `host:port`; the in-process host also takes LAN players (TCP and UDP on that port). |
 | `DEBUG_ARCANUM_JOIN` | `host:port`; New Game joins that host instead of starting one. |
 | `DEBUG_ARCANUM_SCREEN` | `ingame` (character "Debug", through loading into the world), `options`, `singleplayer`, `newgamechoice`, `newgame`, `createcharacter`, `charactereditor`, `loadgame` (with example saves) or `loading` (held for 60 s) opens straight onto that screen (for screenshots). Screenshots are taken 60 frames after the screen is ready; earlier captures came out black. |
 
