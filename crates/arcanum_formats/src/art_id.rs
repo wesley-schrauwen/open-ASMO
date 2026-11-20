@@ -391,6 +391,8 @@ impl std::error::Error for ArtIndexError {}
 pub struct ArtIndex {
     /// Tile names by list: outdoor flippable, outdoor fixed, indoor flippable, indoor fixed.
     tile_lists: [Vec<String>; 4],
+    /// The flags of each name in `tile_lists` ([`TILE_BLOCKS`] and the rest).
+    tile_flags: [Vec<u8>; 4],
     /// (first token, second token) of each wall structure.
     walls: Vec<(String, String)>,
     portals: HashMap<u32, String>,
@@ -419,6 +421,32 @@ fn creature_tail(id: ArtId) -> String {
     format!("{s}{weapon}{}", (b'a' + anim as u8) as char)
 }
 
+/// Tile flag: the tile stops walkers (`b`, and `f`, which lets flyers over).
+pub const TILE_BLOCKS: u8 = 0x1;
+/// Tile flag: critters sink (`s`).
+pub const TILE_SINKS: u8 = 0x2;
+/// Tile flag: flyers pass (`f`).
+pub const TILE_FLYABLE: u8 = 0x4;
+
+/// The flags of a `tilename.mes` entry (parser 0x4eb40b): the letters after the name's first `/`,
+/// up to the space: `b` 0x1, `s` 0x2, `f` 0x5, `i` 0x8, `n` 0x10, `p` 0x20 (other characters,
+/// further `/`s included, are skipped).
+fn tile_flags(text: &str) -> u8 {
+    let token = text.trim().split(' ').next().unwrap_or("");
+    let Some((_, letters)) = token.split_once('/') else { return 0 };
+    letters.bytes().fold(0, |f, c| {
+        f | match c {
+            b's' => 0x2,
+            b'b' => 0x1,
+            b'f' => 0x5,
+            b'i' => 0x8,
+            b'n' => 0x10,
+            b'p' => 0x20,
+            _ => 0,
+        }
+    })
+}
+
 /// The entries of a `.mes` file in key order.
 fn sorted(mes: &MesFile) -> Vec<(u32, &str)> {
     let mut v: Vec<_> = mes.messages.iter().map(|(k, t)| (*k, t.as_str())).collect();
@@ -445,6 +473,7 @@ impl ArtIndex {
             if key < 400 {
                 let name = text.trim().split(['/', ' ']).next().unwrap_or("");
                 index.tile_lists[(key / 100) as usize].push(name.to_string());
+                index.tile_flags[(key / 100) as usize].push(tile_flags(text));
             }
         }
 
@@ -546,6 +575,25 @@ impl ArtIndex {
                 Some(format!("art/unique_npc/{name}/{name}{}.art", creature_tail(id)))
             }
             _ => None,
+        }
+    }
+
+    /// Whether ground tile `id` stops walkers (0x4d7110): for a tile, the [`TILE_BLOCKS`] flag
+    /// of its first name (bits 22-27, in the list its outdoor bit 8 and flippable bit 7 pick;
+    /// 0x4ebad0); a facade unless bit 0 is set (0x504ac0).
+    pub fn tile_blocks(&self, id: ArtId) -> bool {
+        match id.art_type() {
+            0 => {
+                let list = match ((id.0 >> 8) & 1 == 1, (id.0 >> 7) & 1 == 1) {
+                    (true, true) => 0,
+                    (true, false) => 1,
+                    (false, true) => 2,
+                    (false, false) => 3,
+                };
+                self.tile_flags[list].get(((id.0 >> 22) & 0x3f) as usize).is_some_and(|f| f & TILE_BLOCKS != 0)
+            }
+            0xB => id.0 & 1 == 0,
+            _ => false,
         }
     }
 
@@ -709,6 +757,37 @@ mod tests {
         assert_eq!(p(&i, tile(0, 0, 3, 0, 0b010)).as_deref(), Some("art/tile/indbse4a.art"));
         // n1 = drt (indoor idx 1, also an outdoor name), n2 = flr (not found): n2 bse E[15-edge].
         assert_eq!(p(&i, tile(1, 0, 3, 0, 0b010)).as_deref(), Some("art/tile/flrbseda.art"));
+    }
+
+    #[test]
+    fn tile_flags_come_from_the_names() {
+        assert_eq!(tile_flags("rok/b/n/p 3"), 0x31);
+        assert_eq!(tile_flags("dwr/f/n 4"), 0x15);
+        assert_eq!(tile_flags("bog/s/n 4"), 0x12);
+        assert_eq!(tile_flags("WK1 3"), 0);
+        assert_eq!(tile_flags("FOG/b"), 1);
+        let files: HashMap<&str, &str> = HashMap::from([
+            ("art/tile/tilename.mes", "{0}{drt/n 0}\n{1}{dwr/f/n 4}\n{100}{rok/b 3}\n"),
+            ("art/wall/structure.mes", ""),
+            ("art/portal/portal.mes", ""),
+            ("art/scenery/scenery.mes", ""),
+            ("art/facade/facadename.mes", ""),
+            ("art/roof/roofname.mes", ""),
+            ("art/light/light.mes", ""),
+            ("art/monster/monster.mes", ""),
+            ("art/unique_npc/unique_npc.mes", ""),
+            ("art/item/item_ground.mes", ""),
+            ("art/item/item_inven.mes", ""),
+            ("art/item/item_paper.mes", ""),
+            ("art/item/item_schematic.mes", ""),
+            ("art/container/container.mes", ""),
+        ]);
+        let i = ArtIndex::load(|p| files.get(p).map(|s| s.as_bytes().to_vec())).unwrap();
+        assert!(!i.tile_blocks(tile(0, 1, 15, 0, OUT_FLIP)), "dirt, though its second name is deep water");
+        assert!(i.tile_blocks(tile(1, 0, 15, 0, OUT_FLIP)), "deep water");
+        assert!(i.tile_blocks(tile(0, 0, 15, 0, 0b100)), "outdoor fixed list: rock");
+        assert!(i.tile_blocks(ArtId(0xB000_0000)), "a facade");
+        assert!(!i.tile_blocks(ArtId(0xB000_0001)), "a facade with bit 0");
     }
 
     #[test]

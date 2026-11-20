@@ -707,6 +707,26 @@ Not done:
 - NPCs opening doors.
 - Using other objects (containers, NPCs, items).
 
+## Ground tiles that block (after doors)
+
+- **Tile flags** (`tilename.mes`; parser 0x4eb40b): the letters after a name's first `/` give
+  `b` 0x1 (stops walkers), `s` 0x2 (sink), `f` 0x5 (stops walkers, flyers pass), `i` 0x8 (icy),
+  `n` 0x10 (natural), `p` 0x20 (soundproof). `ArtIndex` keeps them per name and list.
+- **What blocks** (`ArtIndex::tile_blocks`, from 0x4d7110):
+  - A ground tile blocks if its first name (bits 22-27) has bit 0x1. The name is looked up in
+    the list its outdoor bit (8) and flippable bit (7) pick (0x5036b0, 0x5038c0, 0x503950,
+    0x4ebab0). So deep water, sea walls, solid rock and black void tiles stop walkers.
+  - A facade tile (art type 0xB) blocks unless bit 0 of its art id is set (0x504ac0).
+- **`LoadedMap`** reads the art index with the map (host and client) and puts the blocking
+  ground tiles of each sector into its blocking (`rebuild_blocking`, also used when a door
+  changes).
+- **Real data:** around the start the cliffs are facades: 26 311 of 26 406 facade tiles in the
+  nine sectors block, as do 2707 black `Blk` tiles. 372 of the 41 x 41 tiles round the start
+  block now (28 before), and every tile A* reaches still gets a path the host accepts. The
+  earlier 60-tile walk's goal (92900, 82640) lies on a facade and is refused.
+
+Not done: sinking (`s`), icy (`i`) and flying are not used; nothing flies yet.
+
 ## Builder's calls (proposed by Claude, not owner decisions)
 
 - `arcanum_sim` uses `bevy_ecs` (and `bevy_app` for scheduling) with no rendering, audio or
