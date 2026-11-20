@@ -27,6 +27,10 @@ use crate::{Npc, PlayerControlled, Position};
 /// How near a PC an NPC must be to think (0x4ad420).
 pub const AI_RANGE: u32 = 30;
 
+/// A PC anywhere in its sector has at least [`crate::SECTOR_RADIUS`] whole sectors loaded on each
+/// side, so every tile an NPC could think within is loaded.
+const _: () = assert!(crate::SECTOR_RADIUS * arcanum_formats::map::SECTOR_TILES >= AI_RANGE);
+
 /// Tile distance: the larger of the axis differences (0x4b96f0).
 pub fn tile_distance(a: TileLoc, b: TileLoc) -> u32 {
     a.x.abs_diff(b.x).max(a.y.abs_diff(b.y))
@@ -97,11 +101,8 @@ mod tests {
     }
 
     #[test]
-    fn the_loaded_block_holds_everything_the_rules_look_at() {
-        // A PC anywhere in its sector has at least SECTOR_RADIUS whole sectors loaded on each
-        // side: every tile an NPC could think within is loaded.
-        assert!(crate::SECTOR_RADIUS * arcanum_formats::map::SECTOR_TILES >= AI_RANGE);
-        // Perception tops out at 20.
+    fn the_loaded_block_holds_the_combat_radius() {
+        // Perception tops out at 20 (the AI range is checked at compile time above).
         assert!(crate::SECTOR_RADIUS * arcanum_formats::map::SECTOR_TILES >= combat_radius(20));
     }
 }
