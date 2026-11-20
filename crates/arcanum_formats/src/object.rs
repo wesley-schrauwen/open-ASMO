@@ -264,18 +264,16 @@ pub struct Object {
 }
 
 impl Object {
-    /// Parses a prototype (`proto/*.pro`). Only player characters so far: other types'
-    /// prototype layouts are not verified and return [`ObjectError::UnsupportedType`].
+    /// Parses a prototype (`proto/*.pro`): the header, the "fields set" mask, then every field
+    /// of the type in enum order.
     pub fn parse_prototype(data: &[u8]) -> Result<Self, ObjectError> {
         let mut r = Reader::new(data);
         let (version, prototype, id, object_type) = read_header(&mut r)?;
-        if object_type != TYPE_PC {
-            return Err(ObjectError::UnsupportedType(object_type));
-        }
-        let words = bitmap_words(TYPE_PC).unwrap();
+        let blocks = field_blocks(object_type).ok_or(ObjectError::UnsupportedType(object_type))?;
+        let words = bitmap_words(object_type).unwrap();
         let bitmap = (0..words).map(|_| r.u32("bitmap")).collect::<Result<_, _>>()?;
         let mut fields = Vec::new();
-        for (_, def) in with_bits(PC_BLOCKS) {
+        for (_, def) in with_bits(blocks) {
             fields.push((*def, read_value(&mut r, *def)?));
         }
         r.finish()?;
@@ -346,6 +344,48 @@ impl Object {
             Value::String(Some(s)) => Some(s),
             _ => None,
         }
+    }
+}
+
+/// Prototypes by number. An instance stores only the fields that differ from its prototype;
+/// the others are the prototype's ([`Prototypes::int`]).
+#[derive(Debug, Clone, Default)]
+pub struct Prototypes(pub std::collections::HashMap<u32, Object>);
+
+impl Prototypes {
+    /// Adds a parsed prototype, keyed by its number. Returns false (adding nothing) if it has
+    /// no number.
+    pub fn insert(&mut self, prototype: Object) -> bool {
+        let Some(number) = prototype.id.prototype() else { return false };
+        self.0.insert(number, prototype);
+        true
+    }
+
+    pub fn get(&self, number: u32) -> Option<&Object> {
+        self.0.get(&number)
+    }
+
+    /// The prototype of `object`.
+    pub fn of(&self, object: &Object) -> Option<&Object> {
+        self.get(object.prototype.prototype()?)
+    }
+
+    /// Field `name` of `object`: its own value, else its prototype's.
+    pub fn int(&self, object: &Object, name: &str) -> Option<i32> {
+        object.int(name).or_else(|| self.of(object)?.int(name))
+    }
+
+    /// The art id of `object`, its own or its prototype's.
+    pub fn art_id(&self, object: &Object) -> Option<ArtId> {
+        self.int(object, "current_aid").map(|v| ArtId(v as u32))
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -804,9 +844,12 @@ mod tests {
         let mut bad_version = good.clone();
         bad_version[0] = 0x76;
         assert_eq!(Object::parse_prototype(&bad_version), Err(ObjectError::BadVersion(0x76)));
+        let mut unknown = good.clone();
+        unknown[52] = 99;
+        assert_eq!(Object::parse_prototype(&unknown), Err(ObjectError::UnsupportedType(99)));
         let mut npc = good.clone();
         npc[52] = 16;
-        assert_eq!(Object::parse_prototype(&npc), Err(ObjectError::UnsupportedType(16)));
+        assert!(Object::parse_prototype(&npc).is_err(), "a PC's fields are not an NPC's");
         // A presence byte that is not 0 or 1.
         let mut bad_flag = good.clone();
         let location = 76 + 4;

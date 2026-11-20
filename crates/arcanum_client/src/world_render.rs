@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use arcanum_formats::art_id::{ArtId, ArtIndex};
 use arcanum_formats::map::{SECTOR_TILES as SECTOR_SIZE, SectorId, TileLoc};
 use arcanum_formats::object::{TYPE_PORTAL, TYPE_SCENERY, TYPE_WALL};
-use arcanum_sim::LoadedMap;
+use arcanum_sim::{LoadedMap, object_location};
 use bevy::image::{ImageFilterMode, ImageSampler};
 use bevy::prelude::*;
 
@@ -53,8 +53,7 @@ pub struct ClientMap {
     frames: HashMap<String, Handle<ArtFrames>>,
     /// Tiles and objects whose art id has no path (they are left out).
     pub unresolved: usize,
-    /// Objects with no `current_aid` of their own (the original falls back to the prototype's,
-    /// which is not read yet): left out.
+    /// Objects with no `current_aid`, their own or their prototype's: left out.
     pub no_art: usize,
 }
 
@@ -216,12 +215,15 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
         // How many objects of this sector each tile has had so far (the original draws a tile's
         // objects in list order).
         let mut on_tile: HashMap<TileLoc, usize> = HashMap::new();
+        let protos = &client.map.prototypes;
         for object in &sector.objects {
-            let flags = object.int("flags").unwrap_or(0);
+            // Fields an object does not store are its prototype's.
+            let int = |name| protos.int(object, name);
+            let flags = int("flags").unwrap_or(0);
             if !DRAWN_OBJECTS.contains(&object.object_type) || flags & HIDDEN_FLAGS != 0 {
                 continue;
             }
-            let Some(aid) = object.art_id() else {
+            let Some(aid) = protos.art_id(object) else {
                 client.no_art += 1;
                 continue;
             };
@@ -237,7 +239,7 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
                 continue;
             };
             let handle = client.frames.entry(path.clone()).or_insert_with(|| assets.load(path)).clone();
-            let offset = Vec2::new(object.int("offset_x").unwrap_or(0) as f32, -(object.int("offset_y").unwrap_or(0) as f32));
+            let offset = Vec2::new(int("offset_x").unwrap_or(0) as f32, -(int("offset_y").unwrap_or(0) as f32));
             let at = tile_to_world(location, origin) + offset;
             commands.spawn((
                 MapObject { location, object_type: object.object_type },
@@ -249,14 +251,6 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
             ));
         }
         client.drawn.insert(id);
-    }
-}
-
-/// An object's `location` field.
-fn object_location(object: &arcanum_formats::object::Object) -> Option<TileLoc> {
-    match object.field("location")? {
-        arcanum_formats::object::Value::Int64(Some(packed)) => Some(TileLoc::from_packed(*packed)),
-        _ => None,
     }
 }
 

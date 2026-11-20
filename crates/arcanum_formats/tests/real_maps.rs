@@ -399,3 +399,75 @@ fn critter_art_resolves() {
     assert!(found > 0);
     assert!(missing.is_empty(), "{missing:?}");
 }
+
+/// Every object on the start map has its prototype as a loose `.pro` (none are in the archives).
+#[test]
+fn start_map_prototypes_exist() {
+    let Some(vfs) = vfs() else { return };
+    let protos: BTreeMap<u32, String> = std::fs::read_dir(game_dir().join("data/proto"))
+        .map(|rd| rd.flatten().filter_map(|e| { let n = e.file_name().to_string_lossy().into_owned(); Some((n.get(..6)?.parse().ok()?, n)) }).collect())
+        .unwrap_or_default();
+    let archived: Vec<String> = vfs.list_dir("proto").unwrap_or_default();
+    eprintln!("{} loose prototypes, {} in archives (e.g. {:?})", protos.len(), archived.len(), &archived[..archived.len().min(3)]);
+    let mut used: BTreeMap<(u32, u32), usize> = BTreeMap::new();
+    for path in vfs.list_dir("maps/Arcanum1-024-fixed").unwrap().into_iter().filter(|p| p.to_ascii_lowercase().ends_with(".sec")) {
+        let sector = Sector::parse(&vfs.read(&path).unwrap()).unwrap();
+        for o in &sector.objects {
+            if let Some(p) = o.prototype.prototype() {
+                *used.entry((o.object_type, p)).or_default() += 1;
+            }
+        }
+    }
+    let mut missing: BTreeMap<u32, (usize, usize)> = BTreeMap::new();
+    for (&(ty, p), &n) in &used {
+        let e = missing.entry(ty).or_default();
+        e.0 += n;
+        if !protos.contains_key(&p) {
+            e.1 += n;
+        }
+    }
+    eprintln!("per type: (objects, objects whose prototype has no .pro): {missing:?}");
+    assert!(missing.values().all(|&(_, absent)| absent == 0), "{missing:?}");
+    let ranges: BTreeMap<u32, (u32, u32)> = used.keys().fold(BTreeMap::new(), |mut m, &(t, p)| {
+        let e = m.entry(t).or_insert((p, p));
+        e.0 = e.0.min(p);
+        e.1 = e.1.max(p);
+        m
+    });
+    eprintln!("prototype number ranges per type: {ranges:?}");
+}
+
+/// The wall pieces the original's walking treats as door openings (10, 13, 14, 17-19, 22, 25,
+/// 26, 29-32) are the only ones that share their tile and edge with a portal.
+#[test]
+fn only_door_opening_wall_pieces_hold_portals() {
+    let Some(vfs) = vfs() else { return };
+    let mut portals: std::collections::HashSet<(i64, u32)> = Default::default();
+    let mut walls: Vec<(i64, u32, u32)> = vec![];
+    for path in vfs.list_dir("maps/Arcanum1-024-fixed").unwrap().into_iter().filter(|p| p.to_ascii_lowercase().ends_with(".sec")) {
+        let sector = Sector::parse(&vfs.read(&path).unwrap()).unwrap();
+        for o in &sector.objects {
+            let (Some(Value::Int64(Some(loc))), Some(art)) = (o.field("location"), o.art_id()) else { continue };
+            let rot = (art.0 >> 11) & 7;
+            let rot = if rot % 2 == 0 { rot + 1 } else { rot };
+            match o.object_type {
+                0 => walls.push((*loc, (art.0 >> 14) & 0x3f, rot)),
+                1 => { portals.insert((*loc, rot)); }
+                _ => {}
+            }
+        }
+    }
+    let mut by_piece: BTreeMap<u32, (usize, usize)> = BTreeMap::new();
+    for (loc, piece, rot) in &walls {
+        let e = by_piece.entry(*piece).or_default();
+        e.0 += 1;
+        if portals.contains(&(*loc, *rot)) { e.1 += 1; }
+    }
+    let openings = [10, 13, 14, 17, 18, 19, 22, 25, 26, 29, 30, 31, 32];
+    for (p, (n, with_portal)) in by_piece {
+        let name = arcanum_formats::art_id::WALL_PIECES.get(p as usize).unwrap_or(&"?");
+        if !openings.contains(&p) {
+            assert_eq!(with_portal, 0, "piece {p} {name}: {n} walls");
+        }
+    }
+}
