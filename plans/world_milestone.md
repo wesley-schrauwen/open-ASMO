@@ -898,11 +898,23 @@ Not done:
 Not done:
 
 - What the buttons and slots do; hover help.
-- The clock (`Clk_timestrip`, moon phases, 0x5522f0), the message box, the ammo icon and count
+- The message box, the ammo icon and count
   (0x54b3c0), the magick weapon button, and the poisoned (yellow) vial and its number.
 - The vial number colour (not found in the code; the font's white is used).
 - Cursors for actions and objects (0x573640 reads an object's cursor art from field 0x5d).
 - No portrait in the bars: the original has none there (`PcStatus` carries it for the party UI).
+
+## The clock (after the in-game interface)
+
+- `hud_clock.rs`, from `intgame_clock_refresh` (0x5522f0): a 512-pixel ring (the 384-pixel
+  day strip, then one 128-pixel moon picture) scrolls through the 128x30 window at (648, 5).
+  The ring position at the window's centre is `((S + 73800) mod 86400) * 512 / 86400` for the
+  game time `S` in seconds, so 3:30 is the strip's left edge, noon is near the sun and 0:30 is
+  the moon. A fixed pointer (`TimePnts`) marks the centre.
+- The moon picture follows a 28-day cycle from day 0, changing at noon (table 0x5c730c).
+- It is redrawn when the world's time first arrives, then once a game hour, as the original's
+  timed event does (0x5526f0); a time earlier than the last drawing redraws at once.
+- **Checked:** a new game at 15:00 shows the sun just left of the pointer.
 
 ## Builder's calls (proposed by Claude, not owner decisions)
 
