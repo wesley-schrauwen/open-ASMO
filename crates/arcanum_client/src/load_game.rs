@@ -12,10 +12,12 @@
 //! bottom bar's text box. The bars, Back/Next and hover help are shared with the other menu
 //! screens ([`crate::menu_window`]).
 //!
-//! Saving does not exist yet, so [`SaveGames`] is empty unless something fills it. The list,
-//! selection, Delete (which only removes the entry from [`SaveGames`]) and the info toggle work
-//! on whatever it holds; Load takes the selected save through the loading screen into the world
-//! placeholder.
+//! [`SaveGames`] is filled on entering the screen from the host's save folder
+//! ([`HostSettings::save_dir`](crate::sim_bridge::HostSettings)), newest first: each save shows
+//! the player's PC name and level, the map, and when it was written. Load starts a host from the
+//! selected save ([`crate::sim_bridge::boot_save`]) and goes through the loading screen into the
+//! world once the PC is back. Delete only removes the entry from the list: deleting the file
+//! waits for the confirmation (`MainMenu.mes` 5150).
 
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
@@ -34,17 +36,67 @@ use crate::widgets::HoverText;
 /// A save game as the list shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SaveSummary {
-    /// The name the player gave the save.
+    /// The name the player gave the save (the PC's name until saves are named).
     pub name: String,
+    /// The save file; `None` for the examples.
+    pub path: Option<std::path::PathBuf>,
     pub level: u32,
     pub location: String,
     /// When it was saved, ready to display.
     pub saved_at: String,
 }
 
-/// The saves the Load Game screen lists, newest first. Empty until saving exists.
+/// The saves the Load Game screen lists, newest first.
 #[derive(Resource, Debug, Clone, Default)]
 pub struct SaveGames(pub Vec<SaveSummary>);
+
+/// [`SaveGames`] holds examples: do not replace them from the save folder (screenshots).
+#[derive(Resource, Debug, Clone, Copy, Default)]
+pub struct ExampleSaves;
+
+/// Fills [`SaveGames`] from the save folder, unless it holds examples or there is no folder.
+fn scan_saves(mut saves: ResMut<SaveGames>, settings: Option<Res<crate::sim_bridge::HostSettings>>, examples: Option<Res<ExampleSaves>>, player: Option<Res<crate::sim_bridge::LocalPlayer>>) {
+    let Some(dir) = settings.and_then(|s| s.save_dir.clone()) else { return };
+    if examples.is_some() {
+        return;
+    }
+    let me = player.map(|p| p.0);
+    let (found, errors) = arcanum_sim::list_saves(&dir);
+    for e in errors {
+        warn!("cannot read a save: {e}");
+    }
+    saves.0 = found
+        .into_iter()
+        .map(|listing| {
+            let pc = me.and_then(|p| listing.save.players.get(&p)).or_else(|| listing.save.players.values().next());
+            SaveSummary {
+                name: pc.map_or_else(|| "?".into(), |p| p.blueprint.sheet.name.clone()),
+                path: Some(listing.path),
+                level: pc.map_or(1, |p| p.blueprint.sheet.level.max(1) as u32),
+                location: listing.save.map.clone(),
+                saved_at: format_time(listing.modified),
+            }
+        })
+        .collect();
+}
+
+/// `d Mon yyyy hh:mm` in UTC.
+fn format_time(t: std::time::SystemTime) -> String {
+    let secs = t.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
+    let (days, rest) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
+    // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    format!("{day} {} {year} {:02}:{:02}", MONTHS[(month - 1) as usize], rest / 3600, rest / 60 % 60)
+}
 
 /// Selection and the info toggle. Reset each time the screen opens.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -120,7 +172,7 @@ impl Plugin for LoadGamePlugin {
         app.init_resource::<SaveGames>()
             .init_resource::<LoadGameState>()
             .add_systems(Startup, load_art)
-            .add_systems(OnEnter(AppState::LoadGame), enter)
+            .add_systems(OnEnter(AppState::LoadGame), (scan_saves, enter).chain())
             .add_systems(OnExit(AppState::LoadGame), |mut commands: Commands| {
                 commands.remove_resource::<RebuildLoadGame>();
             })
@@ -300,8 +352,9 @@ fn on_activate(
     match action {
         LoadGameAction::Back => next_state.set(AppState::SinglePlayer),
         LoadGameAction::Load => {
-            // Reading the save comes with the save system; for now it goes to the world placeholder.
-            commands.insert_resource(LoadRequest::new(AppState::InGame));
+            let Some(path) = selected.and_then(|i| saves.0[i].path.clone()) else { return };
+            commands.queue(move |world: &mut World| crate::sim_bridge::boot_save(world, &path));
+            commands.insert_resource(LoadRequest::new(AppState::InGame).after_save_boots());
             next_state.set(AppState::Loading);
         }
         LoadGameAction::Delete => {
@@ -329,6 +382,7 @@ pub fn load_game_ready(screens: Query<(), With<LoadGameScreen>>) -> bool {
 pub fn sample_saves() -> SaveGames {
     let save = |name: &str, level, location: &str, saved_at: &str| SaveSummary {
         name: name.into(),
+        path: None,
         level,
         location: location.into(),
         saved_at: saved_at.into(),
@@ -352,5 +406,12 @@ mod tests {
         }
         // The screenshot frame fills the oval window (468x300).
         assert_eq!(SHOT.size(), Vec2::new(468.0, 300.0));
+    }
+
+    #[test]
+    fn save_times_read_as_dates() {
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_795_000_000);
+        assert_eq!(format_time(t), "18 Nov 2026 11:06");
+        assert_eq!(format_time(std::time::UNIX_EPOCH), "1 Jan 1970 00:00");
     }
 }

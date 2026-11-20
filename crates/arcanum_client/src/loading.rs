@@ -49,17 +49,25 @@ pub struct LoadRequest {
     pub min_secs: f32,
     /// Also wait for the host to accept the [`CharacterHost`]'s character and spawn the PC.
     pub wait_for_host: bool,
+    /// Also wait for a host booted from a save to spawn the player's PC.
+    pub wait_for_save: bool,
 }
 
 impl LoadRequest {
     pub fn new(next: AppState) -> Self {
-        Self { next, assets: Vec::new(), min_secs: MIN_LOADING_SECS, wait_for_host: false }
+        Self { next, assets: Vec::new(), min_secs: MIN_LOADING_SECS, wait_for_host: false, wait_for_save: false }
     }
 
     /// Also waits for the host to accept the character and spawn the player's PC (counted as
     /// two more items to load).
     pub fn after_world_boots(mut self) -> Self {
         self.wait_for_host = true;
+        self
+    }
+
+    /// Also waits for the host booted from a save to spawn the player's PC (one more item).
+    pub fn after_save_boots(mut self) -> Self {
+        self.wait_for_save = true;
         self
     }
 
@@ -233,6 +241,17 @@ fn track_progress(
         if character.as_ref().is_some_and(|c| c.accepted) {
             done += 1;
         }
+        if pc.as_ref().is_some_and(|pc| pc.0.is_some()) {
+            done += 1;
+        }
+    }
+    if request.wait_for_save {
+        if host.is_none() {
+            warn!("loading screen: the save could not be started; returning to the main menu");
+            next_state.set(AppState::MainMenu);
+            return;
+        }
+        total += 1;
         if pc.as_ref().is_some_and(|pc| pc.0.is_some()) {
             done += 1;
         }

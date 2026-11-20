@@ -161,6 +161,39 @@ fn local_host(world: &mut World, player: PlayerId, settings: &HostSettings) -> a
     link
 }
 
+/// Starts a host in this process from the save at `path` and connects the local player to it;
+/// the host goes on writing that file. Without a host the loading screen returns to the main
+/// menu (the reason is logged): an unreadable save, or one without the local player's PC.
+pub fn boot_save(world: &mut World, path: &std::path::Path) {
+    stop_host(world);
+    let save = match arcanum_sim::WorldSave::read(path) {
+        Ok(save) => save,
+        Err(e) => {
+            warn!("cannot load {}: {e}", path.display());
+            return;
+        }
+    };
+    let player = world.get_resource::<LocalPlayer>().copied().unwrap_or_default().0;
+    if !save.players.contains_key(&player) {
+        warn!("{} has no character for this player ({})", path.display(), player.0);
+        return;
+    }
+    // A loaded game is not a new one: no save folder for a new session; this file instead.
+    let settings = HostSettings { save_dir: None, ..world.get_resource::<HostSettings>().cloned().unwrap_or_default() };
+    let link = local_host(world, player, &settings);
+    {
+        let mut host = world.non_send_mut::<LocalHostRes>();
+        host.0.sim.app.insert_resource(SaveFile(path.to_path_buf()));
+        host.0.sim.boot(save);
+    }
+    world.insert_resource(HostLink(Box::new(link)));
+    world.insert_resource(CharacterHost::default());
+    world.insert_resource(LocalPc::default());
+    world.insert_resource(LocalMap::default());
+    world.insert_resource(ActorDeltas::default());
+    world.insert_resource(crate::world_render::MapDeltas::default());
+}
+
 fn stop_host(world: &mut World) {
     world.remove_non_send::<LocalHostRes>();
     world.remove_resource::<HostLink>();
@@ -354,6 +387,43 @@ mod tests {
 
         // Leaving drops the connection.
         enter(&mut app, AppState::MainMenu);
+        assert!(!app.world().contains_resource::<HostLink>());
+    }
+
+    #[test]
+    fn a_saved_game_boots_and_goes_on_writing_its_file() {
+        use arcanum_rules::{CharacterBlueprint, CharacterSheet};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("1795000000000.save");
+        let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 }, clock: Default::default() };
+        let mut state = arcanum_sim::WorldState::default();
+        let sheet = CharacterSheet { name: "Virgil".into(), ..Default::default() };
+        state.add_player(Some(&start), LOCAL_PLAYER, CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None });
+        let mut save = state.0.unwrap();
+        save.players.get_mut(&LOCAL_PLAYER).unwrap().position = TileLoc { x: 92950, y: 82590 };
+        save.time = arcanum_sim::GameTime { days: 3, ms: 5 * arcanum_sim::HOUR_MS };
+        save.write(&path).unwrap();
+
+        let mut app = app(HostSettings { manual_clock: true, save_dir: Some(dir.path().to_path_buf()), ..default() });
+        enter(&mut app, AppState::SinglePlayer);
+        boot_save(app.world_mut(), &path);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert_eq!(app.world().resource::<LocalPc>().0.map(|(_, at)| at), Some(TileLoc { x: 92950, y: 82590 }), "where it was saved");
+        let host = app.world().non_send::<LocalHostRes>();
+        assert_eq!(host.0.sim.app.world().resource::<arcanum_sim::GameClock>().now.days, 3, "the clock goes on from the save");
+        assert_eq!(host.0.sim.app.world().resource::<SaveFile>().0, path, "the same file");
+        // No other save file appeared.
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+
+        // A save without this player's character does not start.
+        let mut other = arcanum_sim::WorldSave::read(&path).unwrap();
+        let pc = other.players.remove(&LOCAL_PLAYER).unwrap();
+        other.players.insert(PlayerId(99), pc);
+        let other_path = dir.path().join("other.save");
+        other.write(&other_path).unwrap();
+        boot_save(app.world_mut(), &other_path);
         assert!(!app.world().contains_resource::<HostLink>());
     }
 }

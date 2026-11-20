@@ -179,6 +179,32 @@ impl SaveFile {
     }
 }
 
+/// A save found on disk.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SaveListing {
+    pub path: PathBuf,
+    pub save: WorldSave,
+    /// When the file was last written.
+    pub modified: std::time::SystemTime,
+}
+
+/// Every save (`*.save`) in `dir` that reads, newest first. Files that do not read are left out
+/// and returned as `path: error`.
+pub fn list_saves(dir: &Path) -> (Vec<SaveListing>, Vec<String>) {
+    let mut saves = Vec::new();
+    let mut errors = Vec::new();
+    let Ok(entries) = fs::read_dir(dir) else { return (saves, errors) };
+    for path in entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "save")) {
+        let modified = fs::metadata(&path).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+        match WorldSave::read(&path) {
+            Ok(save) => saves.push(SaveListing { path, save, modified }),
+            Err(e) => errors.push(format!("{}: {e}", path.display())),
+        }
+    }
+    saves.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.path.cmp(&b.path)));
+    (saves, errors)
+}
+
 /// The result of the last write, for the owner to report.
 #[derive(Resource, Debug, Default)]
 pub struct SaveStatus {
@@ -254,5 +280,23 @@ mod tests {
         save.write(&file.0).unwrap();
         assert_eq!(WorldSave::read(&file.0).unwrap(), save);
         assert!(file.0.ends_with("saves/9.save"));
+    }
+
+    #[test]
+    fn saves_are_listed_newest_first_and_bad_files_reported() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut state = WorldState::default();
+        state.add_player(Some(&start()), PlayerId(7), blueprint("Virgil"));
+        let save = state.0.unwrap();
+        save.write(&dir.path().join("1.save")).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        save.write(&dir.path().join("2.save")).unwrap();
+        fs::write(dir.path().join("3.save"), b"nonsense").unwrap();
+        fs::write(dir.path().join("notes.txt"), b"x").unwrap();
+        let (saves, errors) = list_saves(dir.path());
+        let names: Vec<_> = saves.iter().map(|s| s.path.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, ["2.save", "1.save"]);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(list_saves(&dir.path().join("none")).0.is_empty());
     }
 }
