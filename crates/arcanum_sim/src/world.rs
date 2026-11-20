@@ -941,4 +941,21 @@ mod tests {
         assert_eq!(synced(&sim.take_deltas(), 7).map(|s| s.destination()), Some(t(200, 80)), "accepted");
         assert!(loaded(&sim).contains(&3));
     }
+
+    #[test]
+    fn npcs_within_thirty_tiles_of_a_pc_are_active() {
+        let dir = tempfile::tempdir().unwrap();
+        write_wide_map(dir.path());
+        // The NPC stands at (80, 80).
+        let mut sim = booted(dir.path(), save(&[(7, "A", t(110, 80))]));
+        let active = |sim: &mut SimApp| {
+            let world = sim.app.world_mut();
+            world.query_filtered::<(), (bevy_ecs::query::With<Npc>, bevy_ecs::query::With<crate::Active>)>().iter(world).count()
+        };
+        assert_eq!(active(&mut sim), 1, "30 tiles away");
+        let world = sim.app.world_mut();
+        world.query_filtered::<&mut Position, bevy_ecs::query::With<PlayerControlled>>().single_mut(world).unwrap().0 = t(111, 80);
+        sim.update();
+        assert_eq!(active(&mut sim), 0, "31 tiles away");
+    }
 }
