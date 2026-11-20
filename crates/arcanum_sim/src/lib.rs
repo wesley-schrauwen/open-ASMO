@@ -10,6 +10,7 @@
 //! directly.
 
 pub mod blocking;
+pub mod clock;
 pub mod creation;
 pub mod delta;
 pub mod doors;
@@ -25,6 +26,7 @@ pub mod session;
 pub mod world;
 
 pub use blocking::*;
+pub use clock::*;
 pub use creation::*;
 pub use delta::*;
 pub use doors::*;

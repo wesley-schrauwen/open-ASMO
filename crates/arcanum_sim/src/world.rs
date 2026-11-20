@@ -186,6 +186,9 @@ pub struct LoadedMap {
     /// Changes to the map's objects since the original data (doors opened or closed), applied to
     /// each sector as it loads: the save's on the host, the host's on a client.
     pub changes: BTreeMap<SectorId, crate::SectorDelta>,
+    /// Whether day locks hold now ([`crate::lock_day`]): doors locked by day or by night block
+    /// accordingly. Set from the game clock ([`LoadedMap::set_lock_day`]).
+    pub lock_day: bool,
 }
 
 impl LoadedMap {
@@ -193,7 +196,8 @@ impl LoadedMap {
     pub fn open(&mut self, vfs: Option<&Vfs>, name: &str) {
         let prototypes = std::mem::take(&mut self.prototypes);
         let art = self.art.take();
-        *self = Self { name: Some(name.to_string()), prototypes, art, ..Self::default() };
+        let lock_day = self.lock_day;
+        *self = Self { name: Some(name.to_string()), prototypes, art, lock_day, ..Self::default() };
         let Some(vfs) = vfs else { return };
         if self.prototypes.is_empty() {
             let (prototypes, errors) = load_prototypes(vfs);
@@ -284,8 +288,20 @@ impl LoadedMap {
                 }
             }
         }
-        self.blocking.add(&sector.objects, &self.prototypes);
-        self.blocking.add(self.mobiles.get(&id).into_iter().flatten(), &self.prototypes);
+        self.blocking.add(&sector.objects, &self.prototypes, self.lock_day);
+        self.blocking.add(self.mobiles.get(&id).into_iter().flatten(), &self.prototypes, self.lock_day);
+    }
+
+    /// Sets whether day locks hold, working out the loaded sectors' blocking again if it changed.
+    pub fn set_lock_day(&mut self, day: bool) {
+        if self.lock_day == day {
+            return;
+        }
+        self.lock_day = day;
+        let loaded: Vec<SectorId> = self.sectors.keys().copied().collect();
+        for id in loaded {
+            self.rebuild_blocking(id);
+        }
     }
 
     /// Unloads every loaded sector `keep` refuses, with what its objects block. Returns them.
@@ -342,6 +358,7 @@ pub fn boot_world(
     mut outbox: ResMut<Outbox>,
     rules: Res<SimRules>,
     mut clock: ResMut<crate::SyncClock>,
+    mut clock_time: ResMut<crate::GameClock>,
     pcs: Query<(&NetId, &PlayerControlled, &Position, &Appearance)>,
     npcs: Query<(&NetId, &Npc, &Position, &Appearance)>,
 ) {
@@ -351,6 +368,9 @@ pub fn boot_world(
     if map.name.as_deref() != Some(save.map.as_str()) {
         map.open(vfs, &save.map);
         map.changes = save.sector_changes.clone();
+        // The clock goes on from the save (a new game's start time).
+        *clock_time = crate::GameClock::at(save.time);
+        map.lock_day = crate::lock_day(save.time.hour());
     }
     let mut existing: Vec<(NetId, PlayerId, TileLoc, Appearance)> = pcs.iter().map(|(id, p, pos, look)| (*id, p.0, pos.0, *look)).collect();
     for (&player, saved) in &save.players {
@@ -434,7 +454,7 @@ mod tests {
     }
 
     fn save(players: &[(u64, &str, TileLoc)]) -> WorldSave {
-        let mut save = WorldSave { map: MAP.into(), ..WorldSave::new_game(&crate::StartMap { map: MAP.into(), position: TileLoc { x: 0, y: 0 } }) };
+        let mut save = WorldSave { map: MAP.into(), ..WorldSave::new_game(&crate::StartMap { map: MAP.into(), position: TileLoc { x: 0, y: 0 }, clock: Default::default() }) };
         for &(id, name, position) in players {
             let sheet = CharacterSheet { name: name.into(), ..Default::default() };
             save.players.insert(PlayerId(id), PlayerSave { blueprint: CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None }, position });
@@ -844,7 +864,7 @@ mod tests {
         assert!(!map.blocking.tiles.contains(&t(80, 80)), "NPCs do not block out of combat");
         // A player who joins later hears of it too.
         let npc = *net_id;
-        sim.app.world_mut().resource_mut::<WorldState>().add_player(Some(&crate::StartMap { map: MAP.into(), position: t(72, 80) }), PlayerId(9), CharacterBlueprint { sheet: CharacterSheet { name: "B".into(), ..Default::default() }, gold: 0, items: vec![], prototype: None });
+        sim.app.world_mut().resource_mut::<WorldState>().add_player(Some(&crate::StartMap { map: MAP.into(), position: t(72, 80), clock: Default::default() }), PlayerId(9), CharacterBlueprint { sheet: CharacterSheet { name: "B".into(), ..Default::default() }, gold: 0, items: vec![], prototype: None });
         sim.update();
         let deltas = sim.take_deltas();
         assert!(deltas.iter().any(|(p, d)| p.0 == 9 && matches!(d, LedgerDelta::Spawn { net_id, .. } if *net_id == npc)), "{deltas:?}");

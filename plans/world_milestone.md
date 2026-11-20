@@ -727,6 +727,32 @@ Not done:
 
 Not done: sinking (`s`), icy (`i`) and flying are not used; nothing flies yet.
 
+## The game clock (after ground tiles)
+
+The original's clock module (tick 0x45b370, accessors 0x45aaa0..0x45ab40, init 0x45ad90,
+`rules/gameinit.mes` read by 0x4b9c30); `arcanum_sim::clock`.
+
+- **Time** is whole days and milliseconds of the day (`GameTime`). The calendar has 12 months
+  of 30 days from 1 January of the session's first year: hour `ms / 3600000`, month
+  `days / 30 % 12 + 1`, day `days % 30 + 1`, year `first + days / 360`.
+- **A new game** starts on day 0 at the hour and in the year `rules/gameinit.mes` gives
+  (entries 5 and 4). For Arcanum that is 15:00 on 1 January 1885; the file's comment says
+  "Currently 3pm, WAS 10am". `StartMap` carries it, and the save keeps `time` and `first_year`.
+- **Rate:** the host advances the clock every tick at 8 times real time (`dt * 8`), kept exact
+  per tick, so a game day takes three real hours. It never stops: the original stops it in
+  single player while a menu is open and in turn-based combat, and neither exists yet. In
+  multiplayer the original does not stop it either.
+- **Sync:** every `StateSync` and `Resync` carries the time. A client sets its `WorldClock`
+  from the newest sync and runs it on at game speed between syncs.
+- **Locks:** day and night locks now follow the hour, counting 7:00 to 21:59 as day
+  (0x441d97). Host and client rebuild the loaded sectors' blocking when the hour crosses a
+  boundary (`LoadedMap::set_lock_day`), so a night-locked door blocks at night on both.
+- **Checked:** a real run saved 15:00:17 on day 0 after about 2 real seconds.
+
+Not done: lighting by hour (the original's day for most uses is 6:00 to 17:59, 0x45acf0);
+waiting and resting (jumps of an hour, 0x57b7f0); time passing per action in combat; a clock
+on screen.
+
 ## Builder's calls (proposed by Claude, not owner decisions)
 
 - `arcanum_sim` uses `bevy_ecs` (and `bevy_app` for scheduling) with no rendering, audio or

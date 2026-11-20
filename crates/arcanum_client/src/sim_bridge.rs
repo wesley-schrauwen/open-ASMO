@@ -297,7 +297,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut app = app(HostSettings { save_dir: Some(dir.path().to_path_buf()), manual_clock: true, ..default() });
         enter(&mut app, AppState::NewGameChoice);
-        let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 } };
+        let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 }, clock: Default::default() };
         app.world_mut().non_send_mut::<LocalHostRes>().0.sim.app.insert_resource(start.clone());
         make_virgil(&mut app);
         app.update();
@@ -313,7 +313,7 @@ mod tests {
     #[test]
     fn a_client_joins_a_host_on_the_lan() {
         // The host: another game's, listening on a free port, with someone already in the world.
-        let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 } };
+        let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 }, clock: Default::default() };
         let rules = RulesData::default();
         let mut host = LocalHost::new(rules.clone());
         host.sim.app.insert_resource(start.clone());

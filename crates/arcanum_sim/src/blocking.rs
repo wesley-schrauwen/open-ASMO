@@ -79,7 +79,8 @@ fn edge_of(art: ArtId) -> usize {
 }
 
 /// How `object` blocks, its missing fields taken from its prototype.
-pub fn object_blocks(object: &Object, prototypes: &Prototypes) -> Blocks {
+/// `day` says whether day locks hold ([`crate::lock_day`]).
+pub fn object_blocks(object: &Object, prototypes: &Prototypes, day: bool) -> Blocks {
     let int = |name| prototypes.int(object, name).unwrap_or(0);
     if int("flags") & (OF_DESTROYED | OF_OFF) != 0 {
         return Blocks::Nothing;
@@ -100,7 +101,7 @@ pub fn object_blocks(object: &Object, prototypes: &Prototypes) -> Blocks {
             let Some(art) = prototypes.art_id(object) else { return Blocks::Nothing };
             let open = art.0 & 0x200 != 0 || (art.0 >> 14) & 0x1f != 0;
             let flags = int("portal_flags");
-            let barred = flags & (OPF_JAMMED | OPF_MAGICALLY_HELD) != 0 || crate::doors::locked(flags);
+            let barred = flags & (OPF_JAMMED | OPF_MAGICALLY_HELD) != 0 || crate::doors::locked(flags, day);
             if !open && barred { Blocks::Edge(edge_of(art)) } else { Blocks::Nothing }
         }
         TYPE_CONTAINER | TYPE_SCENERY | TYPE_PROJECTILE | TYPE_TRAP if int("flags") & OF_NO_BLOCK == 0 => Blocks::Tile,
@@ -118,10 +119,10 @@ pub fn object_location(object: &Object) -> Option<TileLoc> {
 
 impl ObjectBlocking {
     /// Adds what `objects` block.
-    pub fn add<'a>(&mut self, objects: impl IntoIterator<Item = &'a Object>, prototypes: &Prototypes) {
+    pub fn add<'a>(&mut self, objects: impl IntoIterator<Item = &'a Object>, prototypes: &Prototypes, day: bool) {
         for object in objects {
             let Some(at) = object_location(object) else { continue };
-            match object_blocks(object, prototypes) {
+            match object_blocks(object, prototypes, day) {
                 Blocks::Nothing => {}
                 Blocks::Tile => {
                     self.tiles.insert(at);
@@ -169,20 +170,20 @@ mod tests {
     #[test]
     fn walls_block_the_edge_they_face() {
         let p = Prototypes::default();
-        assert_eq!(object_blocks(&wall(0, 3), &p), Blocks::Edge(3));
-        assert_eq!(object_blocks(&wall(0, 2), &p), Blocks::Edge(3), "even rotations count as the next odd one");
-        assert_eq!(object_blocks(&wall(10, 5), &p), Blocks::DiagonalEdge(5), "w3a: a door opening");
-        assert_eq!(object_blocks(&wall(22, 5), &p), Blocks::Nothing, "d3a");
+        assert_eq!(object_blocks(&wall(0, 3), &p, true), Blocks::Edge(3));
+        assert_eq!(object_blocks(&wall(0, 2), &p, true), Blocks::Edge(3), "even rotations count as the next odd one");
+        assert_eq!(object_blocks(&wall(10, 5), &p, true), Blocks::DiagonalEdge(5), "w3a: a door opening");
+        assert_eq!(object_blocks(&wall(22, 5), &p, true), Blocks::Nothing, "d3a");
     }
 
     #[test]
     fn closed_portals_block_only_when_barred() {
         let p = Prototypes::default();
-        assert_eq!(object_blocks(&portal(0, 0), &p), Blocks::Nothing, "closed: the PC opens it");
-        assert_eq!(object_blocks(&portal(0, OPF_LOCKED), &p), Blocks::Edge(3));
-        assert_eq!(object_blocks(&portal(0, OPF_JAMMED), &p), Blocks::Edge(3));
-        assert_eq!(object_blocks(&portal(0x200, OPF_LOCKED), &p), Blocks::Nothing, "open");
-        assert_eq!(object_blocks(&portal(2 << 14, OPF_LOCKED), &p), Blocks::Nothing, "open (a frame)");
+        assert_eq!(object_blocks(&portal(0, 0), &p, true), Blocks::Nothing, "closed: the PC opens it");
+        assert_eq!(object_blocks(&portal(0, OPF_LOCKED), &p, true), Blocks::Edge(3));
+        assert_eq!(object_blocks(&portal(0, OPF_JAMMED), &p, true), Blocks::Edge(3));
+        assert_eq!(object_blocks(&portal(0x200, OPF_LOCKED), &p, true), Blocks::Nothing, "open");
+        assert_eq!(object_blocks(&portal(2 << 14, OPF_LOCKED), &p, true), Blocks::Nothing, "open (a frame)");
     }
 
     #[test]
@@ -196,14 +197,14 @@ mod tests {
             }
             build(b)
         };
-        assert_eq!(object_blocks(&scenery(None), &p), Blocks::Tile);
-        assert_eq!(object_blocks(&scenery(Some(OF_NO_BLOCK)), &p), Blocks::Nothing);
-        assert_eq!(object_blocks(&scenery(Some(OF_OFF)), &p), Blocks::Nothing);
+        assert_eq!(object_blocks(&scenery(None), &p, true), Blocks::Tile);
+        assert_eq!(object_blocks(&scenery(Some(OF_NO_BLOCK)), &p, true), Blocks::Nothing);
+        assert_eq!(object_blocks(&scenery(Some(OF_OFF)), &p, true), Blocks::Nothing);
         // A prototype that does not block, and an instance that does not say.
         let mut proto = ObjectBuilder::new(TYPE_SCENERY).field("flags", Value::Int32(OF_NO_BLOCK));
         proto.id = prototype_id(4001);
         assert!(p.insert(build(proto)));
-        assert_eq!(object_blocks(&scenery(None), &p), Blocks::Nothing);
-        assert_eq!(object_blocks(&scenery(Some(0)), &p), Blocks::Tile, "the instance's own value wins");
+        assert_eq!(object_blocks(&scenery(None), &p, true), Blocks::Nothing);
+        assert_eq!(object_blocks(&scenery(Some(0)), &p, true), Blocks::Tile, "the instance's own value wins");
     }
 }

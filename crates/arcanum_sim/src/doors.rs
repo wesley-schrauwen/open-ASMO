@@ -7,7 +7,8 @@
 //!   keeps the request ([`PendingUse`]) until its PC is in range, or drops it when the PC stops
 //!   short or the player moves on.
 //! - A closed door opens unless jammed (windows are jammed portals), magically held or locked
-//!   ([`locked`]; there are no keys yet); an open one closes unless magically held.
+//!   ([`locked`], by the game clock's hour; there are no keys yet); an open one closes unless
+//!   magically held.
 //! - Only the art's frame changes: closed is frame 0; open is frame 1 for a plain door, or the
 //!   last of the swing frames (bit 10 set: 4-6 for rotations 0 and 6, else 1-3). Blocking
 //!   follows the frame ([`crate::blocking`]).
@@ -17,7 +18,7 @@
 //!   the save's sector changes, and a player who joins gets them all
 //!   ([`LedgerDelta::MapChanges`]).
 //!
-//! Not reproduced: keys and lockpicking, the clock for day and night locks (always day), scripts that veto a use, the door
+//! Not reproduced: keys and lockpicking, scripts that veto a use, the door
 //! sounds (portal field 0x21 + 0/1/2), and NPCs opening doors.
 
 use std::collections::BTreeMap;
@@ -44,19 +45,23 @@ pub const OPF_LOCKED_DAY: i32 = 0x20;
 /// `portal_flags`: locked only by night.
 pub const OPF_LOCKED_NIGHT: i32 = 0x40;
 
-/// Whether a door with `flags` is locked at this hour (0x441d40). Busted and never-locked doors
-/// are not; a day or night lock counts only in its hours; otherwise the `LOCKED` bit decides.
-/// There is no game clock yet: it is always day.
-pub fn locked(flags: i32) -> bool {
-    const DAY: bool = true;
+/// Whether `hour` counts as day for day and night locks (0x441d97): 7:00 to 21:59.
+pub fn lock_day(hour: u32) -> bool {
+    (7..=21).contains(&hour)
+}
+
+/// Whether a door with `flags` is locked (0x441d40), by day ([`lock_day`]) or not. Busted and
+/// never-locked doors are not; a day or night lock counts only in its hours; otherwise the
+/// `LOCKED` bit decides.
+pub fn locked(flags: i32, day: bool) -> bool {
     if flags & (OPF_BUSTED | OPF_NEVER_LOCKED) != 0 {
         return false;
     }
     if flags & OPF_LOCKED_DAY != 0 {
-        return DAY;
+        return day;
     }
     if flags & OPF_LOCKED_NIGHT != 0 {
-        return !DAY;
+        return !day;
     }
     flags & OPF_LOCKED != 0
 }
@@ -100,7 +105,7 @@ pub enum DoorRefusal {
 }
 
 /// Whether `door` can be opened (or, when open, closed).
-pub fn door_check(door: &Object, prototypes: &Prototypes) -> Result<(), DoorRefusal> {
+pub fn door_check(door: &Object, prototypes: &Prototypes, day: bool) -> Result<(), DoorRefusal> {
     if door.object_type != TYPE_PORTAL {
         return Err(DoorRefusal::NotADoor);
     }
@@ -115,7 +120,7 @@ pub fn door_check(door: &Object, prototypes: &Prototypes) -> Result<(), DoorRefu
     if flags & OPF_JAMMED != 0 {
         return Err(DoorRefusal::Jammed);
     }
-    if locked(flags) { Err(DoorRefusal::Locked) } else { Ok(()) }
+    if locked(flags, day) { Err(DoorRefusal::Locked) } else { Ok(()) }
 }
 
 impl LoadedMap {
@@ -179,7 +184,7 @@ fn within(a: TileLoc, b: TileLoc, range: u32) -> bool {
 /// Opens or closes `door` for everyone, if it can be. Returns whether it changed.
 fn use_door(map: &mut LoadedMap, world: &mut WorldState, closing: &mut ClosingDoors, session: &Session, outbox: &mut Outbox, door: MapObjectId) -> bool {
     let Some(object) = map.map_object(door) else { return false };
-    if door_check(object, &map.prototypes).is_err() {
+    if door_check(object, &map.prototypes, map.lock_day).is_err() {
         return false;
     }
     let Some(art) = map.prototypes.art_id(object) else { return false };
@@ -282,11 +287,14 @@ mod tests {
 
     #[test]
     fn locks_follow_the_flags_and_the_hour() {
-        assert!(locked(OPF_LOCKED));
-        assert!(!locked(OPF_LOCKED | OPF_NEVER_LOCKED), "the prototypes' default 9");
-        assert!(!locked(OPF_LOCKED | OPF_BUSTED));
-        assert!(!locked(OPF_LOCKED | OPF_LOCKED_NIGHT), "by day");
-        assert!(locked(OPF_LOCKED_DAY));
+        assert!(locked(OPF_LOCKED, true));
+        assert!(!locked(OPF_LOCKED | OPF_NEVER_LOCKED, true), "the prototypes' default 9");
+        assert!(!locked(OPF_LOCKED | OPF_BUSTED, true));
+        assert!(!locked(OPF_LOCKED | OPF_LOCKED_NIGHT, true), "by day");
+        assert!(locked(OPF_LOCKED | OPF_LOCKED_NIGHT, false), "by night");
+        assert!(locked(OPF_LOCKED_DAY, true));
+        assert!(!locked(OPF_LOCKED_DAY, false));
+        assert!(!lock_day(6) && lock_day(7) && lock_day(21) && !lock_day(22));
     }
 
     #[test]
@@ -339,6 +347,7 @@ mod tests {
             std::fs::write(folder.join("map.prp"), prp).unwrap();
             let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
             let door = |x: u32, flags: i32| {
+                let x: u32 = x;
                 ObjectBuilder::new(TYPE_PORTAL)
                     .field("current_aid", Value::Int32((0x3000_0000u32 | 3 << 11) as i32))
                     .field("location", at(x, 80))
@@ -346,12 +355,12 @@ mod tests {
                     .build()
             };
             let mut sector = SectorBuilder::new();
-            sector.objects = vec![door(72, 0), door(90, OPF_LOCKED)];
+            sector.objects = vec![door(72, 0), door(90, OPF_LOCKED), door(110, OPF_LOCKED | OPF_LOCKED_NIGHT)];
             std::fs::write(folder.join(SectorId::new(1, 1).file_name()), sector.build()).unwrap();
         }
 
         fn booted(dir: &Path, players: &[(u64, TileLoc)], changes: BTreeMap<SectorId, crate::SectorDelta>) -> SimApp {
-            let mut save = WorldSave::new_game(&crate::StartMap { map: MAP.into(), position: t(0, 0) });
+            let mut save = WorldSave::new_game(&crate::StartMap { map: MAP.into(), position: t(0, 0), clock: Default::default() });
             save.sector_changes = changes;
             for &(id, position) in players {
                 let sheet = CharacterSheet { name: "A".into(), ..Default::default() };
@@ -370,6 +379,24 @@ mod tests {
 
         const DOOR: MapObjectId = MapObjectId { sector: SectorId(1 << 26 | 1), index: 0 };
         const LOCKED: MapObjectId = MapObjectId { sector: SectorId(1 << 26 | 1), index: 1 };
+        const NIGHT_LOCKED: MapObjectId = MapObjectId { sector: SectorId(1 << 26 | 1), index: 2 };
+
+        #[test]
+        fn a_night_lock_holds_only_at_night() {
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            // 21:59 game time: a day; a few real seconds later it is 22:00, night.
+            let mut sim = booted(dir.path(), &[(7, t(109, 80))], BTreeMap::new());
+            sim.app.world_mut().resource_mut::<crate::GameClock>().now = crate::GameTime { days: 0, ms: 22 * crate::HOUR_MS - 4000 };
+            sim.update();
+            sim.take_deltas();
+            assert!(step_allowed(sim.app.world().resource::<LoadedMap>(), t(110, 80), t(110, 81)), "by day: passable");
+            for _ in 0..30 {
+                sim.update();
+            }
+            assert!(!step_allowed(sim.app.world().resource::<LoadedMap>(), t(110, 80), t(110, 81)), "by night: locked");
+            assert_eq!(changed(&use_door(&mut sim, 7, NIGHT_LOCKED, 0), 7), None, "and it does not open");
+        }
 
         fn use_door(sim: &mut SimApp, player: u64, door: MapObjectId, seq: u32) -> Vec<(PlayerId, LedgerDelta)> {
             sim.receive([(PlayerId(player), PlayerIntent::UsePortal { door, seq })]);

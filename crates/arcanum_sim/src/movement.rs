@@ -259,6 +259,7 @@ pub fn sync_state(
     session: Res<Session>,
     mut outbox: ResMut<Outbox>,
     pcs: Query<SyncedQuery, With<PlayerControlled>>,
+    clock_time: Res<crate::GameClock>,
 ) {
     clock.since += 1;
     clock.since_keyframe += 1;
@@ -294,9 +295,9 @@ pub fn sync_state(
         clock.players.entry(player).or_insert((number, None));
         let sync = if keyframe || clock.needs_resync(player) {
             clock.players.get_mut(&player).expect("inserted above").1 = Some(number);
-            LedgerDelta::Resync { number, pcs: states.clone() }
+            LedgerDelta::Resync { number, time: clock_time.now, pcs: states.clone() }
         } else {
-            LedgerDelta::StateSync { number, pcs: states.clone() }
+            LedgerDelta::StateSync { number, time: clock_time.now, pcs: states.clone() }
         };
         outbox.0.push((player, sync));
     }
