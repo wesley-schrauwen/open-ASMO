@@ -14,6 +14,7 @@ use std::sync::{Arc, RwLock};
 
 use arcanum_formats::art_id::ArtId;
 use arcanum_formats::map::{MapProperties, SectorId, TileLoc};
+use arcanum_formats::art_id::ArtIndex;
 use arcanum_formats::object::{Object, Prototypes, TYPE_NPC};
 use arcanum_formats::sector::Sector;
 use arcanum_rules::{CharacterSheet, MALE};
@@ -173,6 +174,9 @@ pub struct LoadedMap {
     pub errors: Vec<String>,
     /// The object prototypes (`proto/*.pro`), for fields the map's objects do not store.
     pub prototypes: Arc<Prototypes>,
+    /// The art index, for the ground tiles that block (`tilename.mes` flags); `None` if its
+    /// files could not be read (then no tile art blocks).
+    pub art: Option<Arc<ArtIndex>>,
     /// What the loaded sectors' objects block.
     pub blocking: crate::ObjectBlocking,
     /// The map's mobile objects (`G_<guid>.mob` files: NPCs, containers, items on the ground) by
@@ -188,12 +192,19 @@ impl LoadedMap {
     /// Starts over on `name`, reading its `map.prp`. The prototypes are read once and kept.
     pub fn open(&mut self, vfs: Option<&Vfs>, name: &str) {
         let prototypes = std::mem::take(&mut self.prototypes);
-        *self = Self { name: Some(name.to_string()), prototypes, ..Self::default() };
+        let art = self.art.take();
+        *self = Self { name: Some(name.to_string()), prototypes, art, ..Self::default() };
         let Some(vfs) = vfs else { return };
         if self.prototypes.is_empty() {
             let (prototypes, errors) = load_prototypes(vfs);
             self.prototypes = Arc::new(prototypes);
             self.errors.extend(errors);
+        }
+        if self.art.is_none() && vfs.exists("art/tile/tilename.mes") {
+            match ArtIndex::load(|p| vfs.read(p).ok()) {
+                Ok(index) => self.art = Some(Arc::new(index)),
+                Err(e) => self.errors.push(format!("art index: {e:?}")),
+            }
         }
         self.read_mobiles(vfs, name);
         let path = format!("maps/{name}/map.prp");
@@ -247,9 +258,8 @@ impl LoadedMap {
         }
         match vfs.read(&path).map_err(|e| e.to_string()).and_then(|d| Sector::parse(&d).map_err(|e| e.to_string())) {
             Ok(sector) => {
-                self.blocking.add(&sector.objects, &self.prototypes);
-                self.blocking.add(self.mobiles.get(&id).into_iter().flatten(), &self.prototypes);
                 self.sectors.insert(id, sector);
+                self.rebuild_blocking(id);
                 self.apply_changes(id);
             }
             Err(e) => {
@@ -257,6 +267,25 @@ impl LoadedMap {
                 self.absent.insert(id);
             }
         }
+    }
+
+    /// Works out again what blocks in loaded sector `id`: its ground tiles' art
+    /// ([`ArtIndex::tile_blocks`]), its objects and the map's mobile objects on it.
+    pub fn rebuild_blocking(&mut self, id: SectorId) {
+        self.blocking.remove_sector(id);
+        let Some(sector) = self.sectors.get(&id) else { return };
+        if let Some(art) = &self.art {
+            let (x0, y0) = (id.x() * 64, id.y() * 64);
+            for y in 0..64 {
+                for x in 0..64 {
+                    if art.tile_blocks(sector.tile(x, y).art_id()) {
+                        self.blocking.tiles.insert(TileLoc { x: x0 + x, y: y0 + y });
+                    }
+                }
+            }
+        }
+        self.blocking.add(&sector.objects, &self.prototypes);
+        self.blocking.add(self.mobiles.get(&id).into_iter().flatten(), &self.prototypes);
     }
 
     /// Unloads every loaded sector `keep` refuses, with what its objects block. Returns them.

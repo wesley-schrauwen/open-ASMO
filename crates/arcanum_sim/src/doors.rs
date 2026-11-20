@@ -138,10 +138,7 @@ impl LoadedMap {
         let Some(door) = sector.objects.get_mut(id.index as usize).filter(|o| o.object_type == TYPE_PORTAL) else { return false };
         let Some(art) = prototypes.art_id(door) else { return false };
         door.set_int("current_aid", portal_art(art, open).0 as i32);
-        self.blocking.remove_sector(id.sector);
-        let sector = &self.sectors[&id.sector];
-        self.blocking.add(&sector.objects, &prototypes);
-        self.blocking.add(self.mobiles.get(&id.sector).into_iter().flatten(), &prototypes);
+        self.rebuild_blocking(id.sector);
         true
     }
 

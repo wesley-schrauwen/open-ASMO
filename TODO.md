@@ -11,10 +11,9 @@ Things to pick up later. Larger plans live in `plans/`; project state and findin
 
 ## World
 
-- **Blocking leftovers** (`arcanum_sim::blocking`): tile art flags (the original also blocks
-  some ground tiles, probably water, from per-tile tables at 0x603af4 and nearby, not decoded); the lock
-  and key check (0x4aeca0: today every locked door blocks); doors opening and closing (their
-  state never changes yet); NPCs that cannot open doors (pathflag 0x2).
+- **Blocking leftovers** (`arcanum_sim::blocking`, `doors`): sinking and icy tiles (flags `s`,
+  `i`); keys (0x4aeb70: today every locked door blocks), the game clock for day and night locks;
+  NPCs opening doors, and NPCs that cannot (pathflag 0x2).
 - **NPCs pause when a PC blocks them:** when NPC movement comes, an NPC whose next step is
   blocked by a PC stops for 5 s (150 ticks), then replans from where it stands; PCs replan at
   once (`plans/world_milestone.md`, "Pathfinding and movement validation"). Open: whether NPCs
