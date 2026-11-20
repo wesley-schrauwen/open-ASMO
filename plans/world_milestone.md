@@ -406,6 +406,51 @@ Not done, or done differently from the original:
   is not used: the data stores all 8 rotations.
 - **No running** (anim 6) and no NPCs.
 
+## Click to move (step 7, Milestone A)
+
+- **Click → tile.** A left click on the map goes through the camera to a world point, then
+  `isometric::world_to_tile`. This is the original's `xy_to_loc` (0x4b8730, isometric mode):
+  `x = floor((v - u/2) / 40)`, `y = floor((v + u/2) / 40)`, with `u`, `v` the screen offset
+  from the view origin. So a tile is the 80 x 40 diamond round its centre, each axis half-open.
+- **What the click does** (game window mouse handler 0x54de50, mode 0):
+  - Shift+click does nothing, as in the original.
+  - A new goal while walking replaces the old one. The step under way is finished first.
+  - Original: a click on the tile already being walked to is a no-op. Here it plans the path
+    again, which ends the same.
+- **The walk itself** was already built in step 6: the client plans with `find_path`, walks at
+  once and sends the `Move`.
+- **Corrections** (`Actor::correct`, `WalkLocalPc::corrected`):
+  - The actor goes onto the host's tile at once. Its sprite slides there from where it was drawn,
+    at its walking speed.
+  - A correction of the local PC that answers an older move than the last one sent is ignored.
+  - After the first correction of a move, the client plans once more to the same goal from the
+    host's tile, for example after a door closed. If that move is corrected too, the PC stays.
+- **Camera:** the camera still follows the PC's sprite exactly. The sprite moves smoothly, so no
+  lerp was added.
+- **Debug:** `DEBUG_ARCANUM_CLICK=x,y` clicks that window position (logical pixels) 10 frames
+  after the sectors are in.
+- **Checked on real data:**
+  - From the log on the start map: a click at the window centre lands on the PC's tile, and a
+    click 80 px right and 40 px up lands two tiles up-right.
+  - Not checked by eye: every screenshot came out black, including the Options screen, while the
+    display was off.
+
+Not done, or done differently from the original:
+
+- **No object picking.** The original tests objects under the cursor first (0x4f28a0) and only
+  then the ground. A click on an object interacts with it or attacks it (0x54ed30). Here every
+  click is a ground click, so a click on a tree walks to the tree's tile.
+- **No running.** In the original, Ctrl+click runs (goal `ag_run_to_tile`, 0x433c80). With the
+  "always run" setting on, a click runs and Ctrl+click walks. 0x433640 can also turn a walk into
+  a run (field 0x14f, 0x45f790; not decoded).
+- **Holding the button.** The original handler re-targets on a repeated press while the button
+  is held (flag 0x64c6d8). Whether the input layer sends those repeats is unverified, and holding
+  is not built here.
+- **Unreachable tiles:** here the click does nothing (with a warning). The original's fallback
+  lives in the goal runner or pathfinder and is not traced.
+- **No cursor shapes and no viewport rect.** The original takes clicks only inside the game view
+  rect (0x603bb0). There is no interface bar yet, so the whole window is the view.
+
 ## Builder's calls (proposed by Claude, not owner decisions)
 
 - `arcanum_sim` uses `bevy_ecs` (and `bevy_app` for scheduling) with no rendering, audio or

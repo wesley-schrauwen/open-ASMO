@@ -2,13 +2,13 @@
 //!
 //! Out of combat a client paths and walks its own PC at once, and sends the path as
 //! [`PlayerIntent::Move`](crate::PlayerIntent::Move). The host checks it with [`check_path`]
-//! (the same step rules as [`find_path`](crate::find_path)), then walks the PC along it at
-//! [`WALK_TILES_PER_SECOND`] and tells the other players with a `Move`. A path it refuses gets
+//! (the same step rules as [`find_path`](crate::find_path)), then walks the PC along it at its
+//! [`Gait`] and tells the other players with a `Move`. A path it refuses gets
 //! a `MoveCorrection` with the PC's position on the host, and the PC stops there.
 //!
 //! Every step is checked again just before it is taken, against the map: doors close while a
 //! path is walked. The host never plans a PC's path: on a blocked step the PC stops and every
-//! player gets a `MoveCorrection`, and the client replans from there.
+//! player gets a `MoveCorrection`, and the client plans again from there.
 //!
 //! Out of combat, actors (PCs and NPCs) do not block PCs: they walk through each other and may
 //! share a tile, so a client is never snapped back because another actor moved. In combat they
