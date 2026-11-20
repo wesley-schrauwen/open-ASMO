@@ -70,6 +70,13 @@ state to network.
   - **Shared things are always host-confirmed:** picking up items, containers, doors, NPCs,
     dialogue, quest and world flags. Two players grabbing one item is resolved by the host only.
 
+- **The host decides all game state** (owner, 2026-11-20). This covers combat radius, NPC
+  paths, who notices whom, and what is simulated. The host works from positions in the world
+  and the game's rules (line of sight, light, range), never from what a client's window shows:
+  screen sizes differ, and the game must not. A client's view matters only for what it is
+  sent and for cosmetic, client-only effects.
+- **Distances copy the original** (owner, 2026-11-20). Every radius the host uses (sectors kept
+  loaded and simulated, NPC activity, combat engagement, perception) is the original's.
 - Multiplayer first; the build order below.
 - **Inns and campfires** are more prominent than in the original. They are where players save,
   where others join, and where a host broadcasts a multiplayer session. For development, a
@@ -763,6 +770,33 @@ on screen.
   map object its depth again (each `MapObject` keeps its flat class and place on its tile).
   Actors take their depth from it every frame. Sprite positions and the camera are unchanged:
   `f32` positions relative to the first sector stay exact for millions of pixels.
+
+## The original's distances (after the depth rebase)
+
+The owner's rule: the host decides game state from positions and the game's rules, with the
+original's distances (`arcanum_sim::activity`). Found in Arcanum.exe:
+
+- **Distance** is the larger of the two axis differences (0x4b96f0), so "within N" is a square.
+- **No load radius in the original.** It keeps a 16-sector cache (0x4cf810) and loads whatever
+  is touched (0x4d0540), evicting the oldest unlocked sector. What decides game state is the
+  activity range below. The host's 3 x 3 block per PC holds everything those rules look at
+  (tested): a PC is always at least 64 tiles from the block's edge.
+- **NPC activity** (AI heartbeat 0x4ad200, test 0x4ad420):
+  - An NPC thinks (targets, wanders, flees) only within 30 tiles of a PC, and not during
+    turn-based combat. Further away its goals are interrupted.
+  - Its next heartbeat comes after `250 + 4750 * min(d, 30) / 30` ms, where `d` is the
+    distance to the nearest PC.
+  - The host marks NPCs in range `Active` every tick; there is no AI yet to run.
+- **Combat** (0x4b7300): turn-based combat takes in every critter within
+  `max(10, perception / 2 + 5)` tiles of the PC who starts it (`combat_radius`).
+- **Noticing** (0x4ab460): an NPC looks for enemies within its perception clamped to 1-10
+  (`notice_range`), then needs to see them (0x4af470: a range from perception, sneaking and a
+  line-of-sight walk, capped at 1000 tiles; not decoded fully).
+- **Fidgets** (0x4300d0) run only for critters in the 800 x 400 screen rect: cosmetic, so they
+  belong to the client.
+
+Not done: the AI itself, combat, perception, fidgets; the follower leash (0x4ad4d0: a
+follower more than 30 tiles from its leader is moved to it).
 
 ## Builder's calls (proposed by Claude, not owner decisions)
 

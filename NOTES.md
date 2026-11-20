@@ -12,7 +12,7 @@ Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2; t
   (`feat/click-to-move`) → #35 (`feat/udp-join`) → #36
   (`feat/object-blocking`) → #37 (`feat/npcs`) → #38
   (`feat/ground-objects`) → #39 (`feat/sector-streaming`) → #40 (`feat/doors`) → #41 (`feat/tile-blocking`) → #42 (`feat/game-clock`) →
-  depth rebase (`feat/depth-rebase`, the newest). Merging #26 into
+  #43 (`feat/depth-rebase`) → original radii (`feat/original-radii`, the newest). Merging #26 into
   `main` brings in #10-#25 as well. Then **retarget each next PR to `main` before merging it**.
 - **World milestone:** `plans/world_milestone.md` is the plan and records each step as built
   (differences from the plan, what is not done). Steps 1-8 are done: map readers (#19), the
@@ -24,8 +24,8 @@ Last updated: 2026-11-20 (world milestone steps 1-8 done: Milestones A and A2; t
   client joining (#35, Milestone A2), and object blocking from the original's rules with every
   prototype read (#36), NPCs standing on the map (#37),
   containers and items on the ground (#38), sector streaming (#39), doors (#40), ground tiles that block (#41),
-  the game clock (#42), and draw order
-  that follows the PC (`feat/depth-rebase`). The milestone plan is complete; what is left is
+  the game clock (#42), draw order that
+  follows the PC (#43), and the original's activity distances (`feat/original-radii`). The milestone plan is complete; what is left is
   listed under each step's "Not done" and in `TODO.md` → World.
 - **World debug start:** `DEBUG_ARCANUM_SCREEN=ingame` (character "Debug"), optionally
   `DEBUG_ARCANUM_START=x,y` (e.g. `90330,84122`, a Shrouded Hills house) and
@@ -91,7 +91,7 @@ a text field).
 | Fonts | Game bitmap fonts decoded and rendered (`BitmapText`, multi-line: wrap, `\n`, tab indents, whole-line clipping). Menu uses `Morph30Font`/`morph15font`; character screens add `Flare12Font` (`UiFont::Body`) with the original white/red tints. Override TTF still wins if present; built-in font as last resort. |
 | Game data formats | `.mes`, `.art`, fonts, `.dat`; objects (`arcanum_formats::object`: prototypes and instances, PC field tables from the engine's names); maps/sectors (#19). |
 | Resolutions | Done. 720p–8K, 4:3–2.4:1, `UiScale` from a 1080 baseline. |
-| Tests | 417 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
+| Tests | 421 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
 | Everything else | Not started: game screens, critter art, NPCs, dialogue, scripts, combat, UDP. |
 
 ### Git state
@@ -377,6 +377,11 @@ Recovered by inspecting data and by reverse engineering `Arcanum.exe` with the R
 - **NPCs**: `.mob` files (`G_<guid>.mob`) hold the map's NPCs, containers and items; carried
   ones have `OF_INVENTORY` (0x1000). The host spawns NPCs per loaded sector
   (`arcanum_sim::spawn_npcs`).
+- **Distances** (`arcanum_sim::activity`): tile distance is max(|dx|, |dy|) (0x4b96f0). NPC AI
+  runs within 30 tiles of a PC (0x4ad420), heartbeat delay `250 + 4750 * min(d, 30) / 30` ms.
+  Combat radius `max(10, PE / 2 + 5)` (0x4b7300). Noticing: PE clamped 1..10 (0x4ab460), sight
+  0x4af470. Fidgets: screen rect only (0x4300d0). Sector cache: 16 sectors, demand-loaded
+  (0x4cf810, 0x4d0540). Timeevent types at 0x5b2188 (1 Anim, 3 Fidget, 10 AI, 12 TB Combat).
 - **Game clock** (`arcanum_sim::clock`): `{u32 days, u32 ms}` structs at 0x5e85f8 (real),
   0x5e8600 (game), 0x5e8608 (second clock, does not stop for combat). Tick 0x45b370: game += dt * 8
   (dt clamped to 5..250 ms). Pause counter 0x5e8618 (single player, UI modes); combat flag
