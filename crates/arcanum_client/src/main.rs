@@ -82,13 +82,22 @@ fn main() {
             arcanum_client::actors::ActorsPlugin,
         ));
 
-    // Debugging aid until clicks move the PC: `DEBUG_ARCANUM_WALK=x,y` walks the PC to that
+    // Debugging aid (screenshots take no clicks): `DEBUG_ARCANUM_WALK=x,y` walks the PC to that
     // tile once it is in the world.
     if let Some(goal) = std::env::var("DEBUG_ARCANUM_WALK").ok().and_then(|v| {
         let (x, y) = v.split_once(',')?;
         Some(arcanum_formats::map::TileLoc { x: x.trim().parse().ok()?, y: y.trim().parse().ok()? })
     }) {
         app.add_systems(OnEnter(AppState::InGame), move |mut walk: ResMut<arcanum_client::actors::WalkLocalPc>| walk.goal = Some(goal));
+    }
+
+    // Debugging aid: `DEBUG_ARCANUM_CLICK=x,y` left-clicks that window position (logical pixels
+    // from the top left) once the world is up.
+    if let Some(at) = std::env::var("DEBUG_ARCANUM_CLICK").ok().and_then(|v| {
+        let (x, y) = v.split_once(',')?;
+        Some(Vec2::new(x.trim().parse().ok()?, y.trim().parse().ok()?))
+    }) {
+        app.add_systems(OnEnter(AppState::InGame), move |mut commands: Commands| commands.insert_resource(arcanum_client::actors::DebugClick { at, frames: 10 }));
     }
 
     let start = match std::env::var(SCREEN_VAR).unwrap_or_default().to_ascii_lowercase().as_str() {

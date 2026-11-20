@@ -2,7 +2,13 @@
 //!
 //! The host announces each PC with a `Spawn` (its tile, art id and speed stat) and moves it with
 //! `Move` (other players' PCs) and `MoveCorrection`. The local PC walks on the client at once
-//! ([`WalkLocalPc`]): the client sends the path to the host and walks it without waiting.
+//! ([`WalkLocalPc`], set by a left click on the map): the client sends the path to the host and
+//! walks it without waiting.
+//!
+//! A correction puts the actor on the host's tile, and its sprite slides there from where it was
+//! drawn, at its walking speed, instead of jumping. For the local PC, a correction answering an
+//! older move than the last one sent is ignored (the answer to the newer move decides), and
+//! after a correction the client plans once more to the same goal from the host's tile.
 //!
 //! A walker steps from tile centre to tile centre, each step taking as long as its
 //! [`Gait`] says, which is also the host's timing. Its sprite plays the walk art in the step's
@@ -19,7 +25,7 @@ use bevy::prelude::*;
 
 use crate::animation::ArtAnimation;
 use crate::art_loader::ArtFrames;
-use crate::isometric::tile_to_world;
+use crate::isometric::{tile_to_world, world_to_tile};
 use crate::main_menu::AppState;
 use crate::sim_bridge::{HostLink, LocalPc};
 use crate::vfs_asset::VfsResource;
@@ -31,7 +37,7 @@ impl Plugin for ActorsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ActorDeltas>().init_resource::<WalkLocalPc>().add_systems(OnExit(AppState::InGame), forget_actors).add_systems(
             Update,
-            (apply_actor_deltas, start_local_walk, walk_actors, place_actors).chain().run_if(in_state(AppState::InGame)),
+            (click_to_move, apply_actor_deltas, start_local_walk, walk_actors, place_actors).chain().run_if(in_state(AppState::InGame)),
         );
     }
 }
@@ -53,6 +59,41 @@ pub struct WalkLocalPc {
     pub goal: Option<TileLoc>,
     /// Numbering of the moves sent.
     seq: u32,
+    /// The goal of the last move sent, and whether it was already planned again after a
+    /// correction.
+    last_goal: Option<(TileLoc, bool)>,
+}
+
+impl WalkLocalPc {
+    /// Takes the host's correction of the local PC to `position`, answering move `seq`. Returns
+    /// false if it answers an older move than the last one sent, so is to be ignored. Otherwise,
+    /// the first correction after a move plans again to its goal, from `position`.
+    pub fn corrected(&mut self, seq: u32, position: TileLoc) -> bool {
+        if seq < self.seq {
+            return false;
+        }
+        if let Some((goal, false)) = self.last_goal
+            && goal != position
+        {
+            self.goal = Some(goal);
+            self.last_goal = Some((goal, true));
+        }
+        true
+    }
+
+    /// Records that move `seq + 1` to `goal` is being sent and returns its number.
+    fn sending(&mut self, goal: TileLoc) -> u32 {
+        let again = matches!(self.last_goal, Some((g, true)) if g == goal);
+        self.seq += 1;
+        self.last_goal = Some((goal, again));
+        self.seq
+    }
+
+    /// A new goal from the player.
+    fn click(&mut self, goal: TileLoc) {
+        self.goal = Some(goal);
+        self.last_goal = None;
+    }
 }
 
 /// A critter the host told us about.
@@ -67,6 +108,9 @@ pub struct Actor {
     pub steps: VecDeque<TileLoc>,
     /// Seconds into the step to `steps[0]`.
     pub progress: f64,
+    /// Where the sprite is drawn relative to its place on the path, in world units: left by a
+    /// correction, and shrinking to nothing at walking speed.
+    pub slide: Vec2,
 }
 
 impl Actor {
@@ -117,6 +161,35 @@ impl Actor {
         }
     }
 
+    /// Where the actor is drawn relative to the centre of its tile, in world units: between its
+    /// tile and the next.
+    pub fn drawn_offset(&self) -> Vec2 {
+        let base = match self.steps.front() {
+            Some(&next) => tile_to_world(next, self.at) * self.step_fraction(),
+            None => Vec2::ZERO,
+        };
+        base + self.slide
+    }
+
+    /// Puts the actor on `position`, standing, its sprite sliding there from where it is drawn.
+    pub fn correct(&mut self, position: TileLoc) {
+        self.slide = self.drawn_offset() + tile_to_world(self.at, position);
+        self.at = position;
+        self.walk([]);
+    }
+
+    /// Walking speed in world units a second (the mean over the rotations).
+    fn speed(&self) -> f32 {
+        let per_frame = self.gait.pixels_per_frame.iter().sum::<f64>() / 8.0;
+        (per_frame * 1000.0 / f64::from(self.gait.frame_millis.max(1))) as f32
+    }
+
+    /// Shrinks [`Actor::slide`] by `dt` seconds of walking.
+    fn settle(&mut self, dt: f32) {
+        let left = self.slide.length() - self.speed() * dt;
+        self.slide = if left <= 0.0 { Vec2::ZERO } else { self.slide.normalize() * left };
+    }
+
     /// The art to show now: walking or standing, in the current rotation.
     pub fn current_art(&self) -> ArtId {
         let anim = if self.walking() { walk_art(self.art) } else { with_anim(self.art, ANIM_STAND) };
@@ -127,6 +200,7 @@ impl Actor {
 fn forget_actors(mut deltas: ResMut<ActorDeltas>, mut walk: ResMut<WalkLocalPc>) {
     deltas.0.clear();
     walk.goal = None;
+    walk.last_goal = None;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -136,6 +210,7 @@ fn apply_actor_deltas(
     assets: Res<AssetServer>,
     vfs: Option<Res<VfsResource>>,
     pc: Res<LocalPc>,
+    mut walk: ResMut<WalkLocalPc>,
     mut actors: Query<(Entity, &mut Actor)>,
 ) {
     if deltas.0.is_empty() {
@@ -155,7 +230,7 @@ fn apply_actor_deltas(
                     None => Gait::load(art, speed, |_| None),
                 };
                 let rotation = CritterArt::from_id(art).rotation as usize;
-                let actor = Actor { net_id, art, gait, at: position, rotation, steps: VecDeque::new(), progress: 0.0 };
+                let actor = Actor { net_id, art, gait, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO };
                 let path = CritterArt::from_id(actor.current_art()).path();
                 let handle: Handle<ArtFrames> = assets.load(path);
                 let entity = commands
@@ -179,11 +254,13 @@ fn apply_actor_deltas(
             }
             LedgerDelta::MoveCorrection { net_id, position, seq } => {
                 if Some(net_id) == local {
+                    if !walk.corrected(seq, position) {
+                        continue;
+                    }
                     info!("the host stopped the PC at {position:?} (move {seq})");
                 }
                 if let Some(Ok((_, mut a))) = by_id.get(&net_id).map(|&e| actors.get_mut(e)) {
-                    a.at = position;
-                    a.walk([]);
+                    a.correct(position);
                 }
             }
             LedgerDelta::Despawn { net_id } => {
@@ -193,6 +270,51 @@ fn apply_actor_deltas(
             }
             _ => {}
         }
+    }
+}
+
+/// A click to make once the world is up, at this window position (logical pixels): for
+/// screenshot checks, which take no input. It waits `frames` frames after the sectors are in,
+/// for the camera to reach the PC.
+#[derive(Resource, Debug, Clone, Copy)]
+pub struct DebugClick {
+    pub at: Vec2,
+    pub frames: u32,
+}
+
+/// A left click on the map walks the local PC to the tile under the cursor (0x54de50, the game
+/// window's mouse handler). With Shift held the click does nothing, as in the original.
+#[allow(clippy::too_many_arguments)]
+fn click_to_move(
+    mut commands: Commands,
+    buttons: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    debug: Option<ResMut<DebugClick>>,
+    windows: Query<&Window>,
+    cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    client: Option<Res<ClientMap>>,
+    mut walk: ResMut<WalkLocalPc>,
+) {
+    let Some(origin) = client.filter(|c| !c.map.sectors.is_empty()).and_then(|c| c.origin) else { return };
+    let cursor = match debug {
+        Some(mut click) if click.frames > 0 => {
+            click.frames -= 1;
+            return;
+        }
+        Some(click) => {
+            commands.remove_resource::<DebugClick>();
+            click.at
+        }
+        None if buttons.just_pressed(MouseButton::Left) && !keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) => {
+            let Some(cursor) = windows.iter().find_map(Window::cursor_position) else { return };
+            cursor
+        }
+        None => return,
+    };
+    let Some(world) = cameras.iter().find_map(|(camera, at)| camera.viewport_to_world_2d(at, cursor).ok()) else { return };
+    if let Some(goal) = world_to_tile(world, origin) {
+        debug!("click at {cursor} goes to {goal:?}");
+        walk.click(goal);
     }
 }
 
@@ -215,11 +337,11 @@ fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>
             return;
         }
     };
-    walk.seq += 1;
+    let seq = walk.sending(goal);
     let mut sent = vec![from];
     sent.extend(&path);
     if let Some(link) = link
-        && let Err(e) = link.0.send_intent(PlayerIntent::Move { seq: walk.seq, path: sent })
+        && let Err(e) = link.0.send_intent(PlayerIntent::Move { seq, path: sent })
     {
         warn!("cannot reach the host: {e}");
     }
@@ -236,6 +358,9 @@ fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>
 fn walk_actors(time: Res<Time>, mut pc: ResMut<LocalPc>, mut actors: Query<&mut Actor>) {
     let dt = f64::from(time.delta_secs());
     for mut actor in &mut actors {
+        if actor.slide != Vec2::ZERO {
+            actor.settle(time.delta_secs());
+        }
         if actor.advance(dt)
             && let Some((id, at)) = pc.0
             && id == actor.net_id
@@ -251,13 +376,10 @@ fn place_actors(client: Option<Res<ClientMap>>, assets: Res<AssetServer>, mut ac
     let Some(origin) = client.and_then(|c| c.origin) else { return };
     for (actor, mut animation, mut transform) in &mut actors {
         let here = tile_to_world(actor.at, origin);
-        let (pos, depth_tile) = match actor.steps.front() {
-            Some(&next) => {
-                let there = tile_to_world(next, origin);
-                let lower = if there.y < here.y { next } else { actor.at };
-                (here.lerp(there, actor.step_fraction()), lower)
-            }
-            None => (here, actor.at),
+        let pos = here + actor.drawn_offset();
+        let depth_tile = match actor.steps.front() {
+            Some(&next) if tile_to_world(next, origin).y < here.y => next,
+            _ => actor.at,
         };
         transform.translation = pos.extend(object_depth(depth_tile, origin, false, DEPTH_TILE_ORDER - 1));
         let path = CritterArt::from_id(actor.current_art()).path();
@@ -278,7 +400,7 @@ mod tests {
 
     fn actor() -> Actor {
         let art = arcanum_sim::pc_art(0, true);
-        Actor { net_id: NetId(0), art, gait: Gait::human(17), at: t(10, 10), rotation: 4, steps: VecDeque::new(), progress: 0.0 }
+        Actor { net_id: NetId(0), art, gait: Gait::human(17), at: t(10, 10), rotation: 4, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO }
     }
 
     #[test]
@@ -303,10 +425,39 @@ mod tests {
     fn a_correction_stops_the_actor_where_the_host_says() {
         let mut a = actor();
         a.walk([t(11, 10), t(12, 10)]);
-        a.advance(0.1);
-        a.at = t(10, 11);
-        a.walk([]);
+        let step = a.gait.step_seconds(t(10, 10), t(11, 10));
+        a.advance(step / 2.0);
+        let drawn = tile_to_world(t(10, 10), t(0, 0)) + a.drawn_offset();
+        a.correct(t(10, 11));
         assert!(!a.walking());
         assert_eq!(a.step_fraction(), 0.0);
+        assert_eq!(tile_to_world(t(10, 11), t(0, 0)) + a.drawn_offset(), drawn, "drawn where it was");
+        let distance = a.slide.length();
+        a.settle(0.1);
+        assert!(a.slide.length() < distance, "slides towards the host's tile");
+        a.settle(10.0);
+        assert_eq!(a.slide, Vec2::ZERO, "and stops there");
+    }
+
+    #[test]
+    fn only_the_newest_move_is_corrected_and_planned_once_more() {
+        let mut w = WalkLocalPc::default();
+        w.click(t(20, 20));
+        w.goal = None;
+        assert_eq!(w.sending(t(20, 20)), 1);
+        assert_eq!(w.sending(t(20, 20)), 2, "a second click before the answer");
+        assert!(!w.corrected(1, t(11, 10)), "answers the older move");
+        assert_eq!(w.goal, None);
+        assert!(w.corrected(2, t(11, 10)));
+        assert_eq!(w.goal, Some(t(20, 20)), "plans again from the host's tile");
+        w.goal = None;
+        assert_eq!(w.sending(t(20, 20)), 3);
+        assert!(w.corrected(3, t(12, 10)));
+        assert_eq!(w.goal, None, "only once");
+        w.click(t(30, 30));
+        w.goal = None;
+        w.sending(t(30, 30));
+        assert!(w.corrected(4, t(30, 30)));
+        assert_eq!(w.goal, None, "already at the goal");
     }
 }
