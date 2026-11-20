@@ -331,6 +331,26 @@ impl Object {
         }
     }
 
+    /// Sets 32-bit field `name`, adding it if the object does not store it (it then no longer
+    /// falls back to the prototype). Returns false if the type has no such 32-bit field.
+    pub fn set_int(&mut self, name: &str, value: i32) -> bool {
+        if let Some((_, v)) = self.fields.iter_mut().find(|(d, _)| d.name == name) {
+            *v = Value::Int32(value);
+            return true;
+        }
+        let Some((bit, def)) = field_bits(self.object_type).and_then(|b| b.into_iter().find(|(_, d)| d.name == name)) else { return false };
+        if def.storage != Storage::Int32 {
+            return false;
+        }
+        if let Some(word) = self.bitmap.get_mut(bit as usize / 32) {
+            *word |= 1 << (bit % 32);
+        }
+        // Keep the fields in enum order, as parsed.
+        let at = self.fields.iter().position(|(d, _)| d.id > def.id).unwrap_or(self.fields.len());
+        self.fields.insert(at, (def, Value::Int32(value)));
+        true
+    }
+
     pub fn ints(&self, name: &str) -> Option<Vec<i32>> {
         match self.field(name)? {
             Value::Array(Some(a)) => a.ints(),

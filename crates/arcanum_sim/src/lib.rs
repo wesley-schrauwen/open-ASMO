@@ -12,6 +12,7 @@
 pub mod blocking;
 pub mod creation;
 pub mod delta;
+pub mod doors;
 pub mod gait;
 pub mod intent;
 pub mod movement;
@@ -26,6 +27,7 @@ pub mod world;
 pub use blocking::*;
 pub use creation::*;
 pub use delta::*;
+pub use doors::*;
 pub use gait::*;
 pub use intent::*;
 pub use movement::*;

@@ -2,6 +2,7 @@
 
 pub mod actors;
 pub mod animation;
+pub mod picking;
 pub mod art_loader;
 pub mod audio;
 pub mod bitmap_text;

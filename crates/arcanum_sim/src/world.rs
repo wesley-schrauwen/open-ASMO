@@ -9,7 +9,7 @@
 //! ([`ObjectBlocking`](crate::ObjectBlocking)), with fields the objects do not store taken from
 //! their prototypes.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, RwLock};
 
 use arcanum_formats::art_id::ArtId;
@@ -179,6 +179,9 @@ pub struct LoadedMap {
     /// sector, in file name order, read at [`LoadedMap::open`]. Objects carried or inside a
     /// container (flag `INVENTORY`), destroyed or off are left out.
     pub mobiles: HashMap<SectorId, Vec<Object>>,
+    /// Changes to the map's objects since the original data (doors opened or closed), applied to
+    /// each sector as it loads: the save's on the host, the host's on a client.
+    pub changes: BTreeMap<SectorId, crate::SectorDelta>,
 }
 
 impl LoadedMap {
@@ -247,6 +250,7 @@ impl LoadedMap {
                 self.blocking.add(&sector.objects, &self.prototypes);
                 self.blocking.add(self.mobiles.get(&id).into_iter().flatten(), &self.prototypes);
                 self.sectors.insert(id, sector);
+                self.apply_changes(id);
             }
             Err(e) => {
                 self.errors.push(format!("{path}: {e}"));
@@ -317,6 +321,7 @@ pub fn boot_world(
     let vfs = vfs_guard.as_deref();
     if map.name.as_deref() != Some(save.map.as_str()) {
         map.open(vfs, &save.map);
+        map.changes = save.sector_changes.clone();
     }
     let mut existing: Vec<(NetId, PlayerId, TileLoc, Appearance)> = pcs.iter().map(|(id, p, pos, look)| (*id, p.0, pos.0, *look)).collect();
     for (&player, saved) in &save.players {
@@ -332,6 +337,9 @@ pub fn boot_world(
         session.players.insert(player, SessionPlayer::InWorld(net_id));
         // Everyone already here learns of the new PC; the new PC's player learns of everyone.
         outbox.0.push((player, LedgerDelta::EnterMap { map: save.map.clone() }));
+        if !save.sector_changes.is_empty() {
+            outbox.0.push((player, LedgerDelta::MapChanges { changes: save.sector_changes.clone() }));
+        }
         let spawn = look.spawn(net_id, EntityKind::Pc { player }, saved.position);
         for &other in session.players.keys() {
             outbox.0.push((other, spawn.clone()));

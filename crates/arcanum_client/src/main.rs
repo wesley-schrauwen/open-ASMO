@@ -102,7 +102,7 @@ fn main() {
         let (x, y) = v.split_once(',')?;
         Some(Vec2::new(x.trim().parse().ok()?, y.trim().parse().ok()?))
     }) {
-        app.add_systems(OnEnter(AppState::InGame), move |mut commands: Commands| commands.insert_resource(arcanum_client::actors::DebugClick { at, frames: 10 }));
+        app.add_systems(OnEnter(AppState::InGame), move |mut commands: Commands| commands.insert_resource(arcanum_client::actors::DebugClick { at, frames: 90 }));
     }
 
     let start = match std::env::var(SCREEN_VAR).unwrap_or_default().to_ascii_lowercase().as_str() {
