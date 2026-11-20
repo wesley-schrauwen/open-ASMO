@@ -24,6 +24,20 @@ use crate::{EntityKind, Gait, LedgerDelta, NetId, NetIds, Outbox, PlayerId, Sess
 
 /// Sectors loaded on each side of a PC's sector (1 = a 3 x 3 block).
 pub const SECTOR_RADIUS: u32 = 1;
+/// Sectors kept on each side of a PC's sector: one more than are loaded, so walking back and
+/// forth over a sector border does not load and unload the same sectors.
+pub const KEEP_RADIUS: u32 = 2;
+
+/// The sectors within `radius` of `centre` (fewer at the map's corner).
+pub fn sectors_near(centre: SectorId, radius: u32) -> impl Iterator<Item = SectorId> {
+    let range = move |c: u32| c.saturating_sub(radius)..=c.saturating_add(radius);
+    range(centre.y()).flat_map(move |y| range(centre.x()).map(move |x| SectorId::new(x, y)))
+}
+
+/// Whether sector `id` is within `radius` of `centre`.
+pub fn sector_within(id: SectorId, centre: SectorId, radius: u32) -> bool {
+    id.x().abs_diff(centre.x()) <= radius && id.y().abs_diff(centre.y()) <= radius
+}
 
 /// The game data the host reads maps from.
 #[derive(Resource, Clone)]
@@ -87,6 +101,53 @@ pub fn spawn_npcs(
             let spawn = look.spawn(net_id, EntityKind::Npc { prototype }, position);
             outbox.0.extend(players.iter().map(|&p| (p, spawn.clone())));
         }
+    }
+}
+
+/// Keeps the host's sectors in step with the PCs. It loads the sectors within [`SECTOR_RADIUS`]
+/// of each PC and those of every walking PC's remaining path, and unloads sectors that no PC is
+/// within [`KEEP_RADIUS`] of and no path crosses. A sector's NPCs go with it: every player is
+/// told they are gone, and they spawn again when the sector loads again ([`spawn_npcs`]).
+#[allow(clippy::too_many_arguments)]
+pub fn stream_sectors(
+    mut commands: Commands,
+    vfs: Option<Res<SimVfs>>,
+    mut map: ResMut<LoadedMap>,
+    mut populated: ResMut<PopulatedSectors>,
+    session: Res<Session>,
+    mut outbox: ResMut<Outbox>,
+    pcs: Query<(&Position, Option<&crate::Walking>), With<PlayerControlled>>,
+    npcs: Query<(Entity, &NetId, &Position), With<Npc>>,
+) {
+    if map.name.is_none() {
+        return;
+    }
+    let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
+    let vfs = vfs_guard.as_deref();
+    let mut path_sectors = BTreeSet::new();
+    for (&Position(at), walking) in &pcs {
+        map.load_around(vfs, at);
+        for t in walking.into_iter().flat_map(|w| w.steps.iter()) {
+            path_sectors.insert(t.sector());
+        }
+    }
+    for &id in &path_sectors {
+        map.load_sector(vfs, id);
+    }
+    let centres: Vec<SectorId> = pcs.iter().map(|(p, _)| p.0.sector()).collect();
+    let gone = map.unload_unless(|id| path_sectors.contains(&id) || centres.iter().any(|&c| sector_within(id, c, KEEP_RADIUS)));
+    if gone.is_empty() {
+        return;
+    }
+    let players: Vec<PlayerId> = session.players.iter().filter(|(_, s)| matches!(s, SessionPlayer::InWorld(_))).map(|(&p, _)| p).collect();
+    for id in &gone {
+        populated.0.remove(id);
+    }
+    let mut dropped: Vec<(NetId, Entity)> = npcs.iter().filter(|(_, _, p)| gone.contains(&p.0.sector())).map(|(e, &id, _)| (id, e)).collect();
+    dropped.sort();
+    for (net_id, entity) in dropped {
+        commands.entity(entity).despawn();
+        outbox.0.extend(players.iter().map(|&p| (p, LedgerDelta::Despawn { net_id })));
     }
 }
 
@@ -165,33 +226,43 @@ impl LoadedMap {
 
     /// Loads the sectors within [`SECTOR_RADIUS`] of `at` that are not loaded or known absent.
     pub fn load_around(&mut self, vfs: Option<&Vfs>, at: TileLoc) {
+        for id in sectors_near(at.sector(), SECTOR_RADIUS) {
+            self.load_sector(vfs, id);
+        }
+    }
+
+    /// Loads sector `id` unless it is loaded or known absent.
+    pub fn load_sector(&mut self, vfs: Option<&Vfs>, id: SectorId) {
         let (Some(vfs), Some(name)) = (vfs, self.name.clone()) else { return };
-        let centre = at.sector();
-        let range = |c: u32| c.saturating_sub(SECTOR_RADIUS)..=c.saturating_add(SECTOR_RADIUS);
-        for y in range(centre.y()) {
-            for x in range(centre.x()) {
-                let id = SectorId::new(x, y);
-                if self.sectors.contains_key(&id) || self.absent.contains(&id) {
-                    continue;
-                }
-                let path = format!("maps/{name}/{}", id.file_name());
-                if !vfs.exists(&path) {
-                    self.absent.insert(id);
-                    continue;
-                }
-                match vfs.read(&path).map_err(|e| e.to_string()).and_then(|d| Sector::parse(&d).map_err(|e| e.to_string())) {
-                    Ok(sector) => {
-                        self.blocking.add(&sector.objects, &self.prototypes);
-                        self.blocking.add(self.mobiles.get(&id).into_iter().flatten(), &self.prototypes);
-                        self.sectors.insert(id, sector);
-                    }
-                    Err(e) => {
-                        self.errors.push(format!("{path}: {e}"));
-                        self.absent.insert(id);
-                    }
-                }
+        if self.sectors.contains_key(&id) || self.absent.contains(&id) {
+            return;
+        }
+        let path = format!("maps/{name}/{}", id.file_name());
+        if !vfs.exists(&path) {
+            self.absent.insert(id);
+            return;
+        }
+        match vfs.read(&path).map_err(|e| e.to_string()).and_then(|d| Sector::parse(&d).map_err(|e| e.to_string())) {
+            Ok(sector) => {
+                self.blocking.add(&sector.objects, &self.prototypes);
+                self.blocking.add(self.mobiles.get(&id).into_iter().flatten(), &self.prototypes);
+                self.sectors.insert(id, sector);
+            }
+            Err(e) => {
+                self.errors.push(format!("{path}: {e}"));
+                self.absent.insert(id);
             }
         }
+    }
+
+    /// Unloads every loaded sector `keep` refuses, with what its objects block. Returns them.
+    pub fn unload_unless(&mut self, keep: impl Fn(SectorId) -> bool) -> Vec<SectorId> {
+        let gone: Vec<SectorId> = self.sectors.keys().filter(|&&id| !keep(id)).copied().collect();
+        for id in &gone {
+            self.sectors.remove(id);
+            self.blocking.remove_sector(*id);
+        }
+        gone
     }
 
     /// The tile blocking mask at `at`: `None` when its sector is not loaded or has no mask. The
@@ -741,5 +812,76 @@ mod tests {
         let deltas = sim.take_deltas();
         assert!(deltas.iter().any(|(p, d)| p.0 == 9 && matches!(d, LedgerDelta::Spawn { net_id, .. } if *net_id == npc)), "{deltas:?}");
         assert_eq!(deltas.iter().filter(|(p, d)| p.0 == 7 && matches!(d, LedgerDelta::Spawn { kind: EntityKind::Npc { .. }, .. })).count(), 0, "not again");
+    }
+
+    /// A map 8 sectors wide with a file for each of the sectors (0..8, 1), an NPC in sector
+    /// (1, 1) at (80, 80).
+    fn write_wide_map(dir: &Path) {
+        use arcanum_formats::object::Value;
+        use arcanum_formats::test_util::ObjectBuilder;
+        let folder = dir.join("maps").join(MAP);
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut prp = Vec::new();
+        for v in [7u32, 1] {
+            prp.extend(v.to_le_bytes());
+        }
+        for v in [512u64, 256] {
+            prp.extend(v.to_le_bytes());
+        }
+        std::fs::write(folder.join("map.prp"), prp).unwrap();
+        for x in 0..8 {
+            std::fs::write(folder.join(SectorId::new(x, 1).file_name()), SectorBuilder::new().build()).unwrap();
+        }
+        let at = Value::Int64(Some(80 | (80i64 << 32)));
+        std::fs::write(folder.join("G_A.mob"), ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at).build()).unwrap();
+    }
+
+    fn loaded(sim: &SimApp) -> Vec<u32> {
+        let mut xs: Vec<u32> = sim.app.world().resource::<LoadedMap>().sectors.keys().map(|id| id.x()).collect();
+        xs.sort();
+        xs
+    }
+
+    #[test]
+    fn sectors_follow_the_pcs_and_npcs_go_and_come_back_with_theirs() {
+        let dir = tempfile::tempdir().unwrap();
+        write_wide_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", t(70, 80))]));
+        assert_eq!(loaded(&sim), vec![0, 1, 2]);
+        sim.take_deltas();
+        // The PC is put three sectors on: the far side loads, sectors 0 and 1 go, and with
+        // sector 1 its NPC.
+        let set_x = |sim: &mut SimApp, x: u32| {
+            let world = sim.app.world_mut();
+            let mut q = world.query_filtered::<&mut Position, bevy_ecs::query::With<PlayerControlled>>();
+            q.single_mut(world).unwrap().0 = t(x, 80);
+        };
+        set_x(&mut sim, 4 * 64 + 10);
+        sim.update();
+        assert_eq!(loaded(&sim), vec![2, 3, 4, 5], "kept within two, loaded within one");
+        let deltas = sim.take_deltas();
+        assert!(deltas.iter().any(|(p, d)| p.0 == 7 && matches!(d, LedgerDelta::Despawn { .. })), "{deltas:?}");
+        let world = sim.app.world_mut();
+        assert_eq!(world.query::<&Npc>().iter(world).count(), 0);
+        // Back again: the NPC is spawned again.
+        set_x(&mut sim, 70);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::Spawn { kind: EntityKind::Npc { .. }, position, .. } if *position == t(80, 80))), "{deltas:?}");
+        assert_eq!(loaded(&sim), vec![0, 1, 2, 3], "3 is still within two");
+    }
+
+    #[test]
+    fn a_path_into_sectors_not_loaded_yet_is_checked_against_them() {
+        let dir = tempfile::tempdir().unwrap();
+        write_wide_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", t(120, 80))]));
+        assert_eq!(loaded(&sim), vec![0, 1, 2]);
+        sim.take_deltas();
+        // To (200, 80), in sector 3.
+        send_move(&mut sim, 7, 1, &row(80, 120, 200));
+        sim.update();
+        assert_eq!(synced(&sim.take_deltas(), 7).map(|s| s.destination()), Some(t(200, 80)), "accepted");
+        assert!(loaded(&sim).contains(&3));
     }
 }

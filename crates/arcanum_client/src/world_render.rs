@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use arcanum_formats::art_id::{ArtId, ArtIndex};
 use arcanum_formats::map::{SECTOR_TILES as SECTOR_SIZE, SectorId, TileLoc};
 use arcanum_formats::object::{TYPE_CONTAINER, TYPE_GENERIC, TYPE_PORTAL, TYPE_SCENERY, TYPE_WALL, TYPE_WEAPON};
-use arcanum_sim::{LoadedMap, object_location};
+use arcanum_sim::{KEEP_RADIUS, LoadedMap, object_location, sector_within};
 use bevy::image::{ImageFilterMode, ImageSampler};
 use bevy::prelude::*;
 
@@ -34,7 +34,7 @@ impl Plugin for WorldRenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(AppState::InGame), enter_world)
             .add_systems(OnExit(AppState::InGame), leave_world)
-            .add_systems(Update, (load_sectors, draw_sectors, show_tiles, follow_pc).chain().run_if(in_state(AppState::InGame)));
+            .add_systems(Update, (load_sectors, drop_far_sectors, draw_sectors, show_tiles, follow_pc).chain().run_if(in_state(AppState::InGame)));
     }
 }
 
@@ -61,7 +61,7 @@ pub struct ClientMap {
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroundTile(pub TileLoc);
 
-/// A wall, portal or scenery object from a sector.
+/// A wall, portal, scenery, container or item object from the map.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MapObject {
     pub location: TileLoc,
@@ -193,6 +193,31 @@ fn load_sectors(mut client: ResMut<ClientMap>, map: Res<LocalMap>, pc: Res<Local
     client.map.load_around(Some(&vfs), at);
     for e in &client.map.errors[before.1..] {
         warn!("map: {e}");
+    }
+}
+
+/// Unloads the sectors the local PC is not within [`KEEP_RADIUS`] of, and despawns their tile
+/// and object sprites.
+fn drop_far_sectors(
+    mut commands: Commands,
+    mut client: ResMut<ClientMap>,
+    pc: Res<LocalPc>,
+    sprites: Query<(Entity, Option<&GroundTile>, Option<&MapObject>)>,
+) {
+    let Some((_, at)) = pc.0 else { return };
+    let centre = at.sector();
+    if client.map.sectors.keys().all(|&id| sector_within(id, centre, KEEP_RADIUS)) {
+        return;
+    }
+    let gone: HashSet<SectorId> = client.map.unload_unless(|id| sector_within(id, centre, KEEP_RADIUS)).into_iter().collect();
+    for id in &gone {
+        client.drawn.remove(id);
+    }
+    for (entity, tile, object) in &sprites {
+        let loc = tile.map(|t| t.0).or(object.map(|o| o.location));
+        if loc.is_some_and(|l| gone.contains(&l.sector())) {
+            commands.entity(entity).despawn();
+        }
     }
 }
 
@@ -414,5 +439,32 @@ mod tests {
         assert_eq!(object_frame(ArtId((4 << 28) | (5 << 14))), 5);
         assert_eq!(object_frame(ArtId((3 << 28) | (31 << 14) | (7 << 11))), 31);
         assert_eq!(facade_frame(ArtId((0xb << 28) | (2 << 1))), 2);
+    }
+
+    #[test]
+    fn sectors_the_pc_left_are_dropped_with_their_sprites() {
+        use arcanum_formats::sector::Sector;
+        use arcanum_formats::test_util::SectorBuilder;
+        let sector = Sector::parse(&SectorBuilder::new().build()).unwrap();
+        let mut client = ClientMap::default();
+        for x in 0..6 {
+            client.map.sectors.insert(SectorId::new(x, 1), sector.clone());
+            client.drawn.insert(SectorId::new(x, 1));
+        }
+        let mut app = App::new();
+        app.insert_resource(client).insert_resource(LocalPc(Some((arcanum_sim::NetId(0), t(5 * 64 + 1, 70)))));
+        let near = app.world_mut().spawn(GroundTile(t(4 * 64, 70))).id();
+        let far = app.world_mut().spawn(GroundTile(t(64, 70))).id();
+        let far_object = app.world_mut().spawn(MapObject { location: t(2 * 64 + 5, 70), object_type: TYPE_SCENERY }).id();
+        app.add_systems(Update, drop_far_sectors);
+        app.update();
+        let client = app.world().resource::<ClientMap>();
+        let mut kept: Vec<u32> = client.map.sectors.keys().map(|id| id.x()).collect();
+        kept.sort();
+        assert_eq!(kept, vec![3, 4, 5]);
+        assert_eq!(client.drawn.len(), 3);
+        assert!(app.world().get_entity(near).is_ok());
+        assert!(app.world().get_entity(far).is_err());
+        assert!(app.world().get_entity(far_object).is_err());
     }
 }

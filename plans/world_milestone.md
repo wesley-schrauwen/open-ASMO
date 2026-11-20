@@ -246,7 +246,8 @@ Not done, or done differently from the plan:
 - **Tile masks only.** `LoadedMap::tile_mask_blocked` reads the sectors' tile blocking masks;
   object blocking is not decoded (`TODO.md` → World). (Object blocking came after step 8; see
   "Object blocking" below.)
-- **No streaming:** sectors load when a PC spawns and are never unloaded (`TODO.md` → World).
+- **No streaming:** sectors load when a PC spawns and are never unloaded. (Done later: "Sector
+  streaming" below.)
 - **The save is not updated from the entities.** Positions in the save are the start
   positions; once PCs move (step 4's movement), the save must be written from the entities.
 - **Pathfinding and movement validation** are the rest of step 4, below.
@@ -639,6 +640,24 @@ Not done:
   `.mob` ones draw after.
 - **Container frames:** 2-frame container art (frame 0 larger) is assumed to be closed and
   open; not traced.
+
+## Sector streaming (after ground objects)
+
+- **Host** (`stream_sectors`, every tick): loads the sectors within one of each PC (a 3 x 3
+  block) and those every walking PC's remaining path crosses. It unloads sectors no PC is within
+  two of (`KEEP_RADIUS`, so walking back and forth over a border does not reload) and no path
+  crosses. `apply_moves` loads the sectors a requested path crosses before checking it, so a
+  client planning near the edge of its loaded block is not corrected for it.
+- **NPCs go with their sector:** despawned (every player gets `Despawn`) and spawned again,
+  with new net ids, when it loads again (`PopulatedSectors`).
+- **Blocking** is dropped with its sector (`ObjectBlocking::remove_sector`).
+- **Client** (`drop_far_sectors`): unloads sectors its PC is not within two of, and despawns
+  their tile and object sprites; it already loaded new ones as the PC moved.
+- **Checked on the real start map:** the PC walked about 60 tiles to (92900, 82640), across two
+  sector borders, with no correction and no map errors.
+
+Not done: NPC state survives nothing (it never changes yet); the depth key's origin stays at
+the first sector (`TODO.md` → World).
 
 ## Builder's calls (proposed by Claude, not owner decisions)
 

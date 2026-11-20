@@ -131,6 +131,13 @@ impl ObjectBlocking {
         }
     }
 
+    /// Forgets what the objects of sector `id` block.
+    pub fn remove_sector(&mut self, id: arcanum_formats::map::SectorId) {
+        self.tiles.retain(|t| t.sector() != id);
+        self.edges.retain(|t, _| t.sector() != id);
+        self.diagonal_edges.retain(|t, _| t.sector() != id);
+    }
+
     /// Whether an object blocks the edge of `at` in direction `dir`, for a diagonal step or not.
     pub fn edge_blocked(&self, at: TileLoc, dir: usize, diagonal: bool) -> bool {
         let has = |m: &HashMap<TileLoc, u8>| m.get(&at).is_some_and(|e| e >> dir & 1 == 1);
