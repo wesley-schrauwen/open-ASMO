@@ -24,6 +24,10 @@ pub enum PlayerIntent {
     /// host waits while the PC walks there on move `seq` (or the last one) and drops the request
     /// if it stops short or a newer move comes.
     UsePortal { door: crate::MapObjectId, seq: u32 },
+    /// A change to the player's own PC's sheet from the character screen ([`crate::sheet`]).
+    /// `seq` counts up per client; the host answers each with a
+    /// [`SheetUpdate`](crate::LedgerDelta::SheetUpdate) carrying it.
+    Sheet { seq: u32, request: crate::SheetRequest },
     /// The number of the last state sync the client applied. Sent unreliably, about twice a
     /// second; a client far behind gets a [`Resync`](crate::LedgerDelta::Resync).
     SyncAck { number: u32 },

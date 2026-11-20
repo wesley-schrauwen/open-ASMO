@@ -107,6 +107,21 @@ fn main() {
         app.add_systems(OnEnter(AppState::InGame), move |mut commands: Commands| commands.insert_resource(arcanum_client::actors::DebugClick { at, frames: 90 }));
     }
 
+    // Debugging aid: `DEBUG_ARCANUM_PANEL=character` opens the character screen once the PC's
+    // sheet is in.
+    if std::env::var("DEBUG_ARCANUM_PANEL").is_ok_and(|v| v == "character") {
+        app.add_systems(
+            Update,
+            (|sheet: Res<arcanum_client::pc_sheet::SheetHost>, mut panel: ResMut<arcanum_client::character_editor::CharacterPanel>, mut done: Local<bool>| {
+                if !*done && sheet.sheet().is_some() {
+                    *done = true;
+                    panel.open = true;
+                }
+            })
+            .run_if(in_state(AppState::InGame)),
+        );
+    }
+
     // Debugging aid: `DEBUG_ARCANUM_LOAD=newest` loads the newest save at start, as Load Game would.
     if std::env::var("DEBUG_ARCANUM_LOAD").is_ok_and(|v| v == "newest") {
         app.add_systems(

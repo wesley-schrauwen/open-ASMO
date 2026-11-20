@@ -16,6 +16,11 @@
 //! Back returns to character creation with the character kept; Next keeps the finished
 //! character and loads the game (the original shows one more screen, window 15, first). The
 //! skills, tech and spells tabs on the right are not built yet.
+//!
+//! In game the same screen ([`CharacterPanel`]) opens between the in-game bars from the top
+//! bar's character button, without the menu frame. Its changes go through the host
+//! ([`SheetHost`], [`arcanum_sim::sheet`]): minus goes back to the values at opening, closing
+//! (the button again, or Escape) keeps them.
 
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
@@ -24,6 +29,8 @@ use bevy::ui_widgets::{Activate, ActivateOnPress, Button};
 use crate::art_loader::ArtFrames;
 use crate::audio::MenuSounds;
 use crate::character_host::CharacterHost;
+use crate::pc_sheet::SheetHost;
+use arcanum_sim::SheetRequest;
 use crate::create_character::CreationData;
 use arcanum_rules::{CharacterAction, Message, PRIMARY_STATS, Pool, RESISTANCES, XP_FOR_LEVEL_2};
 use crate::fonts::{ArcanumFonts, UiFont};
@@ -116,7 +123,13 @@ impl Plugin for CharacterEditorPlugin {
         })
         .add_systems(OnEnter(AppState::CharacterEditor), (crate::create_character::load_creation_data, build_screen).chain())
         .add_systems(Update, show_values.run_if(in_state(AppState::CharacterEditor)))
-        .add_observer(on_activate);
+        .init_resource::<CharacterPanel>()
+        .add_systems(OnEnter(AppState::InGame), crate::create_character::load_creation_data)
+        .add_systems(OnExit(AppState::InGame), |mut panel: ResMut<CharacterPanel>| *panel = CharacterPanel::default())
+        .add_systems(Update, (show_panel, show_panel_values).chain().run_if(in_state(AppState::InGame)))
+        .add_systems(PreUpdate, close_panel_on_escape.run_if(in_state(AppState::InGame)).after(bevy::input::InputSystems))
+        .add_observer(on_activate)
+        .add_observer(on_hud_button);
     }
 }
 
@@ -145,18 +158,141 @@ fn build_screen(mut commands: Commands, art: Res<EditorArt>, frame: Res<WindowAr
                 EditorAction::Back,
                 (EditorAction::Next, HoverHelp(7003, "Next Screen")),
             );
-            for (i, &y) in STAT_ROWS.iter().enumerate() {
-                let by = y + 2.0;
-                screen.spawn(button(EditorAction::Stat(LEFT_STATS[i], -1), &art.minus, 170.0, by));
-                screen.spawn(button(EditorAction::Stat(LEFT_STATS[i], 1), &art.plus, 224.0, by));
-                screen.spawn(button(EditorAction::Stat(RIGHT_STATS[i], -1), &art.minus, 313.0, by));
-                screen.spawn(button(EditorAction::Stat(RIGHT_STATS[i], 1), &art.plus, 367.0, by));
-            }
-            screen.spawn(button(EditorAction::HitPoints(-1), &art.minus, 409.0, 144.0));
-            screen.spawn(button(EditorAction::HitPoints(1), &art.plus, 465.0, 144.0));
-            screen.spawn(button(EditorAction::Fatigue(-1), &art.minus, 409.0, 214.0));
-            screen.spawn(button(EditorAction::Fatigue(1), &art.plus, 465.0, 214.0));
+            spawn_buttons(screen, &art);
         });
+}
+
+/// The +/- buttons of the stats and pools.
+fn spawn_buttons(screen: &mut ChildSpawnerCommands, art: &EditorArt) {
+    for (i, &y) in STAT_ROWS.iter().enumerate() {
+        let by = y + 2.0;
+        screen.spawn(button(EditorAction::Stat(LEFT_STATS[i], -1), &art.minus, 170.0, by));
+        screen.spawn(button(EditorAction::Stat(LEFT_STATS[i], 1), &art.plus, 224.0, by));
+        screen.spawn(button(EditorAction::Stat(RIGHT_STATS[i], -1), &art.minus, 313.0, by));
+        screen.spawn(button(EditorAction::Stat(RIGHT_STATS[i], 1), &art.plus, 367.0, by));
+    }
+    screen.spawn(button(EditorAction::HitPoints(-1), &art.minus, 409.0, 144.0));
+    screen.spawn(button(EditorAction::HitPoints(1), &art.plus, 465.0, 144.0));
+    screen.spawn(button(EditorAction::Fatigue(-1), &art.minus, 409.0, 214.0));
+    screen.spawn(button(EditorAction::Fatigue(1), &art.plus, 465.0, 214.0));
+}
+
+/// Whether the in-game character screen is open (the top bar's character button toggles it).
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CharacterPanel {
+    pub open: bool,
+}
+
+/// Root of the in-game character screen.
+#[derive(Component)]
+pub struct CharacterPanelScreen;
+
+/// The refusal message on the in-game screen, shown over the bottom bar's message box.
+#[derive(Component)]
+pub struct PanelMessage;
+
+/// Opens or closes the in-game character screen when [`CharacterPanel`] changes, telling the
+/// host (opening takes the snapshot minus can go back to; closing keeps the changes).
+#[allow(clippy::too_many_arguments)]
+fn show_panel(
+    mut commands: Commands,
+    panel: Res<CharacterPanel>,
+    art: Res<EditorArt>,
+    data: Option<Res<CreationData>>,
+    mut sheet: ResMut<SheetHost>,
+    mut message: ResMut<HelpMessage>,
+    roots: Query<Entity, With<CharacterPanelScreen>>,
+    fonts: Option<Res<ArcanumFonts>>,
+) {
+    if !panel.is_changed() {
+        return;
+    }
+    let rules = data.as_ref().map(|d| d.rules.clone()).unwrap_or_default();
+    message.0 = None;
+    if !panel.open {
+        for root in &roots {
+            commands.entity(root).despawn();
+        }
+        let _ = sheet.request(&rules, SheetRequest::Close);
+        return;
+    }
+    if !roots.is_empty() {
+        return;
+    }
+    let _ = sheet.request(&rules, SheetRequest::Open);
+    let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
+    commands
+        .spawn((
+            CharacterPanelScreen,
+            DespawnOnExit(AppState::InGame),
+            bevy::picking::Pickable::IGNORE,
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(0.0),
+                left: Val::Percent(50.0),
+                margin: UiRect::left(crate::menu_window::px(-400.0)),
+                width: crate::menu_window::px(800.0),
+                height: crate::menu_window::px(600.0),
+                ..default()
+            },
+        ))
+        .with_children(|screen| {
+            screen.spawn((ImageNode::new(art.background.clone()), at(rect(Vec2::new(0.0, TOP_BAR_HEIGHT), Vec2::new(800.0, 400.0)))));
+            spawn_buttons(screen, &art);
+            // Assumed: the bottom bar's message box (its black window) shows the refusal.
+            screen.spawn((bevy::picking::Pickable::IGNORE, Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..at(rect(Vec2::new(200.0, 500.0), Vec2::new(400.0, 40.0))) })).with_children(|b| {
+                let mut text = b.spawn((PanelMessage, TextColor(crate::menu_window::INFO_COLOR)));
+                fonts.insert_text(&mut text, "", UiFont::Small);
+            });
+        });
+}
+
+/// Redraws the in-game screen's values when the sheet changes, and its refusal message.
+#[allow(clippy::too_many_arguments)]
+fn show_panel_values(
+    mut commands: Commands,
+    sheet: Res<SheetHost>,
+    data: Option<Res<CreationData>>,
+    added: Query<(), Added<CharacterPanelScreen>>,
+    contents: Query<Entity, With<EditorContent>>,
+    roots: Query<Entity, With<CharacterPanelScreen>>,
+    fonts: Option<Res<ArcanumFonts>>,
+    message: Res<HelpMessage>,
+    mut texts: Query<(Option<&mut crate::bitmap_text::BitmapText>, Option<&mut Text>), With<PanelMessage>>,
+) {
+    if message.is_changed() {
+        let wanted = message.0.clone().unwrap_or_default();
+        for (bitmap, text) in &mut texts {
+            if let Some(mut b) = bitmap {
+                b.text = wanted.clone();
+            } else if let Some(mut t) = text {
+                t.0 = wanted.clone();
+            }
+        }
+    }
+    let (Some(data), Ok(root), Some(c)) = (data, roots.single(), sheet.sheet()) else { return };
+    if !sheet.is_changed() && added.is_empty() {
+        return;
+    }
+    for old in &contents {
+        commands.entity(old).despawn();
+    }
+    let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
+    draw_values(&mut commands, root, c, &data, &fonts);
+}
+
+/// Escape closes the in-game character screen (before it would leave the game).
+fn close_panel_on_escape(mut keys: ResMut<ButtonInput<KeyCode>>, mut panel: ResMut<CharacterPanel>) {
+    if panel.open && keys.clear_just_pressed(KeyCode::Escape) {
+        panel.open = false;
+    }
+}
+
+/// The top bar's character button toggles the screen.
+fn on_hud_button(activate: On<Activate>, buttons: Query<&crate::hud::HudAction>, mut panel: ResMut<CharacterPanel>) {
+    if buttons.get(activate.entity) == Ok(&crate::hud::HudAction::Character) {
+        panel.open = !panel.open;
+    }
 }
 
 /// (Re)draws every value when the character changes or the screen opens.
@@ -179,7 +315,11 @@ fn show_values(
         commands.entity(old).despawn();
     }
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-    let c = host.sheet();
+    draw_values(&mut commands, root, host.sheet(), &data, &fonts);
+}
+
+/// Spawns every value of `c` under `root` (an 800x600 screen).
+fn draw_values(commands: &mut Commands, root: Entity, c: &arcanum_rules::CharacterSheet, data: &CreationData, fonts: &ArcanumFonts) {
     let rules = &data.rules;
     let label = |id: u32, fallback: &str| data.charedit.get(id).unwrap_or(fallback).to_string();
     let stat_name = |id: u32| data.stats.get(id).unwrap_or("?").to_string();
@@ -250,12 +390,26 @@ fn on_activate(
     data: Option<Res<CreationData>>,
     mut message: ResMut<HelpMessage>,
     sounds: Option<Res<MenuSounds>>,
+    state: Res<State<AppState>>,
+    mut sheet: ResMut<SheetHost>,
 ) {
     let Ok(&action) = actions.get(activate.entity) else { return };
     if let Some(sounds) = &sounds {
         sounds.play_button_press(&mut commands);
     }
     let rules = data.as_ref().map(|d| d.rules.clone()).unwrap_or_default();
+    let change = |d: i32, raise, lower| if d > 0 { raise } else { lower };
+    if *state.get() == AppState::InGame {
+        let request = match action {
+            EditorAction::Stat(i, d) if i < PRIMARY_STATS => change(d, CharacterAction::RaiseStat(i), CharacterAction::LowerStat(i)),
+            EditorAction::HitPoints(d) => CharacterAction::AdjustPool(Pool::HitPoints, d),
+            EditorAction::Fatigue(d) => CharacterAction::AdjustPool(Pool::Fatigue, d),
+            _ => return,
+        };
+        let result = sheet.request(&rules, SheetRequest::Action(request));
+        message.0 = result.err().map(|e| refusal_text(e, data.as_deref()));
+        return;
+    }
     let result = match action {
         EditorAction::Back => {
             next_state.set(AppState::CreateCharacter);
@@ -272,12 +426,15 @@ fn on_activate(
         EditorAction::HitPoints(d) => host.apply(&rules, CharacterAction::AdjustPool(Pool::HitPoints, d)),
         EditorAction::Fatigue(d) => host.apply(&rules, CharacterAction::AdjustPool(Pool::Fatigue, d)),
     };
-    message.0 = result.err().map(|e| {
-        let text = match (e.message(), data.as_ref()) {
-            (Some(Message::Charedit(id)), Some(d)) => d.charedit.get(id),
-            (Some(Message::MainMenu(id)), Some(d)) => d.menu.get(id),
-            _ => None,
-        };
-        text.unwrap_or("That cannot be changed.").to_string()
-    });
+    message.0 = result.err().map(|e| refusal_text(e, data.as_deref()));
+}
+
+/// The original's message for a refused change.
+fn refusal_text(e: arcanum_rules::Refusal, data: Option<&CreationData>) -> String {
+    let text = match (e.message(), data) {
+        (Some(Message::Charedit(id)), Some(d)) => d.charedit.get(id),
+        (Some(Message::MainMenu(id)), Some(d)) => d.menu.get(id),
+        _ => None,
+    };
+    text.unwrap_or("That cannot be changed.").to_string()
 }

@@ -916,6 +916,30 @@ Not done:
   timed event does (0x5526f0); a time earlier than the last drawing redraws at once.
 - **Checked:** a new game at 15:00 shows the sun just left of the pointer.
 
+## The character screen in game (after the clock)
+
+- **The original** (Arcanum.exe 0x5597c0, mode 1; the top bar's character button or `C`):
+  opening takes a snapshot of the stats, skills and spells; minus can go back down to it
+  (charedit 19 below it); changes take effect at once, derived stats included; closing keeps
+  everything, with no accept or cancel; the game does not pause; the button toggles it, and
+  other panels close it. In multiplayer each change goes to the host (message 0x7f).
+- **Host** (`arcanum_sim::sheet`): `PlayerIntent::Sheet { seq, request }` with `Open`,
+  `Action` (stats and pools only) and `Close`. Opening and closing fold the sheet's draft in,
+  the same accept creation uses. Every request gets a `SheetUpdate` with its number; the
+  owner also gets one with the PC's spawn. Changed gauges go to every player (`PcStatus`), a
+  changed speed too (`Speed`: raising dexterity speeds the walk, and the party's pace if the PC
+  leads). The save keeps the sheet.
+- **Client:** `pc_sheet::SheetHost` previews each change at once and replays unanswered ones
+  on the host's copy, as character creation does. The screen is creation's editor (values and
+  buttons shared) drawn in the 800x400 band between the bars; clicks there do not walk.
+- **Builder's calls:** Escape closes the screen (the original's Escape path was not found); a
+  refusal shows over the bottom bar's message box (assumed, the box is not built).
+- **Checked:** a headless test spends a hit point through the host, takes it back and spends
+  it again, then closes with Escape. A real-data run shows the screen between the bars.
+
+Not done: the skills, tech and spells tabs; the portrait and the party arrows; closing by
+opening another panel (there are none yet); the `C` key.
+
 ## Builder's calls (proposed by Claude, not owner decisions)
 
 - `arcanum_sim` uses `bevy_ecs` (and `bevy_app` for scheduling) with no rendering, audio or

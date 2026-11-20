@@ -82,6 +82,7 @@ impl Plugin for SimBridgePlugin {
         app.init_resource::<HostSettings>()
             .init_resource::<LocalPlayer>()
             .init_resource::<CharacterHost>()
+            .init_resource::<crate::pc_sheet::SheetHost>()
             .init_resource::<LocalPc>()
             .init_resource::<LocalMap>()
             .add_systems(OnEnter(AppState::MainMenu), stop_host)
@@ -117,6 +118,7 @@ pub fn start_host(world: &mut World) {
     world.insert_resource(HostLink(link));
     // Anything the old CharacterHost had in flight was for a host that is gone.
     world.insert_resource(CharacterHost::default());
+    world.insert_resource(crate::pc_sheet::SheetHost::default());
     world.insert_resource(LocalPc::default());
     world.insert_resource(LocalMap::default());
     world.insert_resource(ActorDeltas::default());
@@ -188,6 +190,7 @@ pub fn boot_save(world: &mut World, path: &std::path::Path) {
     }
     world.insert_resource(HostLink(Box::new(link)));
     world.insert_resource(CharacterHost::default());
+    world.insert_resource(crate::pc_sheet::SheetHost::default());
     world.insert_resource(LocalPc::default());
     world.insert_resource(LocalMap::default());
     world.insert_resource(ActorDeltas::default());
@@ -208,9 +211,9 @@ fn share_rules(data: Option<Res<CreationData>>, host: Option<NonSendMut<LocalHos
     }
 }
 
-fn send_intents(mut character: ResMut<CharacterHost>, link: Option<Res<HostLink>>) {
+fn send_intents(mut character: ResMut<CharacterHost>, mut sheet: ResMut<crate::pc_sheet::SheetHost>, link: Option<Res<HostLink>>) {
     let Some(link) = link else { return };
-    for intent in character.take_outgoing() {
+    for intent in character.take_outgoing().into_iter().chain(sheet.take_outgoing()) {
         if let Err(e) = link.0.send_intent(intent) {
             warn!("cannot reach the host: {e}");
         }
@@ -229,9 +232,11 @@ fn run_host(host: Option<NonSendMut<LocalHostRes>>, mut reported: Local<Option<S
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn receive_deltas(
     link: Option<Res<HostLink>>,
     mut character: ResMut<CharacterHost>,
+    mut sheet: ResMut<crate::pc_sheet::SheetHost>,
     mut pc: ResMut<LocalPc>,
     mut map: ResMut<LocalMap>,
     mut actors: Option<ResMut<ActorDeltas>>,
@@ -253,6 +258,7 @@ fn receive_deltas(
     };
     for delta in &deltas {
         character.receive(rules, delta);
+        sheet.receive(rules, delta);
         if let LedgerDelta::EnterMap { map: name } = delta {
             map.0 = Some(name.clone());
         }
