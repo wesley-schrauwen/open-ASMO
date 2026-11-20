@@ -573,6 +573,45 @@ are the original's walking (pathfinder 0x41f3c0, tile check 0x4d7110, edge check
 Not done: tile art flags (probably water), the lock and key check, doors opening and closing,
 and NPCs that cannot open doors (`TODO.md` → World).
 
+## NPCs stand on the map (after object blocking)
+
+- **The map's `.mob` files.** `LoadedMap::open` reads the map's `G_<guid>.mob` objects into
+  `mobiles`, by sector and in file-name order. It leaves out objects carried or inside a
+  container (`OF_INVENTORY` 0x1000), destroyed or off. The start map has 1984 such objects.
+  Containers among them block their tile (`ObjectBlocking`).
+- **NPC entities on the host.** `spawn_npcs` gives each NPC of a newly loaded sector a `NetId`,
+  `Npc { prototype }`, `Position` and `Appearance`. Its art is its own or its prototype's;
+  speed is a placeholder 8, as NPCs do not move yet. Each NPC goes to every player in the
+  world as `Spawn { kind: EntityKind::Npc { prototype } }`, and a player who joins later gets
+  the NPCs already there. Order is by sector and file, so two hosts booted from one save give
+  the same net ids. Around the start, 34 NPCs spawn.
+- **Monster and unique NPC art** (`ArtIndex::path`, from the exe):
+  - Monster (0xC): name from `art/monster/monster.mes` by bits 23-27, armour bits 20-22
+    (`xx` for animation 24). Path `art/monster/<name>/<name><armour><x|s><weapon><anim>.art`.
+  - Unique NPC (0xD): name from `art/unique_npc/unique_npc.mes` by bits 20-27, no armour.
+    Path `art/unique_npc/<name>/<name><x|s><weapon><anim>.art`.
+  - Rotation, animation, s/x flag and weapon use the critter bits.
+  - Every NPC in every map now resolves to art that exists (real-data test): 1009 critters,
+    1975 monsters, 787 unique NPCs, 21 drawn as scenery.
+- **The client draws NPCs** as actors.
+  - Standing, an NPC shows the animation and frame its art id names, so the dying gnome lies
+    on the ground. Walking would play the walk.
+  - Two bodies have no standing art (`dgnuw`, 121 NPCs; `air`, 1). The client holds their walk
+    art.
+- **Checked by eye on the start map:** the dying gnome lies beside the PC on his blood, and a
+  robed human (probably Virgil) stands two tiles down.
+
+Not done:
+
+- **NPCs do not move,** and their speed and stats are not read.
+- **Containers and items on the ground are not drawn.** The art paths of types 6 (item) and 7
+  (container) are not decoded; the agent looking them up stopped on a usage limit.
+- **The original's animation fallback** for monsters and unique NPCs (remap tables at
+  0x5a106c-0x5a1150, masks from directory scans) is not reproduced; only the missing-stand case
+  is handled.
+- **Rotation for monsters and unique NPCs** is assumed to follow critters (not verified).
+- **Changing maps** would keep the old `PopulatedSectors` (one map so far).
+
 ## Builder's calls (proposed by Claude, not owner decisions)
 
 - `arcanum_sim` uses `bevy_ecs` (and `bevy_app` for scheduling) with no rendering, audio or

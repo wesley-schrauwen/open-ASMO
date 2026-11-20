@@ -14,7 +14,7 @@ use std::sync::{Arc, RwLock};
 
 use arcanum_formats::art_id::ArtId;
 use arcanum_formats::map::{MapProperties, SectorId, TileLoc};
-use arcanum_formats::object::{Object, Prototypes};
+use arcanum_formats::object::{Object, Prototypes, TYPE_NPC};
 use arcanum_formats::sector::Sector;
 use arcanum_rules::{CharacterSheet, MALE};
 use arcanum_vfs::Vfs;
@@ -47,6 +47,49 @@ impl Appearance {
     }
 }
 
+/// A non-player character from the map's `.mob` files, made from this prototype.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Npc {
+    pub prototype: u32,
+}
+
+/// Sectors whose NPCs have been spawned.
+#[derive(Resource, Debug, Default)]
+pub struct PopulatedSectors(pub BTreeSet<SectorId>);
+
+/// The walking speed NPCs are announced with until their stats are read (they do not move yet).
+pub const NPC_SPEED: i32 = 8;
+
+/// Spawns the NPCs of every loaded sector not populated yet, in sector and file order (so two
+/// hosts booted from one save give them the same net ids), and announces each to every player
+/// in the world. Their art is their own or their prototype's.
+pub fn spawn_npcs(
+    mut commands: Commands,
+    map: Res<LoadedMap>,
+    mut populated: ResMut<PopulatedSectors>,
+    mut ids: ResMut<NetIds>,
+    session: Res<Session>,
+    mut outbox: ResMut<Outbox>,
+) {
+    let mut new: Vec<SectorId> = map.sectors.keys().filter(|id| !populated.0.contains(id)).copied().collect();
+    if new.is_empty() {
+        return;
+    }
+    new.sort_by_key(|id| (id.y(), id.x()));
+    let players: Vec<PlayerId> = session.players.iter().filter(|(_, s)| matches!(s, SessionPlayer::InWorld(_))).map(|(&p, _)| p).collect();
+    for id in new {
+        populated.0.insert(id);
+        for object in map.mobiles.get(&id).into_iter().flatten().filter(|o| o.object_type == TYPE_NPC) {
+            let (Some(position), Some(art), Some(prototype)) = (crate::object_location(object), map.prototypes.art_id(object), object.prototype.prototype()) else { continue };
+            let net_id = ids.0.allocate();
+            let look = Appearance { art, speed: NPC_SPEED };
+            commands.spawn((net_id, Npc { prototype }, Position(position), look));
+            let spawn = look.spawn(net_id, EntityKind::Npc { prototype }, position);
+            outbox.0.extend(players.iter().map(|&p| (p, spawn.clone())));
+        }
+    }
+}
+
 /// The player who controls this PC.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlayerControlled(pub PlayerId);
@@ -71,6 +114,10 @@ pub struct LoadedMap {
     pub prototypes: Arc<Prototypes>,
     /// What the loaded sectors' objects block.
     pub blocking: crate::ObjectBlocking,
+    /// The map's mobile objects (`G_<guid>.mob` files: NPCs, containers, items on the ground) by
+    /// sector, in file name order, read at [`LoadedMap::open`]. Objects carried or inside a
+    /// container (flag `INVENTORY`), destroyed or off are left out.
+    pub mobiles: HashMap<SectorId, Vec<Object>>,
 }
 
 impl LoadedMap {
@@ -84,6 +131,7 @@ impl LoadedMap {
             self.prototypes = Arc::new(prototypes);
             self.errors.extend(errors);
         }
+        self.read_mobiles(vfs, name);
         let path = format!("maps/{name}/map.prp");
         if !vfs.exists(&path) {
             return;
@@ -91,6 +139,27 @@ impl LoadedMap {
         match vfs.read(&path).map_err(|e| e.to_string()).and_then(|d| MapProperties::parse(&d).map_err(|e| e.to_string())) {
             Ok(p) => self.properties = Some(p),
             Err(e) => self.errors.push(format!("{path}: {e}")),
+        }
+    }
+
+    /// Reads the map's `.mob` files into [`LoadedMap::mobiles`].
+    fn read_mobiles(&mut self, vfs: &Vfs, name: &str) {
+        let mut files: Vec<String> = vfs.list_dir(&format!("maps/{name}")).unwrap_or_default().into_iter().filter(|p| p.to_ascii_lowercase().ends_with(".mob")).collect();
+        files.sort_by_key(|p| p.to_ascii_lowercase());
+        for path in files {
+            let object = match vfs.read(&path).map_err(|e| e.to_string()).and_then(|d| Object::parse_instance(&d).map_err(|e| e.to_string())) {
+                Ok(o) => o,
+                Err(e) => {
+                    self.errors.push(format!("{path}: {e}"));
+                    continue;
+                }
+            };
+            let flags = self.prototypes.int(&object, "flags").unwrap_or(0);
+            if flags & (crate::OF_INVENTORY | crate::OF_DESTROYED | crate::OF_OFF) != 0 {
+                continue;
+            }
+            let Some(at) = crate::object_location(&object) else { continue };
+            self.mobiles.entry(at.sector()).or_default().push(object);
         }
     }
 
@@ -113,6 +182,7 @@ impl LoadedMap {
                 match vfs.read(&path).map_err(|e| e.to_string()).and_then(|d| Sector::parse(&d).map_err(|e| e.to_string())) {
                     Ok(sector) => {
                         self.blocking.add(&sector.objects, &self.prototypes);
+                        self.blocking.add(self.mobiles.get(&id).into_iter().flatten(), &self.prototypes);
                         self.sectors.insert(id, sector);
                     }
                     Err(e) => {
@@ -169,6 +239,7 @@ pub fn boot_world(
     rules: Res<SimRules>,
     mut clock: ResMut<crate::SyncClock>,
     pcs: Query<(&NetId, &PlayerControlled, &Position, &Appearance)>,
+    npcs: Query<(&NetId, &Npc, &Position, &Appearance)>,
 ) {
     let Some(save) = &world.0 else { return };
     let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
@@ -196,6 +267,11 @@ pub fn boot_world(
         }
         for &(id, other, position, other_look) in &existing {
             outbox.0.push((player, other_look.spawn(id, EntityKind::Pc { player: other }, position)));
+        }
+        let mut npcs: Vec<_> = npcs.iter().collect();
+        npcs.sort_by_key(|n| *n.0);
+        for (&id, npc, &Position(position), look) in npcs {
+            outbox.0.push((player, look.spawn(id, EntityKind::Npc { prototype: npc.prototype }, position)));
         }
         existing.push((net_id, player, saved.position, look));
         // The newcomer learns where everyone is walking from a sync at the end of this tick.
@@ -231,6 +307,16 @@ mod tests {
         let i = 5 * 64 + 3;
         sector.blocked[i / 32] |= 1 << (i % 32);
         std::fs::write(folder.join(SectorId::new(1, 1).file_name()), sector.build()).unwrap();
+        // An NPC at (80, 80) and a chest at (82, 80), one in a pocket (not on the map), and an
+        // NPC in a sector without a file.
+        use arcanum_formats::object::Value;
+        use arcanum_formats::test_util::ObjectBuilder;
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let mob = |name: &str, b: ObjectBuilder| std::fs::write(folder.join(format!("G_{name}.mob")), b.build()).unwrap();
+        mob("A", ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(80, 80)));
+        mob("B", ObjectBuilder::new(arcanum_formats::object::TYPE_CONTAINER).field("current_aid", Value::Int32(0x7000_0000)).field("location", at(82, 80)));
+        mob("C", ObjectBuilder::new(arcanum_formats::object::TYPE_FOOD).field("flags", Value::Int32(crate::OF_INVENTORY)).field("location", at(82, 80)));
+        mob("D", ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(10, 10)));
     }
 
     fn vfs(dir: &Path) -> SimVfs {
@@ -314,7 +400,7 @@ mod tests {
         write_map(dir.path());
         let mut sim = booted(dir.path(), save(&[(1, "A", TileLoc { x: 70, y: 70 }), (2, "B", TileLoc { x: 71, y: 70 })]));
         let deltas = sim.take_deltas();
-        let spawns = |to: u64| deltas.iter().filter(|(p, d)| p.0 == to && matches!(d, LedgerDelta::Spawn { .. })).count();
+        let spawns = |to: u64| deltas.iter().filter(|(p, d)| p.0 == to && matches!(d, LedgerDelta::Spawn { kind: EntityKind::Pc { .. }, .. })).count();
         assert_eq!((spawns(1), spawns(2)), (2, 2), "{deltas:?}");
         let enter = LedgerDelta::EnterMap { map: MAP.into() };
         for to in [1, 2] {
@@ -632,5 +718,28 @@ mod tests {
         }
         let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
         assert_eq!(save.players[&PlayerId(7)].position, stop);
+    }
+
+    #[test]
+    fn npcs_spawn_with_their_sector_and_reach_every_player() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", t(70, 80))]));
+        let deltas = sim.take_deltas();
+        let npc_spawns: Vec<_> = deltas.iter().filter(|(_, d)| matches!(d, LedgerDelta::Spawn { kind: EntityKind::Npc { .. }, .. })).collect();
+        assert_eq!(npc_spawns.len(), 1, "one NPC on the loaded sector: {deltas:?}");
+        let LedgerDelta::Spawn { net_id, position, art, .. } = &npc_spawns[0].1 else { unreachable!() };
+        assert_eq!((*position, *art), (t(80, 80), 0x2800_2000));
+        let map = sim.app.world().resource::<LoadedMap>();
+        assert_eq!(map.mobiles.values().map(Vec::len).sum::<usize>(), 3, "the pocketed food is left out");
+        assert!(map.blocking.tiles.contains(&t(82, 80)), "the chest blocks");
+        assert!(!map.blocking.tiles.contains(&t(80, 80)), "NPCs do not block out of combat");
+        // A player who joins later hears of it too.
+        let npc = *net_id;
+        sim.app.world_mut().resource_mut::<WorldState>().add_player(Some(&crate::StartMap { map: MAP.into(), position: t(72, 80) }), PlayerId(9), CharacterBlueprint { sheet: CharacterSheet { name: "B".into(), ..Default::default() }, gold: 0, items: vec![], prototype: None });
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.iter().any(|(p, d)| p.0 == 9 && matches!(d, LedgerDelta::Spawn { net_id, .. } if *net_id == npc)), "{deltas:?}");
+        assert_eq!(deltas.iter().filter(|(p, d)| p.0 == 7 && matches!(d, LedgerDelta::Spawn { kind: EntityKind::Npc { .. }, .. })).count(), 0, "not again");
     }
 }

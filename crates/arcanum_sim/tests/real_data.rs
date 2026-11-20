@@ -61,9 +61,15 @@ fn a_new_game_boots_on_the_start_map() {
     assert!(map.sectors.contains_key(&start.position.sector()), "the PC's sector");
     assert_eq!(map.sectors.len() + map.absent.len(), 9);
     eprintln!("loaded {} sectors around the start, {} absent", map.sectors.len(), map.absent.len());
+    let mobiles: usize = map.mobiles.values().map(Vec::len).sum();
     let world = sim.app.world_mut();
-    let positions: Vec<TileLoc> = world.query::<&Position>().iter(world).map(|p| p.0).collect();
-    assert_eq!(positions, vec![start.position]);
+    let pcs: Vec<TileLoc> = world.query_filtered::<&Position, bevy_ecs::query::With<arcanum_sim::PlayerControlled>>().iter(world).map(|p| p.0).collect();
+    assert_eq!(pcs, vec![start.position]);
+    let npcs: Vec<(TileLoc, u32)> = world.query::<(&Position, &arcanum_sim::Npc)>().iter(world).map(|(p, n)| (p.0, n.prototype)).collect();
+    eprintln!("{mobiles} mobile objects on the map; {} NPCs round the start: {npcs:?}", npcs.len());
+    // Virgil stands next to the PC, and the dying gnome two tiles down (start-map .mob files).
+    assert!(npcs.iter().any(|&(p, _)| p == TileLoc { x: 92959, y: 82592 }), "{npcs:?}");
+    assert!(npcs.iter().any(|&(p, _)| p == TileLoc { x: 92959, y: 82594 }), "{npcs:?}");
 }
 
 #[test]

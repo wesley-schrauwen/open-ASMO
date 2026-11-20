@@ -471,3 +471,43 @@ fn only_door_opening_wall_pieces_hold_portals() {
         }
     }
 }
+
+/// Every NPC in every map (art its own or its prototype's) has art that exists, whether
+/// critter, monster, unique NPC or scenery (or, for two bodies with no standing art, walk art).
+#[test]
+fn npc_art_resolves() {
+    use arcanum_formats::art_id::ArtKind;
+    use arcanum_formats::object::{Prototypes, TYPE_NPC};
+    let (Some(archive), Some(vfs)) = (module_archive(), vfs()) else { return };
+    let index = art_index(&vfs);
+    let mut protos = Prototypes::default();
+    for e in std::fs::read_dir(game_dir().join("data/proto")).into_iter().flatten().flatten() {
+        protos.insert(Object::parse_prototype(&std::fs::read(e.path()).unwrap()).unwrap());
+    }
+    let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+    let mut missing: BTreeMap<String, usize> = BTreeMap::new();
+    for path in map_files(&archive, ".mob") {
+        let obj = Object::parse_instance(&archive.read(&path).unwrap()).unwrap();
+        if obj.object_type != TYPE_NPC {
+            continue;
+        }
+        let Some(art) = protos.art_id(&obj) else {
+            *missing.entry("no art id".into()).or_default() += 1;
+            continue;
+        };
+        *kinds.entry(format!("{:?}", art.kind())).or_default() += 1;
+        // Two bodies have no standing art (`dgnuw`, `air`): the client then holds the walk art.
+        let walk = ArtId((art.0 & !(0x1f << 6)) | 1 << 6);
+        match index.path(art) {
+            Some(p) if vfs.exists(&p) => {}
+            Some(p) if matches!(art.kind(), ArtKind::Monster | ArtKind::UniqueNpc) && index.path(walk).is_some_and(|w| vfs.exists(&w)) => {
+                *kinds.entry(format!("walk instead of {p}")).or_default() += 1;
+            }
+            Some(p) => *missing.entry(p).or_default() += 1,
+            None => *missing.entry(format!("{:?} {:#x}: no path", art.kind(), art.0)).or_default() += 1,
+        }
+        assert!(matches!(art.kind(), ArtKind::Critter | ArtKind::Monster | ArtKind::UniqueNpc | ArtKind::Scenery), "{path}: {:?}", art.kind());
+    }
+    eprintln!("NPC art kinds: {kinds:?}; missing: {missing:?}");
+    assert!(missing.is_empty(), "{missing:?}");
+}
