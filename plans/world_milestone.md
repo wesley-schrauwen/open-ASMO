@@ -77,6 +77,13 @@ state to network.
   sent and for cosmetic, client-only effects.
 - **Distances copy the original** (owner, 2026-11-20). Every radius the host uses (NPC activity,
   combat engagement, perception, use ranges) is the original's number.
+- **The party moves together** (owner, 2026-11-20).
+  - All players' PCs (and, later, their companions) form one party, led by the host's PC.
+  - Out of combat every member moves at the leader's speed, capped at Speed 20
+    (`PARTY_MAX_SPEED`), so a slow body never falls behind and a fast one never runs away.
+  - In combat each moves at its own speed, uncapped.
+  - This replaces the original's follower leash (0x4ad4d0), which moved a follower more than
+    30 tiles from its leader next to it; there is no teleport.
 - **Distances are a radius** (owner, 2026-11-20): `sqrt(dx^2 + dy^2)` in tiles, easier to reason
   about than the original's square (the larger axis difference). Sector streaming is ours (the
   original has a demand-loaded cache), and its square blocks of sectors are fine.
@@ -787,7 +794,7 @@ original's distances (`arcanum_sim::activity`). Found in Arcanum.exe:
   (tested): a PC is always at least 64 tiles from the block's edge.
 - **The follower leash** (0x4ad4d0, read in part): on its AI heartbeat, a follower (a companion
   such as Virgil) more than 30 tiles from its leader is moved next to the leader instead of
-  walking, so companions are not lost. The conditions and the tile it lands on are not traced.
+  walking. Not copied: the owner's party pace replaces it ("Owner's decisions").
 - **NPC activity** (AI heartbeat 0x4ad200, test 0x4ad420):
   - An NPC thinks (targets, wanders, flees) only within 30 tiles of a PC, and not during
     turn-based combat. Further away its goals are interrupted.
@@ -802,7 +809,23 @@ original's distances (`arcanum_sim::activity`). Found in Arcanum.exe:
 - **Fidgets** (0x4300d0) run only for critters in the 800 x 400 screen rect: cosmetic, so they
   belong to the client.
 
-Not done: the AI itself, combat, perception, fidgets, the follower leash.
+Not done: the AI itself, combat, perception, fidgets.
+
+## The party moves at its leader's pace (after the original's distances)
+
+- **Host** (`PartyPace`, `update_party_pace`): the host's PC leads (`LocalHost::lead`, called
+  for the in-process player). Once its PC is in the world, the pace is its walk at
+  `party_speed(speed)` = its Speed capped at 20, and every player is told
+  (`PartyLeader { net_id }`). `walk` times each PC's steps with `own.paced(&pace)`.
+- **`Gait::paced`**: steps take as long as the pace's in every direction; the frames play as
+  fast as the walker's own (mean) stride needs, so a dwarf's short steps play quicker and its
+  feet do not slide.
+- **Client** (`Party`, `pace_party`): it works out the same pace from the leader's spawn (art
+  and speed) and puts every PC actor on it; NPCs keep their own walk.
+- **Checked:** a PC with half the leader's stride arrives on the same tick as the leader (host
+  test); a paced client PC's steps take the leader's time (client test).
+
+Not done: combat, where each would move at its own speed; companions; changing the leader.
 
 ## Builder's calls (proposed by Claude, not owner decisions)
 

@@ -88,6 +88,16 @@ fn step_pixels(rotation: usize) -> f64 {
     }
 }
 
+/// The highest Speed the party's shared pace takes from its leader (owner's rule): Speed 20
+/// walks about 1.4 times as fast as the normal 8.
+pub const PARTY_MAX_SPEED: i32 = 20;
+
+/// The speed stat the party moves at out of combat: its leader's, capped at
+/// [`PARTY_MAX_SPEED`] (owner's rule; see [`Gait::paced`]).
+pub fn party_speed(leader_speed: i32) -> i32 {
+    leader_speed.min(PARTY_MAX_SPEED)
+}
+
 /// How a critter walks: its frame time and, per rotation, the screen pixels its walk art moves
 /// per frame.
 #[derive(bevy_ecs::component::Component, Debug, Clone, Copy, PartialEq)]
@@ -132,6 +142,24 @@ impl Gait {
             Some(file) => Self::from_art(&file, fps),
             None => Self::human(fps),
         }
+    }
+
+    /// This critter's walk at another's pace: steps take as long as `pace`'s, and the frames
+    /// play as fast as its own stride needs to cover them (so its feet do not slide). For a
+    /// party moving at its leader's speed out of combat.
+    pub fn paced(&self, pace: &Gait) -> Gait {
+        let mut out = *pace;
+        // Frame time per rotation cannot differ; scale by the mean stride.
+        let own: f64 = self.pixels_per_frame.iter().sum::<f64>() / 8.0;
+        let theirs: f64 = pace.pixels_per_frame.iter().sum::<f64>() / 8.0;
+        out.frame_millis = ((f64::from(pace.frame_millis) * own / theirs).round() as u32).clamp(1, 800);
+        out.pixels_per_frame = self.pixels_per_frame;
+        // Keep the step time the pace's in every direction: ppf * 1000 / ms equal to the pace's.
+        for r in 0..8 {
+            let speed = pace.pixels_per_frame[r] / f64::from(pace.frame_millis);
+            out.pixels_per_frame[r] = speed * f64::from(out.frame_millis);
+        }
+        out
     }
 
     /// Seconds a step from `from` to its neighbour `to` takes (0 if they are not neighbours).
@@ -209,5 +237,18 @@ mod tests {
         let g = Gait::from_art(&art, 10);
         assert_eq!(g.frame_millis, 100);
         assert!((g.pixels_per_frame[2] - 32f64.sqrt() / 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_paced_walk_takes_the_paces_time_with_its_own_frames() {
+        let elf = Gait::human(25);
+        let dwarf = Gait { frame_millis: frame_millis(21), pixels_per_frame: Gait::HUMAN_PIXELS.map(|p| p * 0.6) };
+        let paced = dwarf.paced(&elf);
+        for (from, to) in [(t(10, 10), t(9, 10)), (t(10, 10), t(9, 11)), (t(10, 10), t(11, 11))] {
+            assert!((paced.step_seconds(from, to) - elf.step_seconds(from, to)).abs() < 1e-9, "same time");
+        }
+        assert!(paced.frame_millis < elf.frame_millis, "short strides play faster: {}", paced.frame_millis);
+        assert_eq!(party_speed(30), PARTY_MAX_SPEED);
+        assert_eq!(party_speed(8), 8);
     }
 }

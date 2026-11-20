@@ -152,6 +152,48 @@ pub fn stream_sectors(
     }
 }
 
+/// The party's leader and the pace it sets (owner's rules): all players' PCs (and, later, their
+/// companions) form one party, led by the host's PC. Out of combat every member moves at the
+/// leader's speed, capped at [`crate::PARTY_MAX_SPEED`]; in combat each at its own (no combat
+/// yet). This replaces the original's follower leash (0x4ad4d0), which moved a follower more
+/// than 30 tiles from its leader next to it.
+#[derive(Resource, Debug, Default, Clone)]
+pub struct PartyPace {
+    /// The player whose PC leads: the host's.
+    pub leader: Option<PlayerId>,
+    /// The leader's walk at the party's speed, once its PC is in the world.
+    pub gait: Option<Gait>,
+    /// The leader PC's net id, as players are told it.
+    pub net_id: Option<NetId>,
+    /// Players told who leads.
+    pub told: BTreeSet<PlayerId>,
+}
+
+/// Works out the party's pace once the leader's PC is in the world, and tells every player in
+/// the world which PC leads (`PartyLeader`).
+pub fn update_party_pace(
+    mut pace: ResMut<PartyPace>,
+    vfs: Option<Res<SimVfs>>,
+    session: Res<Session>,
+    mut outbox: ResMut<Outbox>,
+    pcs: Query<(&NetId, &PlayerControlled, &Appearance)>,
+) {
+    let Some(leader) = pace.leader else { return };
+    let Some((&net_id, _, look)) = pcs.iter().find(|(_, p, _)| p.0 == leader) else { return };
+    if pace.net_id != Some(net_id) {
+        let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
+        let vfs = vfs_guard.as_deref();
+        pace.gait = Some(Gait::load(look.art, crate::party_speed(look.speed), |p| vfs.and_then(|v| v.read(p).ok())));
+        pace.net_id = Some(net_id);
+        pace.told.clear();
+    }
+    let players: Vec<PlayerId> = session.players.iter().filter(|(p, s)| matches!(s, SessionPlayer::InWorld(_)) && !pace.told.contains(p)).map(|(&p, _)| p).collect();
+    for player in players {
+        outbox.0.push((player, LedgerDelta::PartyLeader { net_id }));
+        pace.told.insert(player);
+    }
+}
+
 /// The player who controls this PC.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PlayerControlled(pub PlayerId);
@@ -957,5 +999,34 @@ mod tests {
         world.query_filtered::<&mut Position, bevy_ecs::query::With<PlayerControlled>>().single_mut(world).unwrap().0 = t(111, 80);
         sim.update();
         assert_eq!(active(&mut sim), 0, "31 tiles away");
+    }
+
+    #[test]
+    fn out_of_combat_the_party_walks_at_its_leaders_pace() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "A", t(70, 80)), (9, "B", t(70, 82))]));
+        sim.app.world_mut().resource_mut::<PartyPace>().leader = Some(PlayerId(7));
+        // Player 9's PC is slow: half the stride of the leader's.
+        let world = sim.app.world_mut();
+        let slow = world.query::<(Entity, &PlayerControlled)>().iter(world).find(|(_, p)| p.0 == PlayerId(9)).unwrap().0;
+        world.entity_mut(slow).insert(Gait { frame_millis: 58, pixels_per_frame: Gait::HUMAN_PIXELS.map(|p| p / 2.0) });
+        sim.update();
+        let deltas = sim.take_deltas();
+        for to in [7, 9] {
+            assert!(deltas.iter().any(|(p, d)| p.0 == to && matches!(d, LedgerDelta::PartyLeader { .. })), "player {to} told: {deltas:?}");
+        }
+        send_move(&mut sim, 7, 1, &row(80, 70, 73));
+        send_move(&mut sim, 9, 1, &row(82, 70, 73));
+        let mut arrived = [None, None];
+        for tick in 0..ticks_for(6) {
+            sim.update();
+            for (i, p) in [7, 9].into_iter().enumerate() {
+                if arrived[i].is_none() && position(&mut sim, p).x == 73 {
+                    arrived[i] = Some(tick);
+                }
+            }
+        }
+        assert!(arrived[0].is_some() && arrived[0] == arrived[1], "together: {arrived:?}");
     }
 }

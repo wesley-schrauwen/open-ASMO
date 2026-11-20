@@ -45,10 +45,11 @@ impl Plugin for ActorsPlugin {
             .init_resource::<WalkLocalPc>()
             .init_resource::<SyncState>()
             .init_resource::<WorldClock>()
+            .init_resource::<Party>()
             .add_systems(OnExit(AppState::InGame), forget_actors)
             .add_systems(
                 Update,
-                (click_to_move, apply_actor_deltas, run_clock, start_local_walk, resend_move, ack_syncs, walk_actors, place_actors).chain().run_if(in_state(AppState::InGame)),
+                (click_to_move, apply_actor_deltas, pace_party, run_clock, start_local_walk, resend_move, ack_syncs, walk_actors, place_actors).chain().run_if(in_state(AppState::InGame)),
             );
     }
 }
@@ -60,7 +61,31 @@ pub struct ActorDeltas(pub Vec<LedgerDelta>);
 impl ActorDeltas {
     /// Whether this module handles `delta`.
     pub fn wants(delta: &LedgerDelta) -> bool {
-        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. })
+        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. } | LedgerDelta::PartyLeader { .. })
+    }
+}
+
+/// The party as this client knows it (owner's rules, [`arcanum_sim::PartyPace`]): out of combat
+/// every PC moves at the leader's speed, capped; each keeps its own walk frames.
+#[derive(Resource, Debug, Default)]
+pub struct Party {
+    pub leader: Option<NetId>,
+    /// The leader's walk at the party's speed.
+    pub pace: Option<Gait>,
+    /// Art and speed stat of every actor spawned, to work out the pace from.
+    known: HashMap<NetId, (ArtId, i32)>,
+}
+
+/// Puts every PC on the party's pace (out of combat; there is no combat yet).
+fn pace_party(party: Res<Party>, mut actors: Query<&mut Actor>) {
+    let Some(pace) = party.pace else { return };
+    for mut actor in &mut actors {
+        if actor.pc {
+            let paced = actor.own_gait.paced(&pace);
+            if actor.gait != paced {
+                actor.gait = paced;
+            }
+        }
     }
 }
 
@@ -191,7 +216,12 @@ pub struct Actor {
     pub net_id: NetId,
     /// Standing, rotation 0; the rotation in use is [`Actor::rotation`].
     pub art: ArtId,
+    /// The walk it moves at now: its own, or (a PC out of combat) the party's pace.
     pub gait: Gait,
+    /// Its own walk, from its art and speed stat.
+    pub own_gait: Gait,
+    /// A player's PC (part of the party), not an NPC.
+    pub pc: bool,
     pub at: TileLoc,
     pub rotation: usize,
     pub steps: VecDeque<TileLoc>,
@@ -347,8 +377,9 @@ fn with_anim_bits(art: ArtId, anim: u32, rotation: u32) -> ArtId {
     ArtId((art.0 & !(0x1f << 6 | 7 << 11 | 0x1f << 14)) | anim << 6 | (rotation & 7) << 11)
 }
 
-fn forget_actors(mut deltas: ResMut<ActorDeltas>, mut walk: ResMut<WalkLocalPc>, mut sync: ResMut<SyncState>, mut clock: ResMut<WorldClock>) {
+fn forget_actors(mut deltas: ResMut<ActorDeltas>, mut walk: ResMut<WalkLocalPc>, mut sync: ResMut<SyncState>, mut clock: ResMut<WorldClock>, mut party: ResMut<Party>) {
     deltas.0.clear();
+    *party = Party::default();
     *clock = WorldClock::default();
     *walk = WalkLocalPc::default();
     *sync = SyncState::default();
@@ -363,6 +394,7 @@ fn apply_actor_deltas(
     mut walk: ResMut<WalkLocalPc>,
     mut sync: ResMut<SyncState>,
     mut clock: ResMut<WorldClock>,
+    mut party: ResMut<Party>,
     mut actors: Query<(Entity, &mut Actor)>,
 ) {
     if deltas.0.is_empty() {
@@ -372,17 +404,19 @@ fn apply_actor_deltas(
     let mut by_id: HashMap<NetId, Entity> = actors.iter().map(|(e, a)| (a.net_id, e)).collect();
     for delta in deltas.0.drain(..) {
         match delta {
-            LedgerDelta::Spawn { net_id, position, art, speed, .. } => {
+            LedgerDelta::Spawn { net_id, position, art, speed, kind } => {
                 if by_id.contains_key(&net_id) {
                     continue;
                 }
                 let art = ArtId(art);
+                party.known.insert(net_id, (art, speed));
                 let gait = match vfs.as_ref().and_then(|v| v.0.read().ok()) {
                     Some(vfs) => Gait::load(art, speed, |p| vfs.read(p).ok()),
                     None => Gait::load(art, speed, |_| None),
                 };
                 let rotation = CritterArt::from_id(art).rotation as usize;
-                let actor = Actor { net_id, art, gait, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO };
+                let pc = matches!(kind, arcanum_sim::EntityKind::Pc { .. });
+                let actor = Actor { net_id, art, gait, own_gait: gait, pc, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO };
                 // The art is set once the art index is in (`place_actors`).
                 let entity = commands
                     .spawn((
@@ -395,6 +429,15 @@ fn apply_actor_deltas(
                     ))
                     .id();
                 by_id.insert(net_id, entity);
+            }
+            LedgerDelta::PartyLeader { net_id } => {
+                let Some(&(art, speed)) = party.known.get(&net_id) else { continue };
+                let pace = match vfs.as_ref().and_then(|v| v.0.read().ok()) {
+                    Some(vfs) => Gait::load(art, arcanum_sim::party_speed(speed), |p| vfs.read(p).ok()),
+                    None => Gait::load(art, arcanum_sim::party_speed(speed), |_| None),
+                };
+                party.leader = Some(net_id);
+                party.pace = Some(pace);
             }
             LedgerDelta::StateSync { number, time, pcs } | LedgerDelta::Resync { number, time, pcs } => {
                 if !sync.take(number) {
@@ -671,7 +714,7 @@ mod tests {
 
     fn actor() -> Actor {
         let art = arcanum_sim::pc_art(0, true);
-        Actor { net_id: NetId(0), art, gait: Gait::human(17), at: t(10, 10), rotation: 4, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO }
+        Actor { net_id: NetId(0), art, gait: Gait::human(17), own_gait: Gait::human(17), pc: true, at: t(10, 10), rotation: 4, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO }
     }
 
     #[test]
@@ -817,5 +860,20 @@ mod tests {
         }
         let ms = clock.now.unwrap().ms - 15 * arcanum_sim::HOUR_MS;
         assert!((7990..=8000).contains(&ms), "{ms}");
+    }
+
+    #[test]
+    fn pcs_take_the_party_pace_and_npcs_keep_their_own() {
+        let leader = Gait::human(25);
+        let mut app = App::new();
+        app.insert_resource(Party { leader: Some(NetId(0)), pace: Some(leader), known: HashMap::new() });
+        let slow = Gait { frame_millis: 58, pixels_per_frame: Gait::HUMAN_PIXELS.map(|p| p * 0.6) };
+        let pc = app.world_mut().spawn(Actor { gait: slow, own_gait: slow, ..actor() }).id();
+        let npc = app.world_mut().spawn(Actor { gait: slow, own_gait: slow, pc: false, ..actor() }).id();
+        app.add_systems(Update, pace_party);
+        app.update();
+        let step = |e| app.world().get::<Actor>(e).unwrap().gait.step_seconds(t(10, 10), t(9, 10));
+        assert!((step(pc) - leader.step_seconds(t(10, 10), t(9, 10))).abs() < 1e-9, "the PC keeps the leader's pace");
+        assert_eq!(step(npc), slow.step_seconds(t(10, 10), t(9, 10)), "an NPC is not in the party");
     }
 }

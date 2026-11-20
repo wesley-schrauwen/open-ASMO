@@ -220,10 +220,12 @@ type WalkerQuery<'a> = (Entity, &'a mut Position, &'a PlayerControlled, Option<&
 /// Steps walking PCs along their paths, checking each step against the map just before it is
 /// taken (see the module docs). A PC that reaches the end or cannot go on stops, its position
 /// goes into the save, and a sync is due.
-pub fn walk(mut commands: Commands, map: Res<LoadedMap>, mut clock: ResMut<SyncClock>, mut world: ResMut<WorldState>, mut pcs: Query<WalkerQuery>) {
+pub fn walk(mut commands: Commands, map: Res<LoadedMap>, pace: Res<crate::PartyPace>, mut clock: ResMut<SyncClock>, mut world: ResMut<WorldState>, mut pcs: Query<WalkerQuery>) {
     for (entity, mut position, player, gait, walking) in &mut pcs {
         let Some(mut walking) = walking else { continue };
-        let gait = gait.copied().unwrap_or(Gait::human(walk_fps(8, 0)));
+        let own = gait.copied().unwrap_or(Gait::human(walk_fps(8, 0)));
+        // Out of combat the party moves at its leader's pace (there is no combat yet).
+        let gait = pace.gait.map_or(own, |p| own.paced(&p));
         walking.progress += 1.0 / TICK_HZ;
         let mut stopped = false;
         while let Some(&next) = walking.steps.front() {
