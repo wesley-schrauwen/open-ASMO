@@ -1027,10 +1027,10 @@ hover help, the magick/tech aptitude gauge, the fourth tab.
 - **Checked:** unit tests for the timing and the texts; the headless test sees a refusal reach
   the box; real-data runs show a stat's, a skill's, a spell's and a degree's help.
 
-Not done: shortening text that does not fit, the message log, the clock's time and date, the
-hotkey slots' and vials' help, college descriptions (not found), spells' fatigue line, hover
-help in character creation, and hover areas over the stat values themselves (only their
-buttons have help).
+Not done: shortening text that does not fit, the message log, the clock's time and date (done
+next), college descriptions (not found), spells' fatigue line, and hover areas over the stat
+values themselves (only their buttons have help). The original has no help on the vials or
+hotkey slots, nor in creation (see "The clock's hover help").
 
 ## The character screen's portrait and meters (after the message box)
 
@@ -1046,3 +1046,22 @@ buttons have help).
 
 Not done: the auto-level schemes button, the sector's magick/tech aura, a traced starting
 alignment.
+
+## The clock's hover help (after the portrait and meters)
+
+- Hovering the clock shows one line in the message box (Arcanum.exe 0x54b5d0, kind 6):
+  `"%s: %s"` and `"   %s: %s"` with `intgame.mes` 22 and 23, "Current Time: 15:00:04   Current
+  Date: 1/1/1885". The time is `%02d:%02d:%02d`, 24-hour (0x45ac20); the date `%d/%d/%d`
+  (0x45ac70), day `days % 30 + 1`, month `days / 30 % 12 + 1`, year from `rules/gameinit.mes`.
+  The original orders the date by the Windows locale (`LOCALE_IDATE`); this uses its fallback,
+  month first. The text is taken once, as the hover starts.
+- **Fix:** wrapped text kept only one space between words; runs of spaces now stay inside a
+  line (`arcanum_formats::font`).
+- **Found, nothing to build:** the original has no hover help on the vials or the hotkey slots,
+  and none in character creation (its box draws only while the bars are up, flag 0x64c6b4).
+  The bars' buttons' help comes after a hover dwell (event 7) whose delay was not traced; here
+  it shows at once.
+- **Checked:** a unit test for the text; a real-data run with the hover forced shows the line.
+
+Not done: the fate points, sleep and multiplayer buttons (`intgame.mes` 1008-1010), which the
+bars do not have yet.
