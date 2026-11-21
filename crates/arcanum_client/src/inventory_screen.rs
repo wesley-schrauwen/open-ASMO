@@ -28,16 +28,29 @@
 //! - Releasing a held item on the drop box drops it on the ground at the PC's feet
 //!   ([`arcanum_sim::ground`]).
 //!
+//! - **Loot window** (mode 2, for junk piles: 0x57cb10): `Loot` (art 234) in place of `PDoll`,
+//!   the pile's portrait (`Cont_Junk`, 832) at (183, 33), Take All (`TakeAllButt`, 808) at
+//!   (301, 47), and the pile's grid from (8, 136): 10 columns, 8 rows shown of its 96, scrolled a
+//!   row a wheel step (0-88). Items drag between the two grids (the grabbed cell under the cursor,
+//!   as in the PC's own); a right click sends an item to the other side where the insert puts it;
+//!   Take All takes what fits, in order. The PC's paperdoll and its lines are hidden, as the
+//!   original's default view (toggle 0x68150c off). Closing tells the host, which collapses a pile
+//!   left empty or with one item.
+//!
 //! Not built: using, the use box, dropping by releasing over the world, splitting stacks, the arrange button, total attack and
-//! defence, item hover help, barter and loot modes. The original's fonts for the text and
+//! defence, item hover help, barter, the loot window's paperdoll toggle (art 338/339) and its
+//! scrollbar art (not found), moving items within a pile. The original's fonts for the text and
 //! numbers were not identified (Flare12Font stands in). The original's encumbrance line also
 //! prints a stray number from its stack (`%s: %s (%d)` given two values); it is left out.
 
 use arcanum_formats::art_id::{ArtId, ArtIndex};
 use arcanum_formats::object::{Prototypes, TYPE_ARMOR, TYPE_WEAPON};
-use arcanum_sim::{AMMO_TYPES, CarriedItem, GOLD, Inventory, InventoryRequest, ItemInfo, ItemRefusal, PlayerIntent, Slot, Wearer, in_grid};
+use arcanum_sim::{AMMO_TYPES, CarriedItem, GOLD, GroundItemId, Inventory, InventoryRequest, ItemInfo, ItemRefusal, PlayerIntent, Slot, Wearer, in_grid};
 use bevy::prelude::*;
-use bevy::ui_widgets::Activate;
+use bevy::picking::hover::Hovered;
+use bevy::ui_widgets::{Activate, ActivateOnPress, Button};
+
+use crate::widgets::FrameButton;
 
 use crate::art_loader::ArtFrames;
 use crate::create_character::CreationData;
@@ -70,7 +83,24 @@ const COUNTS_Y: [f32; 5] = [70.0, 93.0, 116.0, 139.0, 162.0];
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct InventoryPanel {
     pub open: bool,
+    /// The pile it shows beside the PC's grid (the loot window), if any.
+    pub pile: Option<GroundItemId>,
 }
+
+/// The loot window's first pile row shown.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LootScroll(pub i32);
+
+/// The pile grid's top-left cell, in the band.
+pub const PILE_GRID: Vec2 = Vec2::new(8.0, 136.0);
+/// Pile rows shown at once.
+pub const PILE_ROWS_SHOWN: i32 = 8;
+/// The furthest the pile grid scrolls (0x681510 for a container).
+pub const PILE_SCROLL_MAX: i32 = 88;
+
+/// The loot window's Take All button.
+#[derive(Component)]
+pub struct TakeAllButton;
 
 /// The client's copy of its own PC's inventory. As with the sheet ([`crate::pc_sheet`]): a move
 /// is applied at once to a preview with the host's rules and sent as a numbered request; the
@@ -89,6 +119,8 @@ pub struct PcInventory {
     incoming: Vec<(u32, Inventory)>,
     /// The host's refusals to show (`mes/item.mes` ids).
     refused: Vec<u32>,
+    /// A pile the host opened for the loot window.
+    opened: Option<GroundItemId>,
 }
 
 impl PcInventory {
@@ -106,6 +138,17 @@ impl PcInventory {
         self.pending.push((self.last_seq, request.clone()));
         self.outgoing.push(PlayerIntent::Inventory { seq: self.last_seq, request });
         Ok(())
+    }
+
+    /// Queues a loot request: the pile is the host's, so nothing is shown until it answers.
+    pub fn send(&mut self, request: InventoryRequest) {
+        self.last_seq += 1;
+        self.outgoing.push(PlayerIntent::Inventory { seq: self.last_seq, request });
+    }
+
+    /// The host opened `pile` for the loot window.
+    pub fn open_pile(&mut self, pile: GroundItemId) {
+        self.opened = Some(pile);
     }
 
     /// Requests for the host, oldest first.
@@ -158,6 +201,8 @@ pub struct Held {
     pub grab: i32,
     /// Where the cursor sat on the item's art, in pixels from its top-left.
     pub offset: Vec2,
+    /// Taken from the open pile, not the PC.
+    pub from_pile: bool,
 }
 
 /// The held item's art, following the cursor.
@@ -204,14 +249,17 @@ impl Plugin for InventoryScreenPlugin {
             .init_resource::<PcInventory>()
             .init_resource::<HeldItem>()
             .init_resource::<ItemArtCache>()
+            .init_resource::<LootScroll>()
+            .add_message::<bevy::input::mouse::MouseWheel>()
             .add_systems(OnExit(AppState::InGame), |mut panel: ResMut<InventoryPanel>, mut inv: ResMut<PcInventory>, mut held: ResMut<HeldItem>| {
                 *panel = InventoryPanel::default();
                 *inv = PcInventory::default();
                 *held = HeldItem::default();
             })
             .add_systems(PreUpdate, toggle_on_keys.run_if(in_state(AppState::InGame)).after(bevy::input::InputSystems))
-            .add_systems(Update, (settle_inventory, show_refusals, one_panel_at_a_time, show_panel, drag_items, show_items, follow_cursor).chain().run_if(in_state(AppState::InGame)))
-            .add_observer(on_hud_button);
+            .add_systems(Update, (settle_inventory, show_refusals, open_loot, one_panel_at_a_time, show_panel, scroll_pile, drag_items, show_items, follow_cursor).chain().run_if(in_state(AppState::InGame)))
+            .add_observer(on_hud_button)
+            .add_observer(on_take_all);
     }
 }
 
@@ -238,6 +286,36 @@ fn on_hud_button(activate: On<Activate>, buttons: Query<&crate::hud::HudAction>,
     }
 }
 
+/// The host opened a pile: the loot window shows it.
+fn open_loot(mut inventory: ResMut<PcInventory>, mut panel: ResMut<InventoryPanel>, mut scroll: ResMut<LootScroll>) {
+    if let Some(pile) = inventory.opened.take() {
+        *panel = InventoryPanel { open: true, pile: Some(pile) };
+        scroll.0 = 0;
+    }
+}
+
+fn on_take_all(activate: On<Activate>, buttons: Query<(), With<TakeAllButton>>, mut inventory: ResMut<PcInventory>) {
+    if buttons.contains(activate.entity) {
+        inventory.send(InventoryRequest::TakeAll);
+    }
+}
+
+/// The mouse wheel over the pile's grid scrolls it a row a step.
+fn scroll_pile(panel: Res<InventoryPanel>, mut wheel: MessageReader<bevy::input::mouse::MouseWheel>, windows: Query<&Window>, mut scroll: ResMut<LootScroll>) {
+    let steps: f32 = wheel.read().map(|w| w.y.signum()).sum();
+    if panel.pile.is_none() || !panel.open || steps == 0.0 {
+        return;
+    }
+    let Some(point) = windows.iter().find_map(|w| w.cursor_position().map(|c| screen_point(w.size(), c) - Vec2::new(0.0, TOP_BAR_HEIGHT))) else { return };
+    // The wheel region (0x5cafa0): the grid and its track, (8, 136, 337, 256).
+    if Rect::from_corners(PILE_GRID, PILE_GRID + Vec2::new(337.0, 256.0)).contains(point) {
+        let to = (scroll.0 - steps as i32).clamp(0, PILE_SCROLL_MAX);
+        if to != scroll.0 {
+            scroll.0 = to;
+        }
+    }
+}
+
 /// Opening one of the inventory and character screens closes the other.
 fn one_panel_at_a_time(mut inventory: ResMut<InventoryPanel>, mut character: ResMut<crate::character_editor::CharacterPanel>) {
     if inventory.is_changed() && inventory.open && character.open {
@@ -247,20 +325,33 @@ fn one_panel_at_a_time(mut inventory: ResMut<InventoryPanel>, mut character: Res
     }
 }
 
-fn show_panel(mut commands: Commands, panel: Res<InventoryPanel>, roots: Query<Entity, With<InventoryScreen>>, assets: Res<AssetServer>) {
+fn show_panel(mut commands: Commands, mut panel: ResMut<InventoryPanel>, roots: Query<Entity, With<InventoryScreen>>, assets: Res<AssetServer>, mut inventory: ResMut<PcInventory>, mut shown: Local<Option<GroundItemId>>) {
     if !panel.is_changed() {
         return;
     }
-    if !panel.open {
+    let built = !roots.is_empty();
+    if built && panel.open && *shown == panel.pile {
+        return;
+    }
+    if built {
         for root in &roots {
             commands.entity(root).despawn();
         }
         commands.insert_resource(HeldItem::default());
+        // The loot window closed, or shows another pile now: the host may collapse the old one.
+        if shown.is_some() {
+            inventory.send(InventoryRequest::ClosePile);
+        }
+    }
+    if !panel.open {
+        if panel.pile.is_some() {
+            panel.pile = None;
+        }
+        *shown = None;
         return;
     }
-    if !roots.is_empty() {
-        return;
-    }
+    *shown = panel.pile;
+    let loot = panel.pile.is_some();
     let image = |name: &str, x: f32, y: f32, w: f32, h: f32| (ImageNode::new(assets.load(art(name))), at(band(x, y, w, h)));
     commands
         .spawn((
@@ -270,10 +361,20 @@ fn show_panel(mut commands: Commands, panel: Res<InventoryPanel>, roots: Query<E
             Node { position_type: PositionType::Absolute, top: Val::Px(0.0), left: Val::Percent(50.0), margin: UiRect::left(px(-400.0)), width: px(800.0), height: px(600.0), ..default() },
         ))
         .with_children(|screen| {
-            screen.spawn(image("PDoll.ART", 0.0, 0.0, 358.0, 400.0));
+            // The window starts black (the loot art's lens is see-through).
+            screen.spawn((BackgroundColor(Color::BLACK), at(band(0.0, 0.0, 800.0, 400.0))));
+            if loot {
+                screen.spawn(image("Loot.ART", 0.0, 0.0, 358.0, 400.0));
+                screen.spawn((ImageNode::new(assets.load(art("Cont_Junk.ART"))), Node { width: Val::Auto, height: Val::Auto, ..at(band(183.0, 33.0, 64.0, 64.0)) }));
+                screen.spawn((TakeAllButton, Button, ActivateOnPress, Hovered::default(), FrameButton::arrow(assets.load(art("TakeAllButt.ART"))), ImageNode::default(), at(band(301.0, 47.0, 51.0, 50.0))));
+            } else {
+                screen.spawn(image("PDoll.ART", 0.0, 0.0, 358.0, 400.0));
+            }
             screen.spawn(image("Inventor.ART", 358.0, 0.0, 442.0, 400.0));
-            screen.spawn(image("TotalAttack.ART", 29.0, 318.0, 54.0, 71.0));
-            screen.spawn(image("TotalDefens.ART", 254.0, 319.0, 54.0, 71.0));
+            if !loot {
+                screen.spawn(image("TotalAttack.ART", 29.0, 318.0, 54.0, 71.0));
+                screen.spawn(image("TotalDefens.ART", 254.0, 319.0, 54.0, 71.0));
+            }
             screen.spawn(image("tiny_butt.ART", 763.0, 197.0, 28.0, 27.0));
             screen.spawn(image("Use_Box_OFF.ART", 703.0, 290.0, 80.0, 43.0));
             screen.spawn(image("Drop_OFF.ART", 703.0, 344.0, 80.0, 43.0));
@@ -375,6 +476,36 @@ pub fn screen_point(window: Vec2, cursor: Vec2) -> Vec2 {
     Vec2::new((cursor.x - (window.x / 2.0 - 400.0 * scale)) / scale, cursor.y / scale)
 }
 
+/// A place on the screen an item can be: the PC's grid or slots, or the open pile's grid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Spot {
+    Pc(i32),
+    Pile(i32),
+}
+
+/// What is at `point` in the band (0x575cb0): with a pile open, its grid scrolled by `scroll`
+/// rows and the PC's grid (its slots are hidden); otherwise the PC's grid and slots.
+pub fn spot_at(point: Vec2, loot: bool, scroll: i32) -> Option<Spot> {
+    if loot {
+        let (col, row) = (((point.x - PILE_GRID.x) / 32.0).floor(), ((point.y - PILE_GRID.y) / 32.0).floor());
+        if (0.0..10.0).contains(&col) && (0.0..PILE_ROWS_SHOWN as f32).contains(&row) {
+            return Some(Spot::Pile((row as i32 + scroll) * 10 + col as i32));
+        }
+        return location_at(point).filter(|l| in_grid(*l)).map(Spot::Pc);
+    }
+    location_at(point).map(Spot::Pc)
+}
+
+/// The pile item covering `location` of `pile`.
+fn pile_item_at(pile: &Inventory, location: i32, info: impl Fn(u32) -> Option<ItemInfo>) -> Option<&CarriedItem> {
+    let (col, row) = (location % 10, location / 10);
+    pile.items.iter().find(|i| {
+        let (w, h) = info(i.prototype).map_or((1, 1), |x| x.cells);
+        let (c, r) = (i.location % 10, i.location / 10);
+        (c..c + w).contains(&col) && (r..r + h).contains(&row)
+    })
+}
+
 /// The grid cell or paperdoll slot at `point` in the band (0x575cb0).
 pub fn location_at(point: Vec2) -> Option<i32> {
     let (col, row) = (((point.x - GRID.x) / 32.0).floor(), ((point.y - GRID.y) / 32.0).floor());
@@ -424,8 +555,10 @@ fn drag_items(
     data: Option<Res<CreationData>>,
     (mut cache, assets, frames): (ResMut<ItemArtCache>, Res<AssetServer>, Res<Assets<ArtFrames>>),
     (boxed, time): (Option<ResMut<crate::message_box::MessageBox>>, Option<Res<Time<Real>>>),
+    scroll: Res<LootScroll>,
 ) {
-    if !panel.open || !(buttons.just_pressed(MouseButton::Left) || buttons.just_released(MouseButton::Left)) {
+    let right = buttons.just_pressed(MouseButton::Right);
+    if !panel.open || !(buttons.just_pressed(MouseButton::Left) || buttons.just_released(MouseButton::Left) || right) {
         return;
     }
     let Some(point) = windows.iter().find_map(|w| w.cursor_position().map(|c| screen_point(w.size(), c))) else { return };
@@ -434,28 +567,68 @@ fn drag_items(
     let empty = Prototypes::default();
     let prototypes = client.as_ref().map_or(&empty, |c| &c.map.prototypes);
     let index = client.as_ref().and_then(|c| c.art_index());
-    let sizes = inventory_sizes(&inv, prototypes, index, &mut cache, &assets, &frames);
+    let pile = panel.pile.and_then(|p| client.as_ref()?.map.pile(p)).map(|p| p.inventory.clone());
+    let mut sizes = inventory_sizes(&inv, prototypes, index, &mut cache, &assets, &frames);
+    if let Some(pile) = &pile {
+        sizes.extend(inventory_sizes(pile, prototypes, index, &mut cache, &assets, &frames));
+    }
     let info = client_info(prototypes, &sizes);
-    if buttons.just_pressed(MouseButton::Left) && held.0.is_none() {
-        let Some(item) = item_at(&inv, point, &info) else { return };
-        let grab = location_at(point).filter(|l| in_grid(*l)).map_or(0, |l| l - item.location);
-        let art = item_art(prototypes, item).and_then(|id| art_frame(index, &mut cache, &assets, &frames, id));
-        let corner = art.and_then(|(_, s)| Some(centred(placement(item, info(item.prototype).map_or((1, 1), |i| i.cells))?, s, in_grid(item.location)))).unwrap_or(point);
-        held.0 = Some(Held { from: item.location, grab, offset: point - corner });
+    let loot = panel.pile.is_some();
+    let spot = spot_at(point, loot, scroll.0);
+    if (buttons.just_pressed(MouseButton::Left) || right) && held.0.is_none() {
+        let picked = match spot {
+            Some(Spot::Pile(at)) => pile.as_ref().and_then(|p| pile_item_at(p, at, &info)).map(|i| (i.clone(), at, true)),
+            Some(Spot::Pc(_)) => item_at(&inv, point, &info).map(|i| (i.clone(), location_at(point).unwrap_or(i.location), false)),
+            None => None,
+        };
+        let Some((item, at, from_pile)) = picked else { return };
+        if right {
+            // A right click sends it to the other side where the insert puts it (0x574248).
+            if loot {
+                inventory.send(if from_pile { InventoryRequest::Take { from: item.location, to: None } } else { InventoryRequest::Put { from: item.location, to: None } });
+            }
+            return;
+        }
+        let in_grid_now = from_pile || in_grid(item.location);
+        let grab = if in_grid_now { at - item.location } else { 0 };
+        let cells = info(item.prototype).map_or((1, 1), |i| i.cells);
+        let inside = if from_pile { Some(pile_box(item.location, cells, scroll.0)) } else { placement(&item, cells) };
+        let art = item_art(prototypes, &item).and_then(|id| art_frame(index, &mut cache, &assets, &frames, id));
+        let corner = art.and_then(|(_, s)| Some(centred(inside?, s, in_grid_now))).unwrap_or(point);
+        held.0 = Some(Held { from: item.location, grab, offset: point - corner, from_pile });
     } else if buttons.just_released(MouseButton::Left)
         && let Some(h) = held.0.take()
-        && let Some(request) = if DROP_BOX.contains(point) {
+    {
+        let request = if DROP_BOX.contains(point) && !h.from_pile {
             // On the drop box: onto the ground at the PC's feet.
             Some(InventoryRequest::Drop { from: h.from })
         } else {
-            drop_target(point, h).filter(|to| *to != h.from).map(|to| InventoryRequest::Move { from: h.from, to })
+            match (spot, h.from_pile) {
+                (Some(Spot::Pile(at)), false) => (at - h.grab >= 0).then(|| InventoryRequest::Put { from: h.from, to: Some(at - h.grab) }),
+                (Some(Spot::Pc(at)), true) => {
+                    let to = if in_grid(at) { at - h.grab } else { at };
+                    (to >= 0).then_some(InventoryRequest::Take { from: h.from, to: Some(to) })
+                }
+                (Some(Spot::Pc(_)), false) => drop_target(point, h).filter(|to| *to != h.from).map(|to| InventoryRequest::Move { from: h.from, to }),
+                _ => None,
+            }
+        };
+        let Some(request) = request else { return };
+        if request.is_loot() {
+            inventory.send(request);
+            return;
         }
-        && let Err(refusal) = inventory.request(request, wearer(&sheet), &info)
-        && let (Some(id), Some(mut boxed)) = (refusal.message(), boxed)
-    {
+        let Err(refusal) = inventory.request(request, wearer(&sheet), &info) else { return };
+        let (Some(id), Some(mut boxed)) = (refusal.message(), boxed) else { return };
         let text = data.as_ref().and_then(|d| d.item.get(id)).unwrap_or("").to_string();
         boxed.post(crate::message_box::BoxMessage::plain(text), time.map_or(0.0, |t| t.elapsed_secs_f64()));
     }
+}
+
+/// A pile item's footprint box in the band, with the grid scrolled by `scroll` rows.
+fn pile_box(location: i32, cells: (i32, i32), scroll: i32) -> Rect {
+    let at = PILE_GRID + Vec2::new((location % 10) as f32, (location / 10 - scroll) as f32) * 32.0;
+    Rect::from_corners(at, at + Vec2::new(cells.0 as f32, cells.1 as f32) * 32.0)
 }
 
 /// Draws the held item at the cursor, keeping the point it was grabbed by under it.
@@ -468,9 +641,12 @@ fn follow_cursor(
     roots: Query<Entity, With<InventoryScreen>>,
     mut arts: Query<(Entity, &mut Node), With<HeldArt>>,
     client: Option<Res<crate::world_render::ClientMap>>,
-    (mut cache, assets, frames): (ResMut<ItemArtCache>, Res<AssetServer>, Res<Assets<ArtFrames>>),
+    (mut cache, assets, frames, panel): (ResMut<ItemArtCache>, Res<AssetServer>, Res<Assets<ArtFrames>>, Res<InventoryPanel>),
 ) {
-    let item = held.0.and_then(|h| Some((h, inventory.shown()?.items.iter().find(|i| i.location == h.from)?.clone())));
+    let item = held.0.and_then(|h| {
+        let source = if h.from_pile { &panel.pile.and_then(|p| client.as_ref()?.map.pile(p))?.inventory } else { inventory.shown()? };
+        Some((h, source.items.iter().find(|i| i.location == h.from)?.clone()))
+    });
     let (Some((h, item)), Ok(root)) = (item, roots.single()) else {
         for (e, _) in &arts {
             commands.entity(e).despawn();
@@ -507,12 +683,17 @@ fn show_items(
     contents: Query<Entity, With<InventoryContent>>,
     added: Query<(), Added<InventoryScreen>>,
     (assets, frames, mut pending, mut cache): (Res<AssetServer>, Res<Assets<ArtFrames>>, Local<bool>, ResMut<ItemArtCache>),
+    (panel, scroll, mut drawn_pile): (Res<InventoryPanel>, Res<LootScroll>, Local<Option<arcanum_sim::Pile>>),
 ) {
     let Ok(root) = roots.single() else { return };
-    if !inventory.is_changed() && !held.is_changed() && added.is_empty() && !*pending {
+    let pile = panel.pile.and_then(|p| client.as_ref()?.map.pile(p)).cloned();
+    let pile_changed = pile != *drawn_pile;
+    if !inventory.is_changed() && !held.is_changed() && !scroll.is_changed() && !pile_changed && added.is_empty() && !*pending {
         return;
     }
     *pending = false;
+    *drawn_pile = pile.clone();
+    let loot = panel.pile.is_some();
     for old in &contents {
         commands.entity(old).despawn();
     }
@@ -523,13 +704,31 @@ fn show_items(
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
     let mut content = Vec::new();
     for (slot, r, cover) in SLOTS {
-        if inv.worn(slot).is_none() {
+        if !loot && inv.worn(slot).is_none() {
             content.push(commands.spawn((InventoryContent, bevy::picking::Pickable::IGNORE, ImageNode::new(assets.load(art(cover))), Node { width: Val::Auto, height: Val::Auto, ..at(band(r[0], r[1], r[2], r[3])) })).id());
         }
     }
     // The held item is not drawn where it was (item flag 0x10, 0x4a50d0).
-    let held_at = held.0.map(|h| h.from);
-    for item in inv.items.iter().filter(|i| Some(i.location) != held_at) {
+    let held_pc = held.0.filter(|h| !h.from_pile).map(|h| h.from);
+    let held_pile = held.0.filter(|h| h.from_pile).map(|h| h.from);
+    // The pile's items, clipped to its 8 rows shown.
+    if let Some(pile) = &pile {
+        let clip = commands.spawn((InventoryContent, bevy::picking::Pickable::IGNORE, Node { overflow: Overflow::clip(), ..at(band(PILE_GRID.x, PILE_GRID.y, 320.0, 256.0)) })).id();
+        let mut inside = Vec::new();
+        for item in pile.inventory.items.iter().filter(|i| Some(i.location) != held_pile) {
+            let Some(id) = item_art(prototypes, &CarriedItem { location: 0, ..item.clone() }) else { continue };
+            let Some((image, size)) = art_frame(index, &mut cache, &assets, &frames, id) else {
+                *pending = true;
+                continue;
+            };
+            let boxed = pile_box(item.location, arcanum_sim::cells_for(size.x, size.y), scroll.0);
+            let corner = centred(boxed, size, true) - PILE_GRID;
+            inside.push(commands.spawn((DrawnItem(item.clone()), bevy::picking::Pickable::IGNORE, ImageNode::new(image), at(rect(corner, Vec2::new(size.x as f32, size.y as f32))))).id());
+        }
+        commands.entity(clip).add_children(&inside);
+        content.push(clip);
+    }
+    for item in inv.items.iter().filter(|i| Some(i.location) != held_pc && !(loot && !in_grid(i.location))) {
         let Some(id) = item_art(prototypes, item) else { continue };
         let Some((image, size)) = art_frame(index, &mut cache, &assets, &frames, id) else {
             // Not loaded yet: draw again next frame.
@@ -557,7 +756,8 @@ fn show_items(
         (InventoryText::Encumbrance, format!("{}: {}", label(10, "Encumbrance"), level_name)),
         (InventoryText::Speed, format!("{}: {}", label(11, "Speed"), rules.derived(&c).speed)),
     ];
-    for ((which, text), y) in lines.into_iter().zip(TEXT_LINES) {
+    // The loot window hides the PC's lines (shown only with its paperdoll toggled on).
+    for ((which, text), y) in lines.into_iter().zip(TEXT_LINES).filter(|_| !loot) {
         content.push(text_cell(&mut commands, &fonts, which, &text, band(145.0, y, 185.0, 15.0)));
     }
     let count = |proto: Option<u32>, kind: Option<i32>| -> i32 {
@@ -596,15 +796,28 @@ mod tests {
         assert_eq!(location_at(Vec2::new(368.0 + 32.0 * 9.5, 8.0 + 32.0 * 11.5)), Some(119));
         assert_eq!(location_at(Vec2::new(30.0, 200.0)), Some(Slot::Weapon as i32));
         assert_eq!(location_at(Vec2::new(700.0, 200.0)), None);
-        let inv = Inventory { items: vec![CarriedItem { prototype: 1, location: 13, quantity: 0 }] };
+        let inv = Inventory { items: vec![CarriedItem { prototype: 1, location: 13, quantity: 0 }], ..Default::default() };
         let on = |cell: i32| Vec2::new(368.0 + 32.0 * (cell % 10) as f32 + 5.0, 8.0 + 32.0 * (cell / 10) as f32 + 5.0);
         assert!(item_at(&inv, on(33), sword).is_some(), "the footprint's last cell");
         assert!(item_at(&inv, on(43), sword).is_none());
         // Picked up by its middle cell, dropped with that cell under the cursor.
-        let held = Held { from: 13, grab: 10, offset: Vec2::ZERO };
+        let held = Held { from: 13, grab: 10, offset: Vec2::ZERO, from_pile: false };
         assert_eq!(drop_target(on(55), held), Some(45));
         assert_eq!(drop_target(on(5), held), None, "above row 0 it goes back");
         assert_eq!(drop_target(Vec2::new(30.0, 200.0), held), Some(Slot::Weapon as i32));
+    }
+
+    #[test]
+    fn the_loot_window_finds_the_piles_cells_scrolled() {
+        let cell = |x: i32, y: i32| Vec2::new(8.0 + 32.0 * x as f32 + 3.0, 136.0 + 32.0 * y as f32 + 3.0);
+        assert_eq!(spot_at(cell(0, 0), true, 0), Some(Spot::Pile(0)));
+        assert_eq!(spot_at(cell(9, 7), true, 2), Some(Spot::Pile(99)), "row 7 shown is row 9 two rows down");
+        assert_eq!(spot_at(cell(0, 8), true, 0), None, "eight rows shown");
+        assert_eq!(spot_at(Vec2::new(30.0, 200.0), false, 0), Some(Spot::Pc(Slot::Weapon as i32)), "the paperdoll without a pile");
+        assert_eq!(spot_at(Vec2::new(370.0, 10.0), true, 0), Some(Spot::Pc(0)));
+        assert_eq!(pile_box(23, (1, 2), 1).min, Vec2::new(8.0 + 96.0, 136.0 + 32.0));
+        let pile = Inventory { items: vec![CarriedItem { prototype: 1, location: 12, quantity: 0 }], ..Inventory::container() };
+        assert!(pile_item_at(&pile, 32, sword).is_some(), "a 1x3 sword from row 1 to 3");
     }
 
     #[test]
@@ -612,18 +825,18 @@ mod tests {
         let man = Wearer { race: 0, gender: 1 };
         let mut inv = PcInventory::default();
         assert!(inv.request(InventoryRequest::Move { from: 0, to: 1 }, man, sword).is_err(), "nothing before the host's copy");
-        inv.receive(0, Inventory { items: vec![CarriedItem { prototype: 1, location: 0, quantity: 0 }] });
+        inv.receive(0, Inventory { items: vec![CarriedItem { prototype: 1, location: 0, quantity: 0 }], ..Default::default() });
         inv.settle(man, sword);
         inv.request(InventoryRequest::Move { from: 0, to: 5 }, man, sword).unwrap();
         inv.request(InventoryRequest::Move { from: 5, to: 7 }, man, sword).unwrap();
         assert_eq!(inv.shown().unwrap().items[0].location, 7);
         assert_eq!(inv.take_outgoing().len(), 2);
         // The host took the first; the second is replayed on its copy.
-        inv.receive(1, Inventory { items: vec![CarriedItem { prototype: 1, location: 5, quantity: 0 }] });
+        inv.receive(1, Inventory { items: vec![CarriedItem { prototype: 1, location: 5, quantity: 0 }], ..Default::default() });
         inv.settle(man, sword);
         assert_eq!(inv.shown().unwrap().items[0].location, 7);
         // The host refused the second: its copy wins.
-        inv.receive(2, Inventory { items: vec![CarriedItem { prototype: 1, location: 5, quantity: 0 }] });
+        inv.receive(2, Inventory { items: vec![CarriedItem { prototype: 1, location: 5, quantity: 0 }], ..Default::default() });
         inv.settle(man, sword);
         assert_eq!(inv.shown().unwrap().items[0].location, 5);
         assert_eq!(inv.request(InventoryRequest::Move { from: 5, to: 1001 }, man, sword), Err(ItemRefusal::WrongSlot));

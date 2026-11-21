@@ -135,6 +135,10 @@ pub enum LedgerDelta {
     GroundItemDropped { item: crate::GroundItemId, ground: crate::GroundItem },
     /// An item was picked up off the ground.
     GroundItemTaken { item: crate::GroundItemId },
+    /// A pile changed, appeared (`Some`) or went (`None`).
+    PileChanged { pile: crate::GroundItemId, contents: Option<crate::Pile> },
+    /// The player's PC reached the pile it was sent to: the loot window opens.
+    PileOpened { pile: crate::GroundItemId },
     /// The player's PC could not take an item: `mes/item.mes` `message` (too heavy, no room).
     ItemRefused { message: u32 },
     /// A PC's speed stat changed (it raised its dexterity): clients time its walk from it.

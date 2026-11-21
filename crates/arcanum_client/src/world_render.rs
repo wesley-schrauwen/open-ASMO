@@ -99,7 +99,7 @@ pub struct MapDeltas(pub Vec<LedgerDelta>);
 impl MapDeltas {
     /// Whether this module handles `delta`.
     pub fn wants(delta: &LedgerDelta) -> bool {
-        matches!(delta, LedgerDelta::MapChanges { .. } | LedgerDelta::PortalChanged { .. } | LedgerDelta::GroundItemDropped { .. } | LedgerDelta::GroundItemTaken { .. })
+        matches!(delta, LedgerDelta::MapChanges { .. } | LedgerDelta::PortalChanged { .. } | LedgerDelta::GroundItemDropped { .. } | LedgerDelta::GroundItemTaken { .. } | LedgerDelta::PileChanged { .. })
     }
 }
 
@@ -283,6 +283,7 @@ fn apply_map_deltas(mut commands: Commands, mut deltas: ResMut<MapDeltas>, mut c
                 for (entity, object) in &objects {
                     if let Some(item) = object.ground
                         && client.map.ground_item(item).is_none()
+                        && client.map.pile(item).is_none()
                     {
                         commands.entity(entity).despawn();
                     }
@@ -292,7 +293,11 @@ fn apply_map_deltas(mut commands: Commands, mut deltas: ResMut<MapDeltas>, mut c
                     .changes
                     .iter()
                     .filter(|(id, _)| client.drawn.contains(id))
-                    .flat_map(|(&sector, delta)| delta.dropped.iter().map(move |(&number, &item)| (GroundItemId::Dropped { sector, number }, item)))
+                    .flat_map(|(&sector, delta)| {
+                        let dropped = delta.dropped.iter().map(move |(&number, &item)| (GroundItemId::Dropped { sector, number }, item));
+                        let piles = delta.piles.iter().map(move |(&number, p)| (GroundItemId::Pile { sector, number }, pile_look(p)));
+                        dropped.chain(piles)
+                    })
                     .filter(|(id, _)| !objects.iter().any(|(_, o)| o.ground == Some(*id)))
                     .collect();
                 for (id, item) in drawn {
@@ -314,6 +319,25 @@ fn apply_map_deltas(mut commands: Commands, mut deltas: ResMut<MapDeltas>, mut c
                     if object.ground == Some(item) {
                         commands.entity(entity).despawn();
                     }
+                }
+            }
+            LedgerDelta::PileChanged { pile, contents } => {
+                let shown = contents.as_ref().map(pile_look);
+                let drawn = objects.iter().any(|(_, o)| o.ground == Some(pile));
+                client.map.set_pile(pile, contents);
+                match shown {
+                    None => {
+                        for (entity, object) in &objects {
+                            if object.ground == Some(pile) {
+                                commands.entity(entity).despawn();
+                            }
+                        }
+                    }
+                    Some(look) if !drawn && client.drawn.contains(&pile.sector()) => {
+                        let on_tile = objects.iter().filter(|(_, o)| o.location == look.location).count();
+                        spawn_dropped(&mut commands, &mut client, &assets, pile, look, on_tile);
+                    }
+                    Some(_) => {}
                 }
             }
             LedgerDelta::GroundItemDropped { item, ground } => {
@@ -454,12 +478,20 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
                 DespawnOnExit(AppState::InGame),
             ));
         }
-        let dropped: Vec<_> = client.map.changes.get(&id).map(|d| d.dropped.iter().map(|(&n, &i)| (n, i)).collect()).unwrap_or_default();
-        for (number, item) in dropped {
+        let dropped: Vec<(GroundItemId, arcanum_sim::GroundItem)> = client
+            .map
+            .changes
+            .get(&id)
+            .map(|d| {
+                let piles = d.piles.iter().map(|(&number, p)| (GroundItemId::Pile { sector: id, number }, pile_look(p)));
+                d.dropped.iter().map(|(&number, &i)| (GroundItemId::Dropped { sector: id, number }, i)).chain(piles).collect()
+            })
+            .unwrap_or_default();
+        for (ground_id, item) in dropped {
             let order = on_tile.entry(item.location).or_default();
             *order += 1;
             let order = *order - 1;
-            later.push((GroundItemId::Dropped { sector: id, number }, item, order));
+            later.push((ground_id, item, order));
         }
         client.drawn.insert(id);
     }
@@ -468,7 +500,12 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
     }
 }
 
-/// A sprite for a dropped item: its prototype's ground art on its tile.
+/// What a pile shows on the map: the junk pile's prototype on its tile.
+fn pile_look(pile: &arcanum_sim::Pile) -> arcanum_sim::GroundItem {
+    arcanum_sim::GroundItem { prototype: arcanum_sim::PILE, quantity: 0, location: pile.location }
+}
+
+/// A sprite for a dropped item or a pile: its prototype's ground art on its tile.
 fn spawn_dropped(commands: &mut Commands, client: &mut ClientMap, assets: &AssetServer, id: GroundItemId, item: arcanum_sim::GroundItem, tile_order: usize) {
     let (Some(Ok(art)), Some(origin)) = (&client.art, client.origin) else { return };
     let depth_origin = client.depth_origin.unwrap_or(origin);
