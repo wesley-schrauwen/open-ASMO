@@ -32,6 +32,9 @@ pub enum PlayerIntent {
     /// client; the host answers each with an [`Inventory`](crate::LedgerDelta::Inventory)
     /// carrying it.
     Inventory { seq: u32, request: crate::InventoryRequest },
+    /// Pick up an item off the ground once the PC is within [`crate::USE_RANGE`] of it. `seq` is
+    /// the move sent with it (a newer move cancels it).
+    PickUp { item: crate::GroundItemId, seq: u32 },
     /// The number of the last state sync the client applied. Sent unreliably, about twice a
     /// second; a client far behind gets a [`Resync`](crate::LedgerDelta::Resync).
     SyncAck { number: u32 },

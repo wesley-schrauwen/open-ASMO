@@ -1121,3 +1121,24 @@ number that is left out.
 Not done: dropping on the ground and the use and drop boxes, right-click use, stack splitting,
 hexed and no-drop items, the fit test's magick/tech, broken, crippled-arm and animation checks,
 sounds, and the held art's cursor hotspot (the grab point stays under the cursor instead).
+
+## Items on the ground (after moving items)
+
+- **Dropping** (`arcanum_sim::ground`, from Arcanum.exe 0x461ab0 / 0x4415c0): releasing a held
+  item on the inventory screen's drop box drops the whole stack on the PC's own tile (radius 0),
+  offsets cleared. `item_flags` NO_DROP (0x20) is refused with `mes/item.mes` 111.
+- **Picking up:** clicking an item on the map walks the PC to within `USE_RANGE` of it (as doors),
+  then the host inserts it where the insert puts it (gold and ammo onto their stack); too heavy or
+  no room leaves it lying with the refusal (101, 102: `LedgerDelta::ItemRefused`).
+- **State:** the map's own items are named by their place among the sector's mobile objects,
+  dropped ones by a number from the save (`WorldSave::next_dropped`). `SectorDelta` gains
+  `taken` and `dropped`, saved and sent with the map's changes; `GroundItemDropped` and
+  `GroundItemTaken` tell every player in the world, whose clients add or remove the sprite.
+- **Checked:** a host test picks up 50 gold off the map (both players see it go), drops a
+  dagger on the PC's tile for everyone, keeps both in the save, and takes the dagger back; a
+  real-data run dropped Lugard's dagger at his feet.
+
+Not done: the pile container (3023) the original makes when dropping onto a tile with items, and
+the loot window for it (items lie side by side instead); dropping by releasing over the world;
+the quantity prompt for part of a stack; decay of dropped items; pick-up sounds and action
+points; a picked-up map item keeps only its prototype, not its own changed fields.

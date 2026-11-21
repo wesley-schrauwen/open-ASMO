@@ -670,6 +670,72 @@ mod tests {
     }
 
     #[test]
+    fn items_are_picked_up_and_dropped_through_the_host() {
+        use arcanum_formats::object::{Object, TYPE_GOLD, TYPE_WEAPON, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, prototype_id};
+        use crate::{GroundItemId, InventoryRequest};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        // 50 gold on the ground beside the PC.
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let mut gold_mob = ObjectBuilder::new(TYPE_GOLD).field("location", at(71, 70)).field("gold_quantity", Value::Int32(50));
+        gold_mob.prototype = prototype_id(crate::GOLD);
+        std::fs::write(dir.path().join("maps").join(MAP).join("G_Z.mob"), gold_mob.build()).unwrap();
+        let proto = |number: u32, kind: u32| {
+            let mut o = Object::parse_instance(&ObjectBuilder::new(kind).field("item_weight", Value::Int32(10)).build()).unwrap();
+            o.id = prototype_id(number);
+            o
+        };
+        let mut s = save(&[(1, "A", TileLoc { x: 70, y: 70 }), (2, "B", TileLoc { x: 72, y: 72 })]);
+        let player = s.players.get_mut(&PlayerId(1)).unwrap();
+        player.blueprint.sheet.base[0] = 8;
+        player.inventory = Some(crate::Inventory { items: vec![crate::CarriedItem { prototype: 6049, location: 0, quantity: 0 }] });
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        let mut prototypes = Prototypes::default();
+        prototypes.insert(proto(crate::GOLD, TYPE_GOLD));
+        prototypes.insert(proto(6049, TYPE_WEAPON));
+        sim.app.world_mut().resource_mut::<LoadedMap>().prototypes = Arc::new(prototypes);
+        sim.boot(s);
+        sim.update();
+        sim.update();
+        sim.take_deltas();
+        let sector = TileLoc { x: 71, y: 70 }.sector();
+        let index = sim.app.world().resource::<LoadedMap>().mobiles[&sector].iter().position(|o| o.object_type == TYPE_GOLD).unwrap() as u32;
+        let gold = GroundItemId::Mobile { sector, index };
+        sim.receive([(PlayerId(1), PlayerIntent::PickUp { item: gold, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        for to in [1, 2] {
+            assert!(deltas.iter().any(|(p, d)| p.0 == to && *d == LedgerDelta::GroundItemTaken { item: gold }), "player {to} sees it go");
+        }
+        let carried = |deltas: &[(PlayerId, LedgerDelta)]| deltas.iter().rev().find_map(|(p, d)| match d {
+            LedgerDelta::Inventory { inventory, .. } if p.0 == 1 => Some(inventory.clone()),
+            _ => None,
+        });
+        let inv = carried(&deltas).unwrap();
+        assert_eq!(inv.items.iter().find(|i| i.prototype == crate::GOLD).map(|i| i.quantity), Some(50));
+        assert!(sim.app.world().resource::<LoadedMap>().ground_item(gold).is_none());
+        // The dagger dropped lands on the PC's tile for everyone and can be taken back.
+        sim.receive([(PlayerId(1), PlayerIntent::Inventory { seq: 1, request: InventoryRequest::Drop { from: 0 } })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        let dropped = GroundItemId::Dropped { sector: TileLoc { x: 70, y: 70 }.sector(), number: 0 };
+        let ground = crate::GroundItem { prototype: 6049, quantity: 0, location: TileLoc { x: 70, y: 70 } };
+        assert!(deltas.iter().any(|(p, d)| p.0 == 2 && *d == LedgerDelta::GroundItemDropped { item: dropped, ground }));
+        assert!(!carried(&deltas).unwrap().items.iter().any(|i| i.prototype == 6049));
+        let saved = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!((saved.next_dropped, saved.sector_changes[&sector].taken.contains(&index)), (1, true), "kept in the save");
+        assert_eq!(saved.sector_changes[&dropped.sector()].dropped[&0], ground);
+        sim.receive([(PlayerId(1), PlayerIntent::PickUp { item: dropped, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(carried(&deltas).unwrap().items.iter().any(|i| i.prototype == 6049));
+        assert!(matches!(deltas.iter().find_map(|(p, d)| (p.0 == 1).then_some(d).filter(|d| matches!(d, LedgerDelta::Inventory { .. }))), Some(LedgerDelta::Inventory { ack: 1, .. })), "acknowledges the drop");
+    }
+
+    #[test]
     fn the_character_screen_spends_points_through_the_host() {
         use arcanum_rules::{CharacterAction, Pool};
         let dir = tempfile::tempdir().unwrap();

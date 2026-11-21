@@ -264,6 +264,9 @@ fn receive_deltas(
         if let (LedgerDelta::Inventory { ack, inventory: carried, .. }, Some(inv)) = (delta, inventory.as_mut()) {
             inv.receive(*ack, carried.clone());
         }
+        if let (LedgerDelta::ItemRefused { message }, Some(inv)) = (delta, inventory.as_mut()) {
+            inv.refuse(*message);
+        }
         if let LedgerDelta::EnterMap { map: name } = delta {
             map.0 = Some(name.clone());
         }

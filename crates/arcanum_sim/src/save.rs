@@ -37,6 +37,9 @@ pub struct WorldSave {
     /// The calendar's first year (day 0 is 1 January of it).
     #[serde(default = "default_first_year")]
     pub first_year: u32,
+    /// The number the next dropped item gets.
+    #[serde(default)]
+    pub next_dropped: u32,
 }
 
 fn default_first_year() -> u32 {
@@ -61,11 +64,18 @@ pub struct SectorDelta {
     /// Portals opened (true) or closed (false), by index in the sector's list.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub portals: BTreeMap<u32, bool>,
+    /// The map's own items taken off the ground, by index in the sector's mobile objects
+    /// ([`crate::LoadedMap::mobiles`]).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub taken: std::collections::BTreeSet<u32>,
+    /// Items dropped on the ground, by the number the host gave each.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub dropped: BTreeMap<u32, crate::GroundItem>,
 }
 
 impl SectorDelta {
     pub fn is_empty(&self) -> bool {
-        self.portals.is_empty()
+        self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty()
     }
 }
 
@@ -109,6 +119,7 @@ impl WorldSave {
             sector_changes: BTreeMap::new(),
             time: crate::GameTime::at_hour(start.clock.hour),
             first_year: start.clock.year,
+            next_dropped: 0,
         }
     }
 
@@ -252,7 +263,7 @@ mod tests {
         assert!(state.add_player(Some(&start()), PlayerId(7), blueprint("Virgil")));
         let mut save = state.0.unwrap();
         save.tick = 42;
-        save.sector_changes.insert(SectorId::new(3, 4), SectorDelta { portals: BTreeMap::from([(7, true), (9, false)]) });
+        save.sector_changes.insert(SectorId::new(3, 4), SectorDelta { portals: BTreeMap::from([(7, true), (9, false)]), ..Default::default() });
         assert_eq!(WorldSave::from_bytes(&save.to_bytes()).unwrap(), save);
     }
 

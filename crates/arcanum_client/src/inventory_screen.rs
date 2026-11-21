@@ -25,7 +25,10 @@
 //! - Toggled by the top bar's inventory button and `I`; Escape closes it; opening it closes the
 //!   character screen and the other way round. Clicks on it do not walk.
 //!
-//! Not built: using, dropping on the ground or the boxes, splitting stacks, the arrange button, total attack and
+//! - Releasing a held item on the drop box drops it on the ground at the PC's feet
+//!   ([`arcanum_sim::ground`]).
+//!
+//! Not built: using, the use box, dropping by releasing over the world, splitting stacks, the arrange button, total attack and
 //! defence, item hover help, barter and loot modes. The original's fonts for the text and
 //! numbers were not identified (Flare12Font stands in). The original's encumbrance line also
 //! prints a stray number from its stack (`%s: %s (%d)` given two values); it is left out.
@@ -84,6 +87,8 @@ pub struct PcInventory {
     outgoing: Vec<PlayerIntent>,
     /// Host answers not yet settled (they need the item facts to replay on).
     incoming: Vec<(u32, Inventory)>,
+    /// The host's refusals to show (`mes/item.mes` ids).
+    refused: Vec<u32>,
 }
 
 impl PcInventory {
@@ -128,6 +133,11 @@ impl PcInventory {
         }
         self.confirmed = Some(inventory);
         self.preview = Some(preview);
+    }
+
+    /// Keeps a refusal from the host for the message box.
+    pub fn refuse(&mut self, message: u32) {
+        self.refused.push(message);
     }
 
     /// Whether host answers wait to be settled.
@@ -200,7 +210,7 @@ impl Plugin for InventoryScreenPlugin {
                 *held = HeldItem::default();
             })
             .add_systems(PreUpdate, toggle_on_keys.run_if(in_state(AppState::InGame)).after(bevy::input::InputSystems))
-            .add_systems(Update, (settle_inventory, one_panel_at_a_time, show_panel, drag_items, show_items, follow_cursor).chain().run_if(in_state(AppState::InGame)))
+            .add_systems(Update, (settle_inventory, show_refusals, one_panel_at_a_time, show_panel, drag_items, show_items, follow_cursor).chain().run_if(in_state(AppState::InGame)))
             .add_observer(on_hud_button);
     }
 }
@@ -343,6 +353,22 @@ fn settle_inventory(mut inventory: ResMut<PcInventory>, sheet: Res<crate::pc_she
     inventory.settle(wearer(&sheet), client_info(prototypes, &sizes));
 }
 
+/// The drop box (band coordinates; the original tests from screen (703, 385)).
+pub const DROP_BOX: Rect = Rect { min: Vec2::new(703.0, 344.0), max: Vec2::new(783.0, 387.0) };
+
+/// Shows the host's refusals in the message box.
+fn show_refusals(mut inventory: ResMut<PcInventory>, data: Option<Res<CreationData>>, boxed: Option<ResMut<crate::message_box::MessageBox>>, time: Option<Res<Time<Real>>>) {
+    if inventory.refused.is_empty() {
+        return;
+    }
+    let refused = std::mem::take(&mut inventory.refused);
+    let Some(mut boxed) = boxed else { return };
+    for id in refused {
+        let text = data.as_ref().and_then(|d| d.item.get(id)).unwrap_or("").to_string();
+        boxed.post(crate::message_box::BoxMessage::plain(text), time.as_ref().map_or(0.0, |t| t.elapsed_secs_f64()));
+    }
+}
+
 /// The 800x600 point under the window cursor (the screens are centred, scaled to the height).
 pub fn screen_point(window: Vec2, cursor: Vec2) -> Vec2 {
     let scale = window.y / 600.0;
@@ -418,9 +444,13 @@ fn drag_items(
         held.0 = Some(Held { from: item.location, grab, offset: point - corner });
     } else if buttons.just_released(MouseButton::Left)
         && let Some(h) = held.0.take()
-        && let Some(to) = drop_target(point, h)
-        && to != h.from
-        && let Err(refusal) = inventory.request(InventoryRequest::Move { from: h.from, to }, wearer(&sheet), &info)
+        && let Some(request) = if DROP_BOX.contains(point) {
+            // On the drop box: onto the ground at the PC's feet.
+            Some(InventoryRequest::Drop { from: h.from })
+        } else {
+            drop_target(point, h).filter(|to| *to != h.from).map(|to| InventoryRequest::Move { from: h.from, to })
+        }
+        && let Err(refusal) = inventory.request(request, wearer(&sheet), &info)
         && let (Some(id), Some(mut boxed)) = (refusal.message(), boxed)
     {
         let text = data.as_ref().and_then(|d| d.item.get(id)).unwrap_or("").to_string();
@@ -555,7 +585,7 @@ mod tests {
     use super::*;
 
     fn sword(n: u32) -> Option<ItemInfo> {
-        (n == 1).then_some(ItemInfo { kind: TYPE_WEAPON, inventory_art: 0, cells: (1, 3), weight: 1, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 0 })
+        (n == 1).then_some(ItemInfo { kind: TYPE_WEAPON, inventory_art: 0, cells: (1, 3), weight: 1, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 0, item_flags: 0 })
     }
 
     #[test]
