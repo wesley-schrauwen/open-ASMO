@@ -488,7 +488,7 @@ mod tests {
         fn saved_changes_apply_on_load_and_reach_a_joining_player() {
             let dir = tempfile::tempdir().unwrap();
             write_map(dir.path());
-            let changes = BTreeMap::from([(DOOR.sector, crate::SectorDelta { portals: BTreeMap::from([(1, true)]) })]);
+            let changes = BTreeMap::from([(DOOR.sector, crate::SectorDelta { portals: BTreeMap::from([(1, true)]), ..Default::default() })]);
             let mut sim = booted(dir.path(), &[(7, t(80, 80))], changes.clone());
             let deltas = sim.take_deltas();
             assert!(deltas.contains(&(PlayerId(7), LedgerDelta::MapChanges { changes })), "{deltas:?}");

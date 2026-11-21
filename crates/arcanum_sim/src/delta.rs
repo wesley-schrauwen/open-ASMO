@@ -131,6 +131,12 @@ pub enum LedgerDelta {
     /// What the player's own PC carries: sent with its spawn (`ack` 0), and after each inventory
     /// request numbered `ack`, taken or refused. The client replays its later requests on top.
     Inventory { net_id: NetId, ack: u32, inventory: crate::Inventory },
+    /// An item was dropped on the ground ([`crate::ground`]).
+    GroundItemDropped { item: crate::GroundItemId, ground: crate::GroundItem },
+    /// An item was picked up off the ground.
+    GroundItemTaken { item: crate::GroundItemId },
+    /// The player's PC could not take an item: `mes/item.mes` `message` (too heavy, no room).
+    ItemRefused { message: u32 },
     /// A PC's speed stat changed (it raised its dexterity): clients time its walk from it.
     Speed { net_id: NetId, speed: i32 },
     /// An entity is gone.

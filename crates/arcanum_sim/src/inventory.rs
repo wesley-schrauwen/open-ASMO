@@ -36,6 +36,8 @@ pub const COLUMNS: i32 = 10;
 pub const PC_ROWS: i32 = 12;
 /// Ammo kinds (arrows, bullets, charges, fuel: `ammo_type` 0-3).
 pub const AMMO_TYPES: usize = 4;
+/// `item_flags`: the item cannot be dropped (0x466da0).
+pub const ITEM_NO_DROP: i32 = 0x20;
 /// Cell size in pixels.
 pub const CELL: u32 = 32;
 /// The first paperdoll slot.
@@ -99,6 +101,8 @@ pub struct ItemInfo {
     pub weapon_flags: i32,
     /// Armour's flags (1, 2, 4: small, medium, large bodies; 8 men only; 0x10 women only).
     pub armor_flags: i32,
+    /// `item_flags` (0x20: cannot be dropped).
+    pub item_flags: i32,
 }
 
 /// Cells for an art of `width` x `height` pixels: `((n - 1) >> 5) + 1` each way.
@@ -123,6 +127,7 @@ impl ItemInfo {
             generic_flags: int("generic_flags"),
             weapon_flags: int("weapon_flags"),
             armor_flags: int("armor_flags"),
+            item_flags: int("item_flags"),
         }
     }
 
@@ -212,6 +217,8 @@ pub enum ItemRefusal {
     WrongSize,
     /// Body armour for the other gender (110).
     WrongGender,
+    /// `item_flags` NO_DROP (111).
+    NoDrop,
 }
 
 impl ItemRefusal {
@@ -224,6 +231,7 @@ impl ItemRefusal {
             Self::NoFreeHand => Some(104),
             Self::WrongSize => Some(108),
             Self::WrongGender => Some(110),
+            Self::NoDrop => Some(111),
         }
     }
 }
@@ -233,6 +241,8 @@ impl ItemRefusal {
 pub enum InventoryRequest {
     /// The item at `from` dragged to `to` (a grid location or a slot).
     Move { from: i32, to: i32 },
+    /// The item at `from` dropped on the ground at the PC's tile ([`crate::ground`]).
+    Drop { from: i32 },
 }
 
 impl Inventory {
@@ -240,6 +250,15 @@ impl Inventory {
     pub fn apply(&self, request: &InventoryRequest, wearer: Wearer, info: impl Fn(u32) -> Option<ItemInfo>) -> Result<Inventory, ItemRefusal> {
         match *request {
             InventoryRequest::Move { from, to } => self.move_item(from, to, wearer, info),
+            InventoryRequest::Drop { from } => {
+                let index = self.items.iter().position(|i| i.location == from).ok_or(ItemRefusal::Silent)?;
+                if info(self.items[index].prototype).is_some_and(|i| i.item_flags & ITEM_NO_DROP != 0) {
+                    return Err(ItemRefusal::NoDrop);
+                }
+                let mut changed = self.clone();
+                changed.items.remove(index);
+                Ok(changed)
+            }
         }
     }
 }
@@ -250,24 +269,34 @@ pub struct InventoryRequests(pub Vec<(crate::PlayerId, u32, InventoryRequest)>);
 
 /// Applies the [`InventoryRequests`] to the players' PCs, keeps the result in the save, and
 /// answers each with the PC's inventory.
+#[allow(clippy::too_many_arguments)]
 pub fn apply_inventory_requests(
     mut requests: ResMut<InventoryRequests>,
-    map: Res<crate::LoadedMap>,
+    mut map: ResMut<crate::LoadedMap>,
     vfs: Option<Res<crate::SimVfs>>,
     mut world: ResMut<crate::WorldState>,
     mut outbox: ResMut<crate::Outbox>,
-    mut pcs: Query<(&crate::NetId, &crate::PlayerControlled, &crate::Sheet, &mut Inventory)>,
+    session: Res<crate::Session>,
+    mut acks: ResMut<crate::InventoryAcks>,
+    mut pcs: Query<(&crate::NetId, &crate::PlayerControlled, &crate::Sheet, &crate::Position, &mut Inventory)>,
 ) {
     if requests.0.is_empty() {
         return;
     }
     let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
     let vfs = vfs_guard.as_deref();
-    let info = item_info(&map.prototypes, |id| crate::world::art_size(vfs, map.art.as_deref(), id));
+    let prototypes = map.prototypes.clone();
+    let art = map.art.clone();
+    let info = item_info(&prototypes, |id| crate::world::art_size(vfs, art.as_deref(), id));
     for (player, seq, request) in requests.0.drain(..) {
-        let Some((&net_id, _, sheet, mut inventory)) = pcs.iter_mut().find(|(_, p, ..)| p.0 == player) else { continue };
+        let Some((&net_id, _, sheet, position, mut inventory)) = pcs.iter_mut().find(|(_, p, ..)| p.0 == player) else { continue };
+        acks.0.insert(player, seq);
         let wearer = Wearer { race: sheet.0.race, gender: sheet.0.gender };
-        if let Ok(changed) = inventory.apply(&request, wearer, &info) {
+        let result = match request {
+            InventoryRequest::Drop { from } => crate::drop_item(&inventory, from, position.0, &info, &mut map, &mut world, &session, &mut outbox),
+            _ => inventory.apply(&request, wearer, &info),
+        };
+        if let Ok(changed) = result {
             *inventory = changed;
             if let Some(saved) = world.0.as_mut().and_then(|w| w.players.get_mut(&player)) {
                 saved.inventory = Some(inventory.clone());
@@ -504,7 +533,7 @@ mod tests {
     use super::*;
 
     fn info(kind: u32, cells: (i32, i32), weight: i32) -> ItemInfo {
-        ItemInfo { kind, inventory_art: 0, cells, weight, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 7 }
+        ItemInfo { kind, inventory_art: 0, cells, weight, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 7, item_flags: 0 }
     }
 
     fn table(n: u32) -> Option<ItemInfo> {

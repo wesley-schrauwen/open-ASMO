@@ -26,7 +26,7 @@ use std::collections::{HashMap, VecDeque};
 use arcanum_formats::art_id::{ANIM_WALK, ArtId, ArtKind, CritterArt};
 use arcanum_formats::map::TileLoc;
 use arcanum_formats::object::{TYPE_PORTAL, TYPE_WALL};
-use arcanum_sim::{Gait, GameTime, LedgerDelta, MapObjectId, NetId, ActorState, PlayerIntent, USE_RANGE, Walkable, find_path, rotation_of_step, sync_is_newer, walk_art};
+use arcanum_sim::{GroundItemId, Gait, GameTime, LedgerDelta, MapObjectId, NetId, ActorState, PlayerIntent, USE_RANGE, Walkable, find_path, rotation_of_step, sync_is_newer, walk_art};
 use bevy::prelude::*;
 
 use crate::animation::ArtAnimation;
@@ -164,6 +164,8 @@ pub struct WalkLocalPc {
     pending: Option<(PlayerIntent, f32)>,
     /// A door to use, and its tile: the PC walks to within [`USE_RANGE`] of it first.
     pub door: Option<(MapObjectId, TileLoc)>,
+    /// An item to pick up off the ground, and its tile: the same.
+    pub item: Option<(GroundItemId, TileLoc)>,
 }
 
 impl WalkLocalPc {
@@ -202,6 +204,7 @@ impl WalkLocalPc {
         self.goal = Some(goal);
         self.last_goal = None;
         self.door = None;
+        self.item = None;
     }
 
     /// The player clicked door `door` on tile `at`.
@@ -209,6 +212,15 @@ impl WalkLocalPc {
         self.goal = None;
         self.last_goal = None;
         self.door = Some((door, at));
+        self.item = None;
+    }
+
+    /// The player clicked item `item` lying on tile `at`.
+    fn click_item(&mut self, item: GroundItemId, at: TileLoc) {
+        self.goal = None;
+        self.last_goal = None;
+        self.door = None;
+        self.item = Some((item, at));
     }
 }
 
@@ -547,6 +559,13 @@ fn click_to_move(
         walk.click_door(door, object.location);
         return;
     }
+    if let Some((_, _, _, _, object)) = hit.and_then(|e| objects.get(e).ok())
+        && let Some(item) = object.ground
+    {
+        debug!("click at {cursor} is on item {item:?}");
+        walk.click_item(item, object.location);
+        return;
+    }
     if let Some(goal) = world_to_tile(world, origin) {
         debug!("click at {cursor} goes to {goal:?}");
         walk.click(goal);
@@ -556,7 +575,7 @@ fn click_to_move(
 /// Plans the local PC's path to [`WalkLocalPc::goal`] on the client's map, walks it and sends it
 /// to the host.
 fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>>, pc: Res<LocalPc>, link: Option<Res<HostLink>>, mut actors: Query<&mut Actor>) {
-    if walk.goal.is_none() && walk.door.is_none() {
+    if walk.goal.is_none() && walk.door.is_none() && walk.item.is_none() {
         return;
     }
     let (Some(client), Some((net_id, _))) = (client, pc.0) else { return };
@@ -565,7 +584,8 @@ fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>
     }
     let Some(mut actor) = actors.iter_mut().find(|a| a.net_id == net_id) else { return };
     let goal = walk.goal.take();
-    let door = walk.door.take();
+    // A door or an item: walk near it, then use it or pick it up.
+    let target = walk.door.take().map(|(d, at)| (Target::Door(d), at)).or(walk.item.take().map(|(i, at)| (Target::Item(i), at)));
     // Mid-step, the path starts from the tile being stepped onto.
     let from = actor.steps.front().copied().unwrap_or(actor.at);
     let send = |intent: PlayerIntent| {
@@ -575,16 +595,16 @@ fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>
             warn!("cannot reach the host: {e}");
         }
     };
-    let path = match (goal, door) {
-        (_, Some((door, at))) if within(from, at, USE_RANGE) => {
+    let path = match (goal, target) {
+        (_, Some((target, at))) if within(from, at, USE_RANGE) => {
             // Already near enough: use it from here.
-            send(PlayerIntent::UsePortal { door, seq: walk.seq });
+            send(target.intent(walk.seq));
             return;
         }
         (_, Some((_, at))) => match path_near(&client.map, from, at) {
             Some(path) => path,
             None => {
-                warn!("no way to the door at {at:?}");
+                warn!("no way to {at:?}");
                 return;
             }
         },
@@ -604,8 +624,8 @@ fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>
     let intent = PlayerIntent::Move { seq, path: sent };
     walk.pending = Some((intent.clone(), 0.0));
     send(intent);
-    if let Some((door, _)) = door {
-        send(PlayerIntent::UsePortal { door, seq });
+    if let Some((target, _)) = target {
+        send(target.intent(seq));
     }
     if actor.steps.front() == Some(&from) {
         // Finish the step under way, then follow the new path.
@@ -613,6 +633,22 @@ fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>
         actor.steps.extend(path);
     } else {
         actor.walk(path);
+    }
+}
+
+/// What the PC walks to and then acts on.
+#[derive(Debug, Clone, Copy)]
+enum Target {
+    Door(MapObjectId),
+    Item(GroundItemId),
+}
+
+impl Target {
+    fn intent(self, seq: u32) -> PlayerIntent {
+        match self {
+            Self::Door(door) => PlayerIntent::UsePortal { door, seq },
+            Self::Item(item) => PlayerIntent::PickUp { item, seq },
+        }
     }
 }
 
