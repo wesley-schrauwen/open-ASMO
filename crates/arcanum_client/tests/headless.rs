@@ -2115,6 +2115,7 @@ fn creation_data() -> arcanum_client::create_character::CreationData {
         charedit: mes("{0}{Points}{1}{Level}{2}{XP Next}{4}{Race}{5}{Gender}{6}{Age}{7}{Derived Stats}{8}{Resistance}{12}{Damage}{13}{Magick}{14}{Fire}{15}{Poison}{16}{Electrical}{17}{Stat has reached its maximum value.}{18}{You haven't enough character points.}{19}{You cannot reduce this stat below its last accepted level.}{20}{Stat has reached its minimum value.}"),
         schematic_text: MesFile::default(),
         intgame: MesFile::default(),
+        first_year: 1885,
     }
 }
 

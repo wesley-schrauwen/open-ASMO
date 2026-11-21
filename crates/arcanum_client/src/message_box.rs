@@ -12,14 +12,17 @@
 //! - Stored messages (refusals, and later level-ups and the like) replace what is shown. Hover
 //!   help is shown only when no stored message came in the last 3 s of real time; leaving the
 //!   hovered element clears the box, whatever it shows. Nothing expires by itself.
-//! - Hover help: the bars' buttons from `mes/intgame.mes` 1000-1007; the character screen's
+//! - Hover help: the clock's time and date ([`crate::hud_clock::clock_help`]); the bars'
+//!   buttons from `mes/intgame.mes` 1000-1007 (the original shows these after a hover dwell,
+//!   event 7, whose delay was not traced; here at once); the character screen's
 //!   elements from `mes/charedit.mes` 100-140 ("title\nbody") and the rules tables (skills
 //!   1000+, spells 2000+, colleges 3000+, disciplines 4000+, degrees 5000+; 0x55ae70).
 //!
 //! Not built: the original's shortening when a text does not fit (it redraws without the icon,
-//! 0x5c7148), the message log behind it (a 10-entry ring, 0x64c540), the clock's time and date,
-//! the hotkey slots' and vials' help, college descriptions (not found), spells' fatigue line,
-//! hover help in character creation (the original draws the box in the editor's own window).
+//! 0x5c7148), the message log behind it (a 10-entry ring, 0x64c540), college descriptions (not
+//! found), spells' fatigue line. The original has no hover help on the vials or the hotkey
+//! slots, and none in character creation: the box draws only while the bars are up (flag
+//! 0x64c6b4), so creation's hovers go to the log unseen.
 
 use bevy::picking::Pickable;
 use bevy::picking::hover::Hovered;
@@ -134,6 +137,8 @@ impl MessageBox {
 pub enum BoxHelp {
     Intgame(u32),
     Editor(u32),
+    /// The clock: the time and date when the hover starts.
+    Clock,
 }
 
 /// The box's root, in the bottom bar.
@@ -250,7 +255,9 @@ fn hover_help(
     sheet: Option<Res<crate::pc_sheet::SheetHost>>,
     mut messages: ResMut<MessageBox>,
     time: Option<Res<Time<Real>>>,
+    clock: Option<Res<crate::actors::WorldClock>>,
     mut last: Local<Option<BoxHelp>>,
+    mut clock_text: Local<Option<String>>,
 ) {
     let hovered = hovered_help(&helps);
     if hovered != *last {
@@ -258,11 +265,21 @@ fn hover_help(
             messages.clear();
         }
         *last = hovered;
+        *clock_text = None;
     }
     let (Some(help), Some(data)) = (hovered, data) else { return };
     let message = match help {
         BoxHelp::Intgame(id) => data.intgame.get(id).map(BoxMessage::help),
         BoxHelp::Editor(id) => sheet.as_ref().and_then(|s| s.sheet()).and_then(|c| editor_help(id, &data, c)),
+        // The original formats it once, as the hover starts.
+        BoxHelp::Clock => {
+            if clock_text.is_none() {
+                *clock_text = clock.as_ref().and_then(|c| c.now).map(|now| {
+                    crate::hud_clock::clock_help(now, data.first_year, data.intgame.get(22).unwrap_or("Current Time"), data.intgame.get(23).unwrap_or("Current Date"))
+                });
+            }
+            clock_text.as_deref().map(BoxMessage::help)
+        }
     };
     if let Some(message) = message {
         messages.show_help(message, time.map_or(0.0, |t| t.elapsed_secs_f64()));
@@ -274,6 +291,7 @@ fn hover_help(
 fn hovered_help(helps: &Query<(&BoxHelp, &Hovered)>) -> Option<BoxHelp> {
     let id = |h: &BoxHelp| match *h {
         BoxHelp::Intgame(i) | BoxHelp::Editor(i) => i,
+        BoxHelp::Clock => 0,
     };
     helps.iter().filter(|(_, h)| h.get()).map(|(help, _)| *help).max_by_key(id)
 }

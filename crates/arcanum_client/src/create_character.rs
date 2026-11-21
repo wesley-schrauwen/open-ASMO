@@ -91,6 +91,8 @@ pub struct CreationData {
     pub schematic_text: MesFile,
     /// The in-game interface's texts (hover help, requirement lines).
     pub intgame: MesFile,
+    /// The calendar's first year (`rules/gameinit.mes`), for the clock's date.
+    pub first_year: u32,
 }
 
 impl CreationData {
@@ -107,6 +109,7 @@ impl CreationData {
             charedit: mes("mes/charedit.mes")?,
             schematic_text: mes("mes/schematic_text.mes").unwrap_or_default(),
             intgame: mes("mes/intgame.mes").unwrap_or_default(),
+            first_year: arcanum_sim::GameStart::load(vfs).year,
         })
     }
 

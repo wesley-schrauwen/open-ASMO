@@ -12,6 +12,10 @@
 //! - The original redraws it when the interface starts and then once a game hour (a timed event
 //!   of 3,600,000 game ms, 0x5526f0): the ring moves about 21 pixels at a time.
 //!
+//! - Hovering it shows "Current Time: 15:00:00   Current Date: 1/1/1885" in the message box
+//!   (0x54b5d0, kind 6, one line), the time and date taken once as the hover starts
+//!   ([`clock_help`]).
+//!
 //! Not built: the "%d Hours" text branch (0x55260b), which nothing in the exe turns on.
 
 use arcanum_sim::GameTime;
@@ -51,6 +55,22 @@ pub fn ring_offset(t: GameTime) -> u32 {
 pub fn moon_picture(t: GameTime) -> usize {
     let phase = (seconds(t) + 43_200) / 86_400 % 28;
     MOON_PHASES.iter().position(|&last| phase <= last).unwrap_or(7)
+}
+
+/// `%02d:%02d:%02d`, 24-hour (0x45ac20).
+pub fn time_text(t: GameTime) -> String {
+    format!("{:02}:{:02}:{:02}", t.hour(), t.minute(), t.ms / 1000 % 60)
+}
+
+/// `%d/%d/%d` (0x45ac70). The original orders it by the Windows locale (`LOCALE_IDATE`: month
+/// first, day first or year first); this uses its fallback, month first.
+pub fn date_text(t: GameTime, first_year: u32) -> String {
+    format!("{}/{}/{}", t.month(), t.day_of_month(), t.year(first_year))
+}
+
+/// The clock's hover help: `"%s: %s"` then `"   %s: %s"` with `intgame.mes` 22 and 23.
+pub fn clock_help(t: GameTime, first_year: u32, time_label: &str, date_label: &str) -> String {
+    format!("{time_label}: {}   {date_label}: {}", time_text(t), date_text(t, first_year))
 }
 
 /// The ring's pictures inside the clock window, in the window's pixels.
@@ -94,6 +114,7 @@ pub fn spawn_clock(top: &mut ChildSpawnerCommands, assets: &AssetServer) {
             face.spawn((part, ImageNode::new(image), at(rect(Vec2::new(part.left(0), 0.0), Vec2::new(width as f32, height)))));
         }
     });
+    top.spawn(crate::message_box::help_area(crate::message_box::BoxHelp::Clock, CLOCK));
     top.spawn((ImageNode::new(assets.load(interface::CLOCK_POINTER)), at(rect(Vec2::new(708.0, 6.0), Vec2::new(5.0, 29.0)))));
 }
 
@@ -134,6 +155,13 @@ mod tests {
     /// The ring position at the window's centre.
     fn centre(t: GameTime) -> u32 {
         (ring_offset(t) + 64) % RING
+    }
+
+    #[test]
+    fn the_clock_help_gives_the_time_and_date() {
+        let t = GameTime { days: 365, ms: ((15 * 60 + 4) * 60 + 9) * 1000 + 999 };
+        assert_eq!(clock_help(t, 1885, "Current Time", "Current Date"), "Current Time: 15:04:09   Current Date: 1/6/1886");
+        assert_eq!(date_text(GameTime::default(), 1885), "1/1/1885");
     }
 
     #[test]

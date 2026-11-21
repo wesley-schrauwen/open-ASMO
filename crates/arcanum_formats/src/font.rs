@@ -161,6 +161,29 @@ pub fn unescape(text: &str) -> String {
     text.replace("\\n", "\n").replace("\\t", "\t").replace('\r', "")
 }
 
+/// The words of `text` (split at spaces and tabs), each with the number of spaces and tabs
+/// before it.
+fn words_with_gaps(text: &str) -> Vec<(usize, &str)> {
+    let mut out = Vec::new();
+    let mut gap = 0;
+    let mut start = None;
+    for (i, c) in text.char_indices() {
+        if c == ' ' || c == '\t' {
+            if let Some(s) = start.take() {
+                out.push((gap, &text[s..i]));
+                gap = 0;
+            }
+            gap += 1;
+        } else if start.is_none() {
+            start = Some(i);
+        }
+    }
+    if let Some(s) = start {
+        out.push((gap, &text[s..]));
+    }
+    out
+}
+
 impl BitmapFont {
     fn space_width(&self) -> u32 {
         self.glyph(' ').map_or(4, |g| g.width).max(1)
@@ -185,8 +208,9 @@ impl BitmapFont {
             let mut current = String::new();
             let mut line_indent = indent;
             let first = lines.len();
-            for word in body.split([' ', '\t']).filter(|w| !w.is_empty()) {
-                let candidate = if current.is_empty() { word.to_string() } else { format!("{current} {word}") };
+            // Each word with the run of spaces before it, kept inside a line ("   %s: %s").
+            for (gap, word) in words_with_gaps(body) {
+                let candidate = if current.is_empty() { word.to_string() } else { format!("{current}{}{word}", " ".repeat(gap)) };
                 if line_indent + self.measure(&candidate) <= max {
                     current = candidate;
                     continue;
@@ -384,6 +408,7 @@ mod tests {
         let font = BitmapFont::parse(&font_art(4)).unwrap();
         let w = |c| font.glyph(c).unwrap().width;
         assert_eq!(font.measure("Ab c"), w('A') + w('b') + w(' ') + w('c'));
+        assert_eq!(words_with_gaps("  a   bc\td "), vec![(2, "a"), (3, "bc"), (1, "d")]);
         assert_eq!(font.measure(""), 0);
     }
 
