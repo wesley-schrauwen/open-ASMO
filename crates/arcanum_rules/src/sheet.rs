@@ -1,5 +1,7 @@
 //! The character sheet, its draft, and why a change can be refused.
 
+use crate::tables::SKILLS;
+
 /// The eight primary stats in `mes/stat.mes` order: ST DX CN BE IN PE WP CH.
 pub const PRIMARY_STATS: usize = 8;
 /// Every primary stat of a new character before race and background (template 016086).
@@ -34,12 +36,15 @@ pub struct Draft {
     pub stats: [i32; PRIMARY_STATS],
     pub hit_points: i32,
     pub fatigue: i32,
+    /// Skill points bought, basic skills then tech skills (`mes/skill.mes` order).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub skills: [i32; SKILLS],
 }
 
 impl Draft {
-    /// Character points the draft spends.
+    /// Character points the draft spends (skills cost 1 a point too, 0x4c64b0).
     pub fn spent(&self) -> i32 {
-        (self.stats.iter().sum::<i32>() + self.hit_points + self.fatigue) * STAT_COST
+        (self.stats.iter().sum::<i32>() + self.hit_points + self.fatigue + self.skills.iter().sum::<i32>()) * STAT_COST
     }
 }
 
@@ -63,6 +68,14 @@ pub struct CharacterSheet {
     pub fatigue_points: i32,
     /// Accepted unspent character points.
     pub unspent: i32,
+    /// Accepted skill points (0-5 each), basic skills then tech skills (fields 0xdd/0xde, bits
+    /// 0-5).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub skills: [i32; SKILLS],
+    /// Training rank per skill: 0 none, 1 Apprentice, 2 Expert, 3 Master (bits 6-7). Only
+    /// trainers change it, never the editor.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub training: [u8; SKILLS],
     pub draft: Draft,
 }
 
@@ -82,6 +95,8 @@ impl Default for CharacterSheet {
             hp_points: 0,
             fatigue_points: 0,
             unspent: STARTING_POINTS,
+            skills: [0; SKILLS],
+            training: [0; SKILLS],
             draft: Draft::default(),
         }
     }
@@ -115,6 +130,16 @@ pub enum Refusal {
     BelowAccepted,
     /// charedit 20 "Stat has reached its minimum value."
     AtMinimum,
+    /// charedit 21 "Skill has reached its maximum value."
+    SkillAtMaximum,
+    /// charedit 22-38 "You must raise your <stat> first.": the governing stat caps the skill.
+    RaiseStatFirst(u8),
+    /// charedit 23 "You cannot reduce this skill below its last accepted level."
+    SkillBelowAccepted,
+    /// charedit 24 "You have no points in this skill."
+    NoSkillPoints,
+    /// charedit 28: lowering the stat would leave a skill above what it allows.
+    SkillPrerequisite,
     /// The original ignores the click without a message (e.g. female for a male-only race).
     NotAllowed,
     /// MainMenu 506: Next without a name.
@@ -131,8 +156,29 @@ impl Refusal {
             Self::NoPoints => Some(Message::Charedit(18)),
             Self::BelowAccepted => Some(Message::Charedit(19)),
             Self::AtMinimum => Some(Message::Charedit(20)),
+            Self::SkillAtMaximum => Some(Message::Charedit(21)),
+            Self::RaiseStatFirst(stat) => Some(Message::Charedit(raise_first_message(usize::from(stat)))),
+            Self::SkillBelowAccepted => Some(Message::Charedit(23)),
+            Self::NoSkillPoints => Some(Message::Charedit(24)),
+            Self::SkillPrerequisite => Some(Message::Charedit(28)),
             Self::NoName => Some(Message::MainMenu(506)),
             Self::NotAllowed | Self::UnknownPremade => None,
         }
+    }
+}
+
+/// The "You must raise your <stat> first." message for a primary stat (Arcanum.exe 0x55f200:
+/// IN is 26, the others 32-38 in the order ST DX CN BE WP PE CH; 22 "your stats" otherwise).
+pub fn raise_first_message(stat: usize) -> u32 {
+    match stat {
+        0 => 32,
+        1 => 33,
+        2 => 34,
+        3 => 35,
+        4 => 26,
+        5 => 37,
+        6 => 36,
+        7 => 38,
+        _ => 22,
     }
 }

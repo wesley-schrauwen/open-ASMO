@@ -37,6 +37,7 @@ const STAT_UNSPENT: usize = 21;
 const STAT_AGE: usize = 25;
 const STAT_GENDER: usize = 26;
 const STAT_RACE: usize = 27;
+const SKILL_POINTS_MASK: i32 = 0x3f;
 
 /// Where a critter's starting inventory comes from (`Rules/InvenSource.mes`): `Name: min,max`
 /// gold, then `chance,prototype` per item. A prototype's `critter_inventory_source` picks one.
@@ -81,10 +82,14 @@ pub fn parse_inventory_source(text: &str) -> Option<InventorySource> {
 
 impl RulesData {
     /// A pre-made character's sheet from its PC prototype: stored base stats, level, unspent
-    /// points, age, gender, race, name, background and portrait. Nothing is in a draft.
+    /// points, skills, age, gender, race, name, background and portrait. Nothing is in a draft.
     pub fn premade_from_prototype(&self, object: &arcanum_formats::object::Object) -> CharacterSheet {
         let base = object.ints("critter_stat_base_idx").unwrap_or_default();
         let stat = |i: usize| base.get(i).copied().unwrap_or(0);
+        // Skills: bits 0-5 points, bits 6-7 training rank.
+        let basic = object.ints("critter_basic_skill_idx").unwrap_or_default();
+        let tech = object.ints("critter_tech_skill_idx").unwrap_or_default();
+        let skill_field = |k: usize| if k < BASIC_SKILLS { basic.get(k) } else { tech.get(k - BASIC_SKILLS) }.copied().unwrap_or(0);
         CharacterSheet {
             name: object.string("pc_player_name").unwrap_or("").to_string(),
             race: stat(STAT_RACE).clamp(0, RACE_COUNT as i32 - 1) as u8,
@@ -97,6 +102,8 @@ impl RulesData {
             hp_points: 0,
             fatigue_points: 0,
             unspent: stat(STAT_UNSPENT),
+            skills: std::array::from_fn(|k| skill_field(k) & SKILL_POINTS_MASK),
+            training: std::array::from_fn(|k| ((skill_field(k) >> 6) & 3) as u8),
             draft: Draft::default(),
         }
     }

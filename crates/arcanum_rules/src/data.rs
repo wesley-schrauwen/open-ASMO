@@ -12,7 +12,7 @@ use arcanum_formats::mes::MesFile;
 use arcanum_vfs::Vfs;
 
 use crate::sheet::{FEMALE, PRIMARY_STATS, RACE_COUNT};
-use crate::tables::{Schematic, SkillTable, SpellTable, TechTable, parse_schematics};
+use crate::tables::{SKILLS, Schematic, SkillTable, SpellTable, TechTable, parse_schematics};
 
 /// Race-gender codes as used in `gameport.mes` and `backgrnd.mes`.
 const RACE_CODES: [&str; RACE_COUNT] = ["HU", "DW", "EL", "HE", "GN", "HA", "HO", "HG"];
@@ -22,6 +22,11 @@ pub const RACE_EFFECT_BASE: u32 = 64;
 /// Resistance kinds, in the character editor's order.
 pub const RESISTANCES: usize = 5;
 const RESIST_KEYS: [&str; RESISTANCES] = ["resistdamage", "resistmagic", "resistfire", "resistpoison", "resistelectrical"];
+/// Skill keys in `rules/effect.mes`, in `mes/skill.mes` order.
+const SKILL_KEYS: [&str; SKILLS] = [
+    "bow", "dodge", "melee", "throwing", "backstab", "pickpocket", "prowling", "spottrap", "gambling", "haggle", "heal", "persuasion", "repair",
+    "firearms", "picklock", "armtrap",
+];
 
 /// One background block.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +64,8 @@ pub struct Effect {
     pub stats: [i32; PRIMARY_STATS],
     /// Damage, Magick, Fire, Poison, Electrical (`mes/charedit.mes` 12-16 order).
     pub resist: [i32; RESISTANCES],
+    /// Skill level changes (levels, not points), `mes/skill.mes` order.
+    pub skills: [i32; SKILLS],
 }
 
 /// Everything the character rules need from the game data.
@@ -149,7 +156,7 @@ pub fn parse_stat_effect(text: &str) -> [i32; PRIMARY_STATS] {
     parse_effect(text).stats
 }
 
-/// The stat and resistance changes in an effect line.
+/// The stat, resistance and skill changes in an effect line.
 pub fn parse_effect(text: &str) -> Effect {
     let mut out = Effect::default();
     for part in text.split(',') {
@@ -160,6 +167,8 @@ pub fn parse_effect(text: &str) -> Effect {
             out.stats[i] += v;
         } else if let Some(i) = RESIST_KEYS.iter().position(|k| key.eq_ignore_ascii_case(k)) {
             out.resist[i] += v;
+        } else if let Some(i) = SKILL_KEYS.iter().position(|k| key.eq_ignore_ascii_case(k)) {
+            out.skills[i] += v;
         }
     }
     out

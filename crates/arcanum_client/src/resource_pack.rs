@@ -76,6 +76,17 @@ pub mod paths {
         pub const CHAR_MAINT: &str = "art/interface/Char_Maint.art";
         pub const CHAR_PLUS: &str = "art/interface/Char_Plus.art";
         pub const CHAR_MINUS: &str = "art/interface/Char_Minus.art";
+        /// The editor's skills, tech and spells tabs (art 34-36, 39x39, 3 frames).
+        pub const CHAR_TABS: [&str; 3] = ["art/interface/char_Common_Skills.art", "art/interface/char_Tech_Skills.art", "art/interface/char_Spells_Skills.art"];
+        /// The skills panel (art 29, 235x325), its group buttons (art 302-305: combat, thieving,
+        /// social, technological; 3 frames), the skill gauge (art 623, 120x27) and the row
+        /// buttons (art 624/625, 29x30, 3 frames).
+        pub const SKILLS_WINDOW: &str = "art/interface/Skills_Window.ART";
+        pub const SKILL_GROUPS: [&str; 4] =
+            ["art/interface/Combat_But.ART", "art/interface/Thieving_But.ART", "art/interface/Social_But.ART", "art/interface/Technological_But.ART"];
+        pub const SKILL_GAUGE: &str = "art/interface/SkilGauge.ART";
+        pub const SKILL_PLUS: &str = "art/interface/SkilAddBut.ART";
+        pub const SKILL_MINUS: &str = "art/interface/SkilMinusBut.ART";
         /// Save list box, portrait socket and screenshot oval (transparent windows), 800x400.
         pub const SAVE_LOAD_BACK: &str = "art/interface/SaveLoadBackground.ART";
         /// Ring over the portrait, 89x89.
@@ -215,6 +226,17 @@ pub mod paths {
         interface::CHAR_MAINT,
         interface::CHAR_PLUS,
         interface::CHAR_MINUS,
+        interface::CHAR_TABS[0],
+        interface::CHAR_TABS[1],
+        interface::CHAR_TABS[2],
+        interface::SKILLS_WINDOW,
+        interface::SKILL_GROUPS[0],
+        interface::SKILL_GROUPS[1],
+        interface::SKILL_GROUPS[2],
+        interface::SKILL_GROUPS[3],
+        interface::SKILL_GAUGE,
+        interface::SKILL_PLUS,
+        interface::SKILL_MINUS,
         interface::SAVE_LOAD_LENS,
         interface::SAVE_SHOT_COVER,
         interface::NEXT_BUTTON,
