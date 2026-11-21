@@ -87,6 +87,12 @@ pub mod paths {
         pub const SKILL_GAUGE: &str = "art/interface/SkilGauge.ART";
         pub const SKILL_PLUS: &str = "art/interface/SkilAddBut.ART";
         pub const SKILL_MINUS: &str = "art/interface/SkilMinusBut.ART";
+        /// The tech and spells tabs' windows (art 30/31, 235x325) and their plus/minus (art
+        /// 647/648, 32x32, 3 frames).
+        pub const DISCIPLINES_WINDOW: &str = "art/interface/Disciplines_Window.ART";
+        pub const SPELLS_WINDOW: &str = "art/interface/char_spells.art";
+        pub const SPELL_TECH_ADD: &str = "art/interface/SpellTech_Add.ART";
+        pub const SPELL_TECH_MINUS: &str = "art/interface/SpellTech_Minus.ART";
         /// Save list box, portrait socket and screenshot oval (transparent windows), 800x400.
         pub const SAVE_LOAD_BACK: &str = "art/interface/SaveLoadBackground.ART";
         /// Ring over the portrait, 89x89.
@@ -166,6 +172,9 @@ pub mod paths {
         pub const SMALL: &str = "art/interface/morph15font.art";
         /// The in-game vials' numbers (interface art 171).
         pub const HUD_NUMBERS: &str = "art/interface/Cloister18Font.ART";
+        /// The tech tab's discipline glyphs (interface art 300) and its title (art 301).
+        pub const ICONS: &str = "art/interface/Icons17Font.ART";
+        pub const TITLE: &str = "art/interface/Nick16Font.ART";
         /// Running text on the character screens (interface art 229).
         pub const BODY: &str = "art/interface/Flare12Font.art";
         /// TrueType override for UI text. Takes priority over the bitmap fonts when present.
@@ -237,6 +246,10 @@ pub mod paths {
         interface::SKILL_GAUGE,
         interface::SKILL_PLUS,
         interface::SKILL_MINUS,
+        interface::DISCIPLINES_WINDOW,
+        interface::SPELLS_WINDOW,
+        interface::SPELL_TECH_ADD,
+        interface::SPELL_TECH_MINUS,
         interface::SAVE_LOAD_LENS,
         interface::SAVE_SHOT_COVER,
         interface::NEXT_BUTTON,

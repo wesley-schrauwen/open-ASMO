@@ -7,6 +7,7 @@
 pub mod action;
 pub mod blueprint;
 pub mod data;
+pub mod magick_tech;
 pub mod ops;
 pub mod sheet;
 pub mod skills;
@@ -15,6 +16,7 @@ pub mod tables;
 pub use action::*;
 pub use blueprint::*;
 pub use data::*;
+pub use magick_tech::*;
 pub use ops::*;
 pub use sheet::*;
 pub use skills::*;

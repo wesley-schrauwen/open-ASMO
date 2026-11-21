@@ -87,6 +87,8 @@ pub struct CreationData {
     pub stories: MesFile,
     /// The character editor's labels and messages.
     pub charedit: MesFile,
+    /// Schematic names and texts (the tech tab's degree rows).
+    pub schematic_text: MesFile,
 }
 
 impl CreationData {
@@ -101,6 +103,7 @@ impl CreationData {
             stats: mes("mes/stat.mes")?,
             stories: mes("mes/gameback.mes")?,
             charedit: mes("mes/charedit.mes")?,
+            schematic_text: mes("mes/schematic_text.mes").unwrap_or_default(),
         })
     }
 

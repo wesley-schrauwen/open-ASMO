@@ -107,15 +107,25 @@ fn main() {
         app.add_systems(OnEnter(AppState::InGame), move |mut commands: Commands| commands.insert_resource(arcanum_client::actors::DebugClick { at, frames: 90 }));
     }
 
-    // Debugging aid: `DEBUG_ARCANUM_PANEL=character` opens the character screen once the PC's
-    // sheet is in.
-    if std::env::var("DEBUG_ARCANUM_PANEL").is_ok_and(|v| v == "character") {
+    // Debugging aid: `DEBUG_ARCANUM_PANEL=character` (or `tech`, `spells` for those tabs) opens
+    // the character screen once the PC's sheet is in.
+    let panel_tab = match std::env::var("DEBUG_ARCANUM_PANEL").as_deref() {
+        Ok("character") => Some(arcanum_client::editor_tabs::SKILLS_TAB),
+        Ok("tech") => Some(arcanum_client::editor_tabs::TECH_TAB),
+        Ok("spells") => Some(arcanum_client::editor_tabs::SPELLS_TAB),
+        _ => None,
+    };
+    if let Some(tab) = panel_tab {
         app.add_systems(
             Update,
-            (|sheet: Res<arcanum_client::pc_sheet::SheetHost>, mut panel: ResMut<arcanum_client::character_editor::CharacterPanel>, mut done: Local<bool>| {
+            (move |sheet: Res<arcanum_client::pc_sheet::SheetHost>,
+                   mut panel: ResMut<arcanum_client::character_editor::CharacterPanel>,
+                   mut view: ResMut<arcanum_client::editor_tabs::EditorView>,
+                   mut done: Local<bool>| {
                 if !*done && sheet.sheet().is_some() {
                     *done = true;
                     panel.open = true;
+                    view.tab = tab;
                 }
             })
             .run_if(in_state(AppState::InGame)),

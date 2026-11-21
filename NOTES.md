@@ -95,7 +95,7 @@ a text field).
 | Fonts | Game bitmap fonts decoded and rendered (`BitmapText`, multi-line: wrap, `\n`, tab indents, whole-line clipping). Menu uses `Morph30Font`/`morph15font`; character screens add `Flare12Font` (`UiFont::Body`) with the original white/red tints. Override TTF still wins if present; built-in font as last resort. |
 | Game data formats | `.mes`, `.art`, fonts, `.dat`; objects (`arcanum_formats::object`: prototypes and instances, PC field tables from the engine's names); maps/sectors (#19). |
 | Resolutions | Done. 720p–8K, 4:3–2.4:1, `UiScale` from a 1080 baseline. |
-| Tests | 450 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
+| Tests | 455 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
 | Everything else | Not started: game screens, critter art, NPCs, dialogue, scripts, combat, UDP. |
 
 ### Git state
@@ -207,7 +207,7 @@ cargo test --workspace                              # real-data tests skip witho
 | `DEBUG_ARCANUM_LOAD` | `newest`; loads the newest save in the save folder at start, as Load Game would. |
 | `DEBUG_ARCANUM_LISTEN` | `host:port`; the in-process host also takes LAN players (TCP and UDP on that port). |
 | `DEBUG_ARCANUM_JOIN` | `host:port`; New Game joins that host instead of starting one. |
-| `DEBUG_ARCANUM_PANEL` | `character`; opens the in-game character screen once the PC's sheet is in. |
+| `DEBUG_ARCANUM_PANEL` | `character` (or `tech`, `spells` for those tabs); opens the in-game character screen once the PC's sheet is in. |
 | `DEBUG_ARCANUM_SCREEN` | `ingame` (character "Debug", through loading into the world), `options`, `singleplayer`, `newgamechoice`, `newgame`, `createcharacter`, `charactereditor`, `loadgame` (with example saves) or `loading` (held for 60 s) opens straight onto that screen (for screenshots). Screenshots are taken 60 frames after the screen is ready; earlier captures came out black. |
 
 ## Format knowledge
@@ -644,19 +644,21 @@ Character (the picker's Next starts the game directly, 0x5459f0 -> 0x5412d0).
   ST-10 (halved when negative, doubled at ST >= 20); AC DX-10; speed DX (+5 at 20); heal
   (CN+1)/3; poison recovery CN; reaction from BE (table 0x5b5330); followers CH/4 (+1 with a
   skill, not modelled). Resistances from race/background effects. XP Next 2100 at level 1.
-- Skills tab (`arcanum_rules::skills`, both in creation and in game): tabs art 34-36 (39x39) at
-  (527/595/663, 11), skills drawn, tech and spells inert. Panel `Skills_Window` (art 29,
-  235x325) at (503,63); group buttons art 302-305 at x 524/578/632/688, y 80 (the shown group
-  keeps its pressed frame; combat first); rows 66 apart: name plus " (<rank>)" at (520,126) in
-  morph15font white, gauge `SkilGauge` (art 623, 120x27) at (562,150) filled `120 x level /
-  20`, minus/plus (art 625/624, 29x30) at x 521/695, y 147 (0x55bab0, 0x55bf20, tables
-  0x5c82b0, 0x5c82f0, 0x5c8438, 0x5c8538). No numbers. Skill effects from `rules/effect.mes`
-  keys (`armtrap`, `picklock`, ...) count toward the level. Pre-mades read their skills from
-  `critter_basic_skill_idx` / `critter_tech_skill_idx`. Not copied: the basic skill minus that
-  refunds until the level changes (it only differs for a point above level 20, which raising
-  refuses). Hover help for the rows and tabs (charedit 132-138) is not built.
-- Not yet: the tech and spells tabs, the portrait, alignment, hover help texts (charedit
-  100-140), magick-tech aptitude, window 15.
+- Tabs (`editor_tabs.rs`, in creation and in game; positions in its doc comment): skills
+  (0x55bab0/0x55bf20: `Skills_Window`, group buttons, gauges `120 x level / 20`, no numbers),
+  tech (0x55c110/0x55c3a0: `Disciplines_Window`, eight discipline buttons, a "<discipline>
+  <degree>" header with the degree, the seven degrees' schematics white/cyan/grey, `TTI_*` icons
+  for learned degrees, plus on the next slot and minus on the last bought one) and spells
+  (0x55c890/0x55cbc0: `char_spells`, sixteen college buttons, five spells with icon, name and
+  "Level: n"). The shown tab, group, discipline and college keep their buttons' pressed frame
+  (the original's marking was not decoded). Skills shown first, Herbology and Conveyance
+  first. Rules: `arcanum_rules::skills` and `magick_tech`. Not copied: the basic skill minus
+  that refunds until the level changes (only differs above level 20, which raising refuses).
+  Not built: the degrees' ingredient lines, the unknown spell icons' palette effect (dimmed
+  instead), hover help (charedit 132-139; tech 4000+/5000+; spells 2000+/3000+), the fourth tab
+  (art 568).
+- Not yet: the portrait, alignment, hover help texts (charedit 100-140), magick-tech aptitude
+  (the gauge on the left), window 15.
 
 ## Character rules (skills, tech, magick)
 
@@ -723,7 +725,9 @@ stat via 0x55f200: ST 32, DX 33, CN 34, BE 35, IN 26, PE 37, WP 36, CH 38.
 - Spell `IQ:`/MinIQ values are checked against Willpower; Intelligence is a flat 5.
 - A spell rank-order failure shows "raise Willpower first" (36), the fallback message.
 - Spell buy at a full college computes the next college's first spell; no bounds guard found.
-- Tech degrees can be sold below the accepted level (the snapshot is written, never read).
+- Tech degrees can be sold below the accepted level by the rule (the snapshot is written, never
+  read), but in game the screen shows minus only above the opening degree (0x55c3a0): we
+  follow the screen.
 - Tech + at degree 7 shows "raise Intelligence first" (reads past the cost table).
 - Lowering-IN check for tech uses the raw new IN in the UI, the effective IN in the setter.
 - Skill − at the accepted value shows 23 and may still lower it (fall-through, unconfirmed).
