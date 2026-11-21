@@ -92,6 +92,10 @@ pub enum EditorText {
     Fatigue,
     Derived(usize),
     Resist(usize),
+    /// The number under the alignment dial (alignment / 10).
+    Alignment,
+    /// The magick/tech aptitude's number (its absolute value, top box for magick).
+    Aptitude,
 }
 
 /// A primary stat raised above its starting value (Arcanum.exe font 0x64c7a0).
@@ -105,7 +109,67 @@ struct EditorArt {
     plus: Handle<ArtFrames>,
     minus: Handle<ArtFrames>,
     tabs: TabArt,
+    needle: Handle<ArtFrames>,
+    aptitude: Handle<Image>,
 }
+
+/// The alignment dial's needle: the frame of `align.art` to show (0 evil to 20 good).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AlignmentNeedle(pub usize);
+
+/// The aptitude bar's top edge, in editor pixels.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AptitudeMark(pub i32);
+
+/// The alignment dial's needle frame for an alignment (0x55ec90): `v / 10 / 10 + 10`.
+pub fn needle_frame(alignment: i32) -> usize {
+    (alignment / 10 / 10 + 10).clamp(0, 20) as usize
+}
+
+/// The aptitude bar's top in editor pixels (0x55ec90): `221 - v x 128 / 100`, 93 at +100 to
+/// 349 at -100.
+pub fn aptitude_top(aptitude: i32) -> i32 {
+    221 - aptitude * 128 / 100
+}
+
+/// The dial's pivot: each frame's hotspot is put here.
+const NEEDLE_PIVOT: Vec2 = Vec2::new(56.0, 181.0);
+
+/// The original's hover rects (table 0x5c89a8): `charedit.mes` id, then the rect.
+const HELP_RECTS: [(u32, [f32; 4]); 32] = [
+    (100, [141.0, 21.0, 66.0, 66.0]),
+    (101, [212.0, 15.0, 243.0, 75.0]),
+    (102, [15.0, 138.0, 85.0, 85.0]),
+    (103, [337.0, 34.0, 123.0, 18.0]),
+    (104, [337.0, 34.0, 123.0, 18.0]),
+    (105, [337.0, 72.0, 123.0, 18.0]),
+    (106, [410.0, 134.0, 74.0, 37.0]),
+    (107, [410.0, 204.0, 74.0, 37.0]),
+    (108, [751.0, 88.0, 38.0, 274.0]),
+    (109, [124.0, 110.0, 126.0, 31.0]),
+    (110, [124.0, 150.0, 126.0, 31.0]),
+    (111, [124.0, 190.0, 126.0, 31.0]),
+    (112, [124.0, 230.0, 126.0, 31.0]),
+    (113, [266.0, 110.0, 126.0, 31.0]),
+    (114, [266.0, 150.0, 126.0, 31.0]),
+    (115, [266.0, 190.0, 126.0, 31.0]),
+    (116, [266.0, 230.0, 126.0, 31.0]),
+    (117, [51.0, 282.0, 253.0, 18.0]),
+    (118, [49.0, 308.0, 125.0, 14.0]),
+    (119, [49.0, 326.0, 125.0, 14.0]),
+    (120, [49.0, 344.0, 125.0, 14.0]),
+    (121, [49.0, 362.0, 125.0, 14.0]),
+    (122, [178.0, 308.0, 125.0, 14.0]),
+    (123, [178.0, 326.0, 125.0, 14.0]),
+    (124, [178.0, 344.0, 125.0, 14.0]),
+    (125, [178.0, 362.0, 125.0, 14.0]),
+    (126, [315.0, 282.0, 136.0, 18.0]),
+    (127, [322.0, 301.0, 105.0, 14.0]),
+    (128, [322.0, 317.0, 105.0, 14.0]),
+    (129, [322.0, 333.0, 105.0, 14.0]),
+    (130, [322.0, 349.0, 105.0, 14.0]),
+    (131, [322.0, 365.0, 105.0, 14.0]),
+];
 
 /// Window coordinates (the background starts at screen y = 41).
 fn win(x: f32, y: f32, w: f32, h: f32) -> Rect {
@@ -142,6 +206,8 @@ impl Plugin for CharacterEditorPlugin {
                 plus: assets.load(interface::CHAR_PLUS),
                 minus: assets.load(interface::CHAR_MINUS),
                 tabs: TabArt::load(&assets),
+                needle: assets.load(interface::ALIGN_NEEDLE),
+                aptitude: assets.load(interface::APTITUDE_MARK),
             });
         })
         .add_systems(OnEnter(AppState::CharacterEditor), (crate::create_character::load_creation_data, build_screen).chain())
@@ -153,6 +219,7 @@ impl Plugin for CharacterEditorPlugin {
         .add_systems(OnExit(AppState::InGame), |mut panel: ResMut<CharacterPanel>| *panel = CharacterPanel::default())
         .add_systems(Update, (show_panel, show_panel_values).chain().run_if(in_state(AppState::InGame)))
         .add_systems(PreUpdate, close_panel_on_escape.run_if(in_state(AppState::InGame)).after(bevy::input::InputSystems))
+        .add_systems(Update, place_needles)
         .add_observer(on_activate)
         .add_observer(on_hud_button);
     }
@@ -179,8 +246,11 @@ fn build_screen(mut commands: Commands, art: Res<EditorArt>, frame: Res<WindowAr
         });
 }
 
-/// The +/- buttons of the stats and pools.
+/// The hover areas, then the +/- buttons of the stats and pools.
 fn spawn_buttons(screen: &mut ChildSpawnerCommands, art: &EditorArt) {
+    for (id, [x, y, w, h]) in HELP_RECTS {
+        screen.spawn(crate::message_box::help_area(BoxHelp::Editor(id), win(x, y, w, h)));
+    }
     let stat_help = |stat: usize| BoxHelp::Editor(STAT_HELP[stat]);
     for (i, &y) in STAT_ROWS.iter().enumerate() {
         let by = y + 2.0;
@@ -195,6 +265,21 @@ fn spawn_buttons(screen: &mut ChildSpawnerCommands, art: &EditorArt) {
     screen.spawn((BoxHelp::Editor(107), button(EditorAction::Fatigue(-1), &art.minus, 409.0, 214.0)));
     screen.spawn((BoxHelp::Editor(107), button(EditorAction::Fatigue(1), &art.plus, 465.0, 214.0)));
     crate::editor_tabs::spawn_tabs(screen, &art.tabs);
+}
+
+/// Puts the alignment needle's frame at the dial's pivot once `align.art` is loaded.
+fn place_needles(frames: Res<Assets<ArtFrames>>, art: Option<Res<EditorArt>>, mut needles: Query<(&AlignmentNeedle, &mut ImageNode, &mut Node)>) {
+    let Some(set) = art.and_then(|a| frames.get(&a.needle)) else { return };
+    for (needle, mut image, mut node) in &mut needles {
+        let Some((frame, center, size)) = set.rotations.first().and_then(|r| r.frame(needle.0)) else { continue };
+        if image.image == *frame {
+            continue;
+        }
+        image.image = frame.clone();
+        let place = win(NEEDLE_PIVOT.x - center.x as f32, NEEDLE_PIVOT.y - center.y as f32, size.x as f32, size.y as f32);
+        let placed = at(place);
+        (node.left, node.top, node.width, node.height) = (placed.left, placed.top, placed.width, placed.height);
+    }
 }
 
 /// Whether the in-game character screen is open (the top bar's character button toggles it).
@@ -264,7 +349,7 @@ fn show_panel_values(
     contents: Query<Entity, With<EditorContent>>,
     roots: Query<Entity, With<CharacterPanelScreen>>,
     fonts: Option<Res<ArcanumFonts>>,
-    (art, view, mut drawn): (Res<EditorArt>, Res<EditorView>, Local<Option<arcanum_rules::CharacterSheet>>),
+    (art, view, mut drawn, assets): (Res<EditorArt>, Res<EditorView>, Local<Option<arcanum_rules::CharacterSheet>>, Res<AssetServer>),
 ) {
     let (Some(data), Ok(root), Some(c)) = (data, roots.single(), sheet.sheet()) else { return };
     // The bridge takes the outgoing requests every frame, so the resource always looks changed:
@@ -277,7 +362,7 @@ fn show_panel_values(
         commands.entity(old).despawn();
     }
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-    draw_values(&mut commands, root, c, &data, &fonts, &art, *view);
+    draw_values(&mut commands, root, c, &data, &fonts, &art, *view, &assets);
 }
 
 /// Escape closes the in-game character screen (before it would leave the game).
@@ -304,7 +389,7 @@ fn show_values(
     contents: Query<Entity, With<EditorContent>>,
     roots: Query<Entity, With<CharacterEditorScreen>>,
     fonts: Option<Res<ArcanumFonts>>,
-    (art, view): (Res<EditorArt>, Res<EditorView>),
+    (art, view, assets): (Res<EditorArt>, Res<EditorView>, Res<AssetServer>),
 ) {
     let Some(data) = data else { return };
     if !host.is_changed() && !view.is_changed() && added.is_empty() {
@@ -315,12 +400,12 @@ fn show_values(
         commands.entity(old).despawn();
     }
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-    draw_values(&mut commands, root, host.sheet(), &data, &fonts, &art, *view);
+    draw_values(&mut commands, root, host.sheet(), &data, &fonts, &art, *view, &assets);
 }
 
 /// Spawns every value of `c` under `root` (an 800x600 screen).
 #[allow(clippy::too_many_arguments)]
-fn draw_values(commands: &mut Commands, root: Entity, c: &arcanum_rules::CharacterSheet, data: &CreationData, fonts: &ArcanumFonts, art: &EditorArt, view: EditorView) {
+fn draw_values(commands: &mut Commands, root: Entity, c: &arcanum_rules::CharacterSheet, data: &CreationData, fonts: &ArcanumFonts, art: &EditorArt, view: EditorView, assets: &AssetServer) {
     let rules = &data.rules;
     let label = |id: u32, fallback: &str| data.charedit.get(id).unwrap_or(fallback).to_string();
     let stat_name = |id: u32| data.stats.get(id).unwrap_or("?").to_string();
@@ -339,8 +424,8 @@ fn draw_values(commands: &mut Commands, root: Entity, c: &arcanum_rules::Charact
         .with_children(|p| {
             let mut put = |r: Rect, text: &str, which: EditorText, font: UiFont, colour: Color, centre: bool| {
                 let justify = if centre { JustifyContent::Center } else { JustifyContent::FlexStart };
-                p.spawn(Node { justify_content: justify, align_items: AlignItems::Center, ..at(r) }).with_children(|cell| {
-                    let mut t = cell.spawn((which, TextColor(colour)));
+                p.spawn((bevy::picking::Pickable::IGNORE, Node { justify_content: justify, align_items: AlignItems::Center, ..at(r) })).with_children(|cell| {
+                    let mut t = cell.spawn((which, bevy::picking::Pickable::IGNORE, TextColor(colour)));
                     fonts.insert_text(&mut t, text, font);
                 });
             };
@@ -375,6 +460,19 @@ fn draw_values(commands: &mut Commands, root: Entity, c: &arcanum_rules::Charact
             for (i, &y) in RESIST_ROWS.iter().enumerate() {
                 let text = format!("{}: {}", label(12 + i as u32, "?"), resist[i]);
                 put(win(322.0, y, 105.0, 14.0), &text, EditorText::Resist(i), UiFont::Body, SCREEN_WHITE, false);
+            }
+            // The alignment dial and its number, the aptitude bar and its number (0x55ec90).
+            let alignment = rules.alignment(c);
+            put(win(43.0, 198.0, 28.0, 17.0), &(alignment / 10).to_string(), EditorText::Alignment, UiFont::Body, SCREEN_WHITE, true);
+            let aptitude = rules.aptitude(c);
+            let number_y = if aptitude >= 0 { 66.0 } else { 365.0 };
+            put(win(752.0, number_y, 30.0, 16.0), &aptitude.abs().to_string(), EditorText::Aptitude, UiFont::Body, SCREEN_WHITE, true);
+            p.spawn((bevy::picking::Pickable::IGNORE, AlignmentNeedle(needle_frame(alignment)), ImageNode::default(), at(win(0.0, 0.0, 0.0, 0.0))));
+            let top = aptitude_top(aptitude);
+            p.spawn((bevy::picking::Pickable::IGNORE, AptitudeMark(top), ImageNode::new(art.aptitude.clone()), at(win(775.0, top as f32, 14.0, 6.0))));
+            // The portrait (64x64, `portrait/<stem>.bmp`; 0x4ce470).
+            if let Some(stem) = rules.portrait(c) {
+                p.spawn((bevy::picking::Pickable::IGNORE, ImageNode::new(assets.load(format!("portrait/{stem}.bmp"))), at(win(142.0, 22.0, 64.0, 64.0))));
             }
             crate::editor_tabs::draw_tab(p, c, data, fonts, &art.tabs, view);
         })
@@ -449,4 +547,21 @@ fn refusal_text(e: arcanum_rules::Refusal, data: Option<&CreationData>) -> Strin
         _ => None,
     };
     text.unwrap_or("That cannot be changed.").to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_dial_and_the_bar_follow_the_original_formulas() {
+        assert_eq!([-1000, -150, -99, 0, 99, 150, 1000].map(needle_frame), [0, 9, 10, 10, 10, 11, 20], "v / 10 / 10 + 10, rounded towards zero");
+        assert_eq!([100, 50, 0, -1, -100].map(aptitude_top), [93, 157, 221, 222, 349]);
+    }
+
+    #[test]
+    fn hover_rects_follow_the_original_table() {
+        let ids: Vec<u32> = HELP_RECTS.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, (100..=131).collect::<Vec<_>>());
+    }
 }

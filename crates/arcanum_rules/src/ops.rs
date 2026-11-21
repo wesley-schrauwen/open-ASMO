@@ -181,6 +181,10 @@ impl RulesData {
             stats: std::array::from_fn(|i| race.stats[i] + gender.stats[i] + background.stats[i]),
             resist: std::array::from_fn(|i| race.resist[i] + gender.resist[i] + background.resist[i]),
             skills: std::array::from_fn(|i| race.skills[i] + gender.skills[i] + background.skills[i]),
+            magick_points: race.magick_points + gender.magick_points + background.magick_points,
+            tech_points: race.tech_points + gender.tech_points + background.tech_points,
+            aptitude: race.aptitude + gender.aptitude + background.aptitude,
+            alignment: race.alignment + gender.alignment + background.alignment,
         }
     }
 

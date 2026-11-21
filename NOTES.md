@@ -95,7 +95,7 @@ a text field).
 | Fonts | Game bitmap fonts decoded and rendered (`BitmapText`, multi-line: wrap, `\n`, tab indents, whole-line clipping). Menu uses `Morph30Font`/`morph15font`; character screens add `Flare12Font` (`UiFont::Body`) with the original white/red tints. Override TTF still wins if present; built-in font as last resort. |
 | Game data formats | `.mes`, `.art`, fonts, `.dat`; objects (`arcanum_formats::object`: prototypes and instances, PC field tables from the engine's names); maps/sectors (#19). |
 | Resolutions | Done. 720p–8K, 4:3–2.4:1, `UiScale` from a 1080 baseline. |
-| Tests | 460 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
+| Tests | 463 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
 | Everything else | Not started: game screens, critter art, NPCs, dialogue, scripts, combat, UDP. |
 
 ### Git state
@@ -657,8 +657,19 @@ Character (the picker's Next starts the game directly, 0x5459f0 -> 0x5412d0).
   Not built: the degrees' ingredient lines, the unknown spell icons' palette effect (dimmed
   instead), hover help (charedit 132-139; tech 4000+/5000+; spells 2000+/3000+), the fourth tab
   (art 568).
-- Not yet: the portrait, alignment, hover help texts (charedit 100-140), magick-tech aptitude
-  (the gauge on the left), window 15.
+- Portrait, meters and hover rects (0x55ec90, table 0x5c89a8): the 64x64 portrait
+  (`portrait/<stem>.bmp`) at (141,21). The "E&G" dial on the left is the **alignment** (stat
+  19, -1000..1000): `align.art` (art 254) frame `v/10/10 + 10` (0 evil, 10 up, 20 good) with its
+  hotspot at (56,181), and `v/10` in the box under it (centred on x 57, y 198). The thermometer
+  on the right is the **magick/tech aptitude** (stat 16, -100..100): `MT_Apt` (art 255) at
+  (775, `221 - v*128/100`), magick up; its absolute value in the top box (y 66) for magick or
+  the bottom one (y 365) for tech. Aptitude = `(50 x spells - 55 x degrees)/10`, with
+  `magicpts`/`techpts` effects counted as spells/degrees, plus `aptitude` effects (no sector
+  aura yet); alignment = `alignment` effects (a new character's start was not traced; 0
+  assumed). The 32 hover rects for charedit 100-131 are in `character_editor.rs`; where they
+  overlap (101 holds 103-105, and 103/104 share one rect) the highest id wins (the original's
+  choice was not traced). The help shows in the in-game message box only.
+- Not yet: the auto-level schemes button (754,21, art 568, help 140), window 15.
 
 ## Character rules (skills, tech, magick)
 

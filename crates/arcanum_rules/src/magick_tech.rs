@@ -53,7 +53,28 @@ pub fn spell_willpower_needed(s: &CharacterSheet) -> i32 {
     spells_known(s).iter().filter(|&&n| n > 0).map(|&n| SPELL_WILLPOWER[(n as usize - 1).min(SPELLS_PER_COLLEGE - 1)]).max().unwrap_or(0)
 }
 
+/// Magick/tech aptitude limits: +100 is all magick, -100 all tech.
+pub const MAX_APTITUDE: i32 = 100;
+/// Alignment limits: -1000 evil to +1000 good (stat 19).
+pub const MAX_ALIGNMENT: i32 = 1000;
+
 impl RulesData {
+    /// The magick/tech aptitude (stat 16, 0x4b08ce): `(50 x spells - 55 x degrees) / 10`, with
+    /// `magicpts`/`techpts` effects counted as spells and degrees, plus `aptitude` effects,
+    /// clamped to -100..100. The sector's aura (sector + 0x4644) is not built.
+    pub fn aptitude(&self, s: &CharacterSheet) -> i32 {
+        let e = self.character_effects(s);
+        let spells: i32 = spells_known(s).iter().sum::<i32>() + e.magick_points;
+        let degrees: i32 = (0..DISCIPLINES).map(|d| tech_degree(s, d)).sum::<i32>() + e.tech_points;
+        ((50 * spells - 55 * degrees) / 10 + e.aptitude).clamp(-MAX_APTITUDE, MAX_APTITUDE)
+    }
+
+    /// The alignment (stat 19): 0 plus `alignment` effects, clamped to -1000..1000. (A new
+    /// character's starting value was not traced; nothing changes it in play yet.)
+    pub fn alignment(&self, s: &CharacterSheet) -> i32 {
+        self.character_effects(s).alignment.clamp(-MAX_ALIGNMENT, MAX_ALIGNMENT)
+    }
+
     /// Raises discipline `d` by a degree.
     pub fn raise_tech(&self, s: &CharacterSheet, d: usize) -> Result<CharacterSheet, Refusal> {
         if d >= DISCIPLINES {
@@ -166,6 +187,25 @@ mod tests {
         let s = r.accept(&s);
         assert_eq!(r.lower_spell(&s, 3), Err(Refusal::SpellAccepted));
         assert_eq!(r.lower_spell(&s, 4), Err(Refusal::NotAllowed));
+    }
+
+    #[test]
+    fn aptitude_leans_to_magick_with_spells_and_to_tech_with_degrees() {
+        use arcanum_formats::mes::MesFile;
+        let mes = |t: &str| MesFile::parse(t.as_bytes()).unwrap();
+        // Dwarves (race effect 65) count three tech degrees; background 1 is evil.
+        let r = RulesData::from_files(&mes("{0}{1000}{1}{}{2}{}{10}{1001}{11}{86}{12}{}"), &mes("{65}{techpts +3}{86}{alignment -50, alignment max -200}"), &mes("{1001}{DWM1}"));
+        let human = sheet(5, [8, 8, 8, 8, 8, 8, 9, 8]);
+        assert_eq!(r.aptitude(&human), 0);
+        let mage = r.raise_spell(&human, 0).unwrap();
+        assert_eq!(r.aptitude(&mage), 5, "50 / 10");
+        let both = r.raise_tech(&mage, 0).unwrap();
+        assert_eq!(r.aptitude(&both), 0, "(50 - 55) / 10 rounds towards zero");
+        let dwarf = CharacterSheet { race: 1, ..human.clone() };
+        assert_eq!(r.aptitude(&dwarf), -16, "-165 / 10");
+        let full = CharacterSheet { spells: [5; 16], ..human.clone() };
+        assert_eq!(r.aptitude(&full), MAX_APTITUDE, "clamped");
+        assert_eq!(r.alignment(&CharacterSheet { background: 1, ..human }), -50);
     }
 
     #[test]
