@@ -2116,6 +2116,8 @@ fn creation_data() -> arcanum_client::create_character::CreationData {
         schematic_text: MesFile::default(),
         intgame: MesFile::default(),
         first_year: 1885,
+        inven_ui: MesFile::default(),
+        critter: MesFile::default(),
     }
 }
 
@@ -2428,7 +2430,7 @@ fn the_character_screen_spends_points_in_the_world_through_the_host() {
     // The top bar's character button opens it.
     let button = {
         let world = app.world_mut();
-        world.query::<(Entity, &arcanum_client::hud::HudAction)>().iter(world).next().unwrap().0
+        world.query::<(Entity, &arcanum_client::hud::HudAction)>().iter(world).find(|(_, a)| **a == arcanum_client::hud::HudAction::Character).unwrap().0
     };
     app.world_mut().trigger(Activate { entity: button });
     app.update();
@@ -2485,6 +2487,56 @@ fn the_character_screen_spends_points_in_the_world_through_the_host() {
     let sheet = app.world().resource::<arcanum_client::pc_sheet::SheetHost>().sheet().unwrap().clone();
     assert_eq!((sheet.draft.hit_points, sheet.hp_points), (0, 1), "kept on closing");
     assert_eq!((sheet.draft.skills[4], sheet.skills[4] > 0, sheet.spells[0]), (0, true, 1));
+}
+
+#[test]
+fn the_inventory_screen_opens_from_the_bar_and_closes_the_character_screen() {
+    use arcanum_client::character_editor::CharacterPanel;
+    use arcanum_client::hud::HudAction;
+    use arcanum_client::inventory_screen::{InventoryPanel, InventoryScreen, InventoryText, PcInventory};
+
+    let (fx, _) = world_fixture();
+    let mut app = ready_menu(&fx);
+    app.add_plugins((arcanum_client::actors::ActorsPlugin, arcanum_client::hud::HudPlugin, arcanum_client::inventory_screen::InventoryScreenPlugin)).init_resource::<ButtonInput<MouseButton>>();
+    with_pickable_premades(&mut app);
+    activate(&mut app, MenuAction::SinglePlayer);
+    app.update();
+    activate(&mut app, MenuAction::NewGame);
+    app.update();
+    activate(&mut app, MenuAction::PickCharacter);
+    app.update();
+    press_new_game(&mut app, NewGameAction::Next);
+    // The host sends the PC's inventory with its spawn.
+    update_until(&mut app, |app| state(app) == AppState::InGame && app.world().resource::<PcInventory>().0.is_some());
+    let button = |app: &mut App, action: HudAction| {
+        let world = app.world_mut();
+        world.query::<(Entity, &HudAction)>().iter(world).find(|(_, a)| **a == action).unwrap().0
+    };
+    let inventory = button(&mut app, HudAction::Inventory);
+    app.world_mut().trigger(Activate { entity: inventory });
+    app.update();
+    app.update();
+    assert!(app.world().resource::<InventoryPanel>().open);
+    let world = app.world_mut();
+    assert_eq!(world.query_filtered::<(), With<InventoryScreen>>().iter(world).count(), 1);
+    assert_eq!(world.query::<&InventoryText>().iter(world).count(), 8, "three lines, gold and four ammo counts");
+    // The character screen takes its place.
+    let character = button(&mut app, HudAction::Character);
+    app.world_mut().trigger(Activate { entity: character });
+    app.update();
+    app.update();
+    assert!(app.world().resource::<CharacterPanel>().open);
+    assert!(!app.world().resource::<InventoryPanel>().open);
+    let world = app.world_mut();
+    assert_eq!(world.query_filtered::<(), With<InventoryScreen>>().iter(world).count(), 0);
+    // The inventory button swaps them back; Escape closes it.
+    app.world_mut().trigger(Activate { entity: inventory });
+    app.update();
+    app.update();
+    assert!(!app.world().resource::<CharacterPanel>().open);
+    press_escape(&mut app);
+    assert_eq!(state(&app), AppState::InGame);
+    assert!(!app.world().resource::<InventoryPanel>().open);
 }
 
 #[test]

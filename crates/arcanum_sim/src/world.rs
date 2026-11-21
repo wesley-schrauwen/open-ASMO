@@ -408,7 +408,7 @@ pub fn pc_status(rules: &arcanum_rules::RulesData, sheet: &CharacterSheet) -> Pc
 #[allow(clippy::too_many_arguments)]
 pub fn boot_world(
     mut commands: Commands,
-    world: Res<WorldState>,
+    mut world: ResMut<WorldState>,
     vfs: Option<Res<SimVfs>>,
     mut map: ResMut<LoadedMap>,
     mut ids: ResMut<NetIds>,
@@ -421,6 +421,7 @@ pub fn boot_world(
     npcs: Query<(&NetId, &Npc, &Position, &Appearance)>,
 ) {
     let Some(save) = &world.0 else { return };
+    let mut kits = Vec::new();
     let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
     let vfs = vfs_guard.as_deref();
     if map.name.as_deref() != Some(save.map.as_str()) {
@@ -440,7 +441,15 @@ pub fn boot_world(
         let sheet = &saved.blueprint.sheet;
         let look = Appearance { art: pc_art(sheet.race, sheet.gender == MALE), speed: rules.0.derived(sheet).speed };
         let gait = Gait::load(look.art, look.speed, |p| vfs.and_then(|v| v.read(p).ok()));
-        commands.spawn((net_id, PlayerControlled(player), Position(saved.position), Sheet(sheet.clone()), look, gait));
+        let inventory = saved.inventory.clone().unwrap_or_else(|| {
+            let info = crate::item_info(&map.prototypes, |id| art_size(vfs, map.art.as_deref(), id));
+            let kit = crate::starting_kit(&saved.blueprint, info, rules.0.derived(sheet).carry_weight, rules.0.aptitude(sheet));
+            kits.push((player, kit.clone()));
+            kit
+        });
+        // Only its player sees what it carries.
+        outbox.0.push((player, LedgerDelta::Inventory { net_id, inventory: inventory.clone() }));
+        commands.spawn((net_id, PlayerControlled(player), Position(saved.position), Sheet(sheet.clone()), look, gait, inventory));
         map.load_around(vfs, saved.position);
         session.players.insert(player, SessionPlayer::InWorld(net_id));
         // Everyone already here learns of the new PC; the new PC's player learns of everyone.
@@ -469,6 +478,24 @@ pub fn boot_world(
         // The newcomer learns where everyone is walking from a sync at the end of this tick.
         clock.due = true;
     }
+    // A starting kit is given once: the save keeps it from now on.
+    if !kits.is_empty()
+        && let Some(save) = world.0.as_mut()
+    {
+        for (player, kit) in kits {
+            if let Some(saved) = save.players.get_mut(&player) {
+                saved.inventory = Some(kit);
+            }
+        }
+    }
+}
+
+/// The first frame's size of art `id`, read through `index`.
+pub fn art_size(vfs: Option<&Vfs>, index: Option<&ArtIndex>, id: ArtId) -> Option<(u32, u32)> {
+    let path = index?.path(id)?;
+    let file = arcanum_formats::art::ArtFile::parse(&vfs?.read(&path).ok()?).ok()?;
+    let frame = file.frames.first()?.first()?;
+    Some((frame.width, frame.height))
 }
 
 #[cfg(test)]
@@ -521,7 +548,7 @@ mod tests {
         let mut save = WorldSave { map: MAP.into(), ..WorldSave::new_game(&crate::StartMap { map: MAP.into(), position: TileLoc { x: 0, y: 0 }, clock: Default::default() }) };
         for &(id, name, position) in players {
             let sheet = CharacterSheet { name: name.into(), ..Default::default() };
-            save.players.insert(PlayerId(id), PlayerSave { blueprint: CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None }, position });
+            save.players.insert(PlayerId(id), PlayerSave { blueprint: CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None }, position, inventory: None });
         }
         save
     }
@@ -584,6 +611,46 @@ mod tests {
         assert_eq!(map.absent.len() + map.sectors.len(), 4, "a 2 x 2 block at the corner");
         assert_eq!(map.sectors.len(), 1, "(1, 1) is within reach");
         assert_eq!(pcs(&mut sim).len(), 1);
+    }
+
+    #[test]
+    fn a_pc_enters_with_its_starting_kit_once() {
+        use arcanum_formats::object::{Object, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, prototype_id};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let item = |number: u32, kind: u32| {
+            let mut o = Object::parse_instance(&ObjectBuilder::new(kind).field("item_weight", Value::Int32(10)).build()).unwrap();
+            o.id = prototype_id(number);
+            o
+        };
+        let mut s = save(&[(1, "A", TileLoc { x: 70, y: 70 }), (2, "B", TileLoc { x: 71, y: 70 })]);
+        let blueprint = &mut s.players.get_mut(&PlayerId(1)).unwrap().blueprint;
+        (blueprint.gold, blueprint.items, blueprint.prototype) = (385, vec![6029], Some(16094));
+        let dagger = 6029 + crate::BASIC_TO_PROTOTYPE;
+        blueprint.sheet.base[0] = 8;
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        let mut prototypes = Prototypes::default();
+        prototypes.insert(item(crate::GOLD, arcanum_formats::object::TYPE_GOLD));
+        prototypes.insert(item(dagger, arcanum_formats::object::TYPE_WEAPON));
+        sim.app.world_mut().resource_mut::<LoadedMap>().prototypes = Arc::new(prototypes);
+        sim.boot(s);
+        sim.update();
+        sim.update();
+        let deltas = sim.take_deltas();
+        let sent: Vec<_> = deltas.iter().filter_map(|(p, d)| match d {
+            LedgerDelta::Inventory { inventory, .. } => Some((p.0, inventory.clone())),
+            _ => None,
+        }).collect();
+        assert_eq!(sent.len(), 2, "each player gets only their own: {sent:?}");
+        let (_, kit) = sent.iter().find(|(p, _)| *p == 1).unwrap();
+        assert_eq!(kit.items[0], crate::CarriedItem { prototype: crate::GOLD, location: 0, quantity: 385 });
+        assert_eq!(kit.worn(crate::Slot::Weapon).map(|i| i.prototype), Some(dagger), "a pre-made wields its weapon");
+        let saved = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(saved.players[&PlayerId(1)].inventory.as_ref(), Some(kit), "kept in the save");
+        assert_eq!(saved.players[&PlayerId(2)].inventory, Some(crate::Inventory::default()));
     }
 
     #[test]

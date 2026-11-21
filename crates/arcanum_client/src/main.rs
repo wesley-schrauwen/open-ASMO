@@ -86,6 +86,7 @@ fn main() {
             arcanum_client::animation::AnimationPlugin,
             arcanum_client::actors::ActorsPlugin,
             arcanum_client::hud::HudPlugin,
+            arcanum_client::inventory_screen::InventoryScreenPlugin,
             arcanum_client::cursor::CursorPlugin,
         ));
 
@@ -126,6 +127,21 @@ fn main() {
                     *done = true;
                     panel.open = true;
                     view.tab = tab;
+                }
+            })
+            .run_if(in_state(AppState::InGame)),
+        );
+    }
+
+    // Debugging aid: `DEBUG_ARCANUM_PANEL=inventory` opens the inventory screen once the PC's
+    // inventory is in.
+    if std::env::var("DEBUG_ARCANUM_PANEL").is_ok_and(|v| v == "inventory") {
+        app.add_systems(
+            Update,
+            (|inventory: Res<arcanum_client::inventory_screen::PcInventory>, mut panel: ResMut<arcanum_client::inventory_screen::InventoryPanel>, mut done: Local<bool>| {
+                if !*done && inventory.0.is_some() {
+                    *done = true;
+                    panel.open = true;
                 }
             })
             .run_if(in_state(AppState::InGame)),
@@ -202,8 +218,9 @@ fn socket_from_env(var: &str) -> Option<std::net::SocketAddr> {
     }
 }
 
-/// `DEBUG_ARCANUM_SCREEN=ingame`: once the creation data is in, names a character "Debug",
-/// hands it to the host and goes through the loading screen into the world.
+/// `DEBUG_ARCANUM_SCREEN=ingame`: once the creation data is in, names a character "Debug" (or
+/// picks the pre-made `DEBUG_ARCANUM_PREMADE`, a prototype number such as 16094), hands it to the
+/// host and goes through the loading screen into the world.
 fn start_debug_game(
     mut commands: Commands,
     data: Option<Res<arcanum_client::create_character::CreationData>>,
@@ -212,8 +229,12 @@ fn start_debug_game(
 ) {
     let Some(data) = data else { return };
     host.reset(&data.rules);
+    let action = match std::env::var("DEBUG_ARCANUM_PREMADE").ok().and_then(|v| v.parse().ok()) {
+        Some(prototype) => arcanum_rules::CharacterAction::PickPremade(prototype),
+        None => arcanum_rules::CharacterAction::SetName("Debug".into()),
+    };
     let made = host
-        .apply(&data.rules, arcanum_rules::CharacterAction::SetName("Debug".into()))
+        .apply(&data.rules, action)
         .and_then(|()| host.finish(&data.rules).map(|_| ()));
     if let Err(e) = made {
         warn!("debug character refused: {e:?}");

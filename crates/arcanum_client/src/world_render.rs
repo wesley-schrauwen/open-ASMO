@@ -64,6 +64,13 @@ pub struct ClientMap {
     pub no_art: usize,
 }
 
+impl ClientMap {
+    /// The art index, once read.
+    pub fn art_index(&self) -> Option<&ArtIndex> {
+        self.art.as_ref()?.as_ref().ok()
+    }
+}
+
 /// A ground tile.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GroundTile(pub TileLoc);

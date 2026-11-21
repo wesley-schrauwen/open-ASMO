@@ -87,7 +87,7 @@ a text field).
 | World drawing | `world_render.rs` + `isometric.rs`: ground tiles, walls, portals, scenery in the original's order. `actors.rs` + `animation.rs`: PCs with stand/walk animation at the original's speed; left click walks the PC, host corrections slide. No roofs, cutaway, effects or object animation yet. |
 | New Game flow | Choice menu (Pick Character / New Character / Cancel, `MainMenu.mes` 420-422) → pre-made picker (12 characters from their prototypes: portrait, name, gender, race, background title, story) → loading; or → character creation (name text field, portrait/gender/race/background arrows, initial stats, race description or background story) → stats page (spend 5 points on stats, hit points, fatigue; derived stats and resistances) → loading. See the sections below. |
 | Load Game screen | Original art and layout from Arcanum.exe's screen table (0x5c4560): top bar, `SaveLoadBackground`, bottom bar; Back/Load round buttons, Delete, info toggle, hover help in the bottom bar. Lists the host's saves (`list_saves`, newest first; `DEBUG_ARCANUM_SCREEN=loadgame` uses example saves). Load boots a host from the save (`boot_save`) and goes through the loading screen into the world. No portraits/screenshots or delete confirmation yet. |
-| In-game interface | `hud.rs`: the original's top bar (IntTop, 800x41) and bottom bar (IntBotom, 800x159), centred on the window's top and bottom edges over a full-window world (owner's layout). Character/log/map/inventory, combat/skills/spells/schematics buttons (hover and pressed frames; only the character button acts: it opens the character screen in game, spending points through the host, `pc_sheet.rs` + `arcanum_sim::sheet`), spell and hotkey slots, the clock (`hud_clock.rs`: day strip and moon phase scrolled by the game time, redrawn hourly, as 0x5522f0), health and fatigue vials drawn as the original (0x54af10) with `%03d` numbers, from the host's `PcStatus`. Clicks on the bars do not walk. Game cursor (`cursor.rs`, art 0) everywhere, scaled by whole pixels. The message box (`message_box.rs`, 0x5529c0): the bars' buttons' hover help (`intgame.mes` 1000-1007), the clock's time and date, the character screen's hover help and its refusals. No ammo icon or action cursors yet. |
+| In-game interface | `hud.rs`: the original's top bar (IntTop, 800x41) and bottom bar (IntBotom, 800x159), centred on the window's top and bottom edges over a full-window world (owner's layout). Character/log/map/inventory, combat/skills/spells/schematics buttons (hover and pressed frames; only the character button acts: it opens the character screen in game, spending points through the host, `pc_sheet.rs` + `arcanum_sim::sheet`), spell and hotkey slots, the clock (`hud_clock.rs`: day strip and moon phase scrolled by the game time, redrawn hourly, as 0x5522f0), health and fatigue vials drawn as the original (0x54af10) with `%03d` numbers, from the host's `PcStatus`. Clicks on the bars do not walk. Game cursor (`cursor.rs`, art 0) everywhere, scaled by whole pixels. The inventory button and `I` open the inventory screen (`inventory_screen.rs`, 0x572240). The message box (`message_box.rs`, 0x5529c0): the bars' buttons' hover help (`intgame.mes` 1000-1007), the clock's time and date, the character screen's hover help and its refusals. No ammo icon or action cursors yet. |
 | Loading screen | Scaffolded: `LoadRequest { next, assets, min_secs }` + `AppState::Loading`; waits for assets (failures warn and continue) and at least 1.5 s; `LoadingProgress` for a future bar. Shown entering the game only (owner's decision). |
 | Options screen | Original art and text; Game/Video/Sound tabs, arrows on every setting, commit on change. Resolution: arrows pick, Done applies, then "Confirm Resolution" with a 15 s auto-revert. Saved to `config.toml` on leaving the screen. Resolution, fullscreen, brightness and the three volumes take effect; the rest are stored only. |
 | Brightness | A gamma curve over the finished frame (`brightness.rs` + `brightness.wgsl`, Bevy's `FullscreenMaterial` scheduled after `ui_pass`, before `upscaling`), so menus and world both change; colour grading would skip the UI. 0.5 is neutral and pixel-identical; exponent 2^±1 at the ends; black and white stay put. Live. |
@@ -366,6 +366,11 @@ Recovered by inspecting data and by reverse engineering `Arcanum.exe` with the R
   - `OPF_` flags: LOCKED 0x1, JAMMED 0x2, MAGICALLY_HELD 0x4, NEVER_LOCKED 0x8, ALWAYS_LOCKED 0x10.
   - `OSF_PASSWALLED` 0x100000. Wall art piece = bits 14-19.
   - Every object's missing fields come from `proto/*.pro` (all types parse).
+  - **Basic prototype numbers** (what `InvenSource.mes`, backgrounds and the `description`
+    field use) are the object number minus 20 (0x468860): basic 6029, the dagger, is
+    `proto/006049 - Weapon.pro`; gold 9056 is `009076 - Gold.pro`. Every basic prototype ships
+    as a loose file; the exe would write missing ones from code (0x468930, per-type ranges at
+    0x5b37fc / 0x5b384c), and the first 20 numbers of each range are the per-type bases.
 - **Monsters and unique NPCs** (art types 0xC, 0xD; path builders 0x41dd45, 0x41dbfc;
   normaliser per type 0x41d510, jump table 0x41da04):
   - Monster: name `art/monster/monster.mes` by bits 23-27; armour bits 20-22 (`xx` for
@@ -725,12 +730,16 @@ stat via 0x55f200: ST 32, DX 33, CN 34, BE 35, IN 26, PE 37, WP 36, CH 38.
 | Mastery | [16] = mastered college (−1 none, set at 0x4b1530); settable once, for a college at 5 spells; earned in play through quest lines, never in the editor (owner, 2026-11-15) | 0x4b1cb0 |
 
 **Starting kit**
-- Created characters: background money (line 4, mostly 400) and items (line 5, 9 backgrounds).
-  The code that hands them out was not found; our blueprint uses them.
+- Created characters (0x460ff0, at the end of creation): background money and items
+  (`backgrnd.mes` bg*10+3 and +4, 0x4c26f0), then default clothes if nothing is body armour
+  (men a nice suit, women a plain dress, by body size 0x5b32c0), then crude lockpicks and
+  bandages (basic 15178, 15179). Built in `arcanum_sim::inventory::starting_kit`.
 - Pre-mades: `critter_inventory_source` → `Rules/InvenSource.mes` (`Name: min,max chance,proto ...`).
   Lugard = 24 "General(sm)PC": 385 gold, 6029, 8168, 8065. All PC sources are fixed gold with only
   100% items.
-- Auto-equip: not confirmed (module `Rules/AutoEquip.mes` exists; no call path from window 15).
+- Auto-equip: pre-made PCs wield what fits at game start (0x545b60 calls 0x4654f0); created
+  ones were not seen to (not traced further). `Rules/AutoEquip.mes` is read only on the
+  multiplayer player-create path (0x4a5670).
 
 **Copied oddities** (behaviour that looks like a bug; copy, owner decides later)
 - Spell `IQ:`/MinIQ values are checked against Willpower; Intelligence is a flat 5.
@@ -746,7 +755,7 @@ stat via 0x55f200: ST 32, DX 33, CN 34, BE 35, IN 26, PE 37, WP 36, CH 38.
 - Training rank is never lowered when skill points drop (to fix later: `TODO.md` → Rules).
 - Level 51 unreachable; at level 50 XP is clamped to 1,300,000 on every check.
 
-**Open**: who hands out background money/items; fatigue maximum formula; training rank effects
+**Open**: fatigue maximum formula; training rank effects
 (0x4c62e0, flags 0x5b6f64); the sector aura source; which quest/dialog path calls 0x4b1cb0 to grant
 mastery. (Index 16 settled: the mastery college; tech code skips it, which is why the tech report
 called it unused.)

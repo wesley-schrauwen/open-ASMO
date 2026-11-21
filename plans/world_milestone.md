@@ -1065,3 +1065,38 @@ alignment.
 
 Not done: the fate points, sleep and multiplayer buttons (`intgame.mes` 1008-1010), which the
 bars do not have yet.
+
+## The inventory screen (after the clock's hover help)
+
+- **Host** (`arcanum_sim::inventory`, from Arcanum.exe's item module): a 10 x 12 grid of
+  32-pixel cells (location `row * 10 + col`), paperdoll slots 1000-1008, hotkeys 2000-2009. An
+  item takes `ceil(pixels / 32)` cells of its inventory art and goes to the first free rectangle,
+  rows first (0x4675a0); gold and ammo join a stack of their prototype; an item that does not
+  fit or is too heavy for the carry weight (500 x ST) is refused. Weight, the magick adjustment
+  scaled by aptitude, ammo by quarter count, and the seven encumbrance levels follow 0x461370 and
+  0x45f790. Item to slot by type and armour coverage (0x4655d0).
+- **Starting kit:** a PC entering the world for the first time gets its blueprint's gold and
+  items (basic numbers, object = basic + 20); a pre-made then wields what fits; a created one
+  gets default clothes if nothing is body armour, then lockpicks and bandages (0x460ff0). The
+  save keeps the inventory (`PlayerSave::inventory`, `None` in older saves until they boot), and
+  only the PC's player is sent it (`LedgerDelta::Inventory`).
+- **Client** (`inventory_screen.rs`, 0x572240 mode 0): `PDoll` and `Inventor` in the band
+  between the bars, the slots' covers or the worn items' paperdoll art, the grid's items centred
+  in their footprints, the weight, encumbrance and speed lines, gold and ammo counts, and the
+  use, drop and arrange buttons' art. The top bar's inventory button and `I` toggle it, Escape
+  closes it, and it and the character screen close each other.
+- **Fix to a report:** the cover table (0x5caf58) puts `CVR_Weapon` (249) on the weapon slot;
+  an agent's reading had it swapped.
+- **Debug:** `DEBUG_ARCANUM_PANEL=inventory`; `DEBUG_ARCANUM_PREMADE=16094` starts the debug game
+  with a pre-made instead of a created character.
+- **Checked:** unit tests for placement, stacking, weight, encumbrance, wielding and both kits; a
+  host test sends each player only their own kit and saves it; a headless test opens the screen
+  from the bar and swaps it with the character screen; real-data runs show a created character's
+  gold, nice suit, lockpicks and bandages in the grid, and Lugard wearing his dagger, suit and
+  shoes.
+
+Not done: picking up, moving, using, dropping and arranging items; keys onto the key ring; total
+attack and defence; item hover help; the encumbrance penalty and item effects; the auto-equip
+scoring between several candidates (the first one is taken); barter and loot. The text fonts
+were not identified (Flare12Font stands in), and the original's encumbrance line prints a stray
+number that is left out.

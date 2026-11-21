@@ -365,7 +365,7 @@ mod tests {
             save.sector_changes = changes;
             for &(id, position) in players {
                 let sheet = CharacterSheet { name: "A".into(), ..Default::default() };
-                save.players.insert(PlayerId(id), PlayerSave { blueprint: CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None }, position });
+                save.players.insert(PlayerId(id), PlayerSave { blueprint: CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None }, position, inventory: None });
             }
             let mut vfs = Vfs::new();
             vfs.mount_dir(dir);
