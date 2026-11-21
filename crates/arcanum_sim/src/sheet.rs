@@ -31,12 +31,12 @@ pub enum SheetRequest {
     Close,
 }
 
-/// Applies `request` to `sheet` with the shared rules. Only stat, pool and skill changes are
-/// allowed in the world.
+/// Applies `request` to `sheet` with the shared rules. Only point spending (stats, pools,
+/// skills, tech degrees, spells) is allowed in the world.
 pub fn apply_sheet_request(rules: &RulesData, sheet: &CharacterSheet, request: &SheetRequest) -> Result<CharacterSheet, Refusal> {
     match request {
         SheetRequest::Open | SheetRequest::Close => Ok(rules.accept(sheet)),
-        SheetRequest::Action(action @ (CharacterAction::RaiseStat(_) | CharacterAction::LowerStat(_) | CharacterAction::AdjustPool(..) | CharacterAction::RaiseSkill(_) | CharacterAction::LowerSkill(_))) => rules.apply(sheet, action),
+        SheetRequest::Action(action @ (CharacterAction::RaiseStat(_) | CharacterAction::LowerStat(_) | CharacterAction::AdjustPool(..) | CharacterAction::RaiseSkill(_) | CharacterAction::LowerSkill(_) | CharacterAction::RaiseTech(_) | CharacterAction::LowerTech(_) | CharacterAction::RaiseSpell(_) | CharacterAction::LowerSpell(_))) => rules.apply(sheet, action),
         SheetRequest::Action(_) => Err(Refusal::NotAllowed),
     }
 }

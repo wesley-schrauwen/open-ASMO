@@ -2113,6 +2113,7 @@ fn creation_data() -> arcanum_client::create_character::CreationData {
         stats: mes("{0}{Strength}{1}{Dexterity}{2}{Constitution}{3}{Beauty}{4}{Intelligence}{5}{Perception}{6}{Willpower}{7}{Charisma}"),
         stories: mes("{1000}{No significant background\n\nNothing happened.}{1001}{Raised by Monks\n\nQuiet years.}"),
         charedit: mes("{0}{Points}{1}{Level}{2}{XP Next}{4}{Race}{5}{Gender}{6}{Age}{7}{Derived Stats}{8}{Resistance}{12}{Damage}{13}{Magick}{14}{Fire}{15}{Poison}{16}{Electrical}{17}{Stat has reached its maximum value.}{18}{You haven't enough character points.}{19}{You cannot reduce this stat below its last accepted level.}{20}{Stat has reached its minimum value.}"),
+        schematic_text: MesFile::default(),
     }
 }
 
@@ -2399,7 +2400,8 @@ fn world_fixture() -> (Fixture, String) {
 
 #[test]
 fn the_character_screen_spends_points_in_the_world_through_the_host() {
-    use arcanum_client::character_editor::{CharacterPanel, CharacterPanelScreen, EditorAction, EditorText, SkillGauge};
+    use arcanum_client::character_editor::{CharacterPanel, CharacterPanelScreen, EditorAction, EditorText};
+    use arcanum_client::editor_tabs::{SkillGauge, SpellIcon};
     use arcanum_client::sim_bridge::LocalPc;
 
     let (fx, _) = world_fixture();
@@ -2454,6 +2456,19 @@ fn the_character_screen_spends_points_in_the_world_through_the_host() {
     app.update();
     assert!(gauge(&mut app, 4).unwrap() > empty, "the gauge fills at once");
 
+    // The spells tab: Conveyance's first spell, bought, shows its icon as known.
+    let known = |app: &mut App| {
+        let world = app.world_mut();
+        world.query::<&SpellIcon>().iter(world).find(|i| i.spell == 0).map(|i| i.known)
+    };
+    assert_eq!(known(&mut app), None, "skills shown");
+    press_editor(&mut app, EditorAction::Tab(2));
+    app.update();
+    assert_eq!(known(&mut app), Some(false));
+    press_editor(&mut app, EditorAction::SpellStep(1));
+    app.update();
+    assert_eq!(known(&mut app), Some(true));
+
     // Escape closes the screen, not the game; the point stays.
     press_escape(&mut app);
     assert_eq!(state(&app), AppState::InGame);
@@ -2462,7 +2477,7 @@ fn the_character_screen_spends_points_in_the_world_through_the_host() {
     assert_eq!(world.query_filtered::<(), With<CharacterPanelScreen>>().iter(world).count(), 0);
     let sheet = app.world().resource::<arcanum_client::pc_sheet::SheetHost>().sheet().unwrap().clone();
     assert_eq!((sheet.draft.hit_points, sheet.hp_points), (0, 1), "kept on closing");
-    assert_eq!((sheet.draft.skills[4], sheet.skills[4] > 0), (0, true));
+    assert_eq!((sheet.draft.skills[4], sheet.skills[4] > 0, sheet.spells[0]), (0, true, 1));
 }
 
 #[test]

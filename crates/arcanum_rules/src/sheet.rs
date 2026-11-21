@@ -1,6 +1,6 @@
 //! The character sheet, its draft, and why a change can be refused.
 
-use crate::tables::SKILLS;
+use crate::tables::{COLLEGES, DISCIPLINES, SKILLS};
 
 /// The eight primary stats in `mes/stat.mes` order: ST DX CN BE IN PE WP CH.
 pub const PRIMARY_STATS: usize = 8;
@@ -39,12 +39,20 @@ pub struct Draft {
     /// Skill points bought, basic skills then tech skills (`mes/skill.mes` order).
     #[cfg_attr(feature = "serde", serde(default))]
     pub skills: [i32; SKILLS],
+    /// Tech degrees bought per discipline.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub tech: [i32; DISCIPLINES],
+    /// Spells bought per college.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub spells: [i32; COLLEGES],
 }
 
 impl Draft {
-    /// Character points the draft spends (skills cost 1 a point too, 0x4c64b0).
+    /// Character points the draft spends: 1 a stat step, pool step, skill point (0x4c64b0),
+    /// tech degree (0x5b5124) or spell (0x4b1650).
     pub fn spent(&self) -> i32 {
-        (self.stats.iter().sum::<i32>() + self.hit_points + self.fatigue + self.skills.iter().sum::<i32>()) * STAT_COST
+        let sum = |v: &[i32]| v.iter().sum::<i32>();
+        (sum(&self.stats) + self.hit_points + self.fatigue + sum(&self.skills) + sum(&self.tech) + sum(&self.spells)) * STAT_COST
     }
 }
 
@@ -76,6 +84,13 @@ pub struct CharacterSheet {
     /// trainers change it, never the editor.
     #[cfg_attr(feature = "serde", serde(default))]
     pub training: [u8; SKILLS],
+    /// Accepted degree per tech discipline, 0 (Layman) to 7 (Doctorate) (field 0xdf, 17-24).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub tech: [i32; DISCIPLINES],
+    /// Accepted spells known per college, 0-5: always the college's first ones (field 0xdf,
+    /// 0-15).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub spells: [i32; COLLEGES],
     pub draft: Draft,
 }
 
@@ -97,6 +112,8 @@ impl Default for CharacterSheet {
             unspent: STARTING_POINTS,
             skills: [0; SKILLS],
             training: [0; SKILLS],
+            tech: [0; DISCIPLINES],
+            spells: [0; COLLEGES],
             draft: Draft::default(),
         }
     }
@@ -140,6 +157,16 @@ pub enum Refusal {
     NoSkillPoints,
     /// charedit 28: lowering the stat would leave a skill above what it allows.
     SkillPrerequisite,
+    /// charedit 27 "You cannot sell back an accepted spell."
+    SpellAccepted,
+    /// charedit 29: lowering Intelligence below what a known spell needs.
+    SpellNeedsIntelligence,
+    /// charedit 39: lowering Willpower below what a known spell needs.
+    SpellNeedsWillpower,
+    /// charedit 30 "You are not high enough level to buy this spell."
+    SpellLevel,
+    /// charedit 31: lowering Intelligence below what a tech degree needs.
+    TechNeedsIntelligence,
     /// The original ignores the click without a message (e.g. female for a male-only race).
     NotAllowed,
     /// MainMenu 506: Next without a name.
@@ -161,6 +188,11 @@ impl Refusal {
             Self::SkillBelowAccepted => Some(Message::Charedit(23)),
             Self::NoSkillPoints => Some(Message::Charedit(24)),
             Self::SkillPrerequisite => Some(Message::Charedit(28)),
+            Self::SpellAccepted => Some(Message::Charedit(27)),
+            Self::SpellNeedsIntelligence => Some(Message::Charedit(29)),
+            Self::SpellNeedsWillpower => Some(Message::Charedit(39)),
+            Self::SpellLevel => Some(Message::Charedit(30)),
+            Self::TechNeedsIntelligence => Some(Message::Charedit(31)),
             Self::NoName => Some(Message::MainMenu(506)),
             Self::NotAllowed | Self::UnknownPremade => None,
         }

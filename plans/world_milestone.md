@@ -988,3 +988,24 @@ grants them yet.
 
 - [Multiplayer](multiplayer.md): the co-op architecture this milestone starts.
 - [Combat design](combat_design.md), [Companions](companions.md): later milestones.
+
+## The tech and spells tabs (after the skills tab)
+
+- The character screen's tech and spells tabs, in creation and in game (`editor_tabs.rs`,
+  positions from Arcanum.exe 0x55c3a0 and 0x55cbc0; rules in `arcanum_rules::magick_tech` from
+  NOTES.md "Character rules").
+- **Tech:** a degree costs a point and needs Intelligence `[0,5,8,11,13,15,17,19]`; minus goes
+  back to the opening degree (the screen hides it below). **Spells:** only a college's next
+  spell, needing level `[1,1,5,10,15]`, Intelligence 5 and Willpower `[6,9,12,15,18]`; accepted
+  spells cannot be sold (27). Lowering Intelligence or Willpower is refused below what known
+  spells and degrees need (29, 39, 31).
+- **Host:** `RaiseTech`/`LowerTech`/`RaiseSpell`/`LowerSpell` through the sheet requests; the
+  save keeps them (older saves load with none).
+- **Fix:** the in-game screen redrew every frame (the bridge touches `SheetHost` each frame),
+  so buttons spawned with the values never showed their art; it now redraws when the sheet
+  itself changes.
+- **Checked:** the headless test buys Conveyance's first spell in game; real-data runs show
+  both tabs (`DEBUG_ARCANUM_PANEL=tech` / `spells`) and the creation editor.
+
+Not done: the degrees' ingredient lines, the unknown spells' palette effect (dimmed instead),
+hover help, the magick/tech aptitude gauge, the fourth tab.

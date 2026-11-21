@@ -226,6 +226,16 @@ impl RulesData {
         if needed {
             return Err(Refusal::SkillPrerequisite);
         }
+        // Then known spells and tech degrees (0x4b1b90, 0x4b1c00, 0x4b02b0).
+        if stat == crate::INTELLIGENCE && lowered < crate::SPELL_INTELLIGENCE && crate::spells_known(&out).iter().any(|&n| n > 0) {
+            return Err(Refusal::SpellNeedsIntelligence);
+        }
+        if stat == crate::WILLPOWER && lowered < crate::spell_willpower_needed(&out) {
+            return Err(Refusal::SpellNeedsWillpower);
+        }
+        if stat == crate::INTELLIGENCE && (0..crate::DISCIPLINES).any(|d| lowered < crate::degree_intelligence(crate::tech_degree(&out, d))) {
+            return Err(Refusal::TechNeedsIntelligence);
+        }
         Ok(out)
     }
 
@@ -262,6 +272,12 @@ impl RulesData {
         out.fatigue_points += s.draft.fatigue;
         for k in 0..crate::SKILLS {
             out.skills[k] += s.draft.skills[k];
+        }
+        for d in 0..crate::DISCIPLINES {
+            out.tech[d] += s.draft.tech[d];
+        }
+        for c in 0..crate::COLLEGES {
+            out.spells[c] += s.draft.spells[c];
         }
         out.draft = Draft::default();
         out
