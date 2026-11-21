@@ -18,14 +18,15 @@
 //!   in order, refusals silent: 0x579770). On close (0x463540), once nobody else has it open, an
 //!   empty pile goes and a pile of one item leaves that item bare on its tile.
 //!
-//! Not built: the original's other containers (chests and the like: locks, generated contents);
-//! moving items within a pile. The quantity prompt for part of a stack; script hooks; the
+//! The map's own containers open into the same loot window ([`crate::container`]).
+//!
+//! Not built: moving items within a pile. The quantity prompt for part of a stack; script hooks; the
 //! sounds; picking up in combat (an action point); an item's own changed fields (a picked-up
 //! map item becomes its prototype). Dropped items never decay: the original's timer (0x468090)
 //! is left out by the owner's decision.
 
 use arcanum_formats::map::{SectorId, TileLoc};
-use arcanum_formats::object::{Object, TYPE_AMMO, TYPE_GENERIC, TYPE_GOLD, TYPE_WEAPON};
+use arcanum_formats::object::{Object, TYPE_AMMO, TYPE_CONTAINER, TYPE_GENERIC, TYPE_GOLD, TYPE_WEAPON, Value};
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -40,12 +41,15 @@ pub enum GroundItemId {
     Dropped { sector: SectorId, number: u32 },
     /// A pile, by the host's number (the same count as dropped items).
     Pile { sector: SectorId, number: u32 },
+    /// One of the map's containers ([`crate::container`]): its place in the sector's mobile
+    /// objects.
+    Container { sector: SectorId, index: u32 },
 }
 
 impl GroundItemId {
     pub fn sector(self) -> SectorId {
         match self {
-            Self::Mobile { sector, .. } | Self::Dropped { sector, .. } | Self::Pile { sector, .. } => sector,
+            Self::Mobile { sector, .. } | Self::Dropped { sector, .. } | Self::Pile { sector, .. } | Self::Container { sector, .. } => sector,
         }
     }
 }
@@ -88,27 +92,87 @@ impl LoadedMap {
                 Some(GroundItem { prototype: object.prototype.prototype()?, quantity: self.quantity_of(object), location: crate::object_location(object)? })
             }
             GroundItemId::Dropped { number, .. } => changes?.dropped.get(&number).copied(),
-            GroundItemId::Pile { .. } => None,
+            GroundItemId::Pile { .. } | GroundItemId::Container { .. } => None,
         }
     }
 
-    /// Pile `id`, if there is one.
-    pub fn pile(&self, id: GroundItemId) -> Option<&Pile> {
-        let GroundItemId::Pile { sector, number } = id else { return None };
-        self.changes.get(&sector)?.piles.get(&number)
+    /// The loot window's other side for `id`: a pile, or one of the map's containers with its
+    /// contents (its changed ones, else the map's stored list).
+    pub fn pile(&self, id: GroundItemId) -> Option<Pile> {
+        match id {
+            GroundItemId::Pile { sector, number } => self.changes.get(&sector)?.piles.get(&number).cloned(),
+            GroundItemId::Container { sector, index } => {
+                let object = self.container_object(id)?;
+                let location = crate::object_location(object)?;
+                if let Some(inventory) = self.changes.get(&sector).and_then(|c| c.containers.get(&index)) {
+                    return Some(Pile { location, inventory: inventory.clone() });
+                }
+                Some(Pile { location, inventory: self.stored_contents(object) })
+            }
+            _ => None,
+        }
     }
 
-    /// Sets pile `id`'s contents, or removes it.
+    /// The map's container `id`.
+    pub fn container_object(&self, id: GroundItemId) -> Option<&Object> {
+        let GroundItemId::Container { sector, index } = id else { return None };
+        self.mobiles.get(&sector)?.get(index as usize).filter(|o| o.object_type == TYPE_CONTAINER)
+    }
+
+    /// A container's stored list (`container_inventory_list_idx`), each item at its stored
+    /// `item_inv_location`.
+    pub fn stored_contents(&self, container: &Object) -> Inventory {
+        let mut contents = Inventory::container();
+        let ids = match container.field("container_inventory_list_idx") {
+            Some(Value::Array(Some(list))) => list.object_ids().unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        for id in ids {
+            let Some(item) = self.stored_items.get(&id) else { continue };
+            let Some(prototype) = item.prototype.prototype() else { continue };
+            let location = self.prototypes.int(item, "item_inv_location").unwrap_or(0);
+            contents.items.push(crate::CarriedItem { prototype, location, quantity: self.quantity_of(item) });
+        }
+        contents
+    }
+
+    /// Sets pile `id`'s contents, or removes it; a container keeps its changed contents.
     pub fn set_pile(&mut self, id: GroundItemId, pile: Option<Pile>) {
-        let GroundItemId::Pile { sector, number } = id else { return };
+        match id {
+            GroundItemId::Pile { sector, number } => {
+                let changes = self.changes.entry(sector).or_default();
+                match pile {
+                    Some(p) => {
+                        changes.piles.insert(number, p);
+                    }
+                    None => {
+                        changes.piles.remove(&number);
+                    }
+                }
+            }
+            GroundItemId::Container { sector, index } => {
+                if let Some(p) = pile {
+                    self.changes.entry(sector).or_default().containers.insert(index, p.inventory);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Whether container `id` shows open (frame 1).
+    pub fn container_open(&self, id: GroundItemId) -> bool {
+        let GroundItemId::Container { sector, index } = id else { return false };
+        self.changes.get(&sector).is_some_and(|c| c.opened.contains(&index))
+    }
+
+    /// Shows container `id` open or shut.
+    pub fn set_container_open(&mut self, id: GroundItemId, open: bool) {
+        let GroundItemId::Container { sector, index } = id else { return };
         let changes = self.changes.entry(sector).or_default();
-        match pile {
-            Some(p) => {
-                changes.piles.insert(number, p);
-            }
-            None => {
-                changes.piles.remove(&number);
-            }
+        if open {
+            changes.opened.insert(index);
+        } else {
+            changes.opened.remove(&index);
         }
     }
 
@@ -149,6 +213,7 @@ impl LoadedMap {
             GroundItemId::Pile { number, .. } => {
                 changes.piles.remove(&number);
             }
+            GroundItemId::Container { .. } => {}
         }
     }
 
@@ -283,7 +348,7 @@ pub fn apply_loot(
     outbox: &mut Outbox,
 ) -> Result<Inventory, ItemRefusal> {
     let pile_id = open.ok_or(ItemRefusal::Silent)?;
-    let pile = map.pile(pile_id).cloned().ok_or(ItemRefusal::Silent)?;
+    let pile = map.pile(pile_id).ok_or(ItemRefusal::Silent)?;
     let (pc, contents) = match *request {
         InventoryRequest::Take { from, to } => {
             let (rest, item) = pile.inventory.take_out(from).ok_or(ItemRefusal::Silent)?;
@@ -308,6 +373,17 @@ pub fn apply_loot(
             (pc, contents)
         }
         InventoryRequest::ClosePile => {
+            // A container shuts once nobody has it open, unless sticky (0x573440); it stays,
+            // even empty.
+            if let Some(object) = map.container_object(pile_id) {
+                let sticky = map.prototypes.int(object, "container_flags").unwrap_or(0) & crate::OCOF_STICKY != 0;
+                if !others_open && !sticky && map.container_open(pile_id) {
+                    map.set_container_open(pile_id, false);
+                    save_change(world, map, pile_id.sector());
+                    broadcast(session, outbox, LedgerDelta::ContainerShown { container: pile_id, open: false });
+                }
+                return Ok(pc.clone());
+            }
             // Collapses only once nobody has it open (0x463540 runs on close).
             if !others_open {
                 let sector = pile_id.sector();
@@ -379,6 +455,37 @@ pub fn pick_up_items(
         }
         commands.entity(entity).remove::<PendingPickUp>();
         let player = controlled.0;
+        // A container opens unless locked, jammed or held; its source rolls on the first opening.
+        if let Some(object) = map.container_object(want.item) {
+            let flags = map.prototypes.int(object, "container_flags").unwrap_or(0);
+            if let Err(refusal) = crate::open_check(flags, map.lock_day) {
+                outbox.0.push((player, LedgerDelta::OpenRefused { message: refusal.message() }));
+                continue;
+            }
+            let first = !map.changes.get(&want.item.sector()).is_some_and(|c| matches!(want.item, GroundItemId::Container { index, .. } if c.containers.contains_key(&index)));
+            let turns = map.prototypes.art_id(object).is_some_and(crate::opens_to_frame);
+            let source = map.prototypes.int(object, "container_inventory_source").and_then(|s| u32::try_from(s).ok()).filter(|&s| s != 0);
+            let Some(mut pile) = map.pile(want.item) else { continue };
+            if first {
+                if flags & crate::OCOF_INVEN_SPAWN_PENDING != 0
+                    && let Some(source) = source.and_then(|s| crate::inventory_source(vfs?, s))
+                {
+                    let (prototypes, art) = (map.prototypes.clone(), map.art.clone());
+                    let info = crate::item_info(&prototypes, |id| crate::world::art_size(vfs, art.as_deref(), id));
+                    crate::roll_source(&mut pile.inventory, &source, &mut crate::Rng(crate::roll_seed(pile.location)), info);
+                }
+                map.set_pile(want.item, Some(pile.clone()));
+                broadcast(&session, &mut outbox, LedgerDelta::PileChanged { pile: want.item, contents: Some(pile) });
+            }
+            if turns && !map.container_open(want.item) {
+                map.set_container_open(want.item, true);
+                broadcast(&session, &mut outbox, LedgerDelta::ContainerShown { container: want.item, open: true });
+            }
+            save_change(&mut world, &map, want.item.sector());
+            commands.entity(entity).insert(LootOpen(want.item));
+            outbox.0.push((player, LedgerDelta::PileOpened { pile: want.item }));
+            continue;
+        }
         // A pile opens the loot window (0x57cb10, mode 2).
         if map.pile(want.item).is_some() {
             commands.entity(entity).insert(LootOpen(want.item));

@@ -267,6 +267,9 @@ fn receive_deltas(
         if let (LedgerDelta::ItemRefused { message }, Some(inv)) = (delta, inventory.as_mut()) {
             inv.refuse(*message);
         }
+        if let (LedgerDelta::OpenRefused { message }, Some(inv)) = (delta, inventory.as_mut()) {
+            inv.refuse_open(*message);
+        }
         if let (LedgerDelta::PileOpened { pile }, Some(inv)) = (delta, inventory.as_mut()) {
             inv.open_pile(*pile);
         }

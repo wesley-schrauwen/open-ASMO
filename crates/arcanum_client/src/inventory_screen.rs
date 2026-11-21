@@ -125,6 +125,8 @@ pub struct PcInventory {
     incoming: Vec<(u32, Inventory)>,
     /// The host's refusals to show (`mes/item.mes` ids).
     refused: Vec<u32>,
+    /// Containers that would not open: `mes/inven_ui.mes` lines.
+    refused_open: Vec<u32>,
     /// A pile the host opened for the loot window.
     opened: Option<GroundItemId>,
 }
@@ -187,6 +189,11 @@ impl PcInventory {
     /// Keeps a refusal from the host for the message box.
     pub fn refuse(&mut self, message: u32) {
         self.refused.push(message);
+    }
+
+    /// Keeps a container's refusal to open (`mes/inven_ui.mes`) for the message box.
+    pub fn refuse_open(&mut self, message: u32) {
+        self.refused_open.push(message);
     }
 
     /// Whether host answers wait to be settled.
@@ -331,7 +338,8 @@ fn one_panel_at_a_time(mut inventory: ResMut<InventoryPanel>, mut character: Res
     }
 }
 
-fn show_panel(mut commands: Commands, mut panel: ResMut<InventoryPanel>, roots: Query<Entity, With<InventoryScreen>>, assets: Res<AssetServer>, mut inventory: ResMut<PcInventory>, mut shown: Local<Option<GroundItemId>>) {
+#[allow(clippy::too_many_arguments)]
+fn show_panel(mut commands: Commands, mut panel: ResMut<InventoryPanel>, roots: Query<Entity, With<InventoryScreen>>, assets: Res<AssetServer>, mut inventory: ResMut<PcInventory>, client: Option<Res<crate::world_render::ClientMap>>, mut shown: Local<Option<GroundItemId>>) {
     if !panel.is_changed() {
         return;
     }
@@ -358,6 +366,11 @@ fn show_panel(mut commands: Commands, mut panel: ResMut<InventoryPanel>, roots: 
     }
     *shown = panel.pile;
     let loot = panel.pile.is_some();
+    // The other side's portrait by its prototype: a pile's, or the container's.
+    let portrait = match panel.pile {
+        Some(id @ GroundItemId::Container { .. }) => client.as_ref().and_then(|c| c.map.container_object(id)).and_then(|o| o.prototype.prototype()).map_or("ContainerIcon.ART", arcanum_sim::portrait),
+        _ => arcanum_sim::portrait(arcanum_sim::PILE),
+    };
     let image = |name: &str, x: f32, y: f32, w: f32, h: f32| (ImageNode::new(assets.load(art(name))), at(band(x, y, w, h)));
     commands
         .spawn((
@@ -371,7 +384,7 @@ fn show_panel(mut commands: Commands, mut panel: ResMut<InventoryPanel>, roots: 
             screen.spawn((BackgroundColor(Color::BLACK), at(band(0.0, 0.0, 800.0, 400.0))));
             if loot {
                 screen.spawn(image("Loot.ART", 0.0, 0.0, 358.0, 400.0));
-                screen.spawn((ImageNode::new(assets.load(art("Cont_Junk.ART"))), Node { width: Val::Auto, height: Val::Auto, ..at(band(183.0, 33.0, 64.0, 64.0)) }));
+                screen.spawn((ImageNode::new(assets.load(art(portrait))), Node { width: Val::Auto, height: Val::Auto, ..at(band(183.0, 33.0, 64.0, 64.0)) }));
                 screen.spawn((TakeAllButton, Button, ActivateOnPress, Hovered::default(), FrameButton::arrow(assets.load(art("TakeAllButt.ART"))), ImageNode::default(), at(band(301.0, 47.0, 51.0, 50.0))));
             } else {
                 screen.spawn(image("PDoll.ART", 0.0, 0.0, 358.0, 400.0));
@@ -465,13 +478,15 @@ pub const DROP_BOX: Rect = Rect { min: Vec2::new(703.0, 344.0), max: Vec2::new(7
 
 /// Shows the host's refusals in the message box.
 fn show_refusals(mut inventory: ResMut<PcInventory>, data: Option<Res<CreationData>>, boxed: Option<ResMut<crate::message_box::MessageBox>>, time: Option<Res<Time<Real>>>) {
-    if inventory.refused.is_empty() {
+    if inventory.refused.is_empty() && inventory.refused_open.is_empty() {
         return;
     }
     let refused = std::mem::take(&mut inventory.refused);
+    let refused_open = std::mem::take(&mut inventory.refused_open);
     let Some(mut boxed) = boxed else { return };
-    for id in refused {
-        let text = data.as_ref().and_then(|d| d.item.get(id)).unwrap_or("").to_string();
+    let texts = refused.into_iter().map(|id| data.as_ref().and_then(|d| d.item.get(id))).chain(refused_open.into_iter().map(|id| data.as_ref().and_then(|d| d.inven_ui.get(id))));
+    for text in texts.collect::<Vec<_>>() {
+        let text = text.unwrap_or("").to_string();
         boxed.post(crate::message_box::BoxMessage::plain(text), time.as_ref().map_or(0.0, |t| t.elapsed_secs_f64()));
     }
 }
@@ -724,7 +739,7 @@ fn show_items(
     (panel, scroll, mut drawn_pile): (Res<InventoryPanel>, Res<LootScroll>, Local<Option<arcanum_sim::Pile>>),
 ) {
     let Ok(root) = roots.single() else { return };
-    let pile = panel.pile.and_then(|p| client.as_ref()?.map.pile(p)).cloned();
+    let pile = panel.pile.and_then(|p| client.as_ref()?.map.pile(p));
     let pile_changed = pile != *drawn_pile;
     if !inventory.is_changed() && !held.is_changed() && !scroll.is_changed() && !pile_changed && added.is_empty() && !*pending {
         return;
@@ -891,3 +906,4 @@ mod tests {
         assert_eq!(centred(placement(&sword, (1, 1)).unwrap(), UVec2::new(101, 128), false), Vec2::new(20.0, 170.0), "an arithmetic shift rounds down");
     }
 }
+

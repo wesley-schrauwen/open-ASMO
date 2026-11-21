@@ -139,6 +139,11 @@ pub enum LedgerDelta {
     PileChanged { pile: crate::GroundItemId, contents: Option<crate::Pile> },
     /// The player's PC reached the pile it was sent to: the loot window opens.
     PileOpened { pile: crate::GroundItemId },
+    /// One of the map's containers shows open (frame 1) or shut ([`crate::container`]).
+    ContainerShown { container: crate::GroundItemId, open: bool },
+    /// The player's PC could not open a container: `mes/inven_ui.mes` `message` (locked, jammed,
+    /// stuck).
+    OpenRefused { message: u32 },
     /// The player's PC could not take an item: `mes/item.mes` `message` (too heavy, no room).
     ItemRefused { message: u32 },
     /// A PC's speed stat changed (it raised its dexterity): clients time its walk from it.

@@ -74,11 +74,18 @@ pub struct SectorDelta {
     /// Piles made by dropping items onto items, by the same numbers.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub piles: BTreeMap<u32, crate::Pile>,
+    /// The map's containers' contents once opened (generated contents rolled), by index in the
+    /// sector's mobile objects; the others hold the map's stored list.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub containers: BTreeMap<u32, crate::Inventory>,
+    /// Containers shown open (frame 1): while a loot window is on them, and sticky ones after.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub opened: std::collections::BTreeSet<u32>,
 }
 
 impl SectorDelta {
     pub fn is_empty(&self) -> bool {
-        self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty()
+        self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty()
     }
 }
 

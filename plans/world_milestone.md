@@ -1165,7 +1165,7 @@ points; a picked-up map item keeps only its prototype, not its own changed field
   the pile grid's hit testing; a real-data run dropped Lugard's dagger and shoes and opened the
   pile in the loot window.
 
-Not done: chests and other containers (locks, generated contents), the loot window's paperdoll
+Not done: chests and other containers (done next: "Containers"), the loot window's paperdoll
 toggle and scrollbar art, moving items within a pile, the open and close sounds.
 
 ## Holding an item (after junk piles)
@@ -1179,3 +1179,37 @@ toggle and scrollbar art, moving items within a pile, the open and close sounds.
   cannot be dropped), as the original swaps it.
 - **Checked:** a real-data run with the cursor moved onto the drop box holding Lugard's dagger
   shows the dagger's top-left at the cursor and the box lit.
+
+## Containers (after holding an item)
+
+- **Opening** (`arcanum_sim::container`, from Arcanum.exe 0x572240 / 0x572370 / 0x4aed80): clicking
+  one of the map's containers walks the PC to it, then the host opens it in the loot window.
+  Jammed refuses with `mes/inven_ui.mes` 2 ("You cannot open that."), magically held with 3
+  ("This seems to be stuck."), locked (the doors' test 0x441d40 on `container_flags`: never
+  locked 0x8 and busted 0x80 open, day and night locks by the hour) with 1 ("Locked.")
+  (`LedgerDelta::OpenRefused`). The key check (0x463370) is not built: no keys yet.
+- **Contents:** the map's stored list (`container_inventory_list_idx`, the items' `.mob` files
+  kept by id in `LoadedMap::stored_items`), each item at its `item_inv_location` in the 10 x 96
+  grid. A container flagged 0x200 (151 in the game's maps) rolls its `container_inventory_source`
+  (`Rules/InvenSource.mes`, 0x463e20) on its first opening, onto what it holds: gold in range,
+  then each item if a 1-100 roll is at or under its chance, placed first-fit, the original's
+  generator (0x4cef50). Once opened, the contents live in the save (`SectorDelta::containers`).
+- **Builder's call:** the roll's seed is the container's tile. The original mixes the tile's x
+  with the opening PC's name and two stats (decoded with medium confidence); a seed that does
+  not depend on who opens it gives every player the same chest.
+- **Frame:** a container at frame 0 shows frame 1 while a loot window is on it and frame 0
+  again when the last closes, unless sticky (0x100) (0x43f7f0 / 0x43f8f0 / 0x573440;
+  `SectorDelta::opened`, `LedgerDelta::ContainerShown`). An empty container stays.
+- **Portrait** (0x553d10, by basic prototype): junk pile `Cont_Junk` (832), body 3056
+  `Cont_Body`, safes 3033/3034 `Cont_Safe`, trash 3055 `Cont_Trash`, plant 3060 `Cont_Plant`,
+  altars 3057-3059 `Cont_Altar_Good/Neutral/Evil`, anything else `ContainerIcon` (435), at
+  (183, 33). No name is drawn.
+- **Checked:** unit tests for the open check, the generator, a source roll and the portraits; a
+  host test refuses a locked chest, opens one with a stored dagger at 3, shows it open and shut
+  for the other player, keeps it empty in the save, and rolls a pending source once; a real-data
+  test opens the nearest of 170 openable chests on the start map with its stored contents; a
+  real-data run showed a barrel's five stored items at their places in the loot window.
+
+Not done: keys, lockpicking and bashing; the open, close and locked sounds (`container_sound`
+plus 0, 1, 2); traps and scripts; stealing from critters (mode 4) and looting bodies; the
+original's per-PC seed.
