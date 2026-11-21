@@ -34,6 +34,8 @@ use serde::{Deserialize, Serialize};
 pub const COLUMNS: i32 = 10;
 /// Grid rows of a critter (containers have 96).
 pub const PC_ROWS: i32 = 12;
+/// Grid rows of a container (0x3c0 cells).
+pub const CONTAINER_ROWS: i32 = 96;
 /// Ammo kinds (arrows, bullets, charges, fuel: `ammo_type` 0-3).
 pub const AMMO_TYPES: usize = 4;
 /// `item_flags`: the item cannot be dropped (0x466da0).
@@ -78,10 +80,27 @@ pub struct CarriedItem {
     pub quantity: i32,
 }
 
-/// What a critter carries.
-#[derive(Component, Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// What a critter or a container carries.
+#[derive(Component, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Inventory {
     pub items: Vec<CarriedItem>,
+    /// Grid rows: [`PC_ROWS`] for critters, [`CONTAINER_ROWS`] for containers.
+    #[serde(default = "pc_rows", skip_serializing_if = "is_pc_rows")]
+    pub rows: i32,
+}
+
+fn pc_rows() -> i32 {
+    PC_ROWS
+}
+
+fn is_pc_rows(rows: &i32) -> bool {
+    *rows == PC_ROWS
+}
+
+impl Default for Inventory {
+    fn default() -> Self {
+        Self { items: Vec::new(), rows: PC_ROWS }
+    }
 }
 
 /// What placement and weight need of an item's prototype.
@@ -207,7 +226,9 @@ pub struct Wearer {
 pub enum ItemRefusal {
     /// It does not fit there, or nothing was there to move: the original refuses silently.
     Silent,
-    /// No room for the item a swap takes off (102).
+    /// More than the carry weight (101).
+    TooHeavy,
+    /// No room for the item a swap takes off, or for one taken (102).
     NoRoom,
     /// Not that slot's kind of item (103).
     WrongSlot,
@@ -226,6 +247,7 @@ impl ItemRefusal {
     pub fn message(self) -> Option<u32> {
         match self {
             Self::Silent => None,
+            Self::TooHeavy => Some(101),
             Self::NoRoom => Some(102),
             Self::WrongSlot => Some(103),
             Self::NoFreeHand => Some(104),
@@ -243,6 +265,77 @@ pub enum InventoryRequest {
     Move { from: i32, to: i32 },
     /// The item at `from` dropped on the ground at the PC's tile ([`crate::ground`]).
     Drop { from: i32 },
+    /// From the open pile's location `from` into the PC's `to`, or where the insert puts it.
+    Take { from: i32, to: Option<i32> },
+    /// From the PC's location `from` into the open pile's `to`, or where the insert puts it.
+    Put { from: i32, to: Option<i32> },
+    /// Everything the PC can take from the open pile, in order (0x579770).
+    TakeAll,
+    /// The loot window closed: an empty pile goes, one with a single item leaves it bare.
+    ClosePile,
+}
+
+impl InventoryRequest {
+    /// Whether it involves the open pile (the host's alone to apply: the client waits).
+    pub fn is_loot(&self) -> bool {
+        matches!(self, Self::Take { .. } | Self::Put { .. } | Self::TakeAll | Self::ClosePile)
+    }
+}
+
+impl From<InsertRefusal> for ItemRefusal {
+    fn from(r: InsertRefusal) -> Self {
+        match r {
+            InsertRefusal::TooHeavy => Self::TooHeavy,
+            InsertRefusal::NoRoom => Self::NoRoom,
+        }
+    }
+}
+
+impl Inventory {
+    /// Removes the item at `from` and returns it.
+    pub fn take_out(&self, from: i32) -> Option<(Inventory, CarriedItem)> {
+        let index = self.items.iter().position(|i| i.location == from)?;
+        let mut rest = self.clone();
+        let item = rest.items.remove(index);
+        Some((rest, item))
+    }
+
+    /// Puts `item` in at `to` (a free spot of this grid, or an empty slot it can be worn in) or,
+    /// with `None`, where the insert puts it; gold and ammo join their stack either way (0x466510).
+    /// `carry` limits the weight (critters; `i32::MAX` for containers).
+    #[allow(clippy::too_many_arguments)]
+    pub fn put_in(&self, item: &CarriedItem, to: Option<i32>, wearer: Wearer, info: impl Fn(u32) -> Option<ItemInfo>, carry: i32, aptitude: i32) -> Result<Inventory, ItemRefusal> {
+        let facts = info(item.prototype).ok_or(ItemRefusal::Silent)?;
+        let mut changed = self.clone();
+        let stacked = facts.stacks() && self.items.iter().any(|i| i.prototype == item.prototype);
+        match to {
+            None => {
+                changed.insert(item.prototype, item.quantity.max(1), &info, carry, aptitude)?;
+            }
+            Some(_) if stacked => {
+                changed.insert(item.prototype, item.quantity.max(1), &info, carry, aptitude)?;
+            }
+            Some(to) => {
+                if self.total_weight(&info, aptitude) + facts.weight(item.quantity, aptitude) > carry {
+                    return Err(ItemRefusal::TooHeavy);
+                }
+                if self.in_grid(to) {
+                    if !Self::fits(&self.occupied(&info), to, facts.cells) {
+                        return Err(ItemRefusal::Silent);
+                    }
+                } else if (FIRST_SLOT..=LAST_SLOT).contains(&to) && self.rows == PC_ROWS {
+                    if self.items.iter().any(|i| i.location == to) {
+                        return Err(ItemRefusal::Silent);
+                    }
+                    self.fit_test(&facts, to, wearer, &info)?;
+                } else {
+                    return Err(ItemRefusal::Silent);
+                }
+                changed.items.push(CarriedItem { location: to, ..item.clone() });
+            }
+        }
+        Ok(changed)
+    }
 }
 
 impl Inventory {
@@ -250,6 +343,7 @@ impl Inventory {
     pub fn apply(&self, request: &InventoryRequest, wearer: Wearer, info: impl Fn(u32) -> Option<ItemInfo>) -> Result<Inventory, ItemRefusal> {
         match *request {
             InventoryRequest::Move { from, to } => self.move_item(from, to, wearer, info),
+            InventoryRequest::Take { .. } | InventoryRequest::Put { .. } | InventoryRequest::TakeAll | InventoryRequest::ClosePile => Err(ItemRefusal::Silent),
             InventoryRequest::Drop { from } => {
                 let index = self.items.iter().position(|i| i.location == from).ok_or(ItemRefusal::Silent)?;
                 if info(self.items[index].prototype).is_some_and(|i| i.item_flags & ITEM_NO_DROP != 0) {
@@ -267,6 +361,9 @@ impl Inventory {
 #[derive(Resource, Debug, Default)]
 pub struct InventoryRequests(pub Vec<(crate::PlayerId, u32, InventoryRequest)>);
 
+/// A PC with what the inventory requests need of it.
+type OwnerQuery<'a> = (Entity, &'a crate::NetId, &'a crate::PlayerControlled, &'a crate::Sheet, &'a crate::Position, &'a mut Inventory, Option<&'a crate::LootOpen>);
+
 /// Applies the [`InventoryRequests`] to the players' PCs, keeps the result in the save, and
 /// answers each with the PC's inventory.
 #[allow(clippy::too_many_arguments)]
@@ -278,7 +375,9 @@ pub fn apply_inventory_requests(
     mut outbox: ResMut<crate::Outbox>,
     session: Res<crate::Session>,
     mut acks: ResMut<crate::InventoryAcks>,
-    mut pcs: Query<(&crate::NetId, &crate::PlayerControlled, &crate::Sheet, &crate::Position, &mut Inventory)>,
+    rules: Res<crate::SimRules>,
+    mut commands: Commands,
+    mut pcs: Query<OwnerQuery>,
 ) {
     if requests.0.is_empty() {
         return;
@@ -289,13 +388,30 @@ pub fn apply_inventory_requests(
     let art = map.art.clone();
     let info = item_info(&prototypes, |id| crate::world::art_size(vfs, art.as_deref(), id));
     for (player, seq, request) in requests.0.drain(..) {
-        let Some((&net_id, _, sheet, position, mut inventory)) = pcs.iter_mut().find(|(_, p, ..)| p.0 == player) else { continue };
+        let open_elsewhere: Vec<(crate::PlayerId, crate::GroundItemId)> = pcs.iter().filter_map(|(_, _, p, .., l)| Some((p.0, l?.0))).collect();
+        let Some((entity, &net_id, _, sheet, position, mut inventory, open)) = pcs.iter_mut().find(|(_, _, p, ..)| p.0 == player) else { continue };
         acks.0.insert(player, seq);
         let wearer = Wearer { race: sheet.0.race, gender: sheet.0.gender };
+        let open = open.map(|l| l.0);
         let result = match request {
             InventoryRequest::Drop { from } => crate::drop_item(&inventory, from, position.0, &info, &mut map, &mut world, &session, &mut outbox),
+            ref loot if loot.is_loot() => {
+                let others = open_elsewhere.iter().any(|(p, pile)| *p != player && Some(*pile) == open);
+                let (carry, aptitude) = (rules.0.derived(&sheet.0).carry_weight, rules.0.aptitude(&sheet.0));
+                if matches!(loot, InventoryRequest::ClosePile) {
+                    commands.entity(entity).remove::<crate::LootOpen>();
+                }
+                crate::apply_loot(loot, open, &inventory, wearer, carry, aptitude, others, &info, &mut map, &mut world, &session, &mut outbox)
+            }
             _ => inventory.apply(&request, wearer, &info),
         };
+        if let Err(refusal) = result
+            && refusal != ItemRefusal::Silent
+            && request.is_loot()
+            && let Some(message) = refusal.message()
+        {
+            outbox.0.push((player, crate::LedgerDelta::ItemRefused { message }));
+        }
         if let Ok(changed) = result {
             *inventory = changed;
             if let Some(saved) = world.0.as_mut().and_then(|w| w.players.get_mut(&player)) {
@@ -318,11 +434,11 @@ pub enum InsertRefusal {
 impl Inventory {
     /// The grid's taken cells (0x466260).
     pub fn occupied(&self, info: impl Fn(u32) -> Option<ItemInfo>) -> Vec<bool> {
-        let mut cells = vec![false; (COLUMNS * PC_ROWS) as usize];
-        for item in self.items.iter().filter(|i| in_grid(i.location)) {
+        let mut cells = vec![false; (COLUMNS * self.rows) as usize];
+        for item in self.items.iter().filter(|i| self.in_grid(i.location)) {
             let (w, h) = info(item.prototype).map_or((1, 1), |i| i.cells);
             let (col, row) = (item.location % COLUMNS, item.location / COLUMNS);
-            for y in row..(row + h).min(PC_ROWS) {
+            for y in row..(row + h).min(self.rows) {
                 for x in col..(col + w).min(COLUMNS) {
                     cells[(y * COLUMNS + x) as usize] = true;
                 }
@@ -333,7 +449,8 @@ impl Inventory {
 
     /// The first free rectangle of `w` x `h` cells, rows first (0x4675a0).
     pub fn free_spot(occupied: &[bool], (w, h): (i32, i32)) -> Option<i32> {
-        for row in 0..=PC_ROWS - h {
+        let rows = occupied.len() as i32 / COLUMNS;
+        for row in 0..=rows - h {
             for col in 0..=COLUMNS - w {
                 let free = (row..row + h).all(|y| (col..col + w).all(|x| !occupied[(y * COLUMNS + x) as usize]));
                 if free {
@@ -368,16 +485,27 @@ impl Inventory {
         Ok(location)
     }
 
+    /// An empty container's inventory.
+    pub fn container() -> Self {
+        Self { items: Vec::new(), rows: CONTAINER_ROWS }
+    }
+
+    /// Whether `location` is one of this grid's cells.
+    pub fn in_grid(&self, location: i32) -> bool {
+        (0..COLUMNS * self.rows).contains(&location)
+    }
+
     /// The taken cells, leaving out the items at `skip`.
     fn occupied_without(&self, info: &impl Fn(u32) -> Option<ItemInfo>, skip: &[i32]) -> Vec<bool> {
-        let rest = Inventory { items: self.items.iter().filter(|i| !skip.contains(&i.location)).cloned().collect() };
+        let rest = Inventory { items: self.items.iter().filter(|i| !skip.contains(&i.location)).cloned().collect(), rows: self.rows };
         rest.occupied(info)
     }
 
     /// Whether `cells` fit at grid `location` in `occupied`.
     fn fits(occupied: &[bool], location: i32, (w, h): (i32, i32)) -> bool {
         let (col, row) = (location % COLUMNS, location / COLUMNS);
-        in_grid(location) && col + w <= COLUMNS && row + h <= PC_ROWS && (row..row + h).all(|y| (col..col + w).all(|x| !occupied[(y * COLUMNS + x) as usize]))
+        let rows = occupied.len() as i32 / COLUMNS;
+        (0..rows * COLUMNS).contains(&location) && col + w <= COLUMNS && row + h <= rows && (row..row + h).all(|y| (col..col + w).all(|x| !occupied[(y * COLUMNS + x) as usize]))
     }
 
     /// Whether `item` may be worn in `slot` by `wearer` with this inventory (0x464d20; the
@@ -416,7 +544,7 @@ impl Inventory {
         let index = self.items.iter().position(|i| i.location == from).ok_or(ItemRefusal::Silent)?;
         let item = info(self.items[index].prototype).ok_or(ItemRefusal::Silent)?;
         let mut moved = self.clone();
-        if in_grid(to) {
+        if self.in_grid(to) {
             if !Self::fits(&self.occupied_without(&info, &[from]), to, item.cells) {
                 return Err(ItemRefusal::Silent);
             }
@@ -431,7 +559,7 @@ impl Inventory {
         }
         // The fit test sees the inventory without what the swap takes off.
         let other = self.items.iter().position(|i| i.location == to);
-        let without = Inventory { items: self.items.iter().filter(|i| i.location != to).cloned().collect() };
+        let without = Inventory { items: self.items.iter().filter(|i| i.location != to).cloned().collect(), rows: self.rows };
         without.fit_test(&item, to, wearer, &info)?;
         moved.items[index].location = to;
         if let Some(other) = other {

@@ -1124,6 +1124,9 @@ sounds, and the held art's cursor hotspot (the grab point stays under the cursor
 
 ## Items on the ground (after moving items)
 
+- **Owner's decision (2026-11-21):** dropped items do not decay. The original's timer
+  (0x468090) is left out on purpose: it serves little purpose.
+
 - **Dropping** (`arcanum_sim::ground`, from Arcanum.exe 0x461ab0 / 0x4415c0): releasing a held
   item on the inventory screen's drop box drops the whole stack on the PC's own tile (radius 0),
   offsets cleared. `item_flags` NO_DROP (0x20) is refused with `mes/item.mes` 111.
@@ -1138,7 +1141,29 @@ sounds, and the held art's cursor hotspot (the grab point stays under the cursor
   dagger on the PC's tile for everyone, keeps both in the save, and takes the dagger back; a
   real-data run dropped Lugard's dagger at his feet.
 
-Not done: the pile container (3023) the original makes when dropping onto a tile with items, and
-the loot window for it (items lie side by side instead); dropping by releasing over the world;
-the quantity prompt for part of a stack; decay of dropped items; pick-up sounds and action
+Not done: the pile container and its loot window (done next: "Junk piles"); dropping by releasing over the world;
+the quantity prompt for part of a stack; pick-up sounds and action
 points; a picked-up map item keeps only its prototype, not its own changed fields.
+
+## Junk piles (after items on the ground)
+
+- **Piles** (`arcanum_sim::ground`, from Arcanum.exe 0x466ef0 / 0x463540 / 0x579770): an item
+  dropped onto a pile's tile goes into it; onto bare items, a new junk pile (basic 3023, "Junk
+  Pile", `g_junk.ART`) takes them in order, then the dropped item. A pile is a 10 x 96 grid
+  (`Inventory::rows`), kept in the save's sector changes (`SectorDelta::piles`) and sent to every
+  player (`PileChanged`). Closing the loot window, once nobody else has it open, removes an empty
+  pile and turns a pile of one item back into a bare item.
+- **Loot window** (mode 2, 0x57cb10): clicking a pile walks the PC to it, then the host opens
+  it (`PileOpened`). `Loot` replaces `PDoll`; the pile's portrait (`Cont_Junk`) at (183, 33);
+  Take All at (301, 47); the pile's grid at (8, 136), 8 of its rows shown, scrolled with the
+  wheel. Items drag between the grids; a right click sends one to the other side; Take All
+  takes what fits, refusals silent. Refusals of single moves (too heavy, no room) show in the
+  message box. The pile's contents are the host's: loot moves show when it answers.
+- The original's pile timer (0x468090) is its decay: left out by the owner's decision.
+- **Checked:** a host test drops a dagger and gold onto one tile (a pile of both, the dagger
+  first), opens it, takes the gold, closes it and finds the dagger lying bare; unit tests for
+  the pile grid's hit testing; a real-data run dropped Lugard's dagger and shoes and opened the
+  pile in the loot window.
+
+Not done: chests and other containers (locks, generated contents), the loot window's paperdoll
+toggle and scrollbar art, moving items within a pile, the open and close sounds.

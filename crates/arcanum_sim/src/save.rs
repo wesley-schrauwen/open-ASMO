@@ -71,11 +71,14 @@ pub struct SectorDelta {
     /// Items dropped on the ground, by the number the host gave each.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub dropped: BTreeMap<u32, crate::GroundItem>,
+    /// Piles made by dropping items onto items, by the same numbers.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub piles: BTreeMap<u32, crate::Pile>,
 }
 
 impl SectorDelta {
     pub fn is_empty(&self) -> bool {
-        self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty()
+        self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty()
     }
 }
 

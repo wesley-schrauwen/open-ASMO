@@ -689,7 +689,7 @@ mod tests {
         let mut s = save(&[(1, "A", TileLoc { x: 70, y: 70 }), (2, "B", TileLoc { x: 72, y: 72 })]);
         let player = s.players.get_mut(&PlayerId(1)).unwrap();
         player.blueprint.sheet.base[0] = 8;
-        player.inventory = Some(crate::Inventory { items: vec![crate::CarriedItem { prototype: 6049, location: 0, quantity: 0 }] });
+        player.inventory = Some(crate::Inventory { items: vec![crate::CarriedItem { prototype: 6049, location: 0, quantity: 0 }], ..Default::default() });
         let mut sim = SimApp::new(RulesData::default());
         sim.use_manual_clock();
         sim.app.insert_resource(vfs(dir.path()));
@@ -733,6 +733,41 @@ mod tests {
         let deltas = sim.take_deltas();
         assert!(carried(&deltas).unwrap().items.iter().any(|i| i.prototype == 6049));
         assert!(matches!(deltas.iter().find_map(|(p, d)| (p.0 == 1).then_some(d).filter(|d| matches!(d, LedgerDelta::Inventory { .. }))), Some(LedgerDelta::Inventory { ack: 1, .. })), "acknowledges the drop");
+
+        // Dropping the gold onto the dagger makes a pile of both, the dagger first.
+        let inv = carried(&deltas).unwrap();
+        let at_of = |inv: &crate::Inventory, p: u32| inv.items.iter().find(|i| i.prototype == p).unwrap().location;
+        sim.receive([
+            (PlayerId(1), PlayerIntent::Inventory { seq: 2, request: InventoryRequest::Drop { from: at_of(&inv, 6049) } }),
+            (PlayerId(1), PlayerIntent::Inventory { seq: 3, request: InventoryRequest::Drop { from: at_of(&inv, crate::GOLD) } }),
+        ]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        let pile = GroundItemId::Pile { sector: dropped.sector(), number: 2 };
+        let contents = deltas.iter().rev().find_map(|(p, d)| match d {
+            LedgerDelta::PileChanged { pile: id, contents } if p.0 == 2 && *id == pile => Some(contents.clone()),
+            _ => None,
+        });
+        let contents = contents.flatten().expect("a pile for everyone");
+        assert_eq!(contents.inventory.items.iter().map(|i| i.prototype).collect::<Vec<_>>(), [6049, crate::GOLD]);
+        assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::GroundItemTaken { item: GroundItemId::Dropped { number: 1, .. } })), "the bare dagger went into it");
+        // Opening it, taking the gold and closing it leaves the dagger bare again.
+        sim.receive([(PlayerId(1), PlayerIntent::PickUp { item: pile, seq: 0 })]);
+        sim.update();
+        assert!(sim.take_deltas().iter().any(|(p, d)| p.0 == 1 && *d == LedgerDelta::PileOpened { pile }));
+        let gold_at = at_of(&contents.inventory, crate::GOLD);
+        sim.receive([
+            (PlayerId(1), PlayerIntent::Inventory { seq: 4, request: InventoryRequest::Take { from: gold_at, to: None } }),
+            (PlayerId(1), PlayerIntent::Inventory { seq: 5, request: InventoryRequest::ClosePile }),
+        ]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert_eq!(carried(&deltas).unwrap().items.iter().find(|i| i.prototype == crate::GOLD).map(|i| i.quantity), Some(50));
+        assert!(deltas.iter().any(|(_, d)| *d == LedgerDelta::PileChanged { pile, contents: None }), "the pile goes");
+        assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::GroundItemDropped { ground, .. } if ground.prototype == 6049)), "its last item lies bare");
+        let map = sim.app.world().resource::<LoadedMap>();
+        assert!(map.pile(pile).is_none());
+        assert_eq!(map.items_on_tile(TileLoc { x: 70, y: 70 }).len(), 1);
     }
 
     #[test]
