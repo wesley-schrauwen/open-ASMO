@@ -89,6 +89,8 @@ pub struct CreationData {
     pub charedit: MesFile,
     /// Schematic names and texts (the tech tab's degree rows).
     pub schematic_text: MesFile,
+    /// The in-game interface's texts (hover help, requirement lines).
+    pub intgame: MesFile,
 }
 
 impl CreationData {
@@ -104,6 +106,7 @@ impl CreationData {
             stories: mes("mes/gameback.mes")?,
             charedit: mes("mes/charedit.mes")?,
             schematic_text: mes("mes/schematic_text.mes").unwrap_or_default(),
+            intgame: mes("mes/intgame.mes").unwrap_or_default(),
         })
     }
 

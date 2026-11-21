@@ -932,8 +932,9 @@ Not done:
 - **Client:** `pc_sheet::SheetHost` previews each change at once and replays unanswered ones
   on the host's copy, as character creation does. The screen is creation's editor (values and
   buttons shared) drawn in the 800x400 band between the bars; clicks there do not walk.
-- **Builder's calls:** Escape closes the screen (the original's Escape path was not found); a
-  refusal shows over the bottom bar's message box (assumed, the box is not built).
+- **Builder's calls:** Escape closes the screen (the original's Escape path was not found).
+  Refusals go to the bottom bar's message box (confirmed later, kind 4: see "The message
+  box").
 - **Checked:** a headless test spends a hit point through the host, takes it back and spends
   it again, then closes with Escape. A real-data run shows the screen between the bars.
 
@@ -1009,3 +1010,24 @@ grants them yet.
 
 Not done: the degrees' ingredient lines, the unknown spells' palette effect (dimmed instead),
 hover help, the magick/tech aptitude gauge, the fourth tab.
+
+## The message box (after the tech and spells tabs)
+
+- `message_box.rs`, from Arcanum.exe 0x5529c0 / 0x550750 / 0x550720: the box at (211, 503,
+  383, 82) in the bottom bar, an icon at (217, 510), a title (morph15font) and a wrapped body
+  (Flare12Font) beside it, and a blue requirement line for skills and degrees.
+- **Stored and transient messages:** refusals are stored (kind 4, the exclamation icon) and
+  replace what is shown; hover help is transient and waits 3 s of real time after a stored
+  message; leaving the hovered element clears the box. Nothing expires.
+- **Hover help:** the bars' eight buttons (`mes/intgame.mes` 1000-1007); on the character
+  screen the stat and pool buttons, tabs and groups (`mes/charedit.mes` 106-138, "title\nbody"),
+  skill rows (name, description, "Minimum DX to raise: 6"), the tech header (139),
+  disciplines, degree rows (degree name, its description, "Minimum IN to raise: n"), colleges
+  and spell rows (name, "Minimum WP: n", description).
+- **Checked:** unit tests for the timing and the texts; the headless test sees a refusal reach
+  the box; real-data runs show a stat's, a skill's, a spell's and a degree's help.
+
+Not done: shortening text that does not fit, the message log, the clock's time and date, the
+hotkey slots' and vials' help, college descriptions (not found), spells' fatigue line, hover
+help in character creation, and hover areas over the stat values themselves (only their
+buttons have help).

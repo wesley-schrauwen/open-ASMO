@@ -21,6 +21,7 @@ pub mod isometric;
 pub mod load_game;
 pub mod loading;
 pub mod main_menu;
+pub mod message_box;
 pub mod menu_window;
 pub mod mes_loader;
 pub mod new_game;

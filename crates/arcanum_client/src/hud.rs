@@ -29,6 +29,7 @@ use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 use bevy::ui_widgets::{ActivateOnPress, Button};
 
+use crate::message_box::BoxHelp;
 use crate::actors::Party;
 use arcanum_sim::Pool;
 
@@ -55,14 +56,14 @@ pub const VIAL_HEIGHT: i32 = 88;
 pub const HEALTH_NUMBER: Rect = Rect { min: Vec2::new(15.0, 578.0), max: Vec2::new(44.0, 591.0) };
 pub const FATIGUE_NUMBER: Rect = Rect { min: Vec2::new(755.0, 578.0), max: Vec2::new(782.0, 591.0) };
 
-/// Top bar buttons: file, x.
-const TOP_BUTTONS: [(&str, f32); 4] = [("Char_But.ART", 4.0), ("Log_But.ART", 41.0), ("TMap_But.ART", 78.0), ("Invn_But.ART", 115.0)];
-/// Bottom bar buttons: file, top-left corner.
-const BOTTOM_BUTTONS: [(&str, Vec2); 4] = [
-    ("Combat_Button.ART", Vec2::new(86.0, 457.0)),
-    ("Skills_Button.ART", Vec2::new(693.0, 456.0)),
-    ("Spells_Button.ART", Vec2::new(649.0, 494.0)),
-    ("Schematics_Button.ART", Vec2::new(693.0, 539.0)),
+/// Top bar buttons: file, x, hover help (`mes/intgame.mes`, 0x54b5d0).
+const TOP_BUTTONS: [(&str, f32, u32); 4] = [("Char_But.ART", 4.0, 1005), ("Log_But.ART", 41.0, 1004), ("TMap_But.ART", 78.0, 1007), ("Invn_But.ART", 115.0, 1006)];
+/// Bottom bar buttons: file, top-left corner, hover help.
+const BOTTOM_BUTTONS: [(&str, Vec2, u32); 4] = [
+    ("Combat_Button.ART", Vec2::new(86.0, 457.0), 1002),
+    ("Skills_Button.ART", Vec2::new(693.0, 456.0), 1001),
+    ("Spells_Button.ART", Vec2::new(649.0, 494.0), 1000),
+    ("Schematics_Button.ART", Vec2::new(693.0, 539.0), 1003),
 ];
 /// Hotkey slots 1-9 and 0, left to right.
 const HOTKEY_X: [f32; 10] = [198.0, 237.0, 276.0, 315.0, 354.0, 418.0, 456.0, 495.0, 534.0, 573.0];
@@ -98,6 +99,9 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
+        if !app.is_plugin_added::<crate::message_box::MessageBoxPlugin>() {
+            app.add_plugins(crate::message_box::MessageBoxPlugin);
+        }
         app.add_systems(OnEnter(AppState::InGame), spawn_hud).add_systems(Update, (show_vials, crate::hud_clock::show_clock).run_if(in_state(AppState::InGame)));
     }
 }
@@ -126,8 +130,8 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
     commands
         .spawn((DespawnOnExit(AppState::InGame), bar(true, TOP_HEIGHT), ImageNode::new(assets.load(interface::HUD_TOP))))
         .with_children(|top| {
-            for (i, (file, x)) in TOP_BUTTONS.into_iter().enumerate() {
-                let mut button = top.spawn(hud_button(assets.load(art(file)), rect(Vec2::new(x, 2.0), Vec2::splat(34.0))));
+            for (i, (file, x, help)) in TOP_BUTTONS.into_iter().enumerate() {
+                let mut button = top.spawn((BoxHelp::Intgame(help), hud_button(assets.load(art(file)), rect(Vec2::new(x, 2.0), Vec2::splat(34.0)))));
                 if i == 0 {
                     button.insert(HudAction::Character);
                 }
@@ -141,9 +145,10 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
     commands
         .spawn((DespawnOnExit(AppState::InGame), bar(false, BOTTOM_HEIGHT), ImageNode::new(assets.load(interface::HUD_BOTTOM))))
         .with_children(|bottom| {
-            for (file, corner) in BOTTOM_BUTTONS {
-                bottom.spawn(hud_button(assets.load(art(file)), local(rect(corner, Vec2::splat(39.0)))));
+            for (file, corner, help) in BOTTOM_BUTTONS {
+                bottom.spawn((BoxHelp::Intgame(help), hud_button(assets.load(art(file)), local(rect(corner, Vec2::splat(39.0))))));
             }
+            crate::message_box::spawn_box(bottom, local);
             for (slot, x) in HOTKEY_X.into_iter().enumerate() {
                 let file = format!("HKSlt{}.ART", (slot + 1) % 10);
                 bottom.spawn((ImageNode::new(assets.load(art(&file))), at(local(rect(Vec2::new(x, HOTKEY_Y), Vec2::splat(32.0))))));

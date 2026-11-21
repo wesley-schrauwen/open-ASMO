@@ -93,6 +93,9 @@ pub mod paths {
         pub const SPELLS_WINDOW: &str = "art/interface/char_spells.art";
         pub const SPELL_TECH_ADD: &str = "art/interface/SpellTech_Add.ART";
         pub const SPELL_TECH_MINUS: &str = "art/interface/SpellTech_Minus.ART";
+        /// The message box's icons: help (art 444, "Arcanum Icon") and plain messages (art 442).
+        pub const ARCANUM_ICON: &str = "art/interface/LevelUpIcon.ART";
+        pub const EXCLAMATION_ICON: &str = "art/interface/Exclaimation_Icon.ART";
         /// Save list box, portrait socket and screenshot oval (transparent windows), 800x400.
         pub const SAVE_LOAD_BACK: &str = "art/interface/SaveLoadBackground.ART";
         /// Ring over the portrait, 89x89.
@@ -250,6 +253,8 @@ pub mod paths {
         interface::SPELLS_WINDOW,
         interface::SPELL_TECH_ADD,
         interface::SPELL_TECH_MINUS,
+        interface::ARCANUM_ICON,
+        interface::EXCLAMATION_ICON,
         interface::SAVE_LOAD_LENS,
         interface::SAVE_SHOT_COVER,
         interface::NEXT_BUTTON,

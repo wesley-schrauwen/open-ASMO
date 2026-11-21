@@ -11,7 +11,8 @@
 //!   minus/plus buttons; each point buys 4.
 //! - "Derived Stats" (charedit 7) and "Resistance" (8) with their rows (`stat.mes` 8-15,
 //!   charedit 12-16), in `Flare12Font`.
-//! - Refused clicks show the original's message (charedit 17-20) in the help box.
+//! - Refused clicks show the original's message (charedit 17-39) in the help box; in game in
+//!   the bottom bar's message box, with hover help ([`crate::message_box`]).
 //!
 //! - The skills, tech and spells tabs on the right: [`crate::editor_tabs`].
 //!
@@ -35,6 +36,7 @@ use arcanum_sim::SheetRequest;
 use crate::create_character::CreationData;
 use arcanum_rules::{CharacterAction, Message, PRIMARY_STATS, Pool, RESISTANCES, XP_FOR_LEVEL_2};
 use crate::editor_tabs::{EditorView, TabArt};
+use crate::message_box::{BoxHelp, BoxMessage, MessageBox};
 use crate::fonts::{ArcanumFonts, UiFont};
 use crate::loading::LoadRequest;
 use crate::main_menu::AppState;
@@ -121,6 +123,8 @@ const BUTTON: f32 = 19.0;
 const STAT_ROWS: [f32; 4] = [115.0, 155.0, 195.0, 235.0];
 const LEFT_STATS: [usize; 4] = [0, 2, 1, 3];
 const RIGHT_STATS: [usize; 4] = [4, 6, 5, 7];
+/// Each stat's help in `mes/charedit.mes` (109-116 are ST CN DX BE IN WP PE CH).
+const STAT_HELP: [u32; PRIMARY_STATS] = [109, 111, 110, 112, 113, 115, 114, 116];
 const DERIVED_ROWS: [f32; 4] = [308.0, 326.0, 344.0, 362.0];
 const RESIST_ROWS: [f32; RESISTANCES] = [301.0, 317.0, 333.0, 349.0, 365.0];
 
@@ -177,17 +181,19 @@ fn build_screen(mut commands: Commands, art: Res<EditorArt>, frame: Res<WindowAr
 
 /// The +/- buttons of the stats and pools.
 fn spawn_buttons(screen: &mut ChildSpawnerCommands, art: &EditorArt) {
+    let stat_help = |stat: usize| BoxHelp::Editor(STAT_HELP[stat]);
     for (i, &y) in STAT_ROWS.iter().enumerate() {
         let by = y + 2.0;
-        screen.spawn(button(EditorAction::Stat(LEFT_STATS[i], -1), &art.minus, 170.0, by));
-        screen.spawn(button(EditorAction::Stat(LEFT_STATS[i], 1), &art.plus, 224.0, by));
-        screen.spawn(button(EditorAction::Stat(RIGHT_STATS[i], -1), &art.minus, 313.0, by));
-        screen.spawn(button(EditorAction::Stat(RIGHT_STATS[i], 1), &art.plus, 367.0, by));
+        let (left, right) = (LEFT_STATS[i], RIGHT_STATS[i]);
+        screen.spawn((stat_help(left), button(EditorAction::Stat(left, -1), &art.minus, 170.0, by)));
+        screen.spawn((stat_help(left), button(EditorAction::Stat(left, 1), &art.plus, 224.0, by)));
+        screen.spawn((stat_help(right), button(EditorAction::Stat(right, -1), &art.minus, 313.0, by)));
+        screen.spawn((stat_help(right), button(EditorAction::Stat(right, 1), &art.plus, 367.0, by)));
     }
-    screen.spawn(button(EditorAction::HitPoints(-1), &art.minus, 409.0, 144.0));
-    screen.spawn(button(EditorAction::HitPoints(1), &art.plus, 465.0, 144.0));
-    screen.spawn(button(EditorAction::Fatigue(-1), &art.minus, 409.0, 214.0));
-    screen.spawn(button(EditorAction::Fatigue(1), &art.plus, 465.0, 214.0));
+    screen.spawn((BoxHelp::Editor(106), button(EditorAction::HitPoints(-1), &art.minus, 409.0, 144.0)));
+    screen.spawn((BoxHelp::Editor(106), button(EditorAction::HitPoints(1), &art.plus, 465.0, 144.0)));
+    screen.spawn((BoxHelp::Editor(107), button(EditorAction::Fatigue(-1), &art.minus, 409.0, 214.0)));
+    screen.spawn((BoxHelp::Editor(107), button(EditorAction::Fatigue(1), &art.plus, 465.0, 214.0)));
     crate::editor_tabs::spawn_tabs(screen, &art.tabs);
 }
 
@@ -201,10 +207,6 @@ pub struct CharacterPanel {
 #[derive(Component)]
 pub struct CharacterPanelScreen;
 
-/// The refusal message on the in-game screen, shown over the bottom bar's message box.
-#[derive(Component)]
-pub struct PanelMessage;
-
 /// Opens or closes the in-game character screen when [`CharacterPanel`] changes, telling the
 /// host (opening takes the snapshot minus can go back to; closing keeps the changes).
 #[allow(clippy::too_many_arguments)]
@@ -214,15 +216,12 @@ fn show_panel(
     art: Res<EditorArt>,
     data: Option<Res<CreationData>>,
     mut sheet: ResMut<SheetHost>,
-    mut message: ResMut<HelpMessage>,
     roots: Query<Entity, With<CharacterPanelScreen>>,
-    fonts: Option<Res<ArcanumFonts>>,
 ) {
     if !panel.is_changed() {
         return;
     }
     let rules = data.as_ref().map(|d| d.rules.clone()).unwrap_or_default();
-    message.0 = None;
     if !panel.open {
         for root in &roots {
             commands.entity(root).despawn();
@@ -234,7 +233,6 @@ fn show_panel(
         return;
     }
     let _ = sheet.request(&rules, SheetRequest::Open);
-    let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
     commands
         .spawn((
             CharacterPanelScreen,
@@ -253,15 +251,10 @@ fn show_panel(
         .with_children(|screen| {
             screen.spawn((ImageNode::new(art.background.clone()), at(rect(Vec2::new(0.0, TOP_BAR_HEIGHT), Vec2::new(800.0, 400.0)))));
             spawn_buttons(screen, &art);
-            // Assumed: the bottom bar's message box (its black window) shows the refusal.
-            screen.spawn((bevy::picking::Pickable::IGNORE, Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..at(rect(Vec2::new(200.0, 500.0), Vec2::new(400.0, 40.0))) })).with_children(|b| {
-                let mut text = b.spawn((PanelMessage, TextColor(crate::menu_window::INFO_COLOR)));
-                fonts.insert_text(&mut text, "", UiFont::Small);
-            });
         });
 }
 
-/// Redraws the in-game screen's values when the sheet changes, and its refusal message.
+/// Redraws the in-game screen's values when the sheet changes.
 #[allow(clippy::too_many_arguments)]
 fn show_panel_values(
     mut commands: Commands,
@@ -271,20 +264,8 @@ fn show_panel_values(
     contents: Query<Entity, With<EditorContent>>,
     roots: Query<Entity, With<CharacterPanelScreen>>,
     fonts: Option<Res<ArcanumFonts>>,
-    message: Res<HelpMessage>,
-    mut texts: Query<(Option<&mut crate::bitmap_text::BitmapText>, Option<&mut Text>), With<PanelMessage>>,
     (art, view, mut drawn): (Res<EditorArt>, Res<EditorView>, Local<Option<arcanum_rules::CharacterSheet>>),
 ) {
-    if message.is_changed() {
-        let wanted = message.0.clone().unwrap_or_default();
-        for (bitmap, text) in &mut texts {
-            if let Some(mut b) = bitmap {
-                b.text = wanted.clone();
-            } else if let Some(mut t) = text {
-                t.0 = wanted.clone();
-            }
-        }
-    }
     let (Some(data), Ok(root), Some(c)) = (data, roots.single(), sheet.sheet()) else { return };
     // The bridge takes the outgoing requests every frame, so the resource always looks changed:
     // compare the sheet itself.
@@ -412,7 +393,7 @@ fn on_activate(
     mut message: ResMut<HelpMessage>,
     sounds: Option<Res<MenuSounds>>,
     state: Res<State<AppState>>,
-    (mut sheet, mut view): (ResMut<SheetHost>, ResMut<EditorView>),
+    (mut sheet, mut view, boxed, time): (ResMut<SheetHost>, ResMut<EditorView>, Option<ResMut<MessageBox>>, Option<Res<Time<Real>>>),
 ) {
     let Ok(&action) = actions.get(activate.entity) else { return };
     if let Some(sounds) = &sounds {
@@ -431,8 +412,10 @@ fn on_activate(
                 None => return,
             },
         };
-        let result = sheet.request(&rules, SheetRequest::Action(request));
-        message.0 = result.err().map(|e| refusal_text(e, data.as_deref()));
+        // A refusal goes to the bottom bar's message box (kind 4, 0x55f160).
+        if let (Err(e), Some(mut boxed)) = (sheet.request(&rules, SheetRequest::Action(request)), boxed) {
+            boxed.post(BoxMessage::plain(refusal_text(e, data.as_deref())), time.map_or(0.0, |t| t.elapsed_secs_f64()));
+        }
         return;
     }
     let result = match action {
