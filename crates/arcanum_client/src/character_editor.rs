@@ -13,9 +13,16 @@
 //!   charedit 12-16), in `Flare12Font`.
 //! - Refused clicks show the original's message (charedit 17-20) in the help box.
 //!
+//! - Skills tab (the first of the tabs at (527/595/663, 11), art 34-36): the skills panel
+//!   (`Skills_Window`, art 29, at (503,63)) with the group buttons (combat, thieving, social,
+//!   technological; art 302-305 at x 524/578/632/688, y 80) and four rows 66 apart: the name
+//!   (and training rank, " (Expert)") at (520,126), a gauge (`SkilGauge`, art 623, at
+//!   (562,150)) filled `120 x level / 20` wide, and minus/plus buttons (art 625/624) at 521 and
+//!   695, y 147 (Arcanum.exe 0x55bab0, 0x55bf20). No numbers are shown.
+//!
 //! Back returns to character creation with the character kept; Next keeps the finished
 //! character and loads the game (the original shows one more screen, window 15, first). The
-//! skills, tech and spells tabs on the right are not built yet.
+//! tech and spells tabs are drawn but do nothing yet.
 //!
 //! In game the same screen ([`CharacterPanel`]) opens between the in-game bars from the top
 //! bar's character button, without the menu frame. Its changes go through the host
@@ -32,7 +39,7 @@ use crate::character_host::CharacterHost;
 use crate::pc_sheet::SheetHost;
 use arcanum_sim::SheetRequest;
 use crate::create_character::CreationData;
-use arcanum_rules::{CharacterAction, Message, PRIMARY_STATS, Pool, RESISTANCES, XP_FOR_LEVEL_2};
+use arcanum_rules::{CharacterAction, MAX_SKILL_LEVEL, Message, PRIMARY_STATS, Pool, RESISTANCES, SKILL_GROUP_SIZE, XP_FOR_LEVEL_2};
 use crate::fonts::{ArcanumFonts, UiFont};
 use crate::loading::LoadRequest;
 use crate::main_menu::AppState;
@@ -49,7 +56,15 @@ pub enum EditorAction {
     Stat(usize, i32),
     HitPoints(i32),
     Fatigue(i32),
+    /// A skill row (0-3 in the shown group) up or down.
+    SkillRow(usize, i32),
+    /// Shows a skill group: combat, thieving, social, technological.
+    SkillGroup(usize),
 }
+
+/// The skill group the skills tab shows.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ShownSkillGroup(pub usize);
 
 /// Root of the editor screen.
 #[derive(Component)]
@@ -74,6 +89,15 @@ pub enum EditorText {
     Fatigue,
     Derived(usize),
     Resist(usize),
+    /// A skill's name row (`mes/skill.mes` index).
+    SkillName(usize),
+}
+
+/// A skill's gauge, with its fill width in the original's pixels.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SkillGauge {
+    pub skill: usize,
+    pub width: u32,
 }
 
 /// A primary stat raised above its starting value (Arcanum.exe font 0x64c7a0).
@@ -86,6 +110,12 @@ struct EditorArt {
     background: Handle<Image>,
     plus: Handle<ArtFrames>,
     minus: Handle<ArtFrames>,
+    tabs: [Handle<ArtFrames>; 3],
+    skills_window: Handle<Image>,
+    groups: [Handle<ArtFrames>; 4],
+    gauge: Handle<Image>,
+    skill_plus: Handle<ArtFrames>,
+    skill_minus: Handle<ArtFrames>,
 }
 
 /// Window coordinates (the background starts at screen y = 41).
@@ -106,6 +136,18 @@ const LEFT_STATS: [usize; 4] = [0, 2, 1, 3];
 const RIGHT_STATS: [usize; 4] = [4, 6, 5, 7];
 const DERIVED_ROWS: [f32; 4] = [308.0, 326.0, 344.0, 362.0];
 const RESIST_ROWS: [f32; RESISTANCES] = [301.0, 317.0, 333.0, 349.0, 365.0];
+const TAB_X: [f32; 3] = [527.0, 595.0, 663.0];
+const GROUP_X: [f32; 4] = [524.0, 578.0, 632.0, 688.0];
+const GROUP_SIZE: [(f32, f32); 4] = [(32.0, 32.0), (33.0, 32.0), (34.0, 32.0), (32.0, 32.0)];
+/// Skill rows are 66 pixels apart.
+const SKILL_ROW: f32 = 66.0;
+const GAUGE_WIDTH: f32 = 120.0;
+const GAUGE_HEIGHT: f32 = 27.0;
+
+/// The gauge's fill width for a skill level: `120 x level / 20`, rounded down (0x55bf20).
+pub fn gauge_width(level: i32) -> u32 {
+    (GAUGE_WIDTH as i32 * level.clamp(0, MAX_SKILL_LEVEL) / MAX_SKILL_LEVEL) as u32
+}
 
 pub struct CharacterEditorPlugin;
 
@@ -119,11 +161,19 @@ impl Plugin for CharacterEditorPlugin {
                 background: assets.load(interface::CHAR_MAINT),
                 plus: assets.load(interface::CHAR_PLUS),
                 minus: assets.load(interface::CHAR_MINUS),
+                tabs: interface::CHAR_TABS.map(|p| assets.load(p)),
+                skills_window: assets.load(interface::SKILLS_WINDOW),
+                groups: interface::SKILL_GROUPS.map(|p| assets.load(p)),
+                gauge: assets.load(interface::SKILL_GAUGE),
+                skill_plus: assets.load(interface::SKILL_PLUS),
+                skill_minus: assets.load(interface::SKILL_MINUS),
             });
         })
         .add_systems(OnEnter(AppState::CharacterEditor), (crate::create_character::load_creation_data, build_screen).chain())
         .add_systems(Update, show_values.run_if(in_state(AppState::CharacterEditor)))
         .init_resource::<CharacterPanel>()
+        .init_resource::<ShownSkillGroup>()
+        .add_systems(Update, show_skill_group)
         .add_systems(OnEnter(AppState::InGame), crate::create_character::load_creation_data)
         .add_systems(OnExit(AppState::InGame), |mut panel: ResMut<CharacterPanel>| *panel = CharacterPanel::default())
         .add_systems(Update, (show_panel, show_panel_values).chain().run_if(in_state(AppState::InGame)))
@@ -134,15 +184,11 @@ impl Plugin for CharacterEditorPlugin {
 }
 
 fn button(action: EditorAction, frames: &Handle<ArtFrames>, x: f32, y: f32) -> impl Bundle {
-    (
-        action,
-        Button,
-        ActivateOnPress,
-        Hovered::default(),
-        FrameButton::arrow(frames.clone()),
-        ImageNode::default(),
-        at(win(x, y, BUTTON, BUTTON)),
-    )
+    sized_button(action, frames, win(x, y, BUTTON, BUTTON))
+}
+
+fn sized_button(action: EditorAction, frames: &Handle<ArtFrames>, r: Rect) -> impl Bundle {
+    (action, Button, ActivateOnPress, Hovered::default(), FrameButton::arrow(frames.clone()), ImageNode::default(), at(r))
 }
 
 fn build_screen(mut commands: Commands, art: Res<EditorArt>, frame: Res<WindowArt>, fonts: Option<Res<ArcanumFonts>>) {
@@ -175,6 +221,39 @@ fn spawn_buttons(screen: &mut ChildSpawnerCommands, art: &EditorArt) {
     screen.spawn(button(EditorAction::HitPoints(1), &art.plus, 465.0, 144.0));
     screen.spawn(button(EditorAction::Fatigue(-1), &art.minus, 409.0, 214.0));
     screen.spawn(button(EditorAction::Fatigue(1), &art.plus, 465.0, 214.0));
+    // The tabs: skills is shown (its pressed frame); tech and spells are not built.
+    for (i, (&x, frames)) in TAB_X.iter().zip(&art.tabs).enumerate() {
+        let mut look = FrameButton::arrow(frames.clone());
+        if i == 0 {
+            look.normal = look.pressed;
+            look.hover = look.pressed;
+        }
+        screen.spawn((Hovered::default(), look, ImageNode::default(), at(win(x, 11.0, 39.0, 39.0))));
+    }
+    screen.spawn((bevy::picking::Pickable::IGNORE, ImageNode::new(art.skills_window.clone()), at(win(503.0, 63.0, 235.0, 325.0))));
+    for (g, (&x, frames)) in GROUP_X.iter().zip(&art.groups).enumerate() {
+        let (w, h) = GROUP_SIZE[g];
+        screen.spawn(sized_button(EditorAction::SkillGroup(g), frames, win(x, 80.0, w, h)));
+    }
+    for row in 0..SKILL_GROUP_SIZE {
+        let y = 147.0 + SKILL_ROW * row as f32;
+        screen.spawn(sized_button(EditorAction::SkillRow(row, -1), &art.skill_minus, win(521.0, y, 29.0, 30.0)));
+        screen.spawn(sized_button(EditorAction::SkillRow(row, 1), &art.skill_plus, win(695.0, y, 29.0, 30.0)));
+    }
+}
+
+/// The shown group's button keeps its pressed frame.
+fn show_skill_group(group: Res<ShownSkillGroup>, mut buttons: Query<(&EditorAction, &mut FrameButton)>, added: Query<(), Added<EditorAction>>) {
+    if !group.is_changed() && added.is_empty() {
+        return;
+    }
+    for (action, mut look) in &mut buttons {
+        let EditorAction::SkillGroup(g) = *action else { continue };
+        let normal = if g == group.0 { look.pressed } else { 0 };
+        if look.normal != normal {
+            look.normal = normal;
+        }
+    }
 }
 
 /// Whether the in-game character screen is open (the top bar's character button toggles it).
@@ -259,6 +338,7 @@ fn show_panel_values(
     fonts: Option<Res<ArcanumFonts>>,
     message: Res<HelpMessage>,
     mut texts: Query<(Option<&mut crate::bitmap_text::BitmapText>, Option<&mut Text>), With<PanelMessage>>,
+    (art, group): (Res<EditorArt>, Res<ShownSkillGroup>),
 ) {
     if message.is_changed() {
         let wanted = message.0.clone().unwrap_or_default();
@@ -271,14 +351,14 @@ fn show_panel_values(
         }
     }
     let (Some(data), Ok(root), Some(c)) = (data, roots.single(), sheet.sheet()) else { return };
-    if !sheet.is_changed() && added.is_empty() {
+    if !sheet.is_changed() && !group.is_changed() && added.is_empty() {
         return;
     }
     for old in &contents {
         commands.entity(old).despawn();
     }
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-    draw_values(&mut commands, root, c, &data, &fonts);
+    draw_values(&mut commands, root, c, &data, &fonts, &art, group.0);
 }
 
 /// Escape closes the in-game character screen (before it would leave the game).
@@ -305,9 +385,10 @@ fn show_values(
     contents: Query<Entity, With<EditorContent>>,
     roots: Query<Entity, With<CharacterEditorScreen>>,
     fonts: Option<Res<ArcanumFonts>>,
+    (art, group): (Res<EditorArt>, Res<ShownSkillGroup>),
 ) {
     let Some(data) = data else { return };
-    if !host.is_changed() && added.is_empty() {
+    if !host.is_changed() && !group.is_changed() && added.is_empty() {
         return;
     }
     let Ok(root) = roots.single() else { return };
@@ -315,11 +396,12 @@ fn show_values(
         commands.entity(old).despawn();
     }
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-    draw_values(&mut commands, root, host.sheet(), &data, &fonts);
+    draw_values(&mut commands, root, host.sheet(), &data, &fonts, &art, group.0);
 }
 
 /// Spawns every value of `c` under `root` (an 800x600 screen).
-fn draw_values(commands: &mut Commands, root: Entity, c: &arcanum_rules::CharacterSheet, data: &CreationData, fonts: &ArcanumFonts) {
+#[allow(clippy::too_many_arguments)]
+fn draw_values(commands: &mut Commands, root: Entity, c: &arcanum_rules::CharacterSheet, data: &CreationData, fonts: &ArcanumFonts, art: &EditorArt, group: usize) {
     let rules = &data.rules;
     let label = |id: u32, fallback: &str| data.charedit.get(id).unwrap_or(fallback).to_string();
     let stat_name = |id: u32| data.stats.get(id).unwrap_or("?").to_string();
@@ -375,6 +457,28 @@ fn draw_values(commands: &mut Commands, root: Entity, c: &arcanum_rules::Charact
                 let text = format!("{}: {}", label(12 + i as u32, "?"), resist[i]);
                 put(win(322.0, y, 105.0, 14.0), &text, EditorText::Resist(i), UiFont::Body, SCREEN_WHITE, false);
             }
+            // The shown skill group: name (and training rank) and gauge per row.
+            for row in 0..SKILL_GROUP_SIZE {
+                let skill = group * SKILL_GROUP_SIZE + row;
+                let dy = SKILL_ROW * row as f32;
+                let name = rules.skills.skills.get(skill).map_or("", |k| k.name.as_str());
+                let rank = c.training[skill];
+                let text = match rank {
+                    1..=3 => format!("{name} ({})", rules.skills.ranks[usize::from(rank) - 1]),
+                    _ => name.to_string(),
+                };
+                put(win(520.0, 126.0 + dy, 200.0, 19.0), &text, EditorText::SkillName(skill), UiFont::Small, SCREEN_WHITE, false);
+            }
+            for row in 0..SKILL_GROUP_SIZE {
+                let skill = group * SKILL_GROUP_SIZE + row;
+                let dy = SKILL_ROW * row as f32;
+                let width = gauge_width(rules.skill_level(c, skill));
+                let fill = ImageNode { rect: Some(Rect::new(0.0, 0.0, width as f32, GAUGE_HEIGHT)), ..ImageNode::new(art.gauge.clone()) };
+                let mut gauge = p.spawn((SkillGauge { skill, width }, fill, at(win(562.0, 150.0 + dy, width as f32, GAUGE_HEIGHT))));
+                if width == 0 {
+                    gauge.insert(Visibility::Hidden);
+                }
+            }
         })
         .id();
     commands.entity(root).add_child(content);
@@ -391,7 +495,7 @@ fn on_activate(
     mut message: ResMut<HelpMessage>,
     sounds: Option<Res<MenuSounds>>,
     state: Res<State<AppState>>,
-    mut sheet: ResMut<SheetHost>,
+    (mut sheet, mut group): (ResMut<SheetHost>, ResMut<ShownSkillGroup>),
 ) {
     let Ok(&action) = actions.get(activate.entity) else { return };
     if let Some(sounds) = &sounds {
@@ -404,6 +508,11 @@ fn on_activate(
             EditorAction::Stat(i, d) if i < PRIMARY_STATS => change(d, CharacterAction::RaiseStat(i), CharacterAction::LowerStat(i)),
             EditorAction::HitPoints(d) => CharacterAction::AdjustPool(Pool::HitPoints, d),
             EditorAction::Fatigue(d) => CharacterAction::AdjustPool(Pool::Fatigue, d),
+            EditorAction::SkillRow(row, d) => skill_change(group.0, row, d),
+            EditorAction::SkillGroup(g) => {
+                group.0 = g;
+                return;
+            }
             _ => return,
         };
         let result = sheet.request(&rules, SheetRequest::Action(request));
@@ -425,8 +534,19 @@ fn on_activate(
         EditorAction::Stat(..) => Ok(()),
         EditorAction::HitPoints(d) => host.apply(&rules, CharacterAction::AdjustPool(Pool::HitPoints, d)),
         EditorAction::Fatigue(d) => host.apply(&rules, CharacterAction::AdjustPool(Pool::Fatigue, d)),
+        EditorAction::SkillRow(row, d) => host.apply(&rules, skill_change(group.0, row, d)),
+        EditorAction::SkillGroup(g) => {
+            group.0 = g;
+            Ok(())
+        }
     };
     message.0 = result.err().map(|e| refusal_text(e, data.as_deref()));
+}
+
+/// The action for a skill row's button in the shown group.
+fn skill_change(group: usize, row: usize, d: i32) -> CharacterAction {
+    let skill = group * SKILL_GROUP_SIZE + row;
+    if d > 0 { CharacterAction::RaiseSkill(skill) } else { CharacterAction::LowerSkill(skill) }
 }
 
 /// The original's message for a refused change.

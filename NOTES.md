@@ -95,7 +95,7 @@ a text field).
 | Fonts | Game bitmap fonts decoded and rendered (`BitmapText`, multi-line: wrap, `\n`, tab indents, whole-line clipping). Menu uses `Morph30Font`/`morph15font`; character screens add `Flare12Font` (`UiFont::Body`) with the original white/red tints. Override TTF still wins if present; built-in font as last resort. |
 | Game data formats | `.mes`, `.art`, fonts, `.dat`; objects (`arcanum_formats::object`: prototypes and instances, PC field tables from the engine's names); maps/sectors (#19). |
 | Resolutions | Done. 720p–8K, 4:3–2.4:1, `UiScale` from a 1080 baseline. |
-| Tests | 444 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
+| Tests | 450 `#[test]` functions; real-data tests skip without game data (synthetic archives/art/fonts, headless Bevy). |
 | Everything else | Not started: game screens, critter art, NPCs, dialogue, scripts, combat, UDP. |
 
 ### Git state
@@ -644,9 +644,19 @@ Character (the picker's Next starts the game directly, 0x5459f0 -> 0x5412d0).
   ST-10 (halved when negative, doubled at ST >= 20); AC DX-10; speed DX (+5 at 20); heal
   (CN+1)/3; poison recovery CN; reaction from BE (table 0x5b5330); followers CH/4 (+1 with a
   skill, not modelled). Resistances from race/background effects. XP Next 2100 at level 1.
-- Not yet: the skills/tech/spells tabs (top-right buttons 527/595/663,11 and the panel at
-  503,104), the portrait, alignment, hover help texts (charedit 100-140), magick-tech aptitude,
-  window 15.
+- Skills tab (`arcanum_rules::skills`, both in creation and in game): tabs art 34-36 (39x39) at
+  (527/595/663, 11), skills drawn, tech and spells inert. Panel `Skills_Window` (art 29,
+  235x325) at (503,63); group buttons art 302-305 at x 524/578/632/688, y 80 (the shown group
+  keeps its pressed frame; combat first); rows 66 apart: name plus " (<rank>)" at (520,126) in
+  morph15font white, gauge `SkilGauge` (art 623, 120x27) at (562,150) filled `120 x level /
+  20`, minus/plus (art 625/624, 29x30) at x 521/695, y 147 (0x55bab0, 0x55bf20, tables
+  0x5c82b0, 0x5c82f0, 0x5c8438, 0x5c8538). No numbers. Skill effects from `rules/effect.mes`
+  keys (`armtrap`, `picklock`, ...) count toward the level. Pre-mades read their skills from
+  `critter_basic_skill_idx` / `critter_tech_skill_idx`. Not copied: the basic skill minus that
+  refunds until the level changes (it only differs for a point above level 20, which raising
+  refuses). Hover help for the rows and tabs (charedit 132-138) is not built.
+- Not yet: the tech and spells tabs, the portrait, alignment, hover help texts (charedit
+  100-140), magick-tech aptitude, window 15.
 
 ## Character rules (skills, tech, magick)
 

@@ -937,8 +937,25 @@ Not done:
 - **Checked:** a headless test spends a hit point through the host, takes it back and spends
   it again, then closes with Escape. A real-data run shows the screen between the bars.
 
-Not done: the skills, tech and spells tabs; the portrait and the party arrows; closing by
-opening another panel (there are none yet); the `C` key.
+Not done: the tech and spells tabs; the portrait and the party arrows; closing by opening
+another panel (there are none yet); the `C` key.
+
+## The skills tab (after the character screen in game)
+
+- The character screen's skills tab, in creation and in game: the original's panel, group
+  buttons, gauges and +/- buttons (positions in NOTES.md, "Character editor").
+- **Rules** (`arcanum_rules::skills`, from NOTES.md "Character rules"): 0-5 points a skill,
+  level `points x 4` plus race and background effects, clamped to 20 and capped by the
+  governing stat; 1 character point a point; the original's refusals (18, 21, "raise <stat>
+  first", 23, 24); a stat cannot be lowered below what a skill it governs needs (28).
+- **Host:** `CharacterAction::RaiseSkill` / `LowerSkill` go through the same sheet requests;
+  the save keeps the points (`skills`, `training` and the draft's `skills` default to zero for
+  older saves).
+- **Checked:** the headless test buys a Backstab point in game and sees the gauge fill; a
+  real-data run shows the tab, and a run with forced levels showed the gauges filling the tubes.
+
+Not done: hover help on the rows; training ranks are read from pre-mades and shown, but nothing
+grants them yet.
 
 ## Builder's calls (proposed by Claude, not owner decisions)
 

@@ -173,13 +173,14 @@ impl RulesData {
     /// The race, gender and background effects together. Race is effect 64 + race; women carry
     /// effect 330 (`rules/effect.mes` "all females"), applied by the gender setter
     /// (Arcanum.exe 0x4b0980 case 0x1a, cause 9).
-    fn character_effects(&self, s: &CharacterSheet) -> Effect {
+    pub(crate) fn character_effects(&self, s: &CharacterSheet) -> Effect {
         let race = self.effect(RACE_EFFECT_BASE + u32::from(s.race));
         let gender = if s.gender == FEMALE { self.effect(FEMALE_EFFECT) } else { Effect::default() };
         let background = self.background(s).and_then(|b| b.effect).map(|e| self.effect(e)).unwrap_or_default();
         Effect {
             stats: std::array::from_fn(|i| race.stats[i] + gender.stats[i] + background.stats[i]),
             resist: std::array::from_fn(|i| race.resist[i] + gender.resist[i] + background.resist[i]),
+            skills: std::array::from_fn(|i| race.skills[i] + gender.skills[i] + background.skills[i]),
         }
     }
 
@@ -213,13 +214,18 @@ impl RulesData {
     }
 
     /// Lowers primary stat `stat` by one, refunding a point; not below its accepted value
-    /// (0x55a997).
+    /// (0x55a997), nor below what a skill it governs needs (charedit 28, 0x4c6b50).
     pub fn lower_stat(&self, s: &CharacterSheet, stat: usize) -> Result<CharacterSheet, Refusal> {
         if s.draft.stats[stat] == 0 {
             return Err(if self.stats(s)[stat] <= MIN_STAT { Refusal::AtMinimum } else { Refusal::BelowAccepted });
         }
         let mut out = s.clone();
         out.draft.stats[stat] -= 1;
+        let lowered = self.stats(&out)[stat];
+        let needed = (0..crate::SKILLS).any(|k| crate::SKILL_STAT[k] == stat && crate::skill_points(s, k) * crate::LEVELS_PER_POINT > crate::skill_cap(lowered));
+        if needed {
+            return Err(Refusal::SkillPrerequisite);
+        }
         Ok(out)
     }
 
@@ -254,6 +260,9 @@ impl RulesData {
         }
         out.hp_points += s.draft.hit_points;
         out.fatigue_points += s.draft.fatigue;
+        for k in 0..crate::SKILLS {
+            out.skills[k] += s.draft.skills[k];
+        }
         out.draft = Draft::default();
         out
     }

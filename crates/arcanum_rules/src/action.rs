@@ -15,6 +15,9 @@ pub enum CharacterAction {
     RaiseStat(usize),
     LowerStat(usize),
     AdjustPool(Pool, i32),
+    /// A point into or out of a skill (`mes/skill.mes` index: basic skills, then tech skills).
+    RaiseSkill(usize),
+    LowerSkill(usize),
     /// Take a pre-made character (prototype number) instead.
     PickPremade(u32),
     Accept,
@@ -32,6 +35,9 @@ impl RulesData {
             CharacterAction::LowerStat(i) if *i < PRIMARY_STATS => self.lower_stat(s, *i),
             CharacterAction::RaiseStat(_) | CharacterAction::LowerStat(_) => Err(Refusal::NotAllowed),
             CharacterAction::AdjustPool(pool, d) => self.adjust_pool(s, *pool, *d),
+            CharacterAction::RaiseSkill(k) if *k < SKILLS => self.raise_skill(s, *k),
+            CharacterAction::LowerSkill(k) if *k < SKILLS => self.lower_skill(s, *k),
+            CharacterAction::RaiseSkill(_) | CharacterAction::LowerSkill(_) => Err(Refusal::NotAllowed),
             CharacterAction::PickPremade(p) => {
                 self.premades.iter().find(|x| x.prototype == *p).map(|x| x.sheet.clone()).ok_or(Refusal::UnknownPremade)
             }

@@ -3,7 +3,7 @@
 //! As the original's in-game character screen does (Arcanum.exe 0x5597c0, mode 1):
 //! - Opening it takes a snapshot ([`SheetRequest::Open`]): the sheet's draft is folded in, so
 //!   minus can lower a value back down to what it was at opening, and no further (charedit 19).
-//! - Raising a stat or buying hit points or fatigue takes effect at once: derived stats such as
+//! - Raising a stat, buying hit points or fatigue or a skill point takes effect at once: derived stats such as
 //!   the maximum hit points follow.
 //! - Closing it ([`SheetRequest::Close`]) keeps every change; there is no cancel.
 //! - The game does not pause. In multiplayer the original sends each change to the host
@@ -24,18 +24,19 @@ use crate::{Appearance, Gait, LedgerDelta, NetId, Outbox, PartyPace, PlayerContr
 pub enum SheetRequest {
     /// The character screen opened: later changes can be undone back to here.
     Open,
-    /// A stat raised or lowered, or a point put into or taken out of hit points or fatigue.
+    /// A stat raised or lowered, or a point put into or taken out of hit points, fatigue or a
+    /// skill.
     Action(CharacterAction),
     /// The character screen closed: the changes stay.
     Close,
 }
 
-/// Applies `request` to `sheet` with the shared rules. Only stat and pool changes are allowed
-/// in the world.
+/// Applies `request` to `sheet` with the shared rules. Only stat, pool and skill changes are
+/// allowed in the world.
 pub fn apply_sheet_request(rules: &RulesData, sheet: &CharacterSheet, request: &SheetRequest) -> Result<CharacterSheet, Refusal> {
     match request {
         SheetRequest::Open | SheetRequest::Close => Ok(rules.accept(sheet)),
-        SheetRequest::Action(action @ (CharacterAction::RaiseStat(_) | CharacterAction::LowerStat(_) | CharacterAction::AdjustPool(..))) => rules.apply(sheet, action),
+        SheetRequest::Action(action @ (CharacterAction::RaiseStat(_) | CharacterAction::LowerStat(_) | CharacterAction::AdjustPool(..) | CharacterAction::RaiseSkill(_) | CharacterAction::LowerSkill(_))) => rules.apply(sheet, action),
         SheetRequest::Action(_) => Err(Refusal::NotAllowed),
     }
 }
@@ -121,7 +122,25 @@ mod tests {
     }
 
     #[test]
-    fn only_stats_and_pools_change_in_the_world() {
+    fn sheets_saved_before_skills_still_load() {
+        let mut json = serde_json::to_value(with_points(2)).unwrap();
+        for key in ["skills", "training"] {
+            json.as_object_mut().unwrap().remove(key);
+        }
+        json["draft"].as_object_mut().unwrap().remove("skills");
+        let sheet: CharacterSheet = serde_json::from_value(json).unwrap();
+        assert_eq!((sheet.skills, sheet.draft.skills), ([0; 16], [0; 16]));
+    }
+
+    #[test]
+    fn skills_change_in_the_world() {
+        let r = rules();
+        let s = apply_sheet_request(&r, &with_points(2), &SheetRequest::Action(CharacterAction::RaiseSkill(1))).unwrap();
+        assert_eq!(r.skill_level(&s, 1), 4);
+    }
+
+    #[test]
+    fn only_stats_pools_and_skills_change_in_the_world() {
         let r = rules();
         for action in [CharacterAction::SetName("X".into()), CharacterAction::StepRace(1), CharacterAction::ToggleGender, CharacterAction::Accept] {
             assert_eq!(apply_sheet_request(&r, &with_points(2), &SheetRequest::Action(action.clone())), Err(Refusal::NotAllowed), "{action:?}");

@@ -9,6 +9,7 @@ pub mod blueprint;
 pub mod data;
 pub mod ops;
 pub mod sheet;
+pub mod skills;
 pub mod tables;
 
 pub use action::*;
@@ -16,4 +17,5 @@ pub use blueprint::*;
 pub use data::*;
 pub use ops::*;
 pub use sheet::*;
+pub use skills::*;
 pub use tables::*;

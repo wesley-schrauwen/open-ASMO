@@ -2399,7 +2399,7 @@ fn world_fixture() -> (Fixture, String) {
 
 #[test]
 fn the_character_screen_spends_points_in_the_world_through_the_host() {
-    use arcanum_client::character_editor::{CharacterPanel, CharacterPanelScreen, EditorAction, EditorText};
+    use arcanum_client::character_editor::{CharacterPanel, CharacterPanelScreen, EditorAction, EditorText, SkillGauge};
     use arcanum_client::sim_bridge::LocalPc;
 
     let (fx, _) = world_fixture();
@@ -2441,6 +2441,19 @@ fn the_character_screen_spends_points_in_the_world_through_the_host() {
     press_editor(&mut app, EditorAction::HitPoints(1));
     update_until(&mut app, |app| max_hp(app) == Some(before + 4));
 
+    // The skills tab: the thieving group, a point into Backstab (skill 4) fills its gauge.
+    let gauge = |app: &mut App, skill: usize| {
+        let world = app.world_mut();
+        world.query::<&SkillGauge>().iter(world).find(|g| g.skill == skill).map(|g| g.width)
+    };
+    assert!(gauge(&mut app, 4).is_none(), "combat skills shown first");
+    press_editor(&mut app, EditorAction::SkillGroup(1));
+    app.update();
+    let empty = gauge(&mut app, 4).unwrap();
+    press_editor(&mut app, EditorAction::SkillRow(0, 1));
+    app.update();
+    assert!(gauge(&mut app, 4).unwrap() > empty, "the gauge fills at once");
+
     // Escape closes the screen, not the game; the point stays.
     press_escape(&mut app);
     assert_eq!(state(&app), AppState::InGame);
@@ -2449,6 +2462,7 @@ fn the_character_screen_spends_points_in_the_world_through_the_host() {
     assert_eq!(world.query_filtered::<(), With<CharacterPanelScreen>>().iter(world).count(), 0);
     let sheet = app.world().resource::<arcanum_client::pc_sheet::SheetHost>().sheet().unwrap().clone();
     assert_eq!((sheet.draft.hit_points, sheet.hp_points), (0, 1), "kept on closing");
+    assert_eq!((sheet.draft.skills[4], sheet.skills[4] > 0), (0, true));
 }
 
 #[test]
