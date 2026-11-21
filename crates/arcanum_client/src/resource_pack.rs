@@ -94,6 +94,10 @@ pub mod paths {
         pub const SPELL_TECH_ADD: &str = "art/interface/SpellTech_Add.ART";
         pub const SPELL_TECH_MINUS: &str = "art/interface/SpellTech_Minus.ART";
         /// The message box's icons: help (art 444, "Arcanum Icon") and plain messages (art 442).
+        /// The character screen's alignment needle (art 254, 21 frames) and aptitude mark (art
+        /// 255, 14x6).
+        pub const ALIGN_NEEDLE: &str = "art/interface/align.art";
+        pub const APTITUDE_MARK: &str = "art/interface/MT_Apt.art";
         pub const ARCANUM_ICON: &str = "art/interface/LevelUpIcon.ART";
         pub const EXCLAMATION_ICON: &str = "art/interface/Exclaimation_Icon.ART";
         /// Save list box, portrait socket and screenshot oval (transparent windows), 800x400.
@@ -255,6 +259,8 @@ pub mod paths {
         interface::SPELL_TECH_MINUS,
         interface::ARCANUM_ICON,
         interface::EXCLAMATION_ICON,
+        interface::ALIGN_NEEDLE,
+        interface::APTITUDE_MARK,
         interface::SAVE_LOAD_LENS,
         interface::SAVE_SHOT_COVER,
         interface::NEXT_BUTTON,

@@ -1031,3 +1031,18 @@ Not done: shortening text that does not fit, the message log, the clock's time a
 hotkey slots' and vials' help, college descriptions (not found), spells' fatigue line, hover
 help in character creation, and hover areas over the stat values themselves (only their
 buttons have help).
+
+## The character screen's portrait and meters (after the message box)
+
+- The portrait, the alignment dial (the "E&G" dial on the left; charedit 102) and the
+  magick/tech aptitude thermometer (on the right; 108), from Arcanum.exe 0x55ec90; the
+  original's 32 hover rects (table 0x5c89a8) for the stats page's help in the message box.
+  Details and formulas in NOTES.md, "Character editor".
+- **Rules:** `RulesData::aptitude` and `alignment` in `arcanum_rules::magick_tech`; effect
+  lines now read `magicpts`, `techpts`, `aptitude` and `alignment`.
+- **Checked:** unit tests for the formulas (dial frame, bar position, aptitude rounding towards
+  zero, dwarves at -16); a real-data run shows the portrait, the needle straight up with 0 and
+  the aptitude mark at 0.
+
+Not done: the auto-level schemes button, the sector's magick/tech aura, a traced starting
+alignment.

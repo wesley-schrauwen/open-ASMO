@@ -66,6 +66,13 @@ pub struct Effect {
     pub resist: [i32; RESISTANCES],
     /// Skill level changes (levels, not points), `mes/skill.mes` order.
     pub skills: [i32; SKILLS],
+    /// `magicpts` and `techpts`: counted as spells known and tech degrees in the aptitude.
+    pub magick_points: i32,
+    pub tech_points: i32,
+    /// `aptitude` (straight onto the magick/tech aptitude) and `alignment` (onto the
+    /// alignment; `alignment max` lines are not read).
+    pub aptitude: i32,
+    pub alignment: i32,
 }
 
 /// Everything the character rules need from the game data.
@@ -169,6 +176,14 @@ pub fn parse_effect(text: &str) -> Effect {
             out.resist[i] += v;
         } else if let Some(i) = SKILL_KEYS.iter().position(|k| key.eq_ignore_ascii_case(k)) {
             out.skills[i] += v;
+        } else {
+            match key.to_ascii_lowercase().as_str() {
+                "magicpts" => out.magick_points += v,
+                "techpts" => out.tech_points += v,
+                "aptitude" => out.aptitude += v,
+                "alignment" => out.alignment += v,
+                _ => {}
+            }
         }
     }
     out

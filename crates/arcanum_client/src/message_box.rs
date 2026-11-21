@@ -252,7 +252,7 @@ fn hover_help(
     time: Option<Res<Time<Real>>>,
     mut last: Local<Option<BoxHelp>>,
 ) {
-    let hovered = helps.iter().find(|(_, h)| h.get()).map(|(help, _)| *help);
+    let hovered = hovered_help(&helps);
     if hovered != *last {
         if last.is_some() {
             messages.clear();
@@ -267,6 +267,15 @@ fn hover_help(
     if let Some(message) = message {
         messages.show_help(message, time.map_or(0.0, |t| t.elapsed_secs_f64()));
     }
+}
+
+/// The hovered help; where hover areas overlap (the info panel's 101 holds 103-105), the
+/// highest id wins: the more specific one.
+fn hovered_help(helps: &Query<(&BoxHelp, &Hovered)>) -> Option<BoxHelp> {
+    let id = |h: &BoxHelp| match *h {
+        BoxHelp::Intgame(i) | BoxHelp::Editor(i) => i,
+    };
+    helps.iter().filter(|(_, h)| h.get()).map(|(help, _)| *help).max_by_key(id)
 }
 
 /// The lowest governing stat that allows skill `k` another point, if it has room for one.
