@@ -91,6 +91,10 @@ pub struct CreationData {
     pub schematic_text: MesFile,
     /// The in-game interface's texts (hover help, requirement lines).
     pub intgame: MesFile,
+    /// The inventory screen's labels.
+    pub inven_ui: MesFile,
+    /// Critter texts (encumbrance levels, 18-24).
+    pub critter: MesFile,
     /// The calendar's first year (`rules/gameinit.mes`), for the clock's date.
     pub first_year: u32,
 }
@@ -109,6 +113,8 @@ impl CreationData {
             charedit: mes("mes/charedit.mes")?,
             schematic_text: mes("mes/schematic_text.mes").unwrap_or_default(),
             intgame: mes("mes/intgame.mes").unwrap_or_default(),
+            inven_ui: mes("mes/inven_ui.mes").unwrap_or_default(),
+            critter: mes("mes/critter.mes").unwrap_or_default(),
             first_year: arcanum_sim::GameStart::load(vfs).year,
         })
     }

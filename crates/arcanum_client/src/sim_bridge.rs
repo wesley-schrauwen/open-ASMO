@@ -242,6 +242,7 @@ fn receive_deltas(
     mut actors: Option<ResMut<ActorDeltas>>,
     mut map_deltas: Option<ResMut<crate::world_render::MapDeltas>>,
     data: Option<Res<CreationData>>,
+    mut inventory: Option<ResMut<crate::inventory_screen::PcInventory>>,
 ) {
     let Some(link) = link else { return };
     let deltas = link.0.recv_deltas();
@@ -259,6 +260,9 @@ fn receive_deltas(
     for delta in &deltas {
         character.receive(rules, delta);
         sheet.receive(rules, delta);
+        if let (LedgerDelta::Inventory { inventory: carried, .. }, Some(inv)) = (delta, inventory.as_mut()) {
+            inv.0 = Some(carried.clone());
+        }
         if let LedgerDelta::EnterMap { map: name } = delta {
             map.0 = Some(name.clone());
         }

@@ -512,6 +512,7 @@ fn click_to_move(
     objects: Query<(Entity, &Sprite, &bevy::sprite::Anchor, &GlobalTransform, &MapObject)>,
     images: Res<Assets<Image>>,
     panel: Option<Res<crate::character_editor::CharacterPanel>>,
+    inventory: Option<Res<crate::inventory_screen::InventoryPanel>>,
 ) {
     let Some(origin) = client.filter(|c| !c.map.sectors.is_empty()).and_then(|c| c.origin) else { return };
     let cursor = match debug {
@@ -525,7 +526,7 @@ fn click_to_move(
         }
         None if buttons.just_pressed(MouseButton::Left) && !keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) => {
             let Some((cursor, size)) = windows.iter().find_map(|w| w.cursor_position().map(|c| (c, w.size()))) else { return };
-            if crate::hud::covers(size, cursor, panel.is_some_and(|p| p.open)) {
+            if crate::hud::covers(size, cursor, panel.is_some_and(|p| p.open) || inventory.is_some_and(|p| p.open)) {
                 return;
             }
             cursor

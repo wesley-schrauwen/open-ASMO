@@ -17,6 +17,7 @@ pub mod create_character;
 pub mod fonts;
 pub mod hud;
 pub mod hud_clock;
+pub mod inventory_screen;
 pub mod isometric;
 pub mod load_game;
 pub mod loading;

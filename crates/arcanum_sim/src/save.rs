@@ -48,6 +48,10 @@ fn default_first_year() -> u32 {
 pub struct PlayerSave {
     pub blueprint: CharacterBlueprint,
     pub position: TileLoc,
+    /// What the PC carries; `None` until it first enters the world, which gives it the
+    /// blueprint's starting kit ([`crate::starting_kit`]).
+    #[serde(default)]
+    pub inventory: Option<crate::Inventory>,
 }
 
 /// What changed in one sector since the original data. Objects are named by their place in the
@@ -163,7 +167,7 @@ impl WorldState {
     pub fn add_player(&mut self, start: Option<&StartMap>, player: PlayerId, blueprint: CharacterBlueprint) -> bool {
         let Some(start) = start else { return false };
         let save = self.0.get_or_insert_with(|| WorldSave::new_game(start));
-        save.players.insert(player, PlayerSave { blueprint, position: start.position });
+        save.players.insert(player, PlayerSave { blueprint, position: start.position, inventory: None });
         true
     }
 }

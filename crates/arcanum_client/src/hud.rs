@@ -74,6 +74,8 @@ const HOTKEY_Y: f32 = 445.0;
 pub enum HudAction {
     /// Opens or closes the character screen ([`crate::character_editor::CharacterPanel`]).
     Character,
+    /// Opens or closes the inventory screen ([`crate::inventory_screen::InventoryPanel`]).
+    Inventory,
 }
 
 /// Which pool a vial shows.
@@ -132,8 +134,14 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
         .with_children(|top| {
             for (i, (file, x, help)) in TOP_BUTTONS.into_iter().enumerate() {
                 let mut button = top.spawn((BoxHelp::Intgame(help), hud_button(assets.load(art(file)), rect(Vec2::new(x, 2.0), Vec2::splat(34.0)))));
-                if i == 0 {
-                    button.insert(HudAction::Character);
+                match i {
+                    0 => {
+                        button.insert(HudAction::Character);
+                    }
+                    3 => {
+                        button.insert(HudAction::Inventory);
+                    }
+                    _ => {}
                 }
             }
             for n in 0..5 {
