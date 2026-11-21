@@ -20,8 +20,10 @@
 //!   grid it lands with the grabbed cell under the cursor (cursor cell minus the grab, linear as
 //!   the original's); on a slot it is worn if the fit test passes. Off the grid and slots it goes
 //!   back. Each move goes to the host ([`PcInventory`]); refusals with a message (`mes/item.mes`)
-//!   go to the message box. The original's cursor hotspot for the held art was not decoded: here
-//!   the point it was grabbed by stays under the cursor.
+//!   go to the message box. The held art's top-left sits at the cursor and the item lands with
+//!   its top-left cell there, so the picture is where it goes (the owner's call: the original
+//!   keeps the grabbed cell under the cursor, and its cursor hotspot was not decoded). The drop
+//!   box lights (`Drop_ON`) while a held item is over it.
 //! - Toggled by the top bar's inventory button and `I`; Escape closes it; opening it closes the
 //!   character screen and the other way round. Clicks on it do not walk.
 //!
@@ -97,6 +99,10 @@ pub const PILE_GRID: Vec2 = Vec2::new(8.0, 136.0);
 pub const PILE_ROWS_SHOWN: i32 = 8;
 /// The furthest the pile grid scrolls (0x681510 for a container).
 pub const PILE_SCROLL_MAX: i32 = 88;
+
+/// The drop box's art: lit while a held item is over it.
+#[derive(Component)]
+pub struct DropBoxArt;
 
 /// The loot window's Take All button.
 #[derive(Component)]
@@ -257,7 +263,7 @@ impl Plugin for InventoryScreenPlugin {
                 *held = HeldItem::default();
             })
             .add_systems(PreUpdate, toggle_on_keys.run_if(in_state(AppState::InGame)).after(bevy::input::InputSystems))
-            .add_systems(Update, (settle_inventory, show_refusals, open_loot, one_panel_at_a_time, show_panel, scroll_pile, drag_items, show_items, follow_cursor).chain().run_if(in_state(AppState::InGame)))
+            .add_systems(Update, (settle_inventory, show_refusals, open_loot, one_panel_at_a_time, show_panel, scroll_pile, drag_items, show_items, follow_cursor, light_drop_box).chain().run_if(in_state(AppState::InGame)))
             .add_observer(on_hud_button)
             .add_observer(on_take_all);
     }
@@ -377,7 +383,7 @@ fn show_panel(mut commands: Commands, mut panel: ResMut<InventoryPanel>, roots: 
             }
             screen.spawn(image("tiny_butt.ART", 763.0, 197.0, 28.0, 27.0));
             screen.spawn(image("Use_Box_OFF.ART", 703.0, 290.0, 80.0, 43.0));
-            screen.spawn(image("Drop_OFF.ART", 703.0, 344.0, 80.0, 43.0));
+            screen.spawn((DropBoxArt, image("Drop_OFF.ART", 703.0, 344.0, 80.0, 43.0)));
         });
 }
 
@@ -589,13 +595,11 @@ fn drag_items(
             }
             return;
         }
-        let in_grid_now = from_pile || in_grid(item.location);
-        let grab = if in_grid_now { at - item.location } else { 0 };
-        let cells = info(item.prototype).map_or((1, 1), |i| i.cells);
-        let inside = if from_pile { Some(pile_box(item.location, cells, scroll.0)) } else { placement(&item, cells) };
-        let art = item_art(prototypes, &item).and_then(|id| art_frame(index, &mut cache, &assets, &frames, id));
-        let corner = art.and_then(|(_, s)| Some(centred(inside?, s, in_grid_now))).unwrap_or(point);
-        held.0 = Some(Held { from: item.location, grab, offset: point - corner, from_pile });
+        // The held art's top-left sits at the cursor, and the item lands with its top-left cell
+        // under it: what is seen is where it goes (the owner's call; the original keeps the
+        // grabbed cell, 0x683470, and its cursor hotspot was not decoded).
+        let _ = at;
+        held.0 = Some(Held { from: item.location, grab: 0, offset: Vec2::ZERO, from_pile });
     } else if buttons.just_released(MouseButton::Left)
         && let Some(h) = held.0.take()
     {
@@ -631,7 +635,41 @@ fn pile_box(location: i32, cells: (i32, i32), scroll: i32) -> Rect {
     Rect::from_corners(at, at + Vec2::new(cells.0 as f32, cells.1 as f32) * 32.0)
 }
 
-/// Draws the held item at the cursor, keeping the point it was grabbed by under it.
+/// The drop box lights while a held item of the PC's is over it (the original swaps its art:
+/// `Drop_ON`, art 225, or `Drop_ILL`, 348, for an item that cannot be dropped).
+#[allow(clippy::too_many_arguments)]
+fn light_drop_box(
+    held: Res<HeldItem>,
+    inventory: Res<PcInventory>,
+    windows: Query<&Window>,
+    client: Option<Res<crate::world_render::ClientMap>>,
+    assets: Res<AssetServer>,
+    mut boxes: Query<&mut ImageNode, With<DropBoxArt>>,
+    mut lit: Local<Option<&'static str>>,
+) {
+    let point = windows.iter().find_map(|w| w.cursor_position().map(|c| screen_point(w.size(), c) - Vec2::new(0.0, TOP_BAR_HEIGHT)));
+    let over = held.0.filter(|h| !h.from_pile && point.is_some_and(|p| DROP_BOX.contains(p)));
+    let name = match over {
+        None => "Drop_OFF.ART",
+        Some(h) => {
+            let no_drop = inventory
+                .shown()
+                .and_then(|inv| inv.items.iter().find(|i| i.location == h.from))
+                .and_then(|i| client.as_ref()?.map.prototypes.get(i.prototype)?.int("item_flags"))
+                .is_some_and(|f| f & arcanum_sim::ITEM_NO_DROP != 0);
+            if no_drop { "Drop_ILL.ART" } else { "Drop_ON.ART" }
+        }
+    };
+    if *lit == Some(name) && !boxes.is_empty() {
+        return;
+    }
+    *lit = Some(name);
+    for mut image in &mut boxes {
+        image.image = assets.load(art(name));
+    }
+}
+
+/// Draws the held item with its top-left at the cursor.
 #[allow(clippy::too_many_arguments)]
 fn follow_cursor(
     mut commands: Commands,

@@ -1120,7 +1120,7 @@ number that is left out.
 
 Not done: dropping on the ground and the use and drop boxes, right-click use, stack splitting,
 hexed and no-drop items, the fit test's magick/tech, broken, crippled-arm and animation checks,
-sounds, and the held art's cursor hotspot (the grab point stays under the cursor instead).
+sounds, and the held art's cursor hotspot (see "Holding an item").
 
 ## Items on the ground (after moving items)
 
@@ -1167,3 +1167,15 @@ points; a picked-up map item keeps only its prototype, not its own changed field
 
 Not done: chests and other containers (locks, generated contents), the loot window's paperdoll
 toggle and scrollbar art, moving items within a pile, the open and close sounds.
+
+## Holding an item (after junk piles)
+
+- **Owner's call (2026-11-21):** the held item's art has its top-left at the cursor, and the item
+  lands with its top-left cell under the cursor, so what is seen is where it goes. (Before, the
+  grabbed point stayed under the cursor while drops went by the cursor's own point, so the drop
+  box seemed not to take items.) The original keeps the grabbed cell (0x683470); its cursor
+  hotspot was not decoded.
+- The drop box lights while a held item is over it (`Drop_ON`, or `Drop_ILL` for an item that
+  cannot be dropped), as the original swaps it.
+- **Checked:** a real-data run with the cursor moved onto the drop box holding Lugard's dagger
+  shows the dagger's top-left at the cursor and the box lit.
