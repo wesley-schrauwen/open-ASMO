@@ -211,9 +211,9 @@ pub fn spawn_tabs(screen: &mut ChildSpawnerCommands, art: &TabArt) {
     });
     screen.spawn(page(SPELLS_TAB)).with_children(|p| {
         p.spawn(window(&art.spells_window));
-        for c in 0..COLLEGES {
+        for (c, frames) in art.colleges.iter().enumerate() {
             let (row, i) = (c / 8, c % 8);
-            p.spawn(button(EditorAction::College(c), &art.colleges[c], win(COLLEGE_X[row][i], COLLEGE_Y[row], 24.0, 24.0)));
+            p.spawn(button(EditorAction::College(c), frames, win(COLLEGE_X[row][i], COLLEGE_Y[row], 24.0, 24.0)));
         }
     });
 }
