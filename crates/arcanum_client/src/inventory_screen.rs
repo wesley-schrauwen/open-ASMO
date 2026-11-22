@@ -849,7 +849,7 @@ mod tests {
         assert_eq!(location_at(Vec2::new(368.0 + 32.0 * 9.5, 8.0 + 32.0 * 11.5)), Some(119));
         assert_eq!(location_at(Vec2::new(30.0, 200.0)), Some(Slot::Weapon as i32));
         assert_eq!(location_at(Vec2::new(700.0, 200.0)), None);
-        let inv = Inventory { items: vec![CarriedItem { prototype: 1, location: 13, quantity: 0 }], ..Default::default() };
+        let inv = Inventory { items: vec![CarriedItem { prototype: 1, location: 13, quantity: 0, keys: vec![] }], ..Default::default() };
         let on = |cell: i32| Vec2::new(368.0 + 32.0 * (cell % 10) as f32 + 5.0, 8.0 + 32.0 * (cell / 10) as f32 + 5.0);
         assert!(item_at(&inv, on(33), sword).is_some(), "the footprint's last cell");
         assert!(item_at(&inv, on(43), sword).is_none());
@@ -869,7 +869,7 @@ mod tests {
         assert_eq!(spot_at(Vec2::new(30.0, 200.0), false, 0), Some(Spot::Pc(Slot::Weapon as i32)), "the paperdoll without a pile");
         assert_eq!(spot_at(Vec2::new(370.0, 10.0), true, 0), Some(Spot::Pc(0)));
         assert_eq!(pile_box(23, (1, 2), 1).min, Vec2::new(8.0 + 96.0, 136.0 + 32.0));
-        let pile = Inventory { items: vec![CarriedItem { prototype: 1, location: 12, quantity: 0 }], ..Inventory::container() };
+        let pile = Inventory { items: vec![CarriedItem { prototype: 1, location: 12, quantity: 0, keys: vec![] }], ..Inventory::container() };
         assert!(pile_item_at(&pile, 32, sword).is_some(), "a 1x3 sword from row 1 to 3");
     }
 
@@ -878,18 +878,18 @@ mod tests {
         let man = Wearer { race: 0, gender: 1 };
         let mut inv = PcInventory::default();
         assert!(inv.request(InventoryRequest::Move { from: 0, to: 1 }, man, sword).is_err(), "nothing before the host's copy");
-        inv.receive(0, Inventory { items: vec![CarriedItem { prototype: 1, location: 0, quantity: 0 }], ..Default::default() });
+        inv.receive(0, Inventory { items: vec![CarriedItem { prototype: 1, location: 0, quantity: 0, keys: vec![] }], ..Default::default() });
         inv.settle(man, sword);
         inv.request(InventoryRequest::Move { from: 0, to: 5 }, man, sword).unwrap();
         inv.request(InventoryRequest::Move { from: 5, to: 7 }, man, sword).unwrap();
         assert_eq!(inv.shown().unwrap().items[0].location, 7);
         assert_eq!(inv.take_outgoing().len(), 2);
         // The host took the first; the second is replayed on its copy.
-        inv.receive(1, Inventory { items: vec![CarriedItem { prototype: 1, location: 5, quantity: 0 }], ..Default::default() });
+        inv.receive(1, Inventory { items: vec![CarriedItem { prototype: 1, location: 5, quantity: 0, keys: vec![] }], ..Default::default() });
         inv.settle(man, sword);
         assert_eq!(inv.shown().unwrap().items[0].location, 7);
         // The host refused the second: its copy wins.
-        inv.receive(2, Inventory { items: vec![CarriedItem { prototype: 1, location: 5, quantity: 0 }], ..Default::default() });
+        inv.receive(2, Inventory { items: vec![CarriedItem { prototype: 1, location: 5, quantity: 0, keys: vec![] }], ..Default::default() });
         inv.settle(man, sword);
         assert_eq!(inv.shown().unwrap().items[0].location, 5);
         assert_eq!(inv.request(InventoryRequest::Move { from: 5, to: 1001 }, man, sword), Err(ItemRefusal::WrongSlot));
@@ -897,11 +897,11 @@ mod tests {
 
     #[test]
     fn items_sit_centred_in_their_footprint() {
-        let item = CarriedItem { prototype: 1, location: 12, quantity: 0 };
+        let item = CarriedItem { prototype: 1, location: 12, quantity: 0, keys: vec![] };
         let inside = placement(&item, (2, 3)).unwrap();
         assert_eq!(inside, Rect::from_corners(Vec2::new(432.0, 40.0), Vec2::new(496.0, 136.0)));
         assert_eq!(centred(inside, UVec2::new(41, 90), true), Vec2::new(443.0, 43.0));
-        let sword = CarriedItem { prototype: 1, location: Slot::Weapon as i32, quantity: 0 };
+        let sword = CarriedItem { prototype: 1, location: Slot::Weapon as i32, quantity: 0, keys: vec![] };
         assert_eq!(placement(&sword, (1, 1)).unwrap().min, Vec2::new(23.0, 170.0));
         assert_eq!(centred(placement(&sword, (1, 1)).unwrap(), UVec2::new(101, 128), false), Vec2::new(20.0, 170.0), "an arithmetic shift rounds down");
     }

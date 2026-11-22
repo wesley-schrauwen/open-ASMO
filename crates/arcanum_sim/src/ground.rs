@@ -55,12 +55,22 @@ impl GroundItemId {
 }
 
 /// A dropped item.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GroundItem {
     pub prototype: u32,
     /// Gold and ammo: how many.
     pub quantity: i32,
     pub location: TileLoc,
+    /// A key's number, or a key ring's ([`crate::keys`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<i32>,
+}
+
+impl GroundItem {
+    /// The item as carried, at `location`.
+    pub fn carried(&self, location: i32) -> crate::CarriedItem {
+        crate::CarriedItem { prototype: self.prototype, location, quantity: self.quantity, keys: self.keys.clone() }
+    }
 }
 
 /// A junk pile: the container the original makes when an item is dropped onto items (basic
@@ -89,9 +99,9 @@ impl LoadedMap {
                     return None;
                 }
                 let object = self.mobiles.get(&sector)?.get(index as usize).filter(|o| is_item(o.object_type))?;
-                Some(GroundItem { prototype: object.prototype.prototype()?, quantity: self.quantity_of(object), location: crate::object_location(object)? })
+                Some(GroundItem { prototype: object.prototype.prototype()?, quantity: self.quantity_of(object), location: crate::object_location(object)?, keys: crate::object_keys(object, &self.prototypes) })
             }
-            GroundItemId::Dropped { number, .. } => changes?.dropped.get(&number).copied(),
+            GroundItemId::Dropped { number, .. } => changes?.dropped.get(&number).cloned(),
             GroundItemId::Pile { .. } | GroundItemId::Container { .. } => None,
         }
     }
@@ -131,7 +141,7 @@ impl LoadedMap {
             let Some(item) = self.stored_items.get(&id) else { continue };
             let Some(prototype) = item.prototype.prototype() else { continue };
             let location = self.prototypes.int(item, "item_inv_location").unwrap_or(0);
-            contents.items.push(crate::CarriedItem { prototype, location, quantity: self.quantity_of(item) });
+            contents.items.push(crate::CarriedItem { prototype, location, quantity: self.quantity_of(item), keys: crate::object_keys(item, &self.prototypes) });
         }
         contents
     }
@@ -292,7 +302,7 @@ fn place_on_ground(item: crate::CarriedItem, at: TileLoc, info: &impl Fn(u32) ->
     for pile_id in map.piles_on_tile(at) {
         let Some(pile) = map.pile(pile_id) else { continue };
         let mut contents = pile.inventory.clone();
-        if contents.insert(item.prototype, item.quantity.max(1), info, i32::MAX, 0).is_ok() {
+        if contents.insert_item(item.clone(), info, i32::MAX, 0).is_ok() {
             let pile = Pile { location: at, inventory: contents };
             map.set_pile(pile_id, Some(pile.clone()));
             save_change(world, map, sector);
@@ -306,20 +316,20 @@ fn place_on_ground(item: crate::CarriedItem, at: TileLoc, info: &impl Fn(u32) ->
     let bare = map.items_on_tile(at);
     if bare.is_empty() {
         let id = GroundItemId::Dropped { sector, number };
-        let ground = GroundItem { prototype: item.prototype, quantity: item.quantity, location: at };
-        map.drop_ground_item(id, ground);
+        let ground = GroundItem { prototype: item.prototype, quantity: item.quantity, location: at, keys: item.keys };
+        map.drop_ground_item(id, ground.clone());
         save_change(world, map, sector);
         broadcast(session, outbox, LedgerDelta::GroundItemDropped { item: id, ground });
         return;
     }
     let mut contents = Inventory::container();
     for (id, ground) in bare {
-        if contents.insert(ground.prototype, ground.quantity.max(1), info, i32::MAX, 0).is_ok() {
+        if contents.insert_item(ground.carried(0), info, i32::MAX, 0).is_ok() {
             map.take_ground_item(id);
             broadcast(session, outbox, LedgerDelta::GroundItemTaken { item: id });
         }
     }
-    let _ = contents.insert(item.prototype, item.quantity.max(1), info, i32::MAX, 0);
+    let _ = contents.insert_item(item, info, i32::MAX, 0);
     let pile_id = GroundItemId::Pile { sector, number };
     let pile = Pile { location: at, inventory: contents };
     map.set_pile(pile_id, Some(pile.clone()));
@@ -458,7 +468,8 @@ pub fn pick_up_items(
         // A container opens unless locked, jammed or held; its source rolls on the first opening.
         if let Some(object) = map.container_object(want.item) {
             let flags = map.prototypes.int(object, "container_flags").unwrap_or(0);
-            if let Err(refusal) = crate::open_check(flags, map.lock_day) {
+            let lock = map.prototypes.int(object, "container_key_id").unwrap_or(0);
+            if let Err(refusal) = crate::open_check(flags, map.lock_day, inventory.has_key(lock)) {
                 outbox.0.push((player, LedgerDelta::OpenRefused { message: refusal.message() }));
                 continue;
             }
@@ -498,7 +509,7 @@ pub fn pick_up_items(
         let (prototypes, art) = (map.prototypes.clone(), map.art.clone());
         let info = crate::item_info(&prototypes, |id| crate::world::art_size(vfs, art.as_deref(), id));
         let mut changed = inventory.clone();
-        match changed.insert(ground.prototype, ground.quantity.max(1), &info, derived.carry_weight, aptitude) {
+        match changed.insert_item(ground.carried(0), &info, derived.carry_weight, aptitude) {
             Ok(_) => {
                 *inventory = changed;
                 map.take_ground_item(want.item);

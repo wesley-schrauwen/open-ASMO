@@ -3,9 +3,9 @@
 //!
 //! - **Opening** (0x4aed80, through 0x572370): jammed refuses ("You cannot open that.",
 //!   `mes/inven_ui.mes` 2), magically held refuses ("This seems to be stuck.", 3), locked
-//!   ([`crate::locked`], the doors' test 0x441d40 on `container_flags`) refuses ("Locked.", 1).
-//!   The original lets a PC with the container's key (`container_key_id`, 0x463370) open a
-//!   locked one; there are no keys yet, so a locked container stays shut.
+//!   ([`crate::locked`], the doors' test 0x441d40 on `container_flags`) refuses ("Locked.", 1)
+//!   unless the PC carries its key (`container_key_id`, [`crate::keys`]); opening with the key
+//!   leaves it locked.
 //! - **Contents:** the map's stored list (`container_inventory_list_idx`), each item where it
 //!   lies in the container's 10 x 96 grid (`item_inv_location`). A container with
 //!   [`OCOF_INVEN_SPAWN_PENDING`] rolls its inventory source (`Rules/InvenSource.mes`, 0x463e20)
@@ -17,7 +17,7 @@
 //!   `STICKY` (0x100): then it stays open.
 //! - An empty container stays (the pile collapse, 0x463540, is for junk piles only).
 //!
-//! Not built: keys and lockpicking, the open, close and locked sounds (`container_sound`
+//! Not built: lockpicking, the open, close and locked sounds (`container_sound`
 //! plus 0, 1, 2), traps, scripts, stealing (mode 4), and the original's seed for the roll: it mixes
 //! the container's x with the opening PC's name and two stats (0x463e20, decoded with medium
 //! confidence); here the seed is the container's tile, so each container rolls the same for
@@ -53,15 +53,16 @@ impl OpenRefusal {
     }
 }
 
-/// Whether a container with `flags` opens (0x4aed80), with day locks holding or not (`day`).
-pub fn open_check(flags: i32, day: bool) -> Result<(), OpenRefusal> {
+/// Whether a container with `flags` opens (0x4aed80), with day locks holding or not (`day`),
+/// for a PC with its key or not (`key`).
+pub fn open_check(flags: i32, day: bool, key: bool) -> Result<(), OpenRefusal> {
     if flags & OCOF_JAMMED != 0 {
         return Err(OpenRefusal::Jammed);
     }
     if flags & OCOF_MAGICALLY_HELD != 0 {
         return Err(OpenRefusal::MagicallyHeld);
     }
-    if crate::locked(flags, day) {
+    if crate::locked(flags, day) && !key {
         return Err(OpenRefusal::Locked);
     }
     Ok(())
@@ -140,13 +141,14 @@ mod tests {
 
     #[test]
     fn jammed_and_held_come_before_the_lock() {
-        assert_eq!(open_check(0, true), Ok(()));
-        assert_eq!(open_check(OCOF_LOCKED, true), Err(OpenRefusal::Locked));
-        assert_eq!(open_check(OCOF_LOCKED | OCOF_JAMMED, true), Err(OpenRefusal::Jammed));
-        assert_eq!(open_check(OCOF_LOCKED | OCOF_MAGICALLY_HELD, true), Err(OpenRefusal::MagicallyHeld));
+        assert_eq!(open_check(0, true, false), Ok(()));
+        assert_eq!(open_check(OCOF_LOCKED, true, false), Err(OpenRefusal::Locked));
+        assert_eq!(open_check(OCOF_LOCKED, true, true), Ok(()), "the key opens it");
+        assert_eq!(open_check(OCOF_LOCKED | OCOF_JAMMED, true, true), Err(OpenRefusal::Jammed));
+        assert_eq!(open_check(OCOF_LOCKED | OCOF_MAGICALLY_HELD, true, true), Err(OpenRefusal::MagicallyHeld));
         // Never-locked and busted containers open; the real data's 0x9 is never locked.
-        assert_eq!(open_check(OCOF_LOCKED | OCOF_NEVER_LOCKED, true), Ok(()));
-        assert_eq!(open_check(OCOF_LOCKED | OCOF_BUSTED, true), Ok(()));
+        assert_eq!(open_check(OCOF_LOCKED | OCOF_NEVER_LOCKED, true, false), Ok(()));
+        assert_eq!(open_check(OCOF_LOCKED | OCOF_BUSTED, true, false), Ok(()));
         assert_eq!(OpenRefusal::Locked.message(), 1);
         assert_eq!(OpenRefusal::MagicallyHeld.message(), 3);
     }

@@ -203,7 +203,7 @@ fn a_chest_on_the_start_map_opens_with_its_stored_contents() {
             let id = GroundItemId::Container { sector, index: index as u32 };
             let Some(at) = object_location(object).filter(|_| object.object_type == TYPE_CONTAINER) else { continue };
             let flags = map.prototypes.int(object, "container_flags").unwrap_or(0);
-            if open_check(flags, map.lock_day).is_ok() && map.pile(id).is_some_and(|p| !p.inventory.items.is_empty()) {
+            if open_check(flags, map.lock_day, false).is_ok() && map.pile(id).is_some_and(|p| !p.inventory.items.is_empty()) {
                 let d = (at.x.abs_diff(start.position.x) as u64).pow(2) + (at.y.abs_diff(start.position.y) as u64).pow(2);
                 chests.push((d, id, at));
             }
@@ -223,4 +223,70 @@ fn a_chest_on_the_start_map_opens_with_its_stored_contents() {
     let deltas = sim.take_deltas();
     assert!(deltas.iter().any(|(_, d)| *d == LedgerDelta::PileOpened { pile: id }), "{deltas:?}");
     assert_eq!(sim.app.world().resource::<LoadedMap>().pile(id).unwrap().inventory, expected);
+}
+
+#[test]
+fn a_key_from_a_chest_on_the_start_map_opens_its_locked_chest() {
+    use std::sync::{Arc, RwLock};
+
+    use arcanum_formats::object::TYPE_CONTAINER;
+    use arcanum_rules::{CharacterBlueprint, CharacterSheet, RulesData};
+    use arcanum_sim::{GroundItemId, Inventory, InventoryRequest, LedgerDelta, LoadedMap, PlayerControlled, PlayerId, PlayerIntent, Position, SimApp, SimVfs, WorldState, key_matches, object_location, open_check};
+
+    let Some(vfs) = vfs() else { return };
+    let vfs = Arc::new(RwLock::new(vfs));
+    let start = StartMap::load(&vfs.read().unwrap()).unwrap();
+    let mut world = WorldState::default();
+    let sheet = CharacterSheet { name: "Virgil".into(), ..Default::default() };
+    world.add_player(Some(&start), PlayerId(1), CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None });
+    let mut sim = SimApp::new(RulesData::default());
+    sim.use_manual_clock();
+    sim.app.insert_resource(SimVfs(vfs.clone()));
+    sim.boot(world.0.unwrap());
+    sim.update();
+    sim.update();
+    sim.take_deltas();
+    // A locked chest round the start whose key lies in an openable one.
+    let map = sim.app.world().resource::<LoadedMap>();
+    let mut chests: Vec<(GroundItemId, TileLoc, i32, i32)> = Vec::new();
+    for (&sector, objects) in &map.mobiles {
+        for (index, object) in objects.iter().enumerate() {
+            let Some(at) = object_location(object).filter(|_| object.object_type == TYPE_CONTAINER) else { continue };
+            let flags = map.prototypes.int(object, "container_flags").unwrap_or(0);
+            let lock = map.prototypes.int(object, "container_key_id").unwrap_or(0);
+            chests.push((GroundItemId::Container { sector, index: index as u32 }, at, flags, lock));
+        }
+    }
+    let pair = chests.iter().filter(|c| open_check(c.2, map.lock_day, false).is_err() && open_check(c.2, map.lock_day, true).is_ok()).find_map(|locked| {
+        chests.iter().filter(|c| open_check(c.2, map.lock_day, false).is_ok()).find_map(|holder| {
+            let items = map.pile(holder.0)?.inventory.items;
+            let key = items.iter().find(|i| i.keys.iter().any(|&k| key_matches(locked.3, k)))?;
+            Some((*locked, *holder, key.location))
+        })
+    });
+    let ((locked, locked_at, _, lock), (holder, holder_at, ..), from) = pair.expect("a locked chest with its key in another");
+    eprintln!("lock {lock} at {locked_at:?}, its key in the chest at {holder_at:?}");
+    let place = |sim: &mut SimApp, at: TileLoc| {
+        let world = sim.app.world_mut();
+        world.query_filtered::<&mut Position, bevy_ecs::query::With<PlayerControlled>>().single_mut(world).unwrap().0 = at;
+    };
+    let open = |sim: &mut SimApp, id: GroundItemId| {
+        sim.receive([(PlayerId(1), PlayerIntent::PickUp { item: id, seq: 0 })]);
+        sim.update();
+        sim.take_deltas().into_iter().any(|(_, d)| d == LedgerDelta::PileOpened { pile: id })
+    };
+    place(&mut sim, locked_at);
+    assert!(!open(&mut sim, locked), "locked without the key");
+    place(&mut sim, holder_at);
+    assert!(open(&mut sim, holder));
+    sim.receive([
+        (PlayerId(1), PlayerIntent::Inventory { seq: 1, request: InventoryRequest::Take { from, to: None } }),
+        (PlayerId(1), PlayerIntent::Inventory { seq: 2, request: InventoryRequest::ClosePile }),
+    ]);
+    sim.update();
+    let world = sim.app.world_mut();
+    let carried = world.query_filtered::<&Inventory, bevy_ecs::query::With<PlayerControlled>>().single(world).unwrap().clone();
+    assert!(carried.has_key(lock), "{carried:?}");
+    place(&mut sim, locked_at);
+    assert!(open(&mut sim, locked), "the key opens it");
 }

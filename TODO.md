@@ -12,7 +12,8 @@ Things to pick up later. Larger plans live in `plans/`; project state and findin
 ## World
 
 - **Blocking leftovers** (`arcanum_sim::blocking`, `doors`): sinking and icy tiles (flags `s`,
-  `i`); keys (0x4aeb70: today every locked door blocks);
+  `i`); paths through locked doors for a PC with the key (0x4aeb70 in the pathing, 0x43fe00:
+  today every locked door blocks paths, though the key opens it);
   NPCs opening doors, and NPCs that cannot (pathflag 0x2).
 - **NPCs pause when a PC blocks them:** when NPC movement comes, an NPC whose next step is
   blocked by a PC stops for 5 s (150 ticks), then replans from where it stands; PCs replan at

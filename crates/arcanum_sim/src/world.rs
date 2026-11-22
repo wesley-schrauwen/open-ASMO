@@ -655,7 +655,7 @@ mod tests {
         }).collect();
         assert_eq!(sent.len(), 2, "each player gets only their own: {sent:?}");
         let (_, kit) = sent.iter().find(|(p, _)| *p == 1).unwrap();
-        assert_eq!(kit.items[0], crate::CarriedItem { prototype: crate::GOLD, location: 0, quantity: 385 });
+        assert_eq!(kit.items[0], crate::CarriedItem { prototype: crate::GOLD, location: 0, quantity: 385, keys: vec![] });
         assert_eq!(kit.worn(crate::Slot::Weapon).map(|i| i.prototype), Some(dagger), "a pre-made wields its weapon");
         let saved = sim.app.world().resource::<WorldState>().0.clone().unwrap();
         assert_eq!(saved.players[&PlayerId(1)].inventory.as_ref(), Some(kit), "kept in the save");
@@ -698,7 +698,7 @@ mod tests {
         let mut s = save(&[(1, "A", TileLoc { x: 70, y: 70 }), (2, "B", TileLoc { x: 72, y: 72 })]);
         let player = s.players.get_mut(&PlayerId(1)).unwrap();
         player.blueprint.sheet.base[0] = 8;
-        player.inventory = Some(crate::Inventory { items: vec![crate::CarriedItem { prototype: 6049, location: 0, quantity: 0 }], ..Default::default() });
+        player.inventory = Some(crate::Inventory { items: vec![crate::CarriedItem { prototype: 6049, location: 0, quantity: 0, keys: vec![] }], ..Default::default() });
         let mut sim = SimApp::new(RulesData::default());
         sim.use_manual_clock();
         sim.app.insert_resource(vfs(dir.path()));
@@ -731,8 +731,8 @@ mod tests {
         sim.update();
         let deltas = sim.take_deltas();
         let dropped = GroundItemId::Dropped { sector: TileLoc { x: 70, y: 70 }.sector(), number: 0 };
-        let ground = crate::GroundItem { prototype: 6049, quantity: 0, location: TileLoc { x: 70, y: 70 } };
-        assert!(deltas.iter().any(|(p, d)| p.0 == 2 && *d == LedgerDelta::GroundItemDropped { item: dropped, ground }));
+        let ground = crate::GroundItem { prototype: 6049, quantity: 0, location: TileLoc { x: 70, y: 70 }, keys: vec![] };
+        assert!(deltas.iter().any(|(p, d)| p.0 == 2 && *d == LedgerDelta::GroundItemDropped { item: dropped, ground: ground.clone() }));
         assert!(!carried(&deltas).unwrap().items.iter().any(|i| i.prototype == 6049));
         let saved = sim.app.world().resource::<WorldState>().0.clone().unwrap();
         assert_eq!((saved.next_dropped, saved.sector_changes[&sector].taken.contains(&index)), (1, true), "kept in the save");
@@ -875,6 +875,92 @@ mod tests {
         sim.receive([(PlayerId(1), PlayerIntent::PickUp { item: c, seq: 0 })]);
         sim.update();
         assert_eq!(items(&sim, c), rolled, "not rolled again");
+    }
+
+    #[test]
+    fn a_key_taken_from_one_chest_opens_another() {
+        use arcanum_formats::object::{Array, Object, ObjectId, TYPE_CONTAINER, TYPE_KEY, TYPE_KEY_RING, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, object_id_bytes, prototype_id};
+        use crate::{GroundItemId, InventoryRequest};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let guid = |n: u8| ObjectId { kind: ObjectId::KIND_GUID, payload: [n; 16] };
+        // Key 14 lies in the first chest; the second is locked to it, the third to key 15.
+        let mut key = ObjectBuilder::new(TYPE_KEY).field("flags", Value::Int32(crate::OF_INVENTORY)).field("item_inv_location", Value::Int32(0)).field("key_key_id", Value::Int32(14));
+        key.prototype = prototype_id(7000);
+        key.id = guid(9);
+        std::fs::write(folder.join("G_K.mob"), key.build()).unwrap();
+        let chest = |name: &str, x: u32, flags: i32, lock: i32, list: &[ObjectId]| {
+            let data = list.iter().flat_map(object_id_bytes).collect();
+            let mut b = ObjectBuilder::new(TYPE_CONTAINER)
+                .field("current_aid", Value::Int32(0x7000_0000))
+                .field("location", at(x, 70))
+                .field("container_flags", Value::Int32(flags))
+                .field("container_key_id", Value::Int32(lock))
+                .field("container_inventory_list_idx", Value::Array(Some(Array { elem_size: 24, id: 0, data, bitset: vec![] })));
+            b.id = guid(x as u8);
+            std::fs::write(folder.join(format!("G_{name}.mob")), b.build()).unwrap();
+        };
+        chest("A", 71, 0, 0, &[guid(9)]);
+        chest("B", 72, crate::OCOF_LOCKED, 14, &[]);
+        chest("C", 69, crate::OCOF_LOCKED, 15, &[]);
+        let proto = |number: u32, kind: u32| {
+            let mut o = Object::parse_instance(&ObjectBuilder::new(kind).field("item_weight", Value::Int32(1)).build()).unwrap();
+            o.id = prototype_id(number);
+            o
+        };
+        let mut s = save(&[(1, "A", TileLoc { x: 70, y: 70 })]);
+        s.players.get_mut(&PlayerId(1)).unwrap().blueprint.sheet.base[0] = 8;
+        // The PC carries a key ring with key 3 on it.
+        let ring = crate::CarriedItem { prototype: 7001, location: 0, quantity: 0, keys: vec![3] };
+        s.players.get_mut(&PlayerId(1)).unwrap().inventory = Some(crate::Inventory { items: vec![ring], ..Default::default() });
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        let mut prototypes = Prototypes::default();
+        prototypes.insert(proto(7000, TYPE_KEY));
+        prototypes.insert(proto(7001, TYPE_KEY_RING));
+        sim.app.world_mut().resource_mut::<LoadedMap>().prototypes = Arc::new(prototypes);
+        sim.boot(s);
+        sim.update();
+        sim.update();
+        sim.take_deltas();
+        let sector = TileLoc { x: 71, y: 70 }.sector();
+        let find = |sim: &SimApp, x: u32| {
+            let map = sim.app.world().resource::<LoadedMap>();
+            let index = map.mobiles[&sector].iter().position(|o| crate::object_location(o) == Some(TileLoc { x, y: 70 })).unwrap() as u32;
+            GroundItemId::Container { sector, index }
+        };
+        let (a, b, c) = (find(&sim, 71), find(&sim, 72), find(&sim, 69));
+        let open = |sim: &mut SimApp, id| {
+            sim.receive([(PlayerId(1), PlayerIntent::PickUp { item: id, seq: 0 })]);
+            sim.update();
+            sim.take_deltas()
+        };
+        let opened = |deltas: &[(PlayerId, LedgerDelta)], id| deltas.iter().any(|(_, d)| *d == LedgerDelta::PileOpened { pile: id });
+
+        assert!(!opened(&open(&mut sim, b), b), "no key yet");
+        // The stored key keeps its number; taken, it goes onto the ring and leaves the grid.
+        let deltas = open(&mut sim, a);
+        assert!(opened(&deltas, a));
+        assert_eq!(sim.app.world().resource::<LoadedMap>().pile(a).unwrap().inventory.items[0].keys, [14]);
+        sim.receive([
+            (PlayerId(1), PlayerIntent::Inventory { seq: 1, request: InventoryRequest::Take { from: 0, to: Some(55) } }),
+            (PlayerId(1), PlayerIntent::Inventory { seq: 2, request: InventoryRequest::ClosePile }),
+        ]);
+        sim.update();
+        sim.take_deltas();
+        let inventory = sim.app.world_mut().query_filtered::<&crate::Inventory, With<crate::PlayerControlled>>().single(sim.app.world()).unwrap().clone();
+        assert_eq!(inventory.items.iter().map(|i| (i.prototype, i.keys.clone())).collect::<Vec<_>>(), [(7001, vec![3, 14])]);
+
+        // Key 14 opens its chest, which stays locked; key 15's chest still refuses.
+        let deltas = open(&mut sim, b);
+        assert!(opened(&deltas, b), "{deltas:?}");
+        let map = sim.app.world().resource::<LoadedMap>();
+        assert_eq!(map.prototypes.int(map.container_object(b).unwrap(), "container_flags"), Some(crate::OCOF_LOCKED));
+        assert!(open(&mut sim, c).iter().any(|(_, d)| *d == LedgerDelta::OpenRefused { message: 1 }));
     }
 
     #[test]
