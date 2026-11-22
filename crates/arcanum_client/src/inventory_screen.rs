@@ -473,6 +473,9 @@ fn settle_inventory(mut inventory: ResMut<PcInventory>, sheet: Res<crate::pc_she
     inventory.settle(wearer(&sheet), client_info(prototypes, &sizes));
 }
 
+/// The use box (band coordinates).
+pub const USE_BOX: Rect = Rect { min: Vec2::new(703.0, 290.0), max: Vec2::new(783.0, 333.0) };
+
 /// The drop box (band coordinates; the original tests from screen (703, 385)).
 pub const DROP_BOX: Rect = Rect { min: Vec2::new(703.0, 344.0), max: Vec2::new(783.0, 387.0) };
 
@@ -566,7 +569,7 @@ pub fn drop_target(point: Vec2, held: Held) -> Option<i32> {
 /// the host. Refusals with a message go to the message box.
 #[allow(clippy::too_many_arguments)]
 fn drag_items(
-    panel: Res<InventoryPanel>,
+    mut panel: ResMut<InventoryPanel>,
     buttons: Res<ButtonInput<MouseButton>>,
     windows: Query<&Window>,
     mut held: ResMut<HeldItem>,
@@ -577,6 +580,7 @@ fn drag_items(
     (mut cache, assets, frames): (ResMut<ItemArtCache>, Res<AssetServer>, Res<Assets<ArtFrames>>),
     (boxed, time): (Option<ResMut<crate::message_box::MessageBox>>, Option<Res<Time<Real>>>),
     scroll: Res<LootScroll>,
+    armed: Option<ResMut<crate::skill_use::SkillTargeting>>,
 ) {
     let right = buttons.just_pressed(MouseButton::Right);
     if !panel.open || !(buttons.just_pressed(MouseButton::Left) || buttons.just_released(MouseButton::Left) || right) {
@@ -618,6 +622,15 @@ fn drag_items(
     } else if buttons.just_released(MouseButton::Left)
         && let Some(h) = held.0.take()
     {
+        if USE_BOX.contains(point) && !h.from_pile {
+            // A lockpick on the use box arms Pick Locks with it; the screen closes.
+            let lockpick = inv.items.iter().find(|i| i.location == h.from).is_some_and(|i| arcanum_sim::is_lockpick(i.prototype, prototypes));
+            if lockpick && let Some(mut armed) = armed {
+                armed.0 = Some(crate::skill_use::Armed { skill: arcanum_sim::SKILL_PICK_LOCKS, tool: Some(h.from) });
+                panel.open = false;
+            }
+            return;
+        }
         let request = if DROP_BOX.contains(point) && !h.from_pile {
             // On the drop box: onto the ground at the PC's feet.
             Some(InventoryRequest::Drop { from: h.from })

@@ -8,6 +8,10 @@
 //! window's height over 600), so the arrow is near the system cursor's size. The art is resampled
 //! with area averaging; at that size whole-pixel scaling is not possible.
 //!
+//! While a skill is armed ([`crate::skill_use::SkillTargeting`]) the arrow shows blue: the
+//! original's targeting cursor (UI mode 0x10, art picked by 0x5719f0) was not decoded, and this
+//! tint stands in for it, as the owner remembers it.
+//!
 //! Not built: the cursors for actions and objects (0x573640 reads an object's cursor art from
 //! its field 0x5d), and the scroll arrows (498, 499).
 
@@ -36,10 +40,12 @@ impl Plugin for CursorPlugin {
 struct GameCursor {
     art: Handle<ArtFrames>,
     size: UVec2,
+    /// Whether the window cursor was made blue.
+    blue: bool,
 }
 
 fn load_cursor(mut commands: Commands, assets: Res<AssetServer>) {
-    commands.insert_resource(GameCursor { art: assets.load(interface::CURSOR), size: UVec2::ZERO });
+    commands.insert_resource(GameCursor { art: assets.load(interface::CURSOR), size: UVec2::ZERO, blue: false });
 }
 
 /// Scale from art pixels to cursor pixels for a window `height` logical pixels tall.
@@ -100,17 +106,22 @@ fn set_cursor(
     frames: Res<Assets<ArtFrames>>,
     mut images: ResMut<Assets<Image>>,
     windows: Query<(Entity, &Window), With<PrimaryWindow>>,
+    armed: Option<Res<crate::skill_use::SkillTargeting>>,
 ) {
     let Ok((entity, window)) = windows.single() else { return };
+    let blue = armed.is_some_and(|a| a.0.is_some());
     let Some(art) = frames.get(&cursor.art) else { return };
     let Some(frame) = art.frames.first() else { return };
     let Some(source) = images.get(frame) else { return };
     let factor = cursor_factor(window.height());
     let size = scaled_size(source.width(), source.height(), factor);
-    if size == cursor.size {
+    if size == cursor.size && blue == cursor.blue {
         return;
     }
-    let Some(scaled) = resample(source, size) else { return };
+    let Some(mut scaled) = resample(source, size) else { return };
+    if blue {
+        tint_blue(&mut scaled);
+    }
     let hotspot = (
         ((TIP.0 as f32 * factor) as u32).min(size.x - 1) as u16,
         ((TIP.1 as f32 * factor) as u32).min(size.y - 1) as u16,
@@ -118,6 +129,18 @@ fn set_cursor(
     let handle = images.add(scaled);
     commands.entity(entity).insert(CursorIcon::Custom(CustomCursor::Image(CustomCursorImage { handle, hotspot, ..default() })));
     cursor.size = size;
+    cursor.blue = blue;
+}
+
+/// Turns an RGBA8 image's colours to blues of the same brightness.
+pub fn tint_blue(image: &mut Image) {
+    let Some(data) = image.data.as_mut() else { return };
+    for px in data.as_chunks_mut::<4>().0 {
+        let light = (u32::from(px[0]) + u32::from(px[1]) + u32::from(px[2])) / 3;
+        px[0] = (light / 4) as u8;
+        px[1] = (light / 2) as u8;
+        px[2] = (light + 64).min(255) as u8;
+    }
 }
 
 #[cfg(test)]

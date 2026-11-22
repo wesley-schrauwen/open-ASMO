@@ -290,3 +290,70 @@ fn a_key_from_a_chest_on_the_start_map_opens_its_locked_chest() {
     place(&mut sim, locked_at);
     assert!(open(&mut sim, locked), "the key opens it");
 }
+
+#[test]
+fn a_skilled_pc_picks_a_locked_chest_on_the_start_map_with_a_lockpick() {
+    use std::sync::{Arc, RwLock};
+
+    use arcanum_formats::object::TYPE_CONTAINER;
+    use arcanum_rules::{CharacterBlueprint, CharacterSheet, RulesData};
+    use arcanum_sim::{CarriedItem, GroundItemId, Inventory, LedgerDelta, LoadedMap, LockTarget, PlayerControlled, PlayerId, PlayerIntent, Position, SimApp, SimVfs, Sheet, WorldState, is_lockpick, lockpick_bonus, object_location, open_check};
+
+    let Some(vfs) = vfs() else { return };
+    let vfs = Arc::new(RwLock::new(vfs));
+    let start = StartMap::load(&vfs.read().unwrap()).unwrap();
+    let mut world = WorldState::default();
+    let sheet = CharacterSheet { name: "Virgil".into(), ..Default::default() };
+    world.add_player(Some(&start), PlayerId(1), CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None });
+    let mut sim = SimApp::new(RulesData::default());
+    sim.use_manual_clock();
+    sim.app.insert_resource(SimVfs(vfs.clone()));
+    sim.boot(world.0.unwrap());
+    sim.update();
+    sim.update();
+    sim.take_deltas();
+    // The nearest locked chest round the start.
+    let map = sim.app.world().resource::<LoadedMap>();
+    let skeleton_key = 15081 + arcanum_sim::BASIC_TO_PROTOTYPE;
+    assert!(is_lockpick(skeleton_key, &map.prototypes), "the Auto Skeleton Key is a lockpick");
+    let mut locked: Vec<(u64, GroundItemId, TileLoc, i32)> = Vec::new();
+    for (&sector, objects) in &map.mobiles {
+        for (index, object) in objects.iter().enumerate() {
+            let Some(at) = object_location(object).filter(|_| object.object_type == TYPE_CONTAINER) else { continue };
+            let flags = map.prototypes.int(object, "container_flags").unwrap_or(0);
+            let id = GroundItemId::Container { sector, index: index as u32 };
+            if open_check(flags, map.lock_day, false) == Err(arcanum_sim::OpenRefusal::Locked) {
+                let d = (at.x.abs_diff(start.position.x) as u64).pow(2) + (at.y.abs_diff(start.position.y) as u64).pow(2);
+                locked.push((d, id, at, map.lock_difficulty(LockTarget::Container(id))));
+            }
+        }
+    }
+    locked.sort_by_key(|c| c.0);
+    let &(_, chest, at, difficulty) = locked.first().expect("a locked chest");
+    eprintln!("{} locked chests; nearest at {at:?}, difficulty {difficulty}", locked.len());
+    // A master of Pick Locks holding the Auto Skeleton Key stands at it.
+    {
+        let world = sim.app.world_mut();
+        let mut q = world.query_filtered::<(&mut Position, &mut Sheet, &mut Inventory), bevy_ecs::query::With<PlayerControlled>>();
+        let (mut position, mut sheet, mut inventory) = q.single_mut(world).unwrap();
+        position.0 = at;
+        sheet.0.base[1] = 20;
+        sheet.0.skills[arcanum_sim::SKILL_PICK_LOCKS] = 5;
+        inventory.items = vec![CarriedItem { prototype: skeleton_key, location: 0, quantity: 0, keys: vec![] }];
+    }
+    let map = sim.app.world().resource::<LoadedMap>();
+    assert_eq!(lockpick_bonus(&Inventory { items: vec![CarriedItem { prototype: skeleton_key, location: 0, quantity: 0, keys: vec![] }], ..Default::default() }, Some(0), &map.prototypes), 10);
+    let mut picked = false;
+    for seq in 0..20 {
+        sim.receive([(PlayerId(1), PlayerIntent::PickLock { target: LockTarget::Container(chest), tool: Some(0), seq })]);
+        sim.update();
+        if sim.take_deltas().iter().any(|(_, d)| *d == LedgerDelta::SkillResult { message: arcanum_sim::PICK_SUCCEEDED }) {
+            picked = true;
+            break;
+        }
+    }
+    assert!(picked, "a 95 % pick gives within 20 tries");
+    sim.receive([(PlayerId(1), PlayerIntent::PickUp { item: chest, seq: 0 })]);
+    sim.update();
+    assert!(sim.take_deltas().iter().any(|(_, d)| *d == LedgerDelta::PileOpened { pile: chest }), "and it opens");
+}

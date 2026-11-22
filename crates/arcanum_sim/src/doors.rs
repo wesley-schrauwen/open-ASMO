@@ -159,6 +159,12 @@ impl LoadedMap {
         for (index, open) in delta.portals {
             self.apply_portal(MapObjectId { sector: id, index }, open);
         }
+        for (index, flags) in delta.portal_flags {
+            self.apply_lock_flags(crate::LockTarget::Door(MapObjectId { sector: id, index }), flags);
+        }
+        for (index, flags) in delta.container_flags {
+            self.apply_lock_flags(crate::LockTarget::Container(crate::GroundItemId::Container { sector: id, index }), flags);
+        }
     }
 }
 
@@ -463,6 +469,42 @@ mod tests {
             assert_eq!(changed(&use_door(&mut sim, 7, LOCKED, 0), 7), None);
             let map = sim.app.world().resource::<LoadedMap>();
             assert!(!step_allowed(map, t(90, 80), t(90, 81)), "locked: the edge blocks");
+        }
+
+        #[test]
+        fn picking_a_lock_unlocks_the_door_for_everyone_and_is_saved() {
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            let mut sim = booted(dir.path(), &[(7, t(89, 80)), (9, t(100, 100))], BTreeMap::new());
+            sim.take_deltas();
+            let pick = |sim: &mut SimApp| {
+                sim.receive([(PlayerId(7), PlayerIntent::PickLock { tool: None, target: crate::LockTarget::Door(LOCKED), seq: 0 })]);
+                sim.update();
+                sim.take_deltas()
+            };
+            // No skill: a 0 % chance, which fails.
+            let deltas = pick(&mut sim);
+            assert!(deltas.contains(&(PlayerId(7), LedgerDelta::SkillResult { message: crate::PICK_FAILED })), "{deltas:?}");
+            assert!(!deltas.iter().any(|(p, _)| p.0 == 9), "the other player hears nothing of a plain failure");
+            // A master of the skill (level 20, 95 %): the lock gives.
+            {
+                let world = sim.app.world_mut();
+                let mut q = world.query::<(&PlayerControlled, &mut crate::Sheet)>();
+                let (_, mut sheet) = q.iter_mut(world).find(|(p, _)| p.0 == PlayerId(7)).unwrap();
+                sheet.0.base[1] = 20;
+                sheet.0.skills[crate::SKILL_PICK_LOCKS] = 5;
+            }
+            let deltas = pick(&mut sim);
+            assert!(deltas.contains(&(PlayerId(7), LedgerDelta::SkillResult { message: crate::PICK_SUCCEEDED })), "{deltas:?}");
+            assert!(deltas.contains(&(PlayerId(9), LedgerDelta::LockChanged { target: crate::LockTarget::Door(LOCKED), flags: 0 })));
+            assert!(step_allowed(sim.app.world().resource::<LoadedMap>(), t(90, 80), t(90, 81)), "unlocked: passable");
+            assert_eq!(changed(&use_door(&mut sim, 7, LOCKED, 1), 7), Some(true), "and it opens");
+            let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+            assert_eq!(save.sector_changes[&LOCKED.sector].portal_flags[&1], 0, "saved");
+            // Loaded again, the door is still unlocked.
+            let sim = booted(dir.path(), &[(7, t(89, 80))], save.sector_changes.clone());
+            let map = sim.app.world().resource::<LoadedMap>();
+            assert_eq!(map.lock_flags(crate::LockTarget::Door(LOCKED)), Some(0));
         }
 
         #[test]

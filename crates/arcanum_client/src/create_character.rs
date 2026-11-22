@@ -97,6 +97,8 @@ pub struct CreationData {
     pub critter: MesFile,
     /// Item texts (the inventory's refusals, 101-119).
     pub item: MesFile,
+    /// Skill use texts (Pick Locks' results, 550-551).
+    pub skill_ui: MesFile,
     /// The calendar's first year (`rules/gameinit.mes`), for the clock's date.
     pub first_year: u32,
 }
@@ -118,6 +120,7 @@ impl CreationData {
             inven_ui: mes("mes/inven_ui.mes").unwrap_or_default(),
             critter: mes("mes/critter.mes").unwrap_or_default(),
             item: mes("mes/item.mes").unwrap_or_default(),
+            skill_ui: mes("mes/skill_ui.mes").unwrap_or_default(),
             first_year: arcanum_sim::GameStart::load(vfs).year,
         })
     }
