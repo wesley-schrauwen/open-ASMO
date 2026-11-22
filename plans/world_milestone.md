@@ -1210,6 +1210,31 @@ toggle and scrollbar art, moving items within a pile, the open and close sounds.
   test opens the nearest of 170 openable chests on the start map with its stored contents; a
   real-data run showed a barrel's five stored items at their places in the loot window.
 
-Not done: keys, lockpicking and bashing; the open, close and locked sounds (`container_sound`
-plus 0, 1, 2); traps and scripts; stealing from critters (mode 4) and looting bodies; the
-original's per-PC seed.
+Not done: keys (done next: "Keys"), lockpicking and bashing; the open, close and locked sounds
+(`container_sound` plus 0, 1, 2); traps and scripts; stealing from critters (mode 4) and looting
+bodies; the original's per-PC seed.
+
+## Keys (after containers)
+
+- **Matching** (`arcanum_sim::keys`, from Arcanum.exe 0x463370 / 0x463240 / 0x463340): a locked
+  door (`portal_key_id`) or container (`container_key_id`) opens for a PC carrying a key whose
+  `key_key_id` matches, loose or on a key ring (`key_ring_list_idx`). Lock 0 has no key, lock 1
+  takes any key, key 1 is a master key; otherwise the numbers are equal. Opening with the key
+  does not unlock: the lock stays and is checked each time.
+- **Carried keys keep their number** (`CarriedItem::keys`, `GroundItem::keys`): read from the
+  map's stored and lying items, kept through the loot window, the ground and the save.
+- **The ring** (0x466a00 / 0x466aa0 / 0x4631a0): a key put into a critter carrying a ring goes
+  onto it and is gone as an item, needing no room and no weight; a ring put in takes the loose
+  keys, or gives its numbers to the ring there. The ring used is the first with keys, else the
+  last. Without a ring keys stay loose in the grid. Containers keep keys as they are.
+- **Checked:** unit tests for the matching and the ring; a host test takes key 14 from one chest
+  onto the PC's ring, opens the chest locked to it (still locked after) and is refused by one
+  locked to 15; a door test opens a locked door with its key and not with another; a real-data
+  test takes the key for lock 14 out of a chest on the start map and opens its chest, refused
+  before.
+
+Not done: the followers' keys (the original searches the whole party); paths through a locked
+door the PC has the key for (the original's pathing asks per critter; here a locked door blocks
+every path, and a click walks the PC up to it, then the key opens it); the ring's empty and full
+art (0x466bd0); the key ring window; relocking after a pick (event 0x15, an hour), with
+lockpicking.

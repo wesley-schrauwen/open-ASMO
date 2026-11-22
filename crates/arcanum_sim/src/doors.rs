@@ -7,8 +7,9 @@
 //!   keeps the request ([`PendingUse`]) until its PC is in range, or drops it when the PC stops
 //!   short or the player moves on.
 //! - A closed door opens unless jammed (windows are jammed portals), magically held or locked
-//!   ([`locked`], by the game clock's hour; there are no keys yet); an open one closes unless
-//!   magically held.
+//!   ([`locked`], by the game clock's hour) without its key (`portal_key_id`, [`crate::keys`]:
+//!   the PC's keys and rings; opening with the key leaves the door locked); an open one closes
+//!   unless magically held.
 //! - Only the art's frame changes: closed is frame 0; open is frame 1 for a plain door, or the
 //!   last of the swing frames (bit 10 set: 4-6 for rotations 0 and 6, else 1-3). Blocking
 //!   follows the frame ([`crate::blocking`]).
@@ -18,7 +19,9 @@
 //!   the save's sector changes, and a player who joins gets them all
 //!   ([`LedgerDelta::MapChanges`]).
 //!
-//! Not reproduced: keys and lockpicking, scripts that veto a use, the door
+//! Not reproduced: lockpicking, the followers' keys, paths through a locked door the PC has the
+//! key for (the original's pathing asks 0x4aeb70 per critter; here locked doors block every
+//! path, and the PC walks up to one and opens it), scripts that veto a use, the door
 //! sounds (portal field 0x21 + 0/1/2), and NPCs opening doors.
 
 use std::collections::BTreeMap;
@@ -105,8 +108,9 @@ pub enum DoorRefusal {
     Locked,
 }
 
-/// Whether `door` can be opened (or, when open, closed).
-pub fn door_check(door: &Object, prototypes: &Prototypes, day: bool) -> Result<(), DoorRefusal> {
+/// Whether `door` can be opened (or, when open, closed) by a critter carrying `keys`
+/// (0x4aeb70).
+pub fn door_check(door: &Object, prototypes: &Prototypes, day: bool, keys: Option<&crate::Inventory>) -> Result<(), DoorRefusal> {
     if door.object_type != TYPE_PORTAL {
         return Err(DoorRefusal::NotADoor);
     }
@@ -121,7 +125,8 @@ pub fn door_check(door: &Object, prototypes: &Prototypes, day: bool) -> Result<(
     if flags & OPF_JAMMED != 0 {
         return Err(DoorRefusal::Jammed);
     }
-    if locked(flags, day) { Err(DoorRefusal::Locked) } else { Ok(()) }
+    let lock = prototypes.int(door, "portal_key_id").unwrap_or(0);
+    if locked(flags, day) && !keys.is_some_and(|k| k.has_key(lock)) { Err(DoorRefusal::Locked) } else { Ok(()) }
 }
 
 impl LoadedMap {
@@ -182,10 +187,12 @@ fn within(a: TileLoc, b: TileLoc, range: u32) -> bool {
     crate::within_radius(a, b, range)
 }
 
-/// Opens or closes `door` for everyone, if it can be. Returns whether it changed.
-fn use_door(map: &mut LoadedMap, world: &mut WorldState, closing: &mut ClosingDoors, session: &Session, outbox: &mut Outbox, door: MapObjectId) -> bool {
+/// Opens or closes `door` for everyone, if it can be, by a critter carrying `keys`. Returns
+/// whether it changed.
+#[allow(clippy::too_many_arguments)]
+fn use_door(map: &mut LoadedMap, world: &mut WorldState, closing: &mut ClosingDoors, session: &Session, outbox: &mut Outbox, door: MapObjectId, keys: Option<&crate::Inventory>) -> bool {
     let Some(object) = map.map_object(door) else { return false };
-    if door_check(object, &map.prototypes, map.lock_day).is_err() {
+    if door_check(object, &map.prototypes, map.lock_day, keys).is_err() {
         return false;
     }
     let Some(art) = map.prototypes.art_id(object) else { return false };
@@ -209,7 +216,7 @@ fn use_door(map: &mut LoadedMap, world: &mut WorldState, closing: &mut ClosingDo
     true
 }
 
-type UserQuery<'a> = (Entity, &'a NetId, &'a Position, Option<&'a Walking>, Option<&'a PendingUse>);
+type UserQuery<'a> = (Entity, &'a NetId, &'a Position, Option<&'a Walking>, Option<&'a PendingUse>, Option<&'a crate::Inventory>);
 /// PCs and NPCs.
 type Critter = Or<(With<PlayerControlled>, With<Npc>)>;
 /// A PC with a use waiting: its tile and whether it walks.
@@ -228,17 +235,18 @@ pub fn use_portals(
     mut outbox: ResMut<Outbox>,
     pcs: Query<UserQuery, With<PlayerControlled>>,
 ) {
-    let mut pending: Vec<Waiting> = pcs.iter().filter_map(|(e, _, p, w, u)| u.map(|u| (e, p.0, w.is_some(), *u))).collect();
+    let mut pending: Vec<Waiting> = pcs.iter().filter_map(|(e, _, p, w, u, _)| u.map(|u| (e, p.0, w.is_some(), *u))).collect();
     for (player, door, seq) in requests.0.drain(..) {
         let Some(SessionPlayer::InWorld(net_id)) = session.players.get(&player) else { continue };
-        let Some((entity, _, &Position(at), walking, _)) = pcs.iter().find(|pc| pc.1 == net_id) else { continue };
+        let Some((entity, _, &Position(at), walking, _, _)) = pcs.iter().find(|pc| pc.1 == net_id) else { continue };
         pending.retain(|p| p.0 != entity);
         pending.push((entity, at, walking.is_some(), PendingUse { door, seq }));
     }
     for (entity, at, walking, use_) in pending {
         let in_range = door_tile(&map, use_.door).is_some_and(|t| within(at, t, USE_RANGE));
         if in_range {
-            use_door(&mut map, &mut world, &mut closing, &session, &mut outbox, use_.door);
+            let keys = pcs.get(entity).ok().and_then(|pc| pc.5);
+            use_door(&mut map, &mut world, &mut closing, &session, &mut outbox, use_.door, keys);
             commands.entity(entity).remove::<PendingUse>();
         } else if walking {
             commands.entity(entity).insert(use_);
@@ -277,7 +285,7 @@ pub fn close_doors(
         let open = map.map_object(door).and_then(|o| map.prototypes.art_id(o)).is_some_and(portal_open);
         closing.0.remove(&door);
         if open {
-            use_door(&mut map, &mut world, &mut closing, &session, &mut outbox, door);
+            use_door(&mut map, &mut world, &mut closing, &session, &mut outbox, door, None);
         }
     }
 }
@@ -334,7 +342,7 @@ mod tests {
         }
 
         /// A sector (1, 1) with a plain door at (72, 80) facing direction 3 (towards (72, 81)),
-        /// and a locked one at (90, 80).
+        /// a locked one at (90, 80) with key 20, and a night-locked one at (110, 80).
         fn write_map(dir: &Path) {
             let folder = dir.join("maps").join(MAP);
             std::fs::create_dir_all(&folder).unwrap();
@@ -353,6 +361,7 @@ mod tests {
                     .field("current_aid", Value::Int32((0x3000_0000u32 | 3 << 11) as i32))
                     .field("location", at(x, 80))
                     .field("portal_flags", Value::Int32(flags))
+                    .field("portal_key_id", Value::Int32(if flags & OPF_LOCKED != 0 { 20 } else { 0 }))
                     .build()
             };
             let mut sector = SectorBuilder::new();
@@ -454,6 +463,26 @@ mod tests {
             assert_eq!(changed(&use_door(&mut sim, 7, LOCKED, 0), 7), None);
             let map = sim.app.world().resource::<LoadedMap>();
             assert!(!step_allowed(map, t(90, 80), t(90, 81)), "locked: the edge blocks");
+        }
+
+        #[test]
+        fn the_key_opens_a_locked_door_and_leaves_it_locked() {
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            let mut sim = booted(dir.path(), &[(7, t(89, 80))], BTreeMap::new());
+            sim.take_deltas();
+            let give = |sim: &mut SimApp, key: i32| {
+                let world = sim.app.world_mut();
+                let mut inventory = world.query_filtered::<&mut crate::Inventory, With<PlayerControlled>>().single_mut(world).unwrap();
+                inventory.items = vec![crate::CarriedItem { prototype: 1, location: 0, quantity: 0, keys: vec![key] }];
+            };
+            give(&mut sim, 21);
+            assert_eq!(changed(&use_door(&mut sim, 7, LOCKED, 0), 7), None, "the wrong key");
+            give(&mut sim, 20);
+            assert_eq!(changed(&use_door(&mut sim, 7, LOCKED, 1), 7), Some(true));
+            let map = sim.app.world().resource::<LoadedMap>();
+            assert!(step_allowed(map, t(90, 80), t(90, 81)), "open: passable");
+            assert_eq!(map.prototypes.int(map.map_object(LOCKED).unwrap(), "portal_flags"), Some(OPF_LOCKED), "still locked");
         }
 
         #[test]

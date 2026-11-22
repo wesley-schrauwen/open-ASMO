@@ -294,7 +294,7 @@ fn apply_map_deltas(mut commands: Commands, mut deltas: ResMut<MapDeltas>, mut c
                     .iter()
                     .filter(|(id, _)| client.drawn.contains(id))
                     .flat_map(|(&sector, delta)| {
-                        let dropped = delta.dropped.iter().map(move |(&number, &item)| (GroundItemId::Dropped { sector, number }, item));
+                        let dropped = delta.dropped.iter().map(move |(&number, item)| (GroundItemId::Dropped { sector, number }, item.clone()));
                         let piles = delta.piles.iter().map(move |(&number, p)| (GroundItemId::Pile { sector, number }, pile_look(p)));
                         dropped.chain(piles)
                     })
@@ -361,7 +361,7 @@ fn apply_map_deltas(mut commands: Commands, mut deltas: ResMut<MapDeltas>, mut c
                 }
             }
             LedgerDelta::GroundItemDropped { item, ground } => {
-                client.map.drop_ground_item(item, ground);
+                client.map.drop_ground_item(item, ground.clone());
                 if client.drawn.contains(&item.sector()) {
                     let on_tile = objects.iter().filter(|(_, o)| o.location == ground.location).count();
                     spawn_dropped(&mut commands, &mut client, &assets, item, ground, on_tile);
@@ -520,7 +520,7 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
             .get(&id)
             .map(|d| {
                 let piles = d.piles.iter().map(|(&number, p)| (GroundItemId::Pile { sector: id, number }, pile_look(p)));
-                d.dropped.iter().map(|(&number, &i)| (GroundItemId::Dropped { sector: id, number }, i)).chain(piles).collect()
+                d.dropped.iter().map(|(&number, i)| (GroundItemId::Dropped { sector: id, number }, i.clone())).chain(piles).collect()
             })
             .unwrap_or_default();
         for (ground_id, item) in dropped {
@@ -538,7 +538,7 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
 
 /// What a pile shows on the map: the junk pile's prototype on its tile.
 fn pile_look(pile: &arcanum_sim::Pile) -> arcanum_sim::GroundItem {
-    arcanum_sim::GroundItem { prototype: arcanum_sim::PILE, quantity: 0, location: pile.location }
+    arcanum_sim::GroundItem { prototype: arcanum_sim::PILE, quantity: 0, location: pile.location, keys: vec![] }
 }
 
 /// A sprite for a dropped item or a pile: its prototype's ground art on its tile.
