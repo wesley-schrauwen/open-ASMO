@@ -15,6 +15,7 @@ pub mod cursor;
 pub mod editor_tabs;
 pub mod create_character;
 pub mod fonts;
+pub mod hotkey_bar;
 pub mod hud;
 pub mod hud_clock;
 pub mod inventory_screen;

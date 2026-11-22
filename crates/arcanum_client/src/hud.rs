@@ -21,7 +21,8 @@
 //! beside them. Clicks on the bars, and on the character screen while it is open, do not reach the world
 //! ([`covers`]).
 //!
-//! Not built: what the buttons and slots do (they only show their hover and pressed frames),
+//! Not built: what the buttons do (they only show their hover and pressed frames; the hotkey
+//! slots are [`crate::hotkey_bar`]),
 //! the message box, the ammo icon and the magick
 //! weapon button, and the poisoned (yellow) health vial (nothing poisons yet).
 
@@ -65,9 +66,9 @@ const BOTTOM_BUTTONS: [(&str, Vec2, u32); 4] = [
     ("Spells_Button.ART", Vec2::new(649.0, 494.0), 1000),
     ("Schematics_Button.ART", Vec2::new(693.0, 539.0), 1003),
 ];
-/// Hotkey slots 1-9 and 0, left to right.
-const HOTKEY_X: [f32; 10] = [198.0, 237.0, 276.0, 315.0, 354.0, 418.0, 456.0, 495.0, 534.0, 573.0];
-const HOTKEY_Y: f32 = 445.0;
+/// Hotkey slots 1-9 and 0, left to right ([`crate::hotkey_bar`]).
+pub const HOTKEY_X: [f32; 10] = [198.0, 237.0, 276.0, 315.0, 354.0, 418.0, 456.0, 495.0, 534.0, 573.0];
+pub const HOTKEY_Y: f32 = 445.0;
 
 /// What a bar button does (the rest do nothing yet).
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -159,7 +160,7 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
             crate::message_box::spawn_box(bottom, local);
             for (slot, x) in HOTKEY_X.into_iter().enumerate() {
                 let file = format!("HKSlt{}.ART", (slot + 1) % 10);
-                bottom.spawn((ImageNode::new(assets.load(art(&file))), at(local(rect(Vec2::new(x, HOTKEY_Y), Vec2::splat(32.0))))));
+                bottom.spawn((crate::hotkey_bar::HotkeySlot(slot), ImageNode::new(assets.load(art(&file))), at(local(rect(Vec2::new(x, HOTKEY_Y), Vec2::splat(32.0))))));
             }
             let digits: Handle<BitmapFontAsset> = assets.load(fonts::HUD_NUMBERS);
             for (vial, area, fill, number) in [(Vial::Health, HEALTH_VIAL, interface::VIAL_RED, HEALTH_NUMBER), (Vial::Fatigue, FATIGUE_VIAL, interface::VIAL_BLUE, FATIGUE_NUMBER)] {

@@ -298,6 +298,8 @@ mod tests {
         assert_eq!(lockpick_bonus(&inv, Some(2), &prototypes), 0);
         assert_eq!(lockpick_bonus(&inv, Some(5), &prototypes), 0, "no longer carried");
         assert_eq!(lockpick_bonus(&inv, None, &prototypes), 0);
+        let barred = Inventory { items: vec![item(15101, 2004)], ..Default::default() };
+        assert_eq!(lockpick_bonus(&barred, Some(2004), &prototypes), 10, "armed from the hotkey bar");
         assert!(is_lockpick(15101, &prototypes) && !is_lockpick(15200, &prototypes));
     }
 

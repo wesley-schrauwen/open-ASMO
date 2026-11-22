@@ -421,7 +421,7 @@ pub fn centred(inside: Rect, size: UVec2, grid: bool) -> Vec2 {
 }
 
 /// The art an item shows at its location: worn weapons and armour their paperdoll art.
-fn item_art(prototypes: &Prototypes, item: &CarriedItem) -> Option<ArtId> {
+pub(crate) fn item_art(prototypes: &Prototypes, item: &CarriedItem) -> Option<ArtId> {
     let p = prototypes.get(item.prototype)?;
     let field = match p.object_type {
         TYPE_WEAPON if !in_grid(item.location) => "weapon_paper_doll_aid",
@@ -432,18 +432,18 @@ fn item_art(prototypes: &Prototypes, item: &CarriedItem) -> Option<ArtId> {
 }
 
 /// The first frame of art `id`, if loaded (a handle is kept in `cache`).
-fn art_frame(index: Option<&ArtIndex>, cache: &mut ItemArtCache, assets: &AssetServer, frames: &Assets<ArtFrames>, id: ArtId) -> Option<(Handle<Image>, UVec2)> {
+pub(crate) fn art_frame(index: Option<&ArtIndex>, cache: &mut ItemArtCache, assets: &AssetServer, frames: &Assets<ArtFrames>, id: ArtId) -> Option<(Handle<Image>, UVec2)> {
     let handle = cache.get(assets, index?.path(id)?);
     frames.get(&handle).and_then(|f| f.rotation(0)?.frame(0).map(|(i, _, s)| (i.clone(), s)))
 }
 
 /// Item facts for the client's rules, footprints from the loaded inventory art.
-fn client_info<'a>(prototypes: &'a Prototypes, sizes: &'a std::collections::HashMap<u32, (u32, u32)>) -> impl Fn(u32) -> Option<ItemInfo> + 'a {
+pub(crate) fn client_info<'a>(prototypes: &'a Prototypes, sizes: &'a std::collections::HashMap<u32, (u32, u32)>) -> impl Fn(u32) -> Option<ItemInfo> + 'a {
     move |n| prototypes.get(n).map(|p| ItemInfo::of(p, |id| sizes.get(&id.0).copied()))
 }
 
 /// The loaded inventory art sizes of everything in `inv`, by art id.
-fn inventory_sizes(inv: &Inventory, prototypes: &Prototypes, index: Option<&ArtIndex>, cache: &mut ItemArtCache, assets: &AssetServer, frames: &Assets<ArtFrames>) -> std::collections::HashMap<u32, (u32, u32)> {
+pub(crate) fn inventory_sizes(inv: &Inventory, prototypes: &Prototypes, index: Option<&ArtIndex>, cache: &mut ItemArtCache, assets: &AssetServer, frames: &Assets<ArtFrames>) -> std::collections::HashMap<u32, (u32, u32)> {
     let mut sizes = std::collections::HashMap::new();
     for item in &inv.items {
         if let Some(id) = prototypes.get(item.prototype).and_then(|p| p.int("item_inv_aid"))
@@ -456,7 +456,7 @@ fn inventory_sizes(inv: &Inventory, prototypes: &Prototypes, index: Option<&ArtI
 }
 
 /// Who wears the items: the local PC's sheet.
-fn wearer(sheet: &crate::pc_sheet::SheetHost) -> Wearer {
+pub(crate) fn wearer(sheet: &crate::pc_sheet::SheetHost) -> Wearer {
     sheet.sheet().map_or(Wearer { race: 0, gender: 1 }, |s| Wearer { race: s.race, gender: s.gender })
 }
 
@@ -601,12 +601,17 @@ fn drag_items(
     let loot = panel.pile.is_some();
     let spot = spot_at(point, loot, scroll.0);
     if (buttons.just_pressed(MouseButton::Left) || right) && held.0.is_none() {
+        let hotkey = crate::hotkey_bar::slot_at(point + Vec2::new(0.0, TOP_BAR_HEIGHT)).map(crate::hotkey_bar::location);
         let picked = match spot {
+            _ if hotkey.is_some() => inv.items.iter().find(|i| Some(i.location) == hotkey).map(|i| (i.clone(), i.location, false)),
             Some(Spot::Pile(at)) => pile.as_ref().and_then(|p| pile_item_at(p, at, &info)).map(|i| (i.clone(), at, true)),
             Some(Spot::Pc(_)) => item_at(&inv, point, &info).map(|i| (i.clone(), location_at(point).unwrap_or(i.location), false)),
             None => None,
         };
         let Some((item, at, from_pile)) = picked else { return };
+        if right && hotkey.is_some() {
+            return;
+        }
         if right {
             // A right click sends it to the other side where the insert puts it (0x574248).
             if loot {
@@ -631,7 +636,11 @@ fn drag_items(
             }
             return;
         }
-        let request = if DROP_BOX.contains(point) && !h.from_pile {
+        let hotkey = crate::hotkey_bar::slot_at(point + Vec2::new(0.0, TOP_BAR_HEIGHT)).map(crate::hotkey_bar::location);
+        let request = if let Some(to) = hotkey {
+            // Onto the hotkey bar (0x57e8d0): the PC's items only.
+            (!h.from_pile && to != h.from).then_some(InventoryRequest::Move { from: h.from, to })
+        } else if DROP_BOX.contains(point) && !h.from_pile {
             // On the drop box: onto the ground at the PC's feet.
             Some(InventoryRequest::Drop { from: h.from })
         } else {

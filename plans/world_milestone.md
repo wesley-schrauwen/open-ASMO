@@ -1270,7 +1270,37 @@ art (0x466bd0); the key ring window. Lockpicking: done next ("Picking locks").
   opens it; a real-data test has a master with the Auto Skeleton Key pick the nearest of 211
   locked chests on the start map (difficulty 20) and open it.
 
-Not done: the hotkey bar; the pick animation and its time (0x436220); the game difficulty's
+Not done: the pick animation and its time (0x436220); the game difficulty's
 scaling (easy +50 %, hard -25 %); the darkness and critter-flag modifiers; witnesses turning
 hostile (0x4aee50); the original's targeting cursor; the Unlocking Cantrip; the client path was
-not run in the real game (no drag tooling for screenshots).
+not run in the real game (no drag tooling for screenshots). The hotkey bar: done next ("The
+hotkey bar").
+
+## The hotkey bar (after picking locks)
+
+- **Slots** (Arcanum.exe 0x6835e0, ten records of 0x58 bytes; types 0 empty, 1 item, 2 spell, 3
+  skill, 4 item used through a skill): only items are built. An item dropped on a slot moves to
+  inventory location 2000 + slot (0x57e8d0 → 0x465760), `arcanum_sim::HOTKEYS`: still carried
+  and weighed, out of the grid. The original's slot keeps the object id; here the location is
+  the reference, so the item is saved with the inventory and leaves the bar when it leaves the
+  PC (0x5570d0 clears the slot then).
+- **Moves** (`Inventory::move_item`, host and client alike): any item onto a slot; one already
+  there swaps to the dragged slot, or goes back where the item was or to the first free spot
+  (0x57eed0 releases it). Off the bar into the grid or onto a paperdoll slot as usual.
+- **Client** (`hotkey_bar`): slot items drawn with their inventory art, centred and shrunk to
+  32x32; with the inventory open, drags from the grid onto a slot, from a slot back, and slot to
+  slot (`inventory_screen::drag_items`); with it closed, a left click or keys 1-9 and 0
+  (0x54de50, DIK 2-11 → 0x57f1d0) use the slot (0x54fcf0): a lockpick arms Pick Locks with it,
+  a weapon or armour is put on (0x550000).
+- **Builder's calls:** a lockpick arms Pick Locks as the use box does (the original holds a
+  non-weapon item on the cursor, 0x573740, and the next world click uses it on the target,
+  0x434f80; the owner's account is a blue cursor either way); art larger than the slot is shrunk
+  (the original picks a smaller art when there is one, field 0x5d, else centres); the pile's
+  items cannot go straight onto the bar.
+- **Checked:** unit tests for moving onto, between and off the slots (weight kept, cells freed,
+  swaps), the slot hit test and the art fit, and a lockpick on the bar giving its bonus.
+
+Not done: spells and skills on the bar; the two active slots (0x683518, the A key); the right
+click (0x550150); the stack count (0x462b40); the hover help; using other items (potions,
+scrolls, food: the held-item cursor); the follower check (the original refuses items not the
+current PC's). Not run in the real game.
