@@ -62,6 +62,7 @@ pub fn handle_intents(
     mut sheets: ResMut<crate::SheetRequests>,
     mut items: ResMut<crate::InventoryRequests>,
     mut pickups: ResMut<crate::PickUpRequests>,
+    mut picks: ResMut<crate::PickLockRequests>,
 ) {
     for (player, intent) in inbox.0.drain(..) {
         match intent {
@@ -89,6 +90,7 @@ pub fn handle_intents(
             PlayerIntent::Sheet { seq, request } => sheets.0.push((player, seq, request)),
             PlayerIntent::Inventory { seq, request } => items.0.push((player, seq, request)),
             PlayerIntent::PickUp { item, seq } => pickups.0.push((player, item, seq)),
+            PlayerIntent::PickLock { target, tool, seq } => picks.0.push((player, target, tool, seq)),
         }
     }
 }

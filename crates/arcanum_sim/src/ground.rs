@@ -252,7 +252,7 @@ pub struct PickUpRequests(pub Vec<(PlayerId, GroundItemId, u32)>);
 pub struct InventoryAcks(pub std::collections::HashMap<PlayerId, u32>);
 
 /// Tells every player in the world.
-fn broadcast(session: &Session, outbox: &mut Outbox, delta: LedgerDelta) {
+pub(crate) fn broadcast(session: &Session, outbox: &mut Outbox, delta: LedgerDelta) {
     for (&player, state) in &session.players {
         if matches!(state, SessionPlayer::InWorld(_)) {
             outbox.0.push((player, delta.clone()));
@@ -261,7 +261,7 @@ fn broadcast(session: &Session, outbox: &mut Outbox, delta: LedgerDelta) {
 }
 
 /// Mirrors a ground change into the save.
-fn save_change(world: &mut WorldState, map: &LoadedMap, sector: SectorId) {
+pub(crate) fn save_change(world: &mut WorldState, map: &LoadedMap, sector: SectorId) {
     if let Some(save) = world.0.as_mut() {
         match map.changes.get(&sector) {
             Some(delta) => {

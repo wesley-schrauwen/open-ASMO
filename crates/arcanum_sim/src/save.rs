@@ -81,11 +81,18 @@ pub struct SectorDelta {
     /// Containers shown open (frame 1): while a loot window is on them, and sticky ones after.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub opened: std::collections::BTreeSet<u32>,
+    /// Doors' `portal_flags` changed by picking their locks, by index in the sector's list.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub portal_flags: BTreeMap<u32, i32>,
+    /// Containers' `container_flags` changed by picking their locks, by index in the sector's
+    /// mobile objects.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub container_flags: BTreeMap<u32, i32>,
 }
 
 impl SectorDelta {
     pub fn is_empty(&self) -> bool {
-        self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty()
+        self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty()
     }
 }
 

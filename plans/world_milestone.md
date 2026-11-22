@@ -1236,5 +1236,41 @@ bodies; the original's per-PC seed.
 Not done: the followers' keys (the original searches the whole party); paths through a locked
 door the PC has the key for (the original's pathing asks per critter; here a locked door blocks
 every path, and a click walks the PC up to it, then the key opens it); the ring's empty and full
-art (0x466bd0); the key ring window; relocking after a pick (event 0x15, an hour), with
-lockpicking.
+art (0x466bd0); the key ring window. Lockpicking: done next ("Picking locks").
+
+## Picking locks (after keys)
+
+- **Owner's account (2026-11-22):** the player drops lockpicks on the inventory's use box (or
+  selects them on the hotkey bar); the cursor turns blue; a click on a chest or door picks it.
+  Traced: UI mode 0x10 is item targeting (0x571aa0 arms it); its click handler (0x571cb0) sends a
+  type-14 item with `generic_flags` 2 (`OGF_IS_LOCKPICK`) to skill 0xe on the clicked object.
+  The bottom bar's skills panel has no Pick Locks; a click on a locked door or chest only refuses
+  (no anim-goal chain to `ag_use_picklock_skill_on`, goal 0x43).
+- **Rules** (`arcanum_sim::lockpick`, 0x4c69f0 / 0x4c8430 / 0x4c7160 case 0xe / 0x4c82e0):
+  chance = skill level x 6, +10 with base Intelligence 20+, capped at 95; difficulty = the
+  lock's (`portal_lock_difficulty` / `container_lock_difficulty`) when above 0, halved for a
+  Master, less the tool's `generic_usage_bonus`; 1-100 plus the difficulty at or under the
+  chance succeeds; a failure jams the lock when a second roll is at or under
+  `max((100 - chance) / 2, 2)`. Success clears the locked bit, or sets it on a lock that was not
+  locked (copied). The key number plays no part. Results: `mes/skill_ui.mes` 550 / 551.
+- **State:** `SectorDelta::portal_flags` / `container_flags`, saved and sent
+  (`LedgerDelta::LockChanged`), so an unlocked door stops blocking every client's paths.
+- **Client:** releasing a lockpick on the use box closes the inventory and arms Pick Locks with
+  it (`skill_use::SkillTargeting`); the next click on a door or container walks the PC within
+  `USE_RANGE` and sends `PlayerIntent::PickLock` with the lockpick's place; a click elsewhere,
+  a right click or Escape puts it away. The result shows in the message box.
+- **Builder's calls:** the cursor turns blue by tinting the arrow (the original's targeting art,
+  chosen by 0x5719f0, was not decoded); the armed lockpick is the tool (the original's handler
+  also asks 0x462760, not decoded); the results go to the message box, not floating text; no
+  timers: the original queues an event an hour after a pick and a day after a jam but never
+  writes the mode it applies (0x4eec80 reads stale stack data), so a pick and a jam stay.
+- **Checked:** unit tests for the chance, the difficulty, the flags, the rolls and the tool's
+  bonus; a host test fails at no skill, then a master unlocks a door for both players, it opens,
+  and stays unlocked through a reload; a host test picks a chest locked to a key not carried and
+  opens it; a real-data test has a master with the Auto Skeleton Key pick the nearest of 211
+  locked chests on the start map (difficulty 20) and open it.
+
+Not done: the hotkey bar; the pick animation and its time (0x436220); the game difficulty's
+scaling (easy +50 %, hard -25 %); the darkness and critter-flag modifiers; witnesses turning
+hostile (0x4aee50); the original's targeting cursor; the Unlocking Cantrip; the client path was
+not run in the real game (no drag tooling for screenshots).

@@ -961,6 +961,22 @@ mod tests {
         let map = sim.app.world().resource::<LoadedMap>();
         assert_eq!(map.prototypes.int(map.container_object(b).unwrap(), "container_flags"), Some(crate::OCOF_LOCKED));
         assert!(open(&mut sim, c).iter().any(|(_, d)| *d == LedgerDelta::OpenRefused { message: 1 }));
+
+        // A master picks key 15's lock; the chest then opens without its key.
+        {
+            let world = sim.app.world_mut();
+            let mut sheet = world.query_filtered::<&mut crate::Sheet, With<crate::PlayerControlled>>().single_mut(world).unwrap();
+            sheet.0.base[1] = 20;
+            sheet.0.skills[crate::SKILL_PICK_LOCKS] = 5;
+        }
+        sim.receive([(PlayerId(1), PlayerIntent::PickLock { tool: None, target: crate::LockTarget::Container(c), seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.iter().any(|(_, d)| *d == LedgerDelta::SkillResult { message: crate::PICK_SUCCEEDED }), "{deltas:?}");
+        assert!(opened(&open(&mut sim, c), c), "picked");
+        let saved = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        let GroundItemId::Container { index, .. } = c else { unreachable!() };
+        assert_eq!(saved.sector_changes[&sector].container_flags[&index], 0);
     }
 
     #[test]

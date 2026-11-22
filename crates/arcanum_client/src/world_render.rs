@@ -99,7 +99,7 @@ pub struct MapDeltas(pub Vec<LedgerDelta>);
 impl MapDeltas {
     /// Whether this module handles `delta`.
     pub fn wants(delta: &LedgerDelta) -> bool {
-        matches!(delta, LedgerDelta::MapChanges { .. } | LedgerDelta::PortalChanged { .. } | LedgerDelta::GroundItemDropped { .. } | LedgerDelta::GroundItemTaken { .. } | LedgerDelta::PileChanged { .. } | LedgerDelta::ContainerShown { .. })
+        matches!(delta, LedgerDelta::MapChanges { .. } | LedgerDelta::PortalChanged { .. } | LedgerDelta::GroundItemDropped { .. } | LedgerDelta::GroundItemTaken { .. } | LedgerDelta::PileChanged { .. } | LedgerDelta::ContainerShown { .. } | LedgerDelta::LockChanged { .. })
     }
 }
 
@@ -366,6 +366,9 @@ fn apply_map_deltas(mut commands: Commands, mut deltas: ResMut<MapDeltas>, mut c
                     let on_tile = objects.iter().filter(|(_, o)| o.location == ground.location).count();
                     spawn_dropped(&mut commands, &mut client, &assets, item, ground, on_tile);
                 }
+            }
+            LedgerDelta::LockChanged { target, flags } => {
+                client.map.set_lock_flags(target, flags);
             }
             LedgerDelta::PortalChanged { door, open } => {
                 client.map.set_portal(door, open);
