@@ -12,6 +12,7 @@
 pub mod activity;
 pub mod blocking;
 pub mod clock;
+pub mod container;
 pub mod creation;
 pub mod delta;
 pub mod doors;
@@ -33,6 +34,7 @@ pub mod world;
 pub use activity::*;
 pub use blocking::*;
 pub use clock::*;
+pub use container::*;
 pub use creation::*;
 pub use delta::*;
 pub use doors::*;

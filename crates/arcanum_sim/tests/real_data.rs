@@ -169,3 +169,58 @@ fn house_walls_block_and_doors_let_through() {
     eprintln!("inside to outside: {:?} steps", path.as_ref().map(Vec::len));
     assert!(path.is_ok(), "{path:?}");
 }
+
+#[test]
+fn a_chest_on_the_start_map_opens_with_its_stored_contents() {
+    use std::sync::{Arc, RwLock};
+
+    use arcanum_formats::object::TYPE_CONTAINER;
+    use arcanum_rules::{CharacterBlueprint, CharacterSheet, RulesData};
+    use arcanum_sim::{GroundItemId, LedgerDelta, LoadedMap, PlayerId, PlayerIntent, SimApp, SimVfs, WorldState, object_location, open_check};
+
+    let Some(vfs) = vfs() else { return };
+    let vfs = Arc::new(RwLock::new(vfs));
+    // The nearest unlocked container with a stored list in the sectors round the start.
+    let start = StartMap::load(&vfs.read().unwrap()).unwrap();
+    let boot = |at: TileLoc| {
+        let mut world = WorldState::default();
+        let sheet = CharacterSheet { name: "Virgil".into(), ..Default::default() };
+        let start = StartMap { position: at, ..start.clone() };
+        world.add_player(Some(&start), PlayerId(1), CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None });
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(SimVfs(vfs.clone()));
+        sim.boot(world.0.unwrap());
+        sim.update();
+        sim.update();
+        sim
+    };
+    let sim = boot(start.position);
+    let map = sim.app.world().resource::<LoadedMap>();
+    let mut chests: Vec<(u64, GroundItemId, TileLoc)> = Vec::new();
+    for (&sector, objects) in &map.mobiles {
+        for (index, object) in objects.iter().enumerate() {
+            let id = GroundItemId::Container { sector, index: index as u32 };
+            let Some(at) = object_location(object).filter(|_| object.object_type == TYPE_CONTAINER) else { continue };
+            let flags = map.prototypes.int(object, "container_flags").unwrap_or(0);
+            if open_check(flags, map.lock_day).is_ok() && map.pile(id).is_some_and(|p| !p.inventory.items.is_empty()) {
+                let d = (at.x.abs_diff(start.position.x) as u64).pow(2) + (at.y.abs_diff(start.position.y) as u64).pow(2);
+                chests.push((d, id, at));
+            }
+        }
+    }
+    chests.sort_by_key(|c| c.0);
+    let &(_, _, at) = chests.first().expect("a chest near the start");
+    let expected = map.pile(chests[0].1).unwrap().inventory;
+    eprintln!("{} openable chests with contents round the start; nearest at {at:?}: {:?}", chests.len(), expected.items);
+    // A PC standing on it opens it and sees the same contents.
+    let mut sim = boot(at);
+    sim.take_deltas();
+    let map = sim.app.world().resource::<LoadedMap>();
+    let id = map.mobiles[&at.sector()].iter().position(|o| object_location(o) == Some(at) && o.object_type == TYPE_CONTAINER).map(|i| GroundItemId::Container { sector: at.sector(), index: i as u32 }).unwrap();
+    sim.receive([(PlayerId(1), PlayerIntent::PickUp { item: id, seq: 0 })]);
+    sim.update();
+    let deltas = sim.take_deltas();
+    assert!(deltas.iter().any(|(_, d)| *d == LedgerDelta::PileOpened { pile: id }), "{deltas:?}");
+    assert_eq!(sim.app.world().resource::<LoadedMap>().pile(id).unwrap().inventory, expected);
+}

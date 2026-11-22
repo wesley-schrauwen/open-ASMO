@@ -229,6 +229,9 @@ pub struct LoadedMap {
     /// sector, in file name order, read at [`LoadedMap::open`]. Objects carried or inside a
     /// container (flag `INVENTORY`), destroyed or off are left out.
     pub mobiles: HashMap<SectorId, Vec<Object>>,
+    /// The map's items inside containers (or carried: flag `INVENTORY`), by their own id, for the
+    /// containers' stored inventory lists (`container_inventory_list_idx`).
+    pub stored_items: HashMap<arcanum_formats::object::ObjectId, Object>,
     /// Changes to the map's objects since the original data (doors opened or closed), applied to
     /// each sector as it loads: the save's on the host, the host's on a client.
     pub changes: BTreeMap<SectorId, crate::SectorDelta>,
@@ -280,7 +283,13 @@ impl LoadedMap {
                 }
             };
             let flags = self.prototypes.int(&object, "flags").unwrap_or(0);
-            if flags & (crate::OF_INVENTORY | crate::OF_DESTROYED | crate::OF_OFF) != 0 {
+            if flags & (crate::OF_DESTROYED | crate::OF_OFF) != 0 {
+                continue;
+            }
+            if flags & crate::OF_INVENTORY != 0 {
+                if crate::is_item(object.object_type) {
+                    self.stored_items.insert(object.id, object);
+                }
                 continue;
             }
             let Some(at) = crate::object_location(&object) else { continue };
@@ -768,6 +777,104 @@ mod tests {
         let map = sim.app.world().resource::<LoadedMap>();
         assert!(map.pile(pile).is_none());
         assert_eq!(map.items_on_tile(TileLoc { x: 70, y: 70 }).len(), 1);
+    }
+
+    #[test]
+    fn containers_open_through_the_host() {
+        use arcanum_formats::object::{Array, Object, ObjectId, TYPE_CONTAINER, TYPE_GOLD, TYPE_WEAPON, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, object_id_bytes, prototype_id};
+        use crate::{GroundItemId, InventoryRequest};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let guid = |n: u8| ObjectId { kind: ObjectId::KIND_GUID, payload: [n; 16] };
+        // A dagger stored in the first chest at grid location 3.
+        let mut dagger = ObjectBuilder::new(TYPE_WEAPON).field("flags", Value::Int32(crate::OF_INVENTORY)).field("item_inv_location", Value::Int32(3));
+        dagger.prototype = prototype_id(6049);
+        dagger.id = guid(9);
+        std::fs::write(folder.join("G_D.mob"), dagger.build()).unwrap();
+        let chest = |name: &str, x: u32, flags: i32, list: &[ObjectId], source: i32| {
+            let data = list.iter().flat_map(object_id_bytes).collect();
+            let mut b = ObjectBuilder::new(TYPE_CONTAINER)
+                .field("current_aid", Value::Int32(0x7000_0000))
+                .field("location", at(x, 70))
+                .field("container_flags", Value::Int32(flags))
+                .field("container_inventory_list_idx", Value::Array(Some(Array { elem_size: 24, id: 0, data, bitset: vec![] })))
+                .field("container_inventory_source", Value::Int32(source));
+            b.id = guid(x as u8);
+            std::fs::write(folder.join(format!("G_{name}.mob")), b.build()).unwrap();
+        };
+        chest("A", 71, 0, &[guid(9)], 0);
+        chest("B", 72, crate::OCOF_LOCKED, &[], 0);
+        chest("C", 69, crate::OCOF_INVEN_SPAWN_PENDING, &[], 1);
+        std::fs::create_dir_all(dir.path().join("Rules")).unwrap();
+        std::fs::write(dir.path().join("Rules/InvenSource.mes"), "{1}{Test: 5,5 100,6029 0,6029}\n").unwrap();
+        let proto = |number: u32, kind: u32| {
+            let mut o = Object::parse_instance(&ObjectBuilder::new(kind).field("item_weight", Value::Int32(10)).build()).unwrap();
+            o.id = prototype_id(number);
+            o
+        };
+        let mut s = save(&[(1, "A", TileLoc { x: 70, y: 70 }), (2, "B", TileLoc { x: 70, y: 72 })]);
+        s.players.get_mut(&PlayerId(1)).unwrap().blueprint.sheet.base[0] = 8;
+        s.players.get_mut(&PlayerId(1)).unwrap().inventory = Some(crate::Inventory::default());
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        let mut prototypes = Prototypes::default();
+        prototypes.insert(proto(crate::GOLD, TYPE_GOLD));
+        prototypes.insert(proto(6049, TYPE_WEAPON));
+        sim.app.world_mut().resource_mut::<LoadedMap>().prototypes = Arc::new(prototypes);
+        sim.boot(s);
+        sim.update();
+        sim.update();
+        sim.take_deltas();
+        let sector = TileLoc { x: 71, y: 70 }.sector();
+        let find = |sim: &SimApp, x: u32| {
+            let map = sim.app.world().resource::<LoadedMap>();
+            let index = map.mobiles[&sector].iter().position(|o| crate::object_location(o) == Some(TileLoc { x, y: 70 })).unwrap() as u32;
+            GroundItemId::Container { sector, index }
+        };
+        let (a, b, c) = (find(&sim, 71), find(&sim, 72), find(&sim, 69));
+        assert!(sim.app.world().resource::<LoadedMap>().ground_item(a).is_none(), "not an item");
+
+        // The locked chest refuses with "Locked." (inven_ui.mes 1).
+        sim.receive([(PlayerId(1), PlayerIntent::PickUp { item: b, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.iter().any(|(p, d)| p.0 == 1 && *d == LedgerDelta::OpenRefused { message: 1 }));
+        assert!(!deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::PileOpened { .. })));
+
+        // The first opens, shows open for everyone, and holds its stored dagger at 3.
+        sim.receive([(PlayerId(1), PlayerIntent::PickUp { item: a, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.iter().any(|(p, d)| p.0 == 1 && *d == LedgerDelta::PileOpened { pile: a }));
+        assert!(deltas.iter().any(|(p, d)| p.0 == 2 && *d == LedgerDelta::ContainerShown { container: a, open: true }));
+        let items = |sim: &SimApp, id| sim.app.world().resource::<LoadedMap>().pile(id).unwrap().inventory.items.iter().map(|i| (i.prototype, i.location, i.quantity)).collect::<Vec<_>>();
+        assert_eq!(items(&sim, a), [(6049, 3, 0)]);
+        sim.receive([
+            (PlayerId(1), PlayerIntent::Inventory { seq: 1, request: InventoryRequest::Take { from: 3, to: None } }),
+            (PlayerId(1), PlayerIntent::Inventory { seq: 2, request: InventoryRequest::ClosePile }),
+        ]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.iter().any(|(p, d)| p.0 == 2 && *d == LedgerDelta::ContainerShown { container: a, open: false }), "shut on close");
+        assert!(items(&sim, a).is_empty(), "an empty chest stays");
+        let saved = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert!(saved.sector_changes[&sector].containers[&match a { GroundItemId::Container { index, .. } => index, _ => unreachable!() }].items.is_empty(), "kept in the save");
+
+        // The pending source rolls once: 5 gold and the certain dagger, not the 0% one.
+        sim.receive([(PlayerId(1), PlayerIntent::PickUp { item: c, seq: 0 })]);
+        sim.update();
+        sim.take_deltas();
+        let rolled = items(&sim, c);
+        assert_eq!(rolled.iter().map(|i| (i.0, i.2)).collect::<Vec<_>>(), [(crate::GOLD, 5), (6049, 0)]);
+        sim.receive([(PlayerId(1), PlayerIntent::Inventory { seq: 3, request: InventoryRequest::ClosePile })]);
+        sim.update();
+        sim.receive([(PlayerId(1), PlayerIntent::PickUp { item: c, seq: 0 })]);
+        sim.update();
+        assert_eq!(items(&sim, c), rolled, "not rolled again");
     }
 
     #[test]

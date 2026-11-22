@@ -99,7 +99,7 @@ pub struct MapDeltas(pub Vec<LedgerDelta>);
 impl MapDeltas {
     /// Whether this module handles `delta`.
     pub fn wants(delta: &LedgerDelta) -> bool {
-        matches!(delta, LedgerDelta::MapChanges { .. } | LedgerDelta::PortalChanged { .. } | LedgerDelta::GroundItemDropped { .. } | LedgerDelta::GroundItemTaken { .. } | LedgerDelta::PileChanged { .. })
+        matches!(delta, LedgerDelta::MapChanges { .. } | LedgerDelta::PortalChanged { .. } | LedgerDelta::GroundItemDropped { .. } | LedgerDelta::GroundItemTaken { .. } | LedgerDelta::PileChanged { .. } | LedgerDelta::ContainerShown { .. })
     }
 }
 
@@ -303,11 +303,31 @@ fn apply_map_deltas(mut commands: Commands, mut deltas: ResMut<MapDeltas>, mut c
                 for (id, item) in drawn {
                     spawn_dropped(&mut commands, &mut client, &assets, id, item, 0);
                 }
+                // Containers show open or shut.
+                for (entity, mut object) in &mut objects {
+                    let Some(container @ GroundItemId::Container { .. }) = object.ground else { continue };
+                    let Some(base) = client.map.container_object(container).and_then(|o| client.map.prototypes.art_id(o)) else { continue };
+                    let aid = container_art(&client.map, Some(container), base);
+                    if aid != object.art {
+                        object.art = aid;
+                        commands.entity(entity).insert(PendingArt { art: object.frames.clone(), rotation: object_rotation(aid), frame: object_frame(aid), hotspot: Some(ObjectArt::of(aid)) });
+                    }
+                }
                 // Loaded door sprites jump to their state.
                 for (entity, mut object) in &mut objects {
                     let Some(door) = object.id.filter(|d| client.map.changes.contains_key(&d.sector)) else { continue };
                     let Some(aid) = client.map.map_object(door).and_then(|o| client.map.prototypes.art_id(o)) else { continue };
                     if aid != object.art {
+                        object.art = aid;
+                        commands.entity(entity).insert(PendingArt { art: object.frames.clone(), rotation: object_rotation(aid), frame: object_frame(aid), hotspot: Some(ObjectArt::of(aid)) });
+                    }
+                }
+            }
+            LedgerDelta::ContainerShown { container, open } => {
+                client.map.set_container_open(container, open);
+                for (entity, mut object) in &mut objects {
+                    if object.ground == Some(container) {
+                        let aid = arcanum_sim::with_frame(object.art, u32::from(open));
                         object.art = aid;
                         commands.entity(entity).insert(PendingArt { art: object.frames.clone(), rotation: object_rotation(aid), frame: object_frame(aid), hotspot: Some(ObjectArt::of(aid)) });
                     }
@@ -365,6 +385,14 @@ fn apply_map_deltas(mut commands: Commands, mut deltas: ResMut<MapDeltas>, mut c
             }
             _ => {}
         }
+    }
+}
+
+/// A container's art as shown: frame 1 while open, if it turns ([`arcanum_sim::container`]).
+fn container_art(map: &arcanum_sim::LoadedMap, ground: Option<GroundItemId>, aid: ArtId) -> ArtId {
+    match ground {
+        Some(id @ GroundItemId::Container { .. }) if arcanum_sim::opens_to_frame(aid) => arcanum_sim::with_frame(aid, u32::from(map.container_open(id))),
+        _ => aid,
     }
 }
 
@@ -437,10 +465,17 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
         // the original's order between the two is not traced).
         let own = sector.objects.iter().enumerate().map(|(i, o)| (Some(MapObjectId { sector: id, index: i as u32 }), None, o));
         let mobiles = client.map.mobiles.get(&id).into_iter().flatten().enumerate().map(|(i, o)| (None, Some(GroundItemId::Mobile { sector: id, index: i as u32 }), o));
-        let mobiles = mobiles.map(|(a, b, o)| (a, b.filter(|_| arcanum_sim::is_item(o.object_type)), o));
+        // Items can be picked up and containers opened: they carry their id.
+        let mobiles = mobiles.map(|(a, b, o)| {
+            let ground = match b {
+                Some(GroundItemId::Mobile { sector, index }) if o.object_type == arcanum_formats::object::TYPE_CONTAINER => Some(GroundItemId::Container { sector, index }),
+                b => b.filter(|_| arcanum_sim::is_item(o.object_type)),
+            };
+            (a, ground, o)
+        });
         for (object_id, ground, object) in own.chain(mobiles) {
             // Items taken off the ground are gone.
-            if let Some(g) = ground
+            if let Some(g @ GroundItemId::Mobile { .. }) = ground
                 && client.map.ground_item(g).is_none()
             {
                 continue;
@@ -455,6 +490,7 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
                 client.no_art += 1;
                 continue;
             };
+            let aid = container_art(&client.map, ground, aid);
             let Some(location) = object_location(object) else { continue };
             let tile_order = {
                 let n = on_tile.entry(location).or_default();

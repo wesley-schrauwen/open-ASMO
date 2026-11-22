@@ -185,7 +185,7 @@ pub struct FieldDef {
 }
 
 /// A 24-byte object identifier.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ObjectId {
     /// -1 none, 1 prototype, 2 GUID (others exist for map objects).
     pub kind: i16,
@@ -196,6 +196,13 @@ impl ObjectId {
     pub const KIND_NONE: i16 = -1;
     pub const KIND_PROTOTYPE: i16 = 1;
     pub const KIND_GUID: i16 = 2;
+
+    /// The id stored at the start of `bytes` (24 bytes: kind, padding, payload), as object id
+    /// arrays hold them.
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let b = bytes.get(..24)?;
+        Some(Self { kind: i16::from_le_bytes([b[0], b[1]]), payload: b[8..24].try_into().ok()? })
+    }
 
     /// The prototype number, for prototype ids.
     pub fn prototype(&self) -> Option<u32> {
@@ -233,6 +240,11 @@ impl Array {
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// The elements as object ids, for arrays of 24-byte elements.
+    pub fn object_ids(&self) -> Option<Vec<ObjectId>> {
+        (self.elem_size == 24).then(|| self.data.as_chunks::<24>().0.iter().filter_map(|c| ObjectId::from_bytes(c)).collect())
     }
 
     /// The elements as i32s, for arrays of 4-byte elements.
