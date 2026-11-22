@@ -50,6 +50,10 @@ impl Plugin for ActorsPlugin {
             .add_systems(
                 Update,
                 (click_to_move, apply_actor_deltas, pace_party, run_clock, start_local_walk, resend_move, ack_syncs, walk_actors, place_actors).chain().run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                Update,
+                update_postures.after(place_actors).after(crate::animation::PlayAnimations).run_if(in_state(AppState::InGame)),
             );
     }
 }
@@ -258,7 +262,27 @@ pub struct Actor {
     /// Where the sprite is drawn relative to its place on the path, in world units: left by a
     /// correction, and shrinking to nothing at walking speed.
     pub slide: Vec2,
+    /// Up, falling or lying unconscious, or getting up ([`update_postures`]).
+    pub posture: Posture,
 }
+
+/// Whether an actor stands, lies unconscious or gets up (Arcanum.exe 0x435a90 / 0x434de0).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum Posture {
+    #[default]
+    Standing,
+    /// Knocked down (art animation 7), then lying on its last frame.
+    Down,
+    /// Getting up (art animation 8), for this many seconds so far.
+    GettingUp(f32),
+}
+
+/// Art animation 7: knocked down.
+pub const ANIM_KNOCKED_DOWN: u32 = 7;
+/// Art animation 8: getting up.
+pub const ANIM_GET_UP: u32 = 8;
+/// Longest a get-up is waited for when its art does not load.
+const GET_UP_LIMIT_SECS: f32 = 3.0;
 
 impl Actor {
     pub fn walking(&self) -> bool {
@@ -381,13 +405,19 @@ impl Actor {
     /// Critters, monsters and unique NPCs share the animation and rotation bits; other art (an
     /// NPC drawn as scenery) is shown as it is.
     pub fn current_art(&self) -> ArtId {
+        let lying = match self.posture {
+            Posture::Standing => None,
+            Posture::Down => Some(ANIM_KNOCKED_DOWN),
+            Posture::GettingUp(_) => Some(ANIM_GET_UP),
+        };
         match self.art.kind() {
             ArtKind::Critter => {
                 let art = if self.walking() { walk_art(self.art) } else { self.art };
-                CritterArt { rotation: self.rotation as u32, ..CritterArt::from_id(art) }.id()
+                let critter = CritterArt { rotation: self.rotation as u32, ..CritterArt::from_id(art) };
+                CritterArt { anim: lying.unwrap_or(critter.anim), frame: if lying.is_some() { 0 } else { critter.frame }, ..critter }.id()
             }
             ArtKind::Monster | ArtKind::UniqueNpc => {
-                let anim = if self.walking() { ANIM_WALK } else { (self.art.0 >> 6) & 0x1f };
+                let anim = lying.unwrap_or(if self.walking() { ANIM_WALK } else { (self.art.0 >> 6) & 0x1f });
                 with_anim_bits(self.art, anim, self.rotation as u32)
             }
             _ => self.art,
@@ -444,7 +474,7 @@ fn apply_actor_deltas(
                 };
                 let rotation = CritterArt::from_id(art).rotation as usize;
                 let pc = matches!(kind, arcanum_sim::EntityKind::Pc { .. });
-                let actor = Actor { net_id, art, gait, own_gait: gait, pc, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO };
+                let actor = Actor { net_id, art, gait, own_gait: gait, pc, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing };
                 // The art is set once the art index is in (`place_actors`).
                 let entity = commands
                     .spawn((
@@ -540,8 +570,12 @@ fn click_to_move(
     panel: Option<Res<crate::character_editor::CharacterPanel>>,
     inventory: Option<Res<crate::inventory_screen::InventoryPanel>>,
     armed: Option<ResMut<crate::skill_use::SkillTargeting>>,
-    link: Option<Res<HostLink>>,
+    (link, party, local): (Option<Res<HostLink>>, Res<Party>, Res<LocalPc>),
 ) {
+    // An unconscious PC does nothing (0x4348e0).
+    if local.0.is_some_and(|(id, _)| unconscious(&party, id)) {
+        return;
+    }
     let Some(origin) = client.filter(|c| !c.map.sectors.is_empty()).and_then(|c| c.origin) else { return };
     let cursor = match debug {
         Some(mut click) if click.frames > 0 => {
@@ -750,6 +784,40 @@ fn ack_syncs(time: Res<Time>, mut sync: ResMut<SyncState>, link: Option<Res<Host
 }
 
 /// Walks every actor on and keeps [`LocalPc`] on the local PC's tile.
+/// Whether the party member `net_id` is unconscious: its fatigue below 1
+/// ([`arcanum_sim::is_unconscious`]).
+pub fn unconscious(party: &Party, net_id: NetId) -> bool {
+    party.status.get(&net_id).is_some_and(|s| arcanum_sim::is_unconscious(s.fatigue.current))
+}
+
+/// The next posture of an actor in `posture` that is `down` or not, its fall or get-up art
+/// `finished`, `dt` seconds on.
+pub fn next_posture(posture: Posture, down: bool, finished: bool, dt: f32) -> Posture {
+    match posture {
+        _ if down => Posture::Down,
+        Posture::Down => Posture::GettingUp(0.0),
+        Posture::GettingUp(t) if finished || t + dt >= GET_UP_LIMIT_SECS => Posture::Standing,
+        Posture::GettingUp(t) => Posture::GettingUp(t + dt),
+        Posture::Standing => Posture::Standing,
+    }
+}
+
+/// Knocks down the PCs whose fatigue fell below 1 and gets them up again once it is back
+/// above 0 and the get-up has played.
+fn update_postures(time: Res<Time>, party: Res<Party>, mut actors: Query<(&mut Actor, &ArtAnimation)>) {
+    for (mut actor, animation) in &mut actors {
+        let down = actor.pc && unconscious(&party, actor.net_id);
+        let finished = matches!(actor.posture, Posture::GettingUp(_)) && animation.finished;
+        let next = next_posture(actor.posture, down, finished, time.delta_secs());
+        if next != actor.posture {
+            if next == Posture::Down && actor.posture == Posture::Standing {
+                actor.walk([]);
+            }
+            actor.posture = next;
+        }
+    }
+}
+
 fn walk_actors(time: Res<Time>, mut pc: ResMut<LocalPc>, mut actors: Query<&mut Actor>) {
     let dt = f64::from(time.delta_secs());
     for mut actor in &mut actors {
@@ -801,9 +869,12 @@ fn place_actors(
         let changed = animation.art != handle;
         animation.set(&handle, actor.rotation);
         animation.frame_millis = walking.then_some(actor.gait.frame_millis);
-        // Standing holds the frame the art id names; walking plays.
-        animation.playing = walking;
-        if !walking && changed {
+        // Standing holds the frame the art id names; walking plays; falling and getting up
+        // play once.
+        let lying = actor.posture != Posture::Standing;
+        animation.once = lying;
+        animation.playing = walking || lying;
+        if !walking && !lying && changed {
             animation.clock.frame = actor.standing_frame();
         }
     }
@@ -819,7 +890,25 @@ mod tests {
 
     fn actor() -> Actor {
         let art = arcanum_sim::pc_art(0, true);
-        Actor { net_id: NetId(0), art, gait: Gait::human(17), own_gait: Gait::human(17), pc: true, at: t(10, 10), rotation: 4, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO }
+        Actor { net_id: NetId(0), art, gait: Gait::human(17), own_gait: Gait::human(17), pc: true, at: t(10, 10), rotation: 4, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing }
+    }
+
+    #[test]
+    fn an_unconscious_pc_falls_lies_and_gets_up() {
+        let p = next_posture(Posture::Standing, true, false, 0.1);
+        assert_eq!(p, Posture::Down);
+        assert_eq!(next_posture(p, true, true, 0.1), Posture::Down, "lies while down");
+        let up = next_posture(p, false, true, 0.1);
+        assert_eq!(up, Posture::GettingUp(0.0));
+        assert_eq!(next_posture(up, false, false, 0.5), Posture::GettingUp(0.5));
+        assert_eq!(next_posture(up, false, true, 0.1), Posture::Standing, "once the get-up has played");
+        assert_eq!(next_posture(Posture::GettingUp(2.9), false, false, 0.2), Posture::Standing, "or its art never loads");
+        assert_eq!(next_posture(up, true, false, 0.1), Posture::Down);
+        let mut a = actor();
+        a.posture = Posture::Down;
+        assert_eq!(CritterArt::from_id(a.current_art()).anim, ANIM_KNOCKED_DOWN);
+        a.posture = Posture::GettingUp(0.0);
+        assert_eq!(CritterArt::from_id(a.current_art()).anim, ANIM_GET_UP);
     }
 
     #[test]

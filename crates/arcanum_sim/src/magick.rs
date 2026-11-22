@@ -13,16 +13,17 @@
 //! - **The Unlocking Cantrip** (spell 1, `rules/spelllist.mes` 1050-1057): any portal or
 //!   container, locked or not; clears the locked bit (`OPF_LOCKED` / `OCOF_LOCKED`), leaves a
 //!   jam and does not open it.
-//! - **Recovery** (0x45d5a0 schedules a time event 80 000 game ms after fatigue is spent;
-//!   0x45e910 heals): every [`RECOVERY_MS`] the fatigue damage drops by three times the heal
-//!   rate (stat 12, `(CN + 1) / 3`), down to 0.
-//! - **Unconscious** (0x45d800): at fatigue 0 or below the PC casts nothing.
+//! - **Recovery** (0x45d5a0 schedules a time event 80 000 game ms after fatigue is spent; its
+//!   handler 0x45e610 heals): every [`RECOVERY_MS`] the fatigue damage drops by the heal rate
+//!   (stat 12, `(CN + 1) / 3`), down to 0. (0x45e910's three times the rate is another path,
+//!   likely resting.)
+//! - **Unconscious** (0x45d800): at fatigue 0 or below the PC casts nothing
+//!   ([`crate::unconscious`]).
 //!
 //! Not built: the cast animation and its eye candy and sounds (`SpellEyeCandy.mes`: cast art
 //! 10, sound 9020; destination art 16, sound 9025); the charge waiting for the animation; mana
 //! stored in worn items, drawn first; line of sight ("You cannot see the target.", 604); the
-//! tech-aptitude roll (read as dead code); other spells; what unconsciousness does besides
-//! (the knock-down, 0x457450, and no walking); healing faster at rest.
+//! tech-aptitude roll (read as dead code); other spells; healing faster at rest.
 
 use arcanum_rules::{CharacterSheet, SPELLS_PER_COLLEGE};
 use bevy_ecs::prelude::{Commands, Component, Entity, Query, Res, ResMut, Resource};
@@ -43,9 +44,9 @@ pub const NOT_ENOUGH_ENERGY: u32 = 600;
 /// Game milliseconds between fatigue recoveries (0x45e820's 80 000).
 pub const RECOVERY_MS: u64 = 80_000;
 
-/// Fatigue damage after `steps` recoveries at `heal_rate` (0x45e910: three times the rate each).
+/// Fatigue damage after `steps` recoveries at `heal_rate` (0x45e610: the rate each).
 pub fn recovered(damage: i32, heal_rate: i32, steps: u64) -> i32 {
-    (damage as i64 - heal_rate as i64 * 3 * steps as i64).max(0) as i32
+    (damage as i64 - heal_rate as i64 * steps as i64).max(0) as i32
 }
 
 /// When a PC's next fatigue recovery is due, in game milliseconds.
@@ -183,9 +184,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn fatigue_recovers_three_times_the_heal_rate_a_step() {
-        assert_eq!(recovered(20, 3, 1), 11);
-        assert_eq!(recovered(20, 3, 3), 0, "not below 0");
+    fn fatigue_recovers_the_heal_rate_a_step() {
+        assert_eq!(recovered(20, 3, 1), 17);
+        assert_eq!(recovered(20, 3, 7), 0, "not below 0");
         assert_eq!(recovered(5, 0, 4), 5, "no heal rate");
     }
 

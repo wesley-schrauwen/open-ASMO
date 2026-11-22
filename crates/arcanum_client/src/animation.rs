@@ -17,9 +17,13 @@ pub struct AnimationPlugin;
 
 impl Plugin for AnimationPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, play_animations);
+        app.add_systems(Update, play_animations.in_set(PlayAnimations));
     }
 }
+
+/// The system stepping the animations, to order others after it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PlayAnimations;
 
 /// Where an animation is in its frames.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -59,11 +63,15 @@ pub struct ArtAnimation {
     pub playing: bool,
     /// Milliseconds a frame, instead of the file's frame rate.
     pub frame_millis: Option<u32>,
+    /// Plays through once and holds the last frame (a fall, getting up).
+    pub once: bool,
+    /// A `once` animation reached its last frame.
+    pub finished: bool,
 }
 
 impl ArtAnimation {
     pub fn new(art: Handle<ArtFrames>, rotation: usize) -> Self {
-        Self { art, rotation, clock: FrameClock::default(), playing: true, frame_millis: None }
+        Self { art, rotation, clock: FrameClock::default(), playing: true, frame_millis: None, once: false, finished: false }
     }
 
     /// Switches to other art (or rotation), from its first frame. Nothing changes if it is the
@@ -72,6 +80,7 @@ impl ArtAnimation {
         if self.art != *art {
             self.art = art.clone();
             self.clock = FrameClock::default();
+            self.finished = false;
         }
         self.rotation = rotation;
     }
@@ -96,7 +105,19 @@ fn play_animations(
             None if art.frame_rate > 0 => 1.0 / art.frame_rate as f32,
             None => 0.0,
         };
-        if animation.playing {
+        if animation.playing && animation.once {
+            if animation.clock.frame + 1 >= count {
+                animation.clock.frame = count.saturating_sub(1);
+                animation.finished = true;
+            } else {
+                let before = animation.clock.frame;
+                animation.clock.advance(dt, period, count);
+                // Not round past the last frame.
+                if animation.clock.frame < before {
+                    animation.clock.frame = count - 1;
+                }
+            }
+        } else if animation.playing {
             animation.clock.advance(dt, period, count);
         } else if animation.clock.frame >= count {
             // A held frame past the end of this art: its last.

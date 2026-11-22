@@ -326,7 +326,7 @@ pub fn sync_state(
 
 /// Puts a stopped PC's position into the save, which then writes it. An unchanged position
 /// does not mark the save changed.
-fn record_position(world: &mut ResMut<WorldState>, player: PlayerId, at: TileLoc) {
+pub(crate) fn record_position(world: &mut ResMut<WorldState>, player: PlayerId, at: TileLoc) {
     let moved = world.0.as_ref().and_then(|s| s.players.get(&player)).is_some_and(|saved| saved.position != at);
     if moved && let Some(saved) = world.0.as_mut().and_then(|s| s.players.get_mut(&player)) {
         saved.position = at;
