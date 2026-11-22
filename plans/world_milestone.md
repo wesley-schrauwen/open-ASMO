@@ -1278,8 +1278,8 @@ hotkey bar").
 
 ## The hotkey bar (after picking locks)
 
-- **Slots** (Arcanum.exe 0x6835e0, ten records of 0x58 bytes; types 0 empty, 1 item, 2 spell, 3
-  skill, 4 item used through a skill): only items are built. An item dropped on a slot moves to
+- **Slots** (Arcanum.exe 0x6835e0, ten records of 0x58 bytes; types 0 empty, 1 item, 2 skill, 3
+  spell, 4 item used through a skill): only items are built. An item dropped on a slot moves to
   inventory location 2000 + slot (0x57e8d0 → 0x465760), `arcanum_sim::HOTKEYS`: still carried
   and weighed, out of the grid. The original's slot keeps the object id; here the location is
   the reference, so the item is saved with the inventory and leaves the bar when it leaves the
@@ -1303,4 +1303,37 @@ hotkey bar").
 Not done: spells and skills on the bar; the two active slots (0x683518, the A key); the right
 click (0x550150); the stack count (0x462b40); the hover help; using other items (potions,
 scrolls, food: the held-item cursor); the follower check (the original refuses items not the
-current PC's). Not run in the real game.
+current PC's). Not run in the real game. Spells: next ("Casting spells").
+
+## Casting spells: the Unlocking Cantrip (after the hotkey bar)
+
+- **The spells view** (`spell_bar`, 0x5506c0 / 0x551210 / 0x550c60 / 0x54b5d0): the spells
+  button swaps the bottom bar's message box for the view, and back; the view also closes when
+  the cursor leaves the bar upwards. College buttons (`s_<college>.art`) at y 497, x 201-575
+  (0x5c6618), only for colleges with a spell known; the chosen college's known spells at y 528,
+  x 284/334/384/435/485 (0x5c6718), stopping at the first not known. A release on a spell arms
+  it (0x57bc70); the cursor turns blue and the next click on a door or container casts it from
+  where the PC stands (0x57c110, `PlayerIntent::Cast`); elsewhere, a right click or Escape puts
+  it away.
+- **Rules** (`arcanum_sim::magick`): the spell must be known (spells are known in order within
+  a college); Intelligence 5 or more (0x4502e0 returns 5 for every spell); conscious (fatigue
+  above 0, 0x45d800); the cost (`rules/spelllist.mes`, `Cost:` on line `1001 + 50 x spell`,
+  read into `Spell::cost`) may leave fatigue down to -14 (0x450420), else "Not enough Energy."
+  (`mes/spell.mes` 600). The Unlocking Cantrip takes any portal or container, clears the locked
+  bit, leaves a jam and does not open it.
+- **Fatigue** (`CharacterSheet::fatigue_damage`, saved with the PC): the vial shows fatigue less
+  what was spent. Every 80 000 game ms (10 s real) it recovers three times the heal rate
+  (0x45d5a0 → 0x45e820 → 0x45e910; heal rate `(CN + 1) / 3`).
+- **Builder's calls:** "max visible" range is 15 tiles; the fatigue is charged at once (the
+  original waits for the cast animation); the first known college is chosen when none is; the
+  cursor is the blue arrow (the original's spell cursor was not found: its setter is a stub).
+- **Checked:** unit tests for knowing spells, the cost and the -14 floor, unconsciousness,
+  recovery, the costs read from the list, and the view's hit test; a host test: unknown, then
+  too tired ("Not enough Energy."), then a cast unlocks the door for both players, costs 10
+  fatigue (saved, sent), the door opens, and 80 game seconds later fatigue comes back. The game
+  starts and runs; the view and the cast were not clicked through in the real game.
+
+Not done: the cast animation, eye candy and sounds; mana stored in worn items; line of sight
+(604); the tech-aptitude roll; other spells; the skills view; hover names in the view; spells on
+the hotkey bar; unconsciousness's knock-down and stopping the PC walking; faster healing at
+rest; the Disarm Traps and other skills' views.

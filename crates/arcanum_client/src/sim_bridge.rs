@@ -272,7 +272,10 @@ fn receive_deltas(
             inv.refuse_open(*message);
         }
         if let (LedgerDelta::SkillResult { message }, Some(results)) = (delta, skill_results.as_mut()) {
-            results.0.push(*message);
+            results.0.push(crate::skill_use::UseResult::Skill(*message));
+        }
+        if let (LedgerDelta::SpellResult { message }, Some(results)) = (delta, skill_results.as_mut()) {
+            results.0.push(crate::skill_use::UseResult::Spell(*message));
         }
         if let (LedgerDelta::PileOpened { pile }, Some(inv)) = (delta, inventory.as_mut()) {
             inv.open_pile(*pile);

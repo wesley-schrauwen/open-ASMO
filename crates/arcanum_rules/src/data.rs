@@ -116,6 +116,9 @@ impl RulesData {
         }
         if let Some(m) = optional("mes/spell.mes") {
             data.spells = SpellTable::from_mes(&m);
+            if let Some(list) = optional("rules/spelllist.mes") {
+                data.spells.read_costs(&list);
+            }
         }
         if let Some(m) = optional("rules/schematic.mes") {
             data.schematics = parse_schematics(&m);

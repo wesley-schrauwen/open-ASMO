@@ -631,7 +631,7 @@ fn drag_items(
             // A lockpick on the use box arms Pick Locks with it; the screen closes.
             let lockpick = inv.items.iter().find(|i| i.location == h.from).is_some_and(|i| arcanum_sim::is_lockpick(i.prototype, prototypes));
             if lockpick && let Some(mut armed) = armed {
-                armed.0 = Some(crate::skill_use::Armed { skill: arcanum_sim::SKILL_PICK_LOCKS, tool: Some(h.from) });
+                armed.0 = Some(crate::skill_use::Armed::Skill { skill: arcanum_sim::SKILL_PICK_LOCKS, tool: Some(h.from) });
                 panel.open = false;
             }
             return;

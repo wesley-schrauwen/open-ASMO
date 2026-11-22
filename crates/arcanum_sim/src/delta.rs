@@ -122,6 +122,8 @@ pub enum LedgerDelta {
     LockChanged { target: crate::LockTarget, flags: i32 },
     /// How the player's skill use went: a `mes/skill_ui.mes` line for the message box.
     SkillResult { message: u32 },
+    /// Why the player's spell was not cast: a `mes/spell.mes` line for the message box.
+    SpellResult { message: u32 },
     /// This PC leads the party: out of combat every member moves at its speed, capped
     /// ([`PartyPace`](crate::PartyPace)). Sent to each player once it is known.
     PartyLeader { net_id: NetId },

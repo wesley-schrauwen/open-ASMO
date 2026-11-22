@@ -398,15 +398,15 @@ pub fn load_prototypes(vfs: &Vfs) -> (Prototypes, Vec<String>) {
     (prototypes, errors)
 }
 
-/// What the in-game interface shows of a PC with `sheet`: its name, portrait and full pools
-/// (nothing takes damage or fatigue yet).
+/// What the in-game interface shows of a PC with `sheet`: its name, portrait and pools
+/// (fatigue less what casting spent; nothing takes damage yet).
 pub fn pc_status(rules: &arcanum_rules::RulesData, sheet: &CharacterSheet) -> PcStatus {
     let derived = rules.derived(sheet);
     PcStatus {
         name: sheet.name.clone(),
         portrait: rules.portrait(sheet).map(str::to_string),
         hit_points: Pool::full(derived.hit_points),
-        fatigue: Pool::full(derived.fatigue),
+        fatigue: Pool { current: derived.fatigue - sheet.fatigue_damage, max: derived.fatigue },
     }
 }
 

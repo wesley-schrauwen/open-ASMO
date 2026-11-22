@@ -77,6 +77,8 @@ pub enum HudAction {
     Character,
     /// Opens or closes the inventory screen ([`crate::inventory_screen::InventoryPanel`]).
     Inventory,
+    /// Shows or hides the bottom bar's spells view ([`crate::spell_bar`]).
+    Spells,
 }
 
 /// Which pool a vial shows.
@@ -155,7 +157,10 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
         .spawn((DespawnOnExit(AppState::InGame), bar(false, BOTTOM_HEIGHT), ImageNode::new(assets.load(interface::HUD_BOTTOM))))
         .with_children(|bottom| {
             for (file, corner, help) in BOTTOM_BUTTONS {
-                bottom.spawn((BoxHelp::Intgame(help), hud_button(assets.load(art(file)), local(rect(corner, Vec2::splat(39.0))))));
+                let mut button = bottom.spawn((BoxHelp::Intgame(help), hud_button(assets.load(art(file)), local(rect(corner, Vec2::splat(39.0))))));
+                if file == "Spells_Button.ART" {
+                    button.insert(HudAction::Spells);
+                }
             }
             crate::message_box::spawn_box(bottom, local);
             for (slot, x) in HOTKEY_X.into_iter().enumerate() {

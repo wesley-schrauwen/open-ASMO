@@ -2120,6 +2120,7 @@ fn creation_data() -> arcanum_client::create_character::CreationData {
         critter: MesFile::default(),
         item: MesFile::default(),
         skill_ui: MesFile::default(),
+        spell: MesFile::default(),
     }
 }
 

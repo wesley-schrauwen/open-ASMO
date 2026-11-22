@@ -109,6 +109,7 @@ impl RulesData {
             training: std::array::from_fn(|k| ((skill_field(k) >> 6) & 3) as u8),
             spells: std::array::from_fn(|c| spell_tech.get(c).copied().unwrap_or(0).clamp(0, SPELLS_PER_COLLEGE as i32)),
             tech: std::array::from_fn(|d| spell_tech.get(TECH_SLOTS + d).copied().unwrap_or(0).clamp(0, MAX_DEGREE)),
+            fatigue_damage: 0,
             draft: Draft::default(),
         }
     }

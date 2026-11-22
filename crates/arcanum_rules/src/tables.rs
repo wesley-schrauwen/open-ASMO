@@ -85,6 +85,8 @@ pub struct Spell {
     pub description: String,
     /// `spell / 5`.
     pub college: usize,
+    /// Fatigue spent casting it (`rules/spelllist.mes` line `1001 + 50 * spell`, `Cost:`).
+    pub cost: i32,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -97,11 +99,28 @@ impl SpellTable {
     pub fn from_mes(mes: &MesFile) -> Self {
         Self {
             spells: (0..SPELLS)
-                .map(|i| Spell { name: text(mes, i), description: text(mes, 700 + i), college: i / SPELLS_PER_COLLEGE })
+                .map(|i| Spell { name: text(mes, i), description: text(mes, 700 + i), college: i / SPELLS_PER_COLLEGE, cost: 0 })
                 .collect(),
             colleges: (0..COLLEGES).map(|c| text(mes, 500 + c)).collect(),
         }
     }
+
+    /// Reads each spell's cost from `rules/spelllist.mes` (the `Cost:` option of line
+    /// `1001 + 50 * spell`; spells with none keep 0).
+    pub fn read_costs(&mut self, list: &MesFile) {
+        for (i, spell) in self.spells.iter_mut().enumerate() {
+            let options = list.get(1001 + 50 * i as u32).unwrap_or("");
+            spell.cost = spell_option(options, "Cost").unwrap_or(0);
+        }
+    }
+}
+
+/// The number after `name:` in a spell's option list, e.g. `Cost: 10, Info: aggressive`.
+fn spell_option(options: &str, name: &str) -> Option<i32> {
+    options.split(',').find_map(|o| {
+        let (key, value) = o.split_once(':')?;
+        (key.trim().eq_ignore_ascii_case(name)).then(|| value.trim().parse().ok()).flatten()
+    })
 }
 
 /// How a schematic is obtained.
@@ -168,6 +187,13 @@ mod tests {
 
     fn mes(text: &str) -> MesFile {
         MesFile::parse(text.as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn spell_costs_come_from_the_spell_list() {
+        let mut table = SpellTable::from_mes(&mes("{0}{Disarm}{1}{Unlocking Cantrip}"));
+        table.read_costs(&mes("{1001}{Cost: 5, Resist: (stat_dexterity @ 0), Info: aggressive}{1051}{Cost: 10}{1201}{Cost: 50, ChargeBeginCost: 0}"));
+        assert_eq!((table.spells[0].cost, table.spells[1].cost, table.spells[4].cost, table.spells[2].cost), (5, 10, 50, 0));
     }
 
     #[test]
