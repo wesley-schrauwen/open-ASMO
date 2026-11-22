@@ -11,8 +11,12 @@
 //!   put on (0x550000). Other items do nothing yet: the original holds them on the cursor to use
 //!   on what is clicked next (0x573740, 0x434f80).
 //! - **Drawing:** the item's inventory art, centred, shrunk to the 32x32 slot when larger.
+//! - **Spells** (type 3): dragged from the spells view ([`crate::spell_bar`]) onto a slot
+//!   (`InventoryRequest::HotkeySpell`; an item there goes back into the grid); kept in
+//!   [`arcanum_sim::Inventory::spells`]. Using the slot arms the spell. With the inventory open
+//!   it drags to another slot, swapping; off the bar it stays (0x57e8d0).
 //!
-//! Not built: spells and skills on the bar (types 2-4), the two active slots and the A key, the
+//! Not built: skills on the bar (types 2 and 4), the dragged spell's icon at the cursor, the two active slots and the A key, the
 //! right-click action (0x550150), the stack count, the hover help, using other items.
 
 use bevy::prelude::*;
@@ -96,6 +100,13 @@ fn use_hotkeys(
         .and_then(slot_at);
     let Some(slot) = clicked.or_else(|| KEYS.iter().position(|k| keys.just_pressed(*k))) else { return };
     let Some(inv) = inventory.shown().cloned() else { return };
+    if let Some(&spell) = inv.spells.get(&location(slot)) {
+        // A spell is cast as from the spells view (0x54fcf0 type 3 → 0x57bc70).
+        if let Some(mut armed) = armed {
+            armed.0 = Some(crate::skill_use::Armed::Spell(spell));
+        }
+        return;
+    }
     let Some(item) = inv.items.iter().find(|i| i.location == location(slot)) else { return };
     let empty = Prototypes::default();
     let prototypes = client.as_ref().map_or(&empty, |c| &c.map.prototypes);
@@ -139,6 +150,11 @@ fn show_hotkeys(
     let index = client.as_ref().and_then(|c| c.art_index());
     let lifted = held.0.filter(|h| !h.from_pile).map(|h| h.from);
     for (entity, slot) in &slots {
+        if let Some(&spell) = inv.spells.get(&location(slot.0)).filter(|_| Some(location(slot.0)) != lifted) {
+            let art = commands.spawn((HotkeyItem(slot.0), bevy::picking::Pickable::IGNORE, ImageNode::new(assets.load(crate::spell_bar::spell_icon(spell))), at(rect(Vec2::ZERO, Vec2::splat(32.0))))).id();
+            commands.entity(entity).add_child(art);
+            continue;
+        }
         let Some(item) = inv.items.iter().find(|i| i.location == location(slot.0) && Some(i.location) != lifted) else { continue };
         let Some(id) = item_art(prototypes, item) else { continue };
         let Some((image, size)) = art_frame(index, &mut cache, &assets, &frames, id) else {

@@ -10,12 +10,14 @@
 //!   384, 435, 485 (0x5c6718), stopping at the first not known (0x550c60).
 //! - **Casting:** a click on a spell (on release, 0x54b5d0 state 1) arms it ([`crate::skill_use`]);
 //!   the next click on the world casts it (0x57bc70 → 0x57c110). The view stays open.
+//! - **Dragging:** a spell dragged onto a hotkey slot goes there ([`crate::hotkey_bar`]); its
+//!   icon follows the cursor.
 //!
 //! Builder's call: the first college the PC knows is chosen when none is (the original keeps
 //! the last one chosen, 0x64c530, its start not traced).
 //!
 //! Not built: the hover names (the original shows them in the view, 0x550860 / 0x5507e0); the
-//! skills view (view 2) and the others; dragging a spell onto the hotkey bar.
+//! skills view (view 2) and the others.
 
 use bevy::prelude::*;
 
@@ -59,11 +61,29 @@ pub struct SpellBarPlugin;
 impl Plugin for SpellBarPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BarView>()
-            .add_systems(OnExit(AppState::InGame), |mut view: ResMut<BarView>| *view = BarView::default())
-            .add_systems(Update, (close_above_the_bar, click_view, show_view).chain().run_if(in_state(AppState::InGame)))
+            .init_resource::<SpellDrag>()
+            .add_systems(OnExit(AppState::InGame), |mut view: ResMut<BarView>, mut drag: ResMut<SpellDrag>| {
+                *view = BarView::default();
+                *drag = SpellDrag::default();
+            })
+            .add_systems(Update, (close_above_the_bar, click_view, show_view, show_drag).chain().run_if(in_state(AppState::InGame)))
             .add_observer(on_spells_button);
     }
 }
+
+/// A spell's icon (`s_<college>n.art`, 0x4b1570).
+pub fn spell_icon(spell: usize) -> String {
+    let stem = crate::editor_tabs::COLLEGE_STEMS[(spell / SPELLS_PER_COLLEGE).min(COLLEGES - 1)];
+    format!("{}/s_{stem}{}.art", interface::DIR, spell % SPELLS_PER_COLLEGE + 1)
+}
+
+/// The spell being dragged out of the view, if any.
+#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SpellDrag(pub Option<usize>);
+
+/// The dragged spell's icon at the cursor.
+#[derive(Component)]
+pub struct DraggedSpell;
 
 /// The spells known in `college` by a PC knowing `known` there, in order.
 pub fn shown_spells(college: usize, known: i32) -> impl Iterator<Item = usize> {
@@ -91,28 +111,74 @@ fn cursor(windows: &Query<&Window>) -> Option<Vec2> {
     windows.iter().find_map(|w| w.cursor_position().map(|c| screen_point(w.size(), c)))
 }
 
-/// The view closes when the cursor goes up past the bar's top (0x54b5d0).
-fn close_above_the_bar(windows: Query<&Window>, mut view: ResMut<BarView>) {
+/// The view closes when the cursor goes up past the bar's top (0x54b5d0); a drag ends.
+fn close_above_the_bar(windows: Query<&Window>, mut view: ResMut<BarView>, mut drag: ResMut<SpellDrag>) {
     if view.spells && cursor(&windows).is_some_and(|p| p.y < BOTTOM_TOP) {
         view.spells = false;
+        drag.0 = None;
     }
 }
 
-/// Press on a college shows its spells; release on a spell arms it.
-fn click_view(buttons: Res<ButtonInput<MouseButton>>, windows: Query<&Window>, mut view: ResMut<BarView>, sheet: Res<crate::pc_sheet::SheetHost>, armed: Option<ResMut<crate::skill_use::SkillTargeting>>) {
-    if !view.spells || !(buttons.just_pressed(MouseButton::Left) || buttons.just_released(MouseButton::Left)) {
+/// Press on a college shows its spells; press on a spell picks it up, and the release arms it
+/// (on the spell) or puts it on a hotkey slot (0x57e8d0).
+#[allow(clippy::too_many_arguments)]
+fn click_view(
+    buttons: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window>,
+    mut view: ResMut<BarView>,
+    mut drag: ResMut<SpellDrag>,
+    sheet_host: Res<crate::pc_sheet::SheetHost>,
+    mut inventory: ResMut<crate::inventory_screen::PcInventory>,
+    armed: Option<ResMut<crate::skill_use::SkillTargeting>>,
+    client: Option<Res<crate::world_render::ClientMap>>,
+    (mut cache, assets, frames): (ResMut<crate::inventory_screen::ItemArtCache>, Res<AssetServer>, Res<Assets<crate::art_loader::ArtFrames>>),
+) {
+    let (pressed, released) = (buttons.just_pressed(MouseButton::Left), buttons.just_released(MouseButton::Left));
+    if !view.spells || !(pressed || released) {
         return;
     }
-    let (Some(point), Some(sheet)) = (cursor(&windows), sheet.sheet()) else { return };
-    match part_at(point, &sheet.spells, view.college) {
-        Some(SpellViewPart::College(c)) if buttons.just_pressed(MouseButton::Left) => view.college = Some(c),
-        Some(SpellViewPart::Spell(s)) if buttons.just_released(MouseButton::Left) => {
-            if let Some(mut armed) = armed {
-                armed.0 = Some(crate::skill_use::Armed::Spell(s));
-            }
+    let (Some(point), Some(sheet)) = (cursor(&windows), sheet_host.sheet()) else { return };
+    let part = part_at(point, &sheet.spells, view.college);
+    if pressed {
+        match part {
+            Some(SpellViewPart::College(c)) => view.college = Some(c),
+            Some(SpellViewPart::Spell(s)) => drag.0 = Some(s),
+            None => {}
         }
-        _ => {}
+        return;
     }
+    let Some(spell) = drag.0.take() else { return };
+    if let Some(slot) = crate::hotkey_bar::slot_at(point) {
+        let Some(inv) = inventory.shown().cloned() else { return };
+        let empty = arcanum_formats::object::Prototypes::default();
+        let prototypes = client.as_ref().map_or(&empty, |c| &c.map.prototypes);
+        let sizes = crate::inventory_screen::inventory_sizes(&inv, prototypes, client.as_ref().and_then(|c| c.art_index()), &mut cache, &assets, &frames);
+        let wearer = crate::inventory_screen::wearer(&sheet_host);
+        let _ = inventory.request(arcanum_sim::InventoryRequest::HotkeySpell { spell, to: crate::hotkey_bar::location(slot) }, wearer, crate::inventory_screen::client_info(prototypes, &sizes));
+    } else if part == Some(SpellViewPart::Spell(spell))
+        && let Some(mut armed) = armed
+    {
+        armed.0 = Some(crate::skill_use::Armed::Spell(spell));
+    }
+}
+
+/// Draws the dragged spell's icon with its top-left at the cursor.
+fn show_drag(mut commands: Commands, drag: Res<SpellDrag>, windows: Query<&Window>, assets: Res<AssetServer>, boxes: Query<&ChildOf, With<MessageBoxRoot>>, mut icons: Query<(Entity, &mut Node), With<DraggedSpell>>) {
+    let (Some(spell), Some(point)) = (drag.0, cursor(&windows)) else {
+        for (e, _) in &icons {
+            commands.entity(e).despawn();
+        }
+        return;
+    };
+    let corner = Vec2::new(point.x, point.y - BOTTOM_TOP);
+    if let Ok((_, mut node)) = icons.single_mut() {
+        node.left = crate::menu_window::px(corner.x);
+        node.top = crate::menu_window::px(corner.y);
+        return;
+    }
+    let Ok(bar) = boxes.single() else { return };
+    let icon = commands.spawn((DraggedSpell, bevy::picking::Pickable::IGNORE, GlobalZIndex(10), ImageNode::new(assets.load(spell_icon(spell))), at(rect(corner, Vec2::splat(SPELL_SIZE))))).id();
+    commands.entity(bar.parent()).add_child(icon);
 }
 
 /// Draws the view over the message box's place, or the message box.
@@ -150,10 +216,8 @@ fn show_view(
         spawned.push(commands.spawn((SpellViewPart::College(c), bevy::picking::Pickable::IGNORE, ImageNode::new(assets.load(path)), local(COLLEGE_X[c], COLLEGE_Y, COLLEGE_SIZE))).id());
     }
     if let Some(college) = view.college {
-        let stem = crate::editor_tabs::COLLEGE_STEMS[college];
         for (spell, x) in shown_spells(college, spells[college]).zip(SPELL_X) {
-            let path = format!("{}/s_{stem}{}.art", interface::DIR, spell % SPELLS_PER_COLLEGE + 1);
-            spawned.push(commands.spawn((SpellViewPart::Spell(spell), bevy::picking::Pickable::IGNORE, ImageNode::new(assets.load(path)), local(x, SPELL_Y, SPELL_SIZE))).id());
+            spawned.push(commands.spawn((SpellViewPart::Spell(spell), bevy::picking::Pickable::IGNORE, ImageNode::new(assets.load(spell_icon(spell))), local(x, SPELL_Y, SPELL_SIZE))).id());
         }
     }
     commands.entity(parent.parent()).add_children(&spawned);

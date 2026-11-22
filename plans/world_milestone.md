@@ -1335,5 +1335,23 @@ current PC's). Not run in the real game. Spells: next ("Casting spells").
 
 Not done: the cast animation, eye candy and sounds; mana stored in worn items; line of sight
 (604); the tech-aptitude roll; other spells; the skills view; hover names in the view; spells on
-the hotkey bar; unconsciousness's knock-down and stopping the PC walking; faster healing at
+the hotkey bar (done next: "Spells on the hotkey bar"); unconsciousness's knock-down and stopping the PC walking; faster healing at
 rest; the Disarm Traps and other skills' views.
+
+## Spells on the hotkey bar (after casting spells)
+
+- **Slots** (type 3, 0x57e8d0 / 0x54fcf0): a spell dragged from the spells view onto a hotkey
+  slot goes there (`InventoryRequest::HotkeySpell`); an item on that slot goes back into the
+  grid's first free spot. Kept in `Inventory::spells` (hotkey location → spell), so the host
+  checks, saves and sends it with the inventory. A slot holds a spell or an item.
+- **Moves:** with the inventory open a spell drags slot to slot, swapping with a spell or item
+  there; dropped off the bar it stays (the original leaves the slot as it was). An item dragged
+  from a slot onto a spell's swaps with it; from the grid it replaces it, and the spell is gone.
+- **Using:** a click on the slot (inventory closed) or its key arms the spell, as the view does.
+- **Client:** the spell's icon (`s_<college>n.art`) in the slot; the dragged spell's icon follows
+  the cursor out of the view.
+- **Checked:** a unit test for putting, swapping and replacing spells on slots. 510 tests pass;
+  the game starts and runs. The drag was not done by hand in the real game.
+
+Not done: the dragged spell's icon while it moves between slots (the inventory's held art shows
+items only); skills on the bar; clearing a slot (the original has no way either).

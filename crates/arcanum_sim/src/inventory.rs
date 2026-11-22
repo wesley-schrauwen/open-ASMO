@@ -90,6 +90,10 @@ pub struct Inventory {
     /// Grid rows: [`PC_ROWS`] for critters, [`CONTAINER_ROWS`] for containers.
     #[serde(default = "pc_rows", skip_serializing_if = "is_pc_rows")]
     pub rows: i32,
+    /// Spells on the hotkey bar, by hotkey location (slot type 3, 0x57e8d0). A slot holds a
+    /// spell or an item, not both.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub spells: std::collections::BTreeMap<i32, usize>,
 }
 
 fn pc_rows() -> i32 {
@@ -102,7 +106,7 @@ fn is_pc_rows(rows: &i32) -> bool {
 
 impl Default for Inventory {
     fn default() -> Self {
-        Self { items: Vec::new(), rows: PC_ROWS }
+        Self { items: Vec::new(), rows: PC_ROWS, spells: Default::default() }
     }
 }
 
@@ -274,6 +278,8 @@ pub enum InventoryRequest {
     Put { from: i32, to: Option<i32> },
     /// Everything the PC can take from the open pile, in order (0x579770).
     TakeAll,
+    /// `spell` put on the hotkey slot at location `to`, from the spells view (0x57e8d0 type 3).
+    HotkeySpell { spell: usize, to: i32 },
     /// The loot window closed: an empty pile goes, one with a single item leaves it bare.
     ClosePile,
 }
@@ -346,7 +352,9 @@ impl Inventory {
     /// Applies `request` for `wearer`.
     pub fn apply(&self, request: &InventoryRequest, wearer: Wearer, info: impl Fn(u32) -> Option<ItemInfo>) -> Result<Inventory, ItemRefusal> {
         match *request {
+            InventoryRequest::Move { from, to } if self.spells.contains_key(&from) => self.move_spell(from, to),
             InventoryRequest::Move { from, to } => self.move_item(from, to, wearer, info),
+            InventoryRequest::HotkeySpell { spell, to } => self.put_spell(spell, to, info),
             InventoryRequest::Take { .. } | InventoryRequest::Put { .. } | InventoryRequest::TakeAll | InventoryRequest::ClosePile => Err(ItemRefusal::Silent),
             InventoryRequest::Drop { from } => {
                 let index = self.items.iter().position(|i| i.location == from).ok_or(ItemRefusal::Silent)?;
@@ -504,7 +512,7 @@ impl Inventory {
 
     /// An empty container's inventory.
     pub fn container() -> Self {
-        Self { items: Vec::new(), rows: CONTAINER_ROWS }
+        Self { items: Vec::new(), rows: CONTAINER_ROWS, spells: Default::default() }
     }
 
     /// Whether `location` is one of this grid's cells.
@@ -514,7 +522,7 @@ impl Inventory {
 
     /// The taken cells, leaving out the items at `skip`.
     fn occupied_without(&self, info: &impl Fn(u32) -> Option<ItemInfo>, skip: &[i32]) -> Vec<bool> {
-        let rest = Inventory { items: self.items.iter().filter(|i| !skip.contains(&i.location)).cloned().collect(), rows: self.rows };
+        let rest = Inventory { items: self.items.iter().filter(|i| !skip.contains(&i.location)).cloned().collect(), rows: self.rows, spells: Default::default() };
         rest.occupied(info)
     }
 
@@ -574,8 +582,14 @@ impl Inventory {
         if HOTKEYS.contains(&to) {
             // Any item goes on the bar and leaves the grid (0x57e8d0, 0x465760 to slot + 2000).
             // What was there swaps to the dragged slot, or goes back where the item was or to
-            // the first free spot (0x57eed0 releases it, 0x461a70).
+            // the first free spot (0x57eed0 releases it, 0x461a70). A spell there swaps to a
+            // dragged slot, or is gone.
             moved.items[index].location = to;
+            if let Some(spell) = moved.spells.remove(&to)
+                && HOTKEYS.contains(&from)
+            {
+                moved.spells.insert(from, spell);
+            }
             if let Some(other) = self.items.iter().position(|i| i.location == to) {
                 moved.items[other].location = if HOTKEYS.contains(&from) {
                     from
@@ -592,7 +606,7 @@ impl Inventory {
         }
         // The fit test sees the inventory without what the swap takes off.
         let other = self.items.iter().position(|i| i.location == to);
-        let without = Inventory { items: self.items.iter().filter(|i| i.location != to).cloned().collect(), rows: self.rows };
+        let without = Inventory { items: self.items.iter().filter(|i| i.location != to).cloned().collect(), rows: self.rows, spells: Default::default() };
         without.fit_test(&item, to, wearer, &info)?;
         moved.items[index].location = to;
         if let Some(other) = other {
@@ -602,6 +616,41 @@ impl Inventory {
             let spot = if Self::fits(&occupied, from, cells) { from } else { Self::free_spot(&occupied, cells).ok_or(ItemRefusal::NoRoom)? };
             moved.items[other].location = spot;
         }
+        Ok(moved)
+    }
+
+    /// Moves the spell on hotkey slot `from` to slot `to`, swapping with what is there (a
+    /// spell, or an item, which goes to `from`). Off the bar it stays (0x57e8d0).
+    pub fn move_spell(&self, from: i32, to: i32) -> Result<Inventory, ItemRefusal> {
+        let spell = *self.spells.get(&from).ok_or(ItemRefusal::Silent)?;
+        if !HOTKEYS.contains(&to) {
+            return Err(ItemRefusal::Silent);
+        }
+        let mut moved = self.clone();
+        if from == to {
+            return Ok(moved);
+        }
+        moved.spells.remove(&from);
+        if let Some(other) = moved.spells.insert(to, spell) {
+            moved.spells.insert(from, other);
+        }
+        if let Some(item) = moved.items.iter_mut().find(|i| i.location == to) {
+            item.location = from;
+        }
+        Ok(moved)
+    }
+
+    /// Puts `spell` on hotkey slot `to`; an item there goes to the first free spot.
+    pub fn put_spell(&self, spell: usize, to: i32, info: impl Fn(u32) -> Option<ItemInfo>) -> Result<Inventory, ItemRefusal> {
+        if !HOTKEYS.contains(&to) {
+            return Err(ItemRefusal::Silent);
+        }
+        let mut moved = self.clone();
+        if let Some(index) = self.items.iter().position(|i| i.location == to) {
+            let cells = info(self.items[index].prototype).map_or((1, 1), |i| i.cells);
+            moved.items[index].location = Self::free_spot(&self.occupied(&info), cells).ok_or(ItemRefusal::NoRoom)?;
+        }
+        moved.spells.insert(to, spell);
         Ok(moved)
     }
 
@@ -780,6 +829,27 @@ mod tests {
         assert_eq!((at(&back, 4), at(&back, 1)), (2000, 2003));
         // Off the bar into the grid where it fits.
         assert_eq!(at(&barred.move_item(2000, 50, man, table).unwrap(), 1), 50);
+    }
+
+    #[test]
+    fn a_hotkey_slot_holds_a_spell_or_an_item() {
+        let mut inv = Inventory::default();
+        inv.insert(1, 0, table, 10_000, 0).unwrap();
+        let man = Wearer { race: 0, gender: 1 };
+        let barred = inv.move_item(0, 2000, man, table).unwrap();
+        // A spell onto the item's slot sends the item back into the grid.
+        let spelled = barred.apply(&InventoryRequest::HotkeySpell { spell: 1, to: 2000 }, man, table).unwrap();
+        assert_eq!((spelled.spells.get(&2000), spelled.items[0].location), (Some(&1), 0));
+        // Slot to slot it swaps with an item there; off the bar it stays.
+        let item_back = spelled.move_item(0, 2003, man, table).unwrap();
+        let swapped = item_back.apply(&InventoryRequest::Move { from: 2000, to: 2003 }, man, table).unwrap();
+        assert_eq!((swapped.spells.get(&2003), swapped.items[0].location), (Some(&1), 2000));
+        assert_eq!(swapped.apply(&InventoryRequest::Move { from: 2003, to: 40 }, man, table), Err(ItemRefusal::Silent));
+        // An item dragged from a slot onto the spell's swaps it; from the grid it replaces it.
+        let crossed = swapped.move_item(2000, 2003, man, table).unwrap();
+        assert_eq!((crossed.spells.get(&2000), crossed.items[0].location), (Some(&1), 2003));
+        let replaced = crossed.move_item(2003, 30, man, table).unwrap().move_item(30, 2000, man, table).unwrap();
+        assert!(replaced.spells.is_empty(), "the spell is gone");
     }
 
     #[test]
