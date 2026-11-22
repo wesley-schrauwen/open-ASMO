@@ -603,7 +603,13 @@ fn drag_items(
     if (buttons.just_pressed(MouseButton::Left) || right) && held.0.is_none() {
         let hotkey = crate::hotkey_bar::slot_at(point + Vec2::new(0.0, TOP_BAR_HEIGHT)).map(crate::hotkey_bar::location);
         let picked = match spot {
-            _ if hotkey.is_some() => inv.items.iter().find(|i| Some(i.location) == hotkey).map(|i| (i.clone(), i.location, false)),
+            _ if hotkey.is_some() => inv
+                .items
+                .iter()
+                .find(|i| Some(i.location) == hotkey)
+                .cloned()
+                .or_else(|| hotkey.filter(|h| inv.spells.contains_key(h)).map(|h| CarriedItem { prototype: 0, location: h, quantity: 0, keys: vec![] }))
+                .map(|i| (i.clone(), i.location, false)),
             Some(Spot::Pile(at)) => pile.as_ref().and_then(|p| pile_item_at(p, at, &info)).map(|i| (i.clone(), at, true)),
             Some(Spot::Pc(_)) => item_at(&inv, point, &info).map(|i| (i.clone(), location_at(point).unwrap_or(i.location), false)),
             None => None,
