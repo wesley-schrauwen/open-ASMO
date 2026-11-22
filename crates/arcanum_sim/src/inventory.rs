@@ -556,7 +556,7 @@ impl Inventory {
     /// Moves the item at `from` to `to` as the inventory screen does (0x573850, 0x5788c0): in the
     /// grid only where its footprint is free (no swaps); onto a slot if the fit test passes,
     /// swapping with what is worn there, which goes back to where the moved item was or to the
-    /// first free spot.
+    /// first free spot; onto a hotkey slot (2000-2009) always, swapping the same way.
     pub fn move_item(&self, from: i32, to: i32, wearer: Wearer, info: impl Fn(u32) -> Option<ItemInfo>) -> Result<Inventory, ItemRefusal> {
         let index = self.items.iter().position(|i| i.location == from).ok_or(ItemRefusal::Silent)?;
         let item = info(self.items[index].prototype).ok_or(ItemRefusal::Silent)?;
@@ -568,11 +568,27 @@ impl Inventory {
             moved.items[index].location = to;
             return Ok(moved);
         }
-        if !(FIRST_SLOT..=LAST_SLOT).contains(&to) {
-            return Err(ItemRefusal::Silent);
-        }
         if from == to {
             return Ok(moved);
+        }
+        if HOTKEYS.contains(&to) {
+            // Any item goes on the bar and leaves the grid (0x57e8d0, 0x465760 to slot + 2000).
+            // What was there swaps to the dragged slot, or goes back where the item was or to
+            // the first free spot (0x57eed0 releases it, 0x461a70).
+            moved.items[index].location = to;
+            if let Some(other) = self.items.iter().position(|i| i.location == to) {
+                moved.items[other].location = if HOTKEYS.contains(&from) {
+                    from
+                } else {
+                    let cells = info(self.items[other].prototype).map_or((1, 1), |i| i.cells);
+                    let occupied = self.occupied_without(&info, &[from]);
+                    if Self::fits(&occupied, from, cells) { from } else { Self::free_spot(&occupied, cells).ok_or(ItemRefusal::NoRoom)? }
+                };
+            }
+            return Ok(moved);
+        }
+        if !(FIRST_SLOT..=LAST_SLOT).contains(&to) {
+            return Err(ItemRefusal::Silent);
         }
         // The fit test sees the inventory without what the swap takes off.
         let other = self.items.iter().position(|i| i.location == to);
@@ -740,6 +756,30 @@ mod tests {
         assert_eq!(inv.move_item(0, 9, man, table), Err(ItemRefusal::Silent), "off the right edge");
         assert_eq!(inv.move_item(0, 110, man, table), Err(ItemRefusal::Silent), "off the bottom");
         assert_eq!(inv.move_item(5, 6, man, table), Err(ItemRefusal::Silent), "nothing there");
+    }
+
+    #[test]
+    fn the_hotkey_bar_takes_any_item_out_of_the_grid_and_swaps() {
+        let mut inv = Inventory::default();
+        inv.insert(1, 0, table, 10_000, 0).unwrap();
+        inv.insert(4, 0, table, 10_000, 0).unwrap();
+        let man = Wearer { race: 0, gender: 1 };
+        let at = |inv: &Inventory, p: u32| inv.items.iter().find(|i| i.prototype == p).unwrap().location;
+        let barred = inv.move_item(at(&inv, 1), 2000, man, table).unwrap();
+        assert_eq!(at(&barred, 1), 2000);
+        let taken = |inv: &Inventory| inv.occupied(table).iter().filter(|c| **c).count();
+        assert!(taken(&barred) < taken(&inv), "its cells are free");
+        assert_eq!(barred.total_weight(table, 0), inv.total_weight(table, 0), "still carried");
+        // Onto a taken slot from the grid: the one there goes back to the item's cells.
+        let from = at(&barred, 4);
+        let swapped = barred.move_item(from, 2000, man, table).unwrap();
+        assert_eq!((at(&swapped, 4), at(&swapped, 1)), (2000, from));
+        // Slot to slot swaps.
+        let two = barred.move_item(from, 2003, man, table).unwrap();
+        let back = two.move_item(2003, 2000, man, table).unwrap();
+        assert_eq!((at(&back, 4), at(&back, 1)), (2000, 2003));
+        // Off the bar into the grid where it fits.
+        assert_eq!(at(&barred.move_item(2000, 50, man, table).unwrap(), 1), 50);
     }
 
     #[test]

@@ -88,6 +88,7 @@ fn main() {
             arcanum_client::hud::HudPlugin,
             arcanum_client::inventory_screen::InventoryScreenPlugin,
             arcanum_client::skill_use::SkillUsePlugin,
+            arcanum_client::hotkey_bar::HotkeyBarPlugin,
             arcanum_client::cursor::CursorPlugin,
         ));
 
