@@ -91,6 +91,10 @@ pub struct CharacterSheet {
     /// 0-15).
     #[cfg_attr(feature = "serde", serde(default))]
     pub spells: [i32; COLLEGES],
+    /// Fatigue spent (casting), off the pool's highest value (the critter's fatigue damage,
+    /// 0x45d550 / 0x45d5a0). Not a character choice: the editor leaves it alone.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub fatigue_damage: i32,
     pub draft: Draft,
 }
 
@@ -114,6 +118,7 @@ impl Default for CharacterSheet {
             training: [0; SKILLS],
             tech: [0; DISCIPLINES],
             spells: [0; COLLEGES],
+            fatigue_damage: 0,
             draft: Draft::default(),
         }
     }

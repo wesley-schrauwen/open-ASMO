@@ -1,11 +1,14 @@
-//! Using a skill on something in the world: for now Pick Locks on a door or container
-//! ([`arcanum_sim::lockpick`]).
+//! Using a skill or casting a spell on something in the world: for now Pick Locks
+//! ([`arcanum_sim::lockpick`]) and the Unlocking Cantrip ([`arcanum_sim::magick`]) on a door or
+//! container.
 //!
 //! - **Arming:** releasing a lockpick on the inventory screen's use box closes the screen and
 //!   arms Pick Locks with it as the tool (the original's use box; also its hotkey bar, not built).
+//! - A spell is armed from the bottom bar's spells view ([`crate::spell_bar`]).
 //! - While [`SkillTargeting`] is armed, a left click on a door or container walks the PC to it
-//!   and asks the host to pick it; a click elsewhere, a right click or Escape puts it away. The
-//!   host's answer (`mes/skill_ui.mes`) shows in the message box.
+//!   and asks the host to pick it, or casts the spell on it from where the PC stands (0x57c110);
+//!   a click elsewhere, a right click or Escape puts it away (0x57bff0). The host's answer
+//!   (`mes/skill_ui.mes`, `mes/spell.mes`) shows in the message box.
 
 use bevy::prelude::*;
 
@@ -15,16 +18,25 @@ use crate::main_menu::AppState;
 #[derive(Resource, Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct SkillTargeting(pub Option<Armed>);
 
-/// A skill armed for the next click, with the tool used (its inventory location).
+/// What the next click uses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Armed {
-    pub skill: usize,
-    pub tool: Option<i32>,
+pub enum Armed {
+    /// A skill, with the tool used (its inventory location).
+    Skill { skill: usize, tool: Option<i32> },
+    /// A spell.
+    Spell(usize),
 }
 
-/// The host's answers to skill uses (`mes/skill_ui.mes` lines), waiting for the message box.
+/// A host's answer: a `mes/skill_ui.mes` or `mes/spell.mes` line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UseResult {
+    Skill(u32),
+    Spell(u32),
+}
+
+/// The host's answers to skill uses and casts, waiting for the message box.
 #[derive(Resource, Debug, Default)]
-pub struct SkillResults(pub Vec<u32>);
+pub struct SkillResults(pub Vec<UseResult>);
 
 pub struct SkillUsePlugin;
 
@@ -54,7 +66,14 @@ fn show_results(mut results: ResMut<SkillResults>, data: Option<Res<crate::creat
     let lines = std::mem::take(&mut results.0);
     let Some(mut boxed) = boxed else { return };
     for line in lines {
-        let text = data.as_ref().and_then(|d| d.skill_ui.get(line)).unwrap_or("").to_string();
+        let text = data
+            .as_ref()
+            .and_then(|d| match line {
+                UseResult::Skill(n) => d.skill_ui.get(n),
+                UseResult::Spell(n) => d.spell.get(n),
+            })
+            .unwrap_or("")
+            .to_string();
         boxed.post(crate::message_box::BoxMessage::plain(text), time.as_ref().map_or(0.0, |t| t.elapsed_secs_f64()));
     }
 }

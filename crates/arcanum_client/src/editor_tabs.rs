@@ -135,7 +135,7 @@ fn win(x: f32, y: f32, w: f32, h: f32) -> Rect {
 
 /// The art stems of the colleges, in `mes/spell.mes` order: `s_<stem>.art` is the college's
 /// button, `s_<stem>1.art` to `5` its spells' icons (force's button is `s_forc.art`).
-const COLLEGE_STEMS: [&str; COLLEGES] =
+pub const COLLEGE_STEMS: [&str; COLLEGES] =
     ["conveyance", "divination", "air", "earth", "fire", "water", "force", "mental", "meta", "morph", "nature", "evilnecro", "goodnecro", "phantasm", "summoning", "temporal"];
 const DISCIPLINE_BUTTONS: [&str; DISCIPLINES] = ["Anatomical", "Chemistry", "Electrical", "Explosives", "GunSmithy", "Mechanical", "Smithy", "Therapeutics"];
 const DISCIPLINE_ICONS: [&str; DISCIPLINES] = ["Herb", "Chem", "Electric", "Explosives", "Gun", "Mechanical", "Smithy", "Theru"];

@@ -540,6 +540,7 @@ fn click_to_move(
     panel: Option<Res<crate::character_editor::CharacterPanel>>,
     inventory: Option<Res<crate::inventory_screen::InventoryPanel>>,
     armed: Option<ResMut<crate::skill_use::SkillTargeting>>,
+    link: Option<Res<HostLink>>,
 ) {
     let Some(origin) = client.filter(|c| !c.map.sectors.is_empty()).and_then(|c| c.origin) else { return };
     let cursor = match debug {
@@ -566,8 +567,8 @@ fn click_to_move(
     // door is drawn over part of it, and walls take no clicks (not traced in the original).
     let candidates = objects.iter().filter(|o| o.4.object_type != TYPE_WALL).map(|(e, s, a, t, _)| (e, s, a, t));
     let hit = crate::picking::pick(world, candidates, &images);
-    // An armed skill takes the click: on a door or container it walks there and picks the lock;
-    // anywhere else it is put away.
+    // An armed skill or spell takes the click: on a door or container it walks there and picks
+    // the lock, or casts from where the PC stands; anywhere else it is put away.
     if let Some(armed) = armed.and_then(|mut a| a.0.take()) {
         let object = hit.and_then(|e| objects.get(e).ok()).map(|o| o.4);
         let target = object.and_then(|o| match (o.object_type, o.id, o.ground) {
@@ -575,9 +576,18 @@ fn click_to_move(
             (_, _, Some(id @ GroundItemId::Container { .. })) => Some(arcanum_sim::LockTarget::Container(id)),
             _ => None,
         });
-        if let (Some(target), Some(object), arcanum_sim::SKILL_PICK_LOCKS) = (target, object, armed.skill) {
-            debug!("pick lock {target:?}");
-            walk.click_pick(target, armed.tool, object.location);
+        match (target, object, armed) {
+            (Some(target), Some(object), crate::skill_use::Armed::Skill { skill: arcanum_sim::SKILL_PICK_LOCKS, tool }) => {
+                debug!("pick lock {target:?}");
+                walk.click_pick(target, tool, object.location);
+            }
+            (Some(target), _, crate::skill_use::Armed::Spell(spell)) => {
+                debug!("cast {spell} on {target:?}");
+                if let Some(link) = link {
+                    let _ = link.0.send_intent(PlayerIntent::Cast { spell, target });
+                }
+            }
+            _ => {}
         }
         return;
     }

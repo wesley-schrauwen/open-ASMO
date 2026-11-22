@@ -104,7 +104,7 @@ fn use_hotkeys(
     match slot_use(item.prototype, prototypes, &info) {
         Some(SlotUse::PickLocks) => {
             if let Some(mut armed) = armed {
-                armed.0 = Some(crate::skill_use::Armed { skill: arcanum_sim::SKILL_PICK_LOCKS, tool: Some(item.location) });
+                armed.0 = Some(crate::skill_use::Armed::Skill { skill: arcanum_sim::SKILL_PICK_LOCKS, tool: Some(item.location) });
             }
         }
         Some(SlotUse::Wear(to)) => {

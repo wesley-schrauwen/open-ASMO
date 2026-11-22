@@ -39,6 +39,8 @@ pub enum PlayerIntent {
     /// [`crate::USE_RANGE`] of it, with the lockpick at inventory location `tool` (if any).
     /// `seq` is the move sent with it (a newer move cancels it).
     PickLock { target: crate::LockTarget, tool: Option<i32>, seq: u32 },
+    /// Cast `spell` on a door or container from where the PC stands ([`crate::magick`]).
+    Cast { spell: usize, target: crate::LockTarget },
     /// The number of the last state sync the client applied. Sent unreliably, about twice a
     /// second; a client far behind gets a [`Resync`](crate::LedgerDelta::Resync).
     SyncAck { number: u32 },

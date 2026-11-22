@@ -508,6 +508,57 @@ mod tests {
         }
 
         #[test]
+        fn the_unlocking_cantrip_unlocks_the_door_and_costs_fatigue() {
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            let mut sim = booted(dir.path(), &[(7, t(89, 80)), (9, t(100, 100))], BTreeMap::new());
+            sim.take_deltas();
+            sim.app.world_mut().resource_mut::<crate::SimRules>().0.spells.spells =
+                (0..arcanum_rules::SPELLS).map(|i| arcanum_rules::Spell { name: String::new(), description: String::new(), college: i / 5, cost: 10 }).collect();
+            let cast = |sim: &mut SimApp| {
+                sim.receive([(PlayerId(7), PlayerIntent::Cast { spell: crate::SPELL_UNLOCKING_CANTRIP, target: crate::LockTarget::Door(LOCKED) })]);
+                sim.update();
+                sim.take_deltas()
+            };
+            let set = |sim: &mut SimApp, f: &dyn Fn(&mut arcanum_rules::CharacterSheet)| {
+                let world = sim.app.world_mut();
+                let mut q = world.query::<(&PlayerControlled, &mut crate::Sheet)>();
+                let (_, mut sheet) = q.iter_mut(world).find(|(p, _)| p.0 == PlayerId(7)).unwrap();
+                f(&mut sheet.0);
+            };
+            assert!(cast(&mut sim).iter().all(|(_, d)| !matches!(d, LedgerDelta::LockChanged { .. })), "not known");
+            // Known, but too tired: 5 fatigue left, and 20 would take it below -14.
+            let max = sim.app.world().resource::<crate::SimRules>().0.derived(&arcanum_rules::CharacterSheet::default()).fatigue;
+            sim.app.world_mut().resource_mut::<crate::SimRules>().0.spells.spells[1].cost = 20;
+            set(&mut sim, &|s| {
+                s.spells[0] = 2;
+                s.fatigue_damage = max - 5;
+            });
+            let deltas = cast(&mut sim);
+            assert!(deltas.contains(&(PlayerId(7), LedgerDelta::SpellResult { message: crate::NOT_ENOUGH_ENERGY })), "{deltas:?}");
+            sim.app.world_mut().resource_mut::<crate::SimRules>().0.spells.spells[1].cost = 10;
+            set(&mut sim, &|s| s.fatigue_damage = 0);
+            let deltas = cast(&mut sim);
+            assert!(deltas.contains(&(PlayerId(9), LedgerDelta::LockChanged { target: crate::LockTarget::Door(LOCKED), flags: 0 })), "{deltas:?}");
+            let fatigue = deltas.iter().find_map(|(p, d)| match d {
+                LedgerDelta::PcStatus { status, .. } if p.0 == 9 => Some(status.fatigue),
+                _ => None,
+            });
+            assert!(fatigue.is_some_and(|f| f.current == f.max - 10), "{fatigue:?}");
+            let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+            assert_eq!(save.players[&PlayerId(7)].blueprint.sheet.fatigue_damage, 10, "spent fatigue is saved");
+            assert_eq!(save.sector_changes[&LOCKED.sector].portal_flags[&1], 0);
+            assert_eq!(changed(&use_door(&mut sim, 7, LOCKED, 1), 7), Some(true), "and it opens");
+            // 80 game seconds on, three times the heal rate comes back.
+            let now = sim.app.world().resource::<crate::GameClock>().now;
+            sim.app.world_mut().resource_mut::<crate::GameClock>().now = now.plus_ms(crate::RECOVERY_MS + 1000);
+            sim.update();
+            let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+            let rate = sim.app.world().resource::<crate::SimRules>().0.derived(&save.players[&PlayerId(7)].blueprint.sheet).heal_rate;
+            assert_eq!(save.players[&PlayerId(7)].blueprint.sheet.fatigue_damage, (10 - 3 * rate).max(0));
+        }
+
+        #[test]
         fn the_key_opens_a_locked_door_and_leaves_it_locked() {
             let dir = tempfile::tempdir().unwrap();
             write_map(dir.path());
