@@ -1322,8 +1322,9 @@ current PC's). Not run in the real game. Spells: next ("Casting spells").
   (`mes/spell.mes` 600). The Unlocking Cantrip takes any portal or container, clears the locked
   bit, leaves a jam and does not open it.
 - **Fatigue** (`CharacterSheet::fatigue_damage`, saved with the PC): the vial shows fatigue less
-  what was spent. Every 80 000 game ms (10 s real) it recovers three times the heal rate
-  (0x45d5a0 → 0x45e820 → 0x45e910; heal rate `(CN + 1) / 3`).
+  what was spent. Every 80 000 game ms (10 s real) it recovers the heal rate (0x45d5a0 →
+  0x45e820 → 0x45e610; heal rate `(CN + 1) / 3`). Built first as three times the rate, from
+  0x45e910, which is another path (likely resting); corrected in "Falling unconscious".
 - **Builder's calls:** "max visible" range is 15 tiles; the fatigue is charged at once (the
   original waits for the cast animation); the first known college is chosen when none is; the
   cursor is the blue arrow (the original's spell cursor was not found: its setter is a stub).
@@ -1355,3 +1356,27 @@ rest; the Disarm Traps and other skills' views.
 
 Not done: the dragged spell's icon while it moves between slots (the inventory's held art shows
 items only); skills on the bar; clearing a slot (the original has no way either).
+
+## Falling unconscious (after spells on the hotkey bar)
+
+- **Falling** (`arcanum_sim::unconscious`, 0x45d5a0 / 0x45d800 / 0x435a90): fatigue below 1
+  knocks the PC down (goal 62, art animation 7). It stops walking (its place is saved) and its
+  waiting door use, pick-up and lock pick are dropped (0x424070 interrupts its goals).
+- **Lying** (0x4348e0 gates every animation goal on 0x45d790): its player's moves, door uses,
+  pick-ups, lock picks and casts are dropped as they arrive (`gate_unconscious`); the client
+  sends no clicks for an unconscious PC.
+- **Waking** (0x45e610 → 0x434de0): when recovery takes fatigue above 0 it gets up (goal 63, art
+  animation 8). No message and no sound either way, as the original.
+- **Recovery corrected:** the 80-second step heals the heal rate once (0x45e610), not three
+  times (0x45e910 is another path).
+- **Client** (`actors::Posture`): read from each PC's fatigue in `PcStatus`; the fall plays once
+  and holds its last frame; the get-up plays once, then the PC stands (after 3 s if its art does
+  not load).
+- **Checked:** unit tests for the threshold, the recovery and the postures (and their art); a
+  host test: a cast from 5 fatigue knocks the PC down, a move is dropped, fatigue comes back step
+  by step, and once awake it walks. 513 tests pass; the game starts and runs. The fall was not
+  seen in the real game.
+
+Not done: spells being cast or maintained ending (none are maintained yet); the turn ending in
+turn-based combat (0x4b7c90); a PC down on load lying at once (0x435b30) rather than falling;
+NPCs falling unconscious (nothing tires them).

@@ -549,13 +549,54 @@ mod tests {
             assert_eq!(save.players[&PlayerId(7)].blueprint.sheet.fatigue_damage, 10, "spent fatigue is saved");
             assert_eq!(save.sector_changes[&LOCKED.sector].portal_flags[&1], 0);
             assert_eq!(changed(&use_door(&mut sim, 7, LOCKED, 1), 7), Some(true), "and it opens");
-            // 80 game seconds on, three times the heal rate comes back.
+            // 80 game seconds on, the heal rate comes back.
             let now = sim.app.world().resource::<crate::GameClock>().now;
             sim.app.world_mut().resource_mut::<crate::GameClock>().now = now.plus_ms(crate::RECOVERY_MS + 1000);
             sim.update();
             let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
             let rate = sim.app.world().resource::<crate::SimRules>().0.derived(&save.players[&PlayerId(7)].blueprint.sheet).heal_rate;
-            assert_eq!(save.players[&PlayerId(7)].blueprint.sheet.fatigue_damage, (10 - 3 * rate).max(0));
+            assert_eq!(save.players[&PlayerId(7)].blueprint.sheet.fatigue_damage, (10 - rate).max(0));
+        }
+
+        #[test]
+        fn a_cast_that_takes_fatigue_below_one_knocks_the_pc_down_until_it_recovers() {
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            let mut sim = booted(dir.path(), &[(7, t(89, 80))], BTreeMap::new());
+            sim.take_deltas();
+            sim.app.world_mut().resource_mut::<crate::SimRules>().0.spells.spells =
+                (0..arcanum_rules::SPELLS).map(|i| arcanum_rules::Spell { name: String::new(), description: String::new(), college: i / 5, cost: 10 }).collect();
+            {
+                let world = sim.app.world_mut();
+                let rules = world.resource::<crate::SimRules>().0.clone();
+                let mut sheet = world.query_filtered::<&mut crate::Sheet, With<PlayerControlled>>().single_mut(world).unwrap();
+                sheet.0.spells[0] = 2;
+                sheet.0.fatigue_damage = rules.derived(&sheet.0).fatigue - 5;
+            }
+            sim.receive([(PlayerId(7), PlayerIntent::Cast { spell: crate::SPELL_UNLOCKING_CANTRIP, target: crate::LockTarget::Door(LOCKED) })]);
+            sim.update();
+            let down = |sim: &mut SimApp| {
+                let world = sim.app.world_mut();
+                world.query_filtered::<(), (With<PlayerControlled>, With<crate::Unconscious>)>().iter(world).count() == 1
+            };
+            assert!(down(&mut sim), "5 - 10: down");
+            let walking = |sim: &mut SimApp| {
+                let world = sim.app.world_mut();
+                world.query_filtered::<(), (With<PlayerControlled>, With<crate::Walking>)>().iter(world).count() == 1
+            };
+            sim.receive([(PlayerId(7), PlayerIntent::Move { seq: 1, path: vec![t(89, 80), t(88, 80)] })]);
+            sim.update();
+            assert!(!walking(&mut sim), "an unconscious PC does not walk");
+            // Fatigue comes back step by step; above 0 it gets up and walks again.
+            for _ in 0..20 {
+                let now = sim.app.world().resource::<crate::GameClock>().now;
+                sim.app.world_mut().resource_mut::<crate::GameClock>().now = now.plus_ms(crate::RECOVERY_MS);
+                sim.update();
+            }
+            assert!(!down(&mut sim), "awake");
+            sim.receive([(PlayerId(7), PlayerIntent::Move { seq: 2, path: vec![t(89, 80), t(88, 80)] })]);
+            sim.update();
+            assert!(walking(&mut sim));
         }
 
         #[test]
