@@ -196,8 +196,24 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      refuse).
    - **Not built:** hiding the PC in the bed and moving it off the bed's tile (0x45f2d0); NPCs
      in beds.
-4. **Gold and items:** conditions 2 and 0x11; actions 0x23, 0x29 and 0x42. These are the inn
-   beds' needs; check with `02429Black_Root_Inn_Bed_Use.scr`.
+4. **Messages and time** (inn beds). Done.
+   - Action 0x18 (0x44b390) shows line `operand 0` of the script's own dialogue file in the
+     triggerer's message box. The file is `dlg/` beside `scr/`, with the same name and a
+     `.dlg` extension (0x4cee60). In multiplayer it goes to that player only (0x4a2b10).
+     Here it is `LedgerDelta::ScriptMessage`, in the text for the PC's gender.
+   - `.dlg` files (`arcanum_formats::dialog`) have seven groups per entry: number, male
+     text, female text, intelligence, test, response, result.
+   - Actions 0x60 (day + 1), 0x61 (hour), 0x62 (minute) and 0x69 (hours since the start:
+     `days * 24 + hour`, 0x45a890).
+   - **Inn beds** (`01990Inn_Bed_Use.scr`):
+     - the bed's counter 0 picks the inn;
+     - global variables 1043-1052 hold the hour each inn's room is paid until;
+     - "now ≤ paid" sleeps;
+     - otherwise the script shows "You must pay the Inn Keeper to use this bed." (or "...
+       again.") and the bed refuses.
+     - Paying happens in the innkeeper's dialogue (not built).
+   - **Real data:** 543 of the 2399 scripts now run to an end from their first line.
+5. **Gold and items:** conditions 2 and 0x11; actions 0x23, 0x29 and 0x42.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,
    teleports, combat-related actions, the remaining conditions.

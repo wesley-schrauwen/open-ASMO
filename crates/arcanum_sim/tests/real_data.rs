@@ -364,6 +364,7 @@ struct Scripted<'a> {
     library: arcanum_sim::ScriptLibrary,
     globals: arcanum_sim::ScriptGlobals,
     pc: arcanum_sim::PcScriptState,
+    shown: Vec<String>,
 }
 
 impl arcanum_sim::ScriptContext for Scripted<'_> {
@@ -380,8 +381,14 @@ impl arcanum_sim::ScriptContext for Scripted<'_> {
     fn random(&mut self, low: i32, _high: i32) -> i32 {
         low
     }
-    fn is_day(&self) -> bool {
-        true
+    fn now(&self) -> arcanum_sim::GameTime {
+        arcanum_sim::GameTime::at_hour(15)
+    }
+    fn dialog_text(&mut self, script: u32, line: i32, _reader: u32) -> Option<String> {
+        self.library.dialog(self.vfs, script)?.text(line, false).map(str::to_string)
+    }
+    fn show_message(&mut self, _to: u32, text: String) {
+        self.shown.push(text);
     }
 }
 
@@ -392,7 +399,7 @@ fn real_scripts_run_and_the_unbuilt_types_are_counted() {
     let library = arcanum_sim::ScriptLibrary::new(&vfs);
     let numbers: Vec<u32> = library.index.files.keys().copied().collect();
     assert!(numbers.len() >= 2399, "{}", numbers.len());
-    let mut world = Scripted { vfs: &vfs, library, globals: Default::default(), pc: Default::default() };
+    let mut world = Scripted { vfs: &vfs, library, globals: Default::default(), pc: Default::default(), shown: vec![] };
     let invocation = Invocation { attachee: 50, triggerer: 1, other: None, event: 1, start_line: 0 };
     // 01621Open_Bed_CM.scr: global flag 2273 decides.
     assert_eq!(run_hook(&mut world, &mut Attachment::new(0, 0, 1621), invocation).result, HookResult::SkipDefault);
@@ -431,7 +438,7 @@ fn doors_and_containers_near_the_start_carry_their_use_scripts() {
     map.open(Some(&vfs), &name);
     map.load_around(Some(&vfs), TileLoc { x: 90330, y: 84122 });
     let library = arcanum_sim::ScriptLibrary::new(&vfs);
-    let mut world = Scripted { vfs: &vfs, library, globals: Default::default(), pc: Default::default() };
+    let mut world = Scripted { vfs: &vfs, library, globals: Default::default(), pc: Default::default(), shown: vec![] };
     let objects = map.sectors.values().flat_map(|s| s.objects.iter()).chain(map.mobiles.values().flatten());
     let mut found = std::collections::BTreeMap::<(u32, u32), usize>::new();
     let mut results = (0, 0, 0);
@@ -452,3 +459,20 @@ fn doors_and_containers_near_the_start_carry_their_use_scripts() {
     assert!(!found.is_empty(), "the start map has use scripts (scenery 1274 among them)");
 }
 
+
+#[test]
+fn the_inn_bed_script_tells_an_unpaying_pc_to_pay() {
+    use arcanum_sim::{Attachment, HookResult, Invocation, run_hook};
+    let Some(vfs) = vfs() else { return };
+    let library = arcanum_sim::ScriptLibrary::new(&vfs);
+    let mut world = Scripted { vfs: &vfs, library, globals: Default::default(), pc: Default::default(), shown: vec![] };
+    let invocation = Invocation { attachee: 50, triggerer: 1, other: None, event: 1, start_line: 0 };
+    // Counter 0 picks the inn: 1 reads global var 1043, the hour the room is paid until.
+    let run = run_hook(&mut world, &mut Attachment::new(0, 1, 1990), invocation);
+    assert_eq!(run.result, HookResult::RunDefault, "{run:?}");
+    assert!(run.unsupported.is_empty(), "{run:?}");
+    assert_eq!(world.shown, ["You must pay the Inn Keeper to use this bed."]);
+    // Paid until a later hour (the game time here is day 0, 15:00): it sleeps.
+    world.globals.set_var(1043, 20);
+    assert_eq!(run_hook(&mut world, &mut Attachment::new(0, 1, 1990), invocation).result, HookResult::SkipDefault);
+}

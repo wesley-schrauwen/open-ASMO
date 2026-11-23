@@ -27,13 +27,15 @@ pub enum Armed {
     Spell(usize),
 }
 
-/// A host's answer: a `mes/skill_ui.mes` or `mes/spell.mes` line.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A host's answer: a `mes/skill_ui.mes` or `mes/spell.mes` line, or a script's text.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UseResult {
     Skill(u32),
     Spell(u32),
     /// A `mes/SleepUI.mes` line: why the PC may not rest ([`crate::rest_window`]).
     Rest(u32),
+    /// A line a script showed ([`arcanum_sim::script`], action 0x18).
+    Text(String),
 }
 
 /// The host's answers to skill uses and casts, waiting for the message box.
@@ -68,15 +70,19 @@ fn show_results(mut results: ResMut<SkillResults>, data: Option<Res<crate::creat
     let lines = std::mem::take(&mut results.0);
     let Some(mut boxed) = boxed else { return };
     for line in lines {
-        let text = data
-            .as_ref()
-            .and_then(|d| match line {
-                UseResult::Skill(n) => d.skill_ui.get(n),
-                UseResult::Spell(n) => d.spell.get(n),
-                UseResult::Rest(n) => d.sleep_ui.get(n),
-            })
-            .unwrap_or("")
-            .to_string();
+        let text = match line {
+            UseResult::Text(text) => text,
+            line => data
+                .as_ref()
+                .and_then(|d| match line {
+                    UseResult::Skill(n) => d.skill_ui.get(n),
+                    UseResult::Spell(n) => d.spell.get(n),
+                    UseResult::Rest(n) => d.sleep_ui.get(n),
+                    UseResult::Text(_) => None,
+                })
+                .unwrap_or("")
+                .to_string(),
+        };
         boxed.post(crate::message_box::BoxMessage::plain(text), time.as_ref().map_or(0.0, |t| t.elapsed_secs_f64()));
     }
 }

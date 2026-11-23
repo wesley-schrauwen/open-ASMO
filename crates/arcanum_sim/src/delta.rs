@@ -124,6 +124,8 @@ pub enum LedgerDelta {
     SkillResult { message: u32 },
     /// Why the player's spell was not cast: a `mes/spell.mes` line for the message box.
     SpellResult { message: u32 },
+    /// A line a script shows in the player's message box ([`crate::script`], action 0x18).
+    ScriptMessage { text: String },
     /// The player may rest: the sleep window opens, sleeping or waiting ([`crate::rest`]).
     RestWindow { mode: crate::RestMode },
     /// Why the player may not rest: a `mes/SleepUI.mes` line for the message box.

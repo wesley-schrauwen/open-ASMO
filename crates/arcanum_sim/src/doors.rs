@@ -262,11 +262,11 @@ pub fn use_portals(
                 if map.map_object(use_.door).is_some_and(|o| crate::is_bed(o, &map.prototypes)) {
                     beds.0.push((player.0, use_.door));
                 } else {
-                    scripts.hook(&mut world, &mut map, crate::ScriptObject::Map(use_.door), crate::EVENT_USE, player.0);
+                    scripts.hook(&mut world, &mut map, &mut outbox, crate::ScriptObject::Map(use_.door), crate::EVENT_USE, player.0);
                 }
                 continue;
             }
-            if scripts.hook(&mut world, &mut map, crate::ScriptObject::Map(use_.door), crate::EVENT_USE, player.0) == crate::HookResult::SkipDefault {
+            if scripts.hook(&mut world, &mut map, &mut outbox, crate::ScriptObject::Map(use_.door), crate::EVENT_USE, player.0) == crate::HookResult::SkipDefault {
                 continue;
             }
             use_door(&mut map, &mut world, &mut closing, &session, &mut outbox, use_.door, keys);
