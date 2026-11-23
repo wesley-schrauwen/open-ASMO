@@ -125,13 +125,31 @@ Decoded so far, with confidence; the rest are named by the helper they call.
 ## Steps (one PR each)
 
 1. **The reader** (`arcanum_formats::script`, `ScriptIndex`) and this plan. Done.
-2. **The runner on the host** (`arcanum_sim::script`):
-   - the hook, lines, results, the step limit, goto, run-once;
-   - the scalar operands and the object sets for attachee, triggerer and other;
-   - global variables, global flags and the story state in the `WorldSave`;
-   - attachment flags and counters saved with their object;
-   - the control, flag, arithmetic and comparison actions and conditions.
-   - Tested on synthetic scripts and on real ones read from the archives.
+2. **The runner on the host** (`arcanum_sim::script`). Done.
+   - `run_hook` runs an `Attachment` for an `Invocation` (attachee, triggerer, other, event,
+     start line) through a `ScriptContext` the host provides, and says whether the default
+     runs.
+   - Built:
+     - conditions 0, 1, 3, 4, 5 and 0x2b;
+     - actions 1-3, 5, 6, 8, 9, 0xa-0xf, 0x12-0x14, 0x25, 0x2a, 0x2b, 0x64 and 0x65;
+     - object sets 0, 1, 0xa, 0xb and 0xc;
+     - all scalar operands.
+   - Global state is saved in the `WorldSave` (`scripts`), a PC's in its `PlayerSave`
+     (`script_state`).
+   - `ScriptLibrary` indexes `scr/` and parses on first use.
+   - Loop break follows 0x44bc60: it goes past the first line from the loop's start whose
+     condition is 0 and whose then action is 0x13. Random is inclusive (0x4cef00).
+   - **Builder's call:** a condition, action or object set not built yet stops the script
+     and runs the default, and the runner reports it, rather than half-running it.
+   - **Real data:** from their first line, 459 of the 2399 scripts run to an end. The rest
+     stop at, most often:
+     - action 4, dialogue (262 scripts);
+     - action 0x2c, teleport (261);
+     - condition 6, quest state (139);
+     - actions 0x22 and 0x51 (105 each);
+     - action 0x18 (89);
+     - condition 0x14 (80);
+     - object set 8, critters near (67).
 3. **Use** (event 1) on doors, containers and scenery through the runner, so the default use
    can be skipped. Beds: the sleep window's bed path (`plans/world_milestone.md` → "Beds wait
    for scripts"), with occupancy and double healing.
