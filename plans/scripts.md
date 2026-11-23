@@ -178,9 +178,24 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      scripts. Most are traps, plus 1180 ("Grave_Container_Use") and others not built yet,
      which run the default. 1621 ("Search the bed") keeps its bed shut until global flag 2273
      is set.
-3b. **Beds and scenery use:** clicking scenery walks to it and uses it, running its use
-   script. A bed (art category 22) takes the sleep window's bed path
-   (`plans/world_milestone.md` → "Beds wait for scripts"), with occupancy and double healing.
+3b. **Beds and scenery use.** Done.
+   - Using scenery (the same `UsePortal` request as doors: the PC walks there first) runs its
+     use script.
+   - A bed (art category 22, 0x428c74) asks for the sleep window on it instead (`BedRequests`,
+     `arcanum_sim::rest`):
+     - no town map check;
+     - the bed's use script running the default refuses with `SleepUI.mes` 8;
+     - another PC resting in it refuses with 10;
+     - otherwise the window opens for sleeping, and each hour heals twice.
+   - The host keeps what the window was opened with (`RestOffer`).
+   - **Client:** a click on a bed, or on scenery with a use script, walks there and uses it.
+     Other scenery lets the click through to the ground (builder's call, so trees do not swallow
+     walking).
+   - **Data:** all beds are sector objects. The start map has 271 beds, 47 of them with a use
+     script; Bates Mansion's beds all have one; most other maps have none (so their beds
+     refuse).
+   - **Not built:** hiding the PC in the bed and moving it off the bed's tile (0x45f2d0); NPCs
+     in beds.
 4. **Gold and items:** conditions 2 and 0x11; actions 0x23, 0x29 and 0x42. These are the inn
    beds' needs; check with `02429Black_Root_Inn_Bed_Use.scr`.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.

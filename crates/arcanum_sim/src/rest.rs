@@ -21,8 +21,17 @@
 //!   [`PlayerIntent::StopRest`](crate::PlayerIntent::StopRest) ends it early (S again).
 //!   Either way the player is sent [`LedgerDelta::RestEnded`](crate::LedgerDelta::RestEnded).
 //!
-//! Not built: beds (scenery category 22: twice the healing, "That bed is occupied.", an inn's
-//! script refusing with "You cannot sleep here."); the combat check ("You cannot sleep with
+//! - **Beds** (scenery of art category [`BED_CATEGORY`], 0x428c74 → 0x57b180): using one asks
+//!   for the window on it ([`BedRequests`]). No town map check; the bed's "use" script runs
+//!   (0x441980): running the default refuses with [`CANNOT_SLEEP_HERE`] ("You cannot sleep here.
+//!   Find an inn and pay for a bed.": every bed without a script, and an inn's until paid);
+//!   a bed another PC rests in refuses with [`BED_OCCUPIED`] (0x45f2d0). The window opens
+//!   for sleeping, and each hour in the bed heals twice ([`heal_at_rest`]).
+//!
+//! The host keeps what the window was opened with ([`RestOffer`]) for the rest that follows.
+//!
+//! Not built: hiding the PC in the bed and moving it off the bed's tile (0x45f2d0); NPCs in
+//! beds (`scenery_whos_in_me`); the combat check ("You cannot sleep with
 //! enemies near."); followers resting too; the hit points (nothing damages them yet, so "Until
 //! Healed" stops after one hour, as the original does at full health); death ending it.
 
@@ -39,6 +48,12 @@ use crate::{LedgerDelta, LoadedMap, Outbox, PlayerControlled, PlayerId, Position
 pub const ALREADY_UNCONSCIOUS: u32 = 11;
 /// `mes/SleepUI.mes`: "You cannot wait here."
 pub const CANNOT_WAIT: u32 = 20;
+/// `mes/SleepUI.mes`: "You cannot sleep here. Find an inn and pay for a bed."
+pub const CANNOT_SLEEP_HERE: u32 = 8;
+/// `mes/SleepUI.mes`: "That bed is occupied."
+pub const BED_OCCUPIED: u32 = 10;
+/// The beds' scenery art category (`art/scenery/scenery.mes` 22000-22011).
+pub const BED_CATEGORY: u32 = 22;
 /// The town map list, with `[w:1]` on the towns where waiting is allowed.
 pub const TOWN_MAP: &str = "Rules/TownMap.mes";
 /// Host ticks from the click to the first hour (the original's 50 ms, rounded up).
@@ -92,13 +107,27 @@ impl RestOption {
     pub const ALL: [RestOption; 8] = [Self::Hours(1), Self::Hours(2), Self::Hours(4), Self::Hours(8), Self::Hours(24), Self::UntilMorning, Self::UntilEvening, Self::UntilHealed];
 }
 
-/// A PC resting: hours left to go (for [`RestOption::Hours`]) and ticks to the next hour.
+/// Whether `object` is a bed: scenery of art category [`BED_CATEGORY`] (0x428c74).
+pub fn is_bed(object: &arcanum_formats::object::Object, prototypes: &arcanum_formats::object::Prototypes) -> bool {
+    object.object_type == arcanum_formats::object::TYPE_SCENERY && prototypes.art_id(object).is_some_and(|a| a.scenery_category() == BED_CATEGORY)
+}
+
+/// A PC resting: hours left to go (for [`RestOption::Hours`]), ticks to the next hour, and
+/// the bed it rests in.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Resting {
     pub mode: RestMode,
     pub option: RestOption,
     pub hours_left: u32,
     pub ticks: u32,
+    pub bed: Option<crate::MapObjectId>,
+}
+
+/// The sleep window a PC's player was given: in a bed, or not.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RestOffer {
+    pub mode: RestMode,
+    pub bed: Option<crate::MapObjectId>,
 }
 
 impl Resting {
@@ -107,7 +136,7 @@ impl Resting {
             RestOption::Hours(n) => n.max(1),
             _ => 0,
         };
-        Self { mode, option, hours_left, ticks: FIRST_STEP_TICKS }
+        Self { mode, option, hours_left, ticks: FIRST_STEP_TICKS, bed: None }
     }
 
     /// After an hour has passed, ending at `hour` with `hp_damage` left: whether to go on
@@ -156,6 +185,10 @@ pub fn rest_mode(townmap: u32, waiting: &BTreeSet<u32>) -> Result<RestMode, u32>
 #[derive(Resource, Debug, Default)]
 pub struct RestRequests(pub Vec<(PlayerId, Option<RestOption>)>);
 
+/// Players who used a bed: they ask for the window on it.
+#[derive(Resource, Debug, Default)]
+pub struct BedRequests(pub Vec<(PlayerId, crate::MapObjectId)>);
+
 /// Players who asked to stop resting.
 #[derive(Resource, Debug, Default)]
 pub struct StopRestRequests(pub Vec<PlayerId>);
@@ -164,7 +197,7 @@ pub struct StopRestRequests(pub Vec<PlayerId>);
 #[derive(Resource, Debug, Default)]
 pub struct WaitingTowns(pub Option<BTreeSet<u32>>);
 
-type RestingPc<'a> = (Entity, &'a PlayerControlled, &'a Position, &'a Sheet, Has<crate::Walking>, Has<Resting>);
+type RestingPc<'a> = (Entity, &'a PlayerControlled, &'a Position, &'a Sheet, Has<crate::Walking>, Option<&'a Resting>, Option<&'a RestOffer>);
 
 /// Answers the requests for the window and to rest: see the module docs.
 #[allow(clippy::too_many_arguments)]
@@ -174,30 +207,58 @@ pub fn start_resting(
     mut stops: ResMut<StopRestRequests>,
     mut towns: ResMut<WaitingTowns>,
     vfs: Option<Res<crate::SimVfs>>,
-    map: Res<LoadedMap>,
+    mut map: ResMut<LoadedMap>,
     session: Res<Session>,
     rules: Res<SimRules>,
     mut world: ResMut<WorldState>,
     mut outbox: ResMut<Outbox>,
     pcs: Query<RestingPc>,
+    (mut beds, mut scripts): (ResMut<BedRequests>, crate::ScriptHost),
 ) {
     for player in stops.0.drain(..) {
-        if let Some((entity, ..)) = pcs.iter().find(|pc| pc.1.0 == player && pc.5) {
-            commands.entity(entity).remove::<Resting>();
+        if let Some((entity, ..)) = pcs.iter().find(|pc| pc.1.0 == player && pc.5.is_some()) {
+            commands.entity(entity).remove::<(Resting, RestOffer)>();
             outbox.0.push((player, LedgerDelta::RestEnded));
         }
     }
-    if requests.0.is_empty() {
-        return;
-    }
     let in_world = session.players.values().filter(|s| matches!(s, SessionPlayer::InWorld(_))).count();
-    for (player, option) in requests.0.drain(..) {
-        let Some((entity, _, position, sheet, walking, resting)) = pcs.iter().find(|pc| pc.1.0 == player) else { continue };
-        if resting || in_world > 1 {
+    let unconscious = |sheet: &Sheet| crate::is_unconscious(pc_status(&rules.0, &sheet.0).fatigue.current);
+    // A bed (0x57b180 with a bed): no town map; its script, then whether it is taken.
+    for (player, bed) in beds.0.drain(..) {
+        let Some((entity, _, _, sheet, _, resting, _)) = pcs.iter().find(|pc| pc.1.0 == player) else { continue };
+        if resting.is_some() || in_world > 1 {
             continue;
         }
-        if crate::is_unconscious(pc_status(&rules.0, &sheet.0).fatigue.current) {
+        if unconscious(sheet) {
             outbox.0.push((player, LedgerDelta::RestRefused { message: ALREADY_UNCONSCIOUS }));
+            continue;
+        }
+        if scripts.hook(&mut world, &mut map, crate::ScriptObject::Map(bed), crate::EVENT_USE, player) == crate::HookResult::RunDefault {
+            outbox.0.push((player, LedgerDelta::RestRefused { message: CANNOT_SLEEP_HERE }));
+            continue;
+        }
+        if pcs.iter().any(|pc| pc.1.0 != player && pc.5.is_some_and(|r| r.bed == Some(bed))) {
+            outbox.0.push((player, LedgerDelta::RestRefused { message: BED_OCCUPIED }));
+            continue;
+        }
+        commands.entity(entity).insert(RestOffer { mode: RestMode::Sleep, bed: Some(bed) });
+        outbox.0.push((player, LedgerDelta::RestWindow { mode: RestMode::Sleep }));
+    }
+    for (player, option) in requests.0.drain(..) {
+        let Some((entity, _, position, sheet, walking, resting, offer)) = pcs.iter().find(|pc| pc.1.0 == player) else { continue };
+        if resting.is_some() || in_world > 1 {
+            continue;
+        }
+        if unconscious(sheet) {
+            outbox.0.push((player, LedgerDelta::RestRefused { message: ALREADY_UNCONSCIOUS }));
+            continue;
+        }
+        // Resting in the bed the window was opened on.
+        if let (Some(option), Some(&RestOffer { mode, bed: Some(bed) })) = (option, offer) {
+            commands.entity(entity).insert(Resting { bed: Some(bed), ..Resting::new(mode, option) }).remove::<(RestOffer, crate::Walking, crate::PendingUse, crate::PendingPick, crate::PendingPickUp)>();
+            if walking {
+                crate::record_position(&mut world, player, position.0);
+            }
             continue;
         }
         let waiting = towns.0.get_or_insert_with(|| vfs.as_ref().map(|v| load_waiting_towns(&v.0.read().expect("vfs lock"))).unwrap_or_default());
@@ -210,13 +271,14 @@ pub fn start_resting(
             }
         };
         let Some(option) = option else {
+            commands.entity(entity).insert(RestOffer { mode, bed: None });
             outbox.0.push((player, LedgerDelta::RestWindow { mode }));
             continue;
         };
         if mode == RestMode::Wait && option == RestOption::UntilHealed {
             continue;
         }
-        commands.entity(entity).insert(Resting::new(mode, option)).remove::<(crate::Walking, crate::PendingUse, crate::PendingPick, crate::PendingPickUp)>();
+        commands.entity(entity).insert(Resting::new(mode, option)).remove::<(RestOffer, crate::Walking, crate::PendingUse, crate::PendingPick, crate::PendingPickUp)>();
         if walking {
             crate::record_position(&mut world, player, position.0);
         }
@@ -242,7 +304,8 @@ pub fn rest_steps(
         clock.jump(u64::from(crate::HOUR_MS));
         if resting.mode == RestMode::Sleep {
             let heal_rate = rules.0.derived(&sheet.0).heal_rate;
-            let (_, fatigue) = heal_at_rest(0, sheet.0.fatigue_damage, heal_rate, 1);
+            let times = if resting.bed.is_some() { 2 } else { 1 };
+            let (_, fatigue) = heal_at_rest(0, sheet.0.fatigue_damage, heal_rate, times);
             if fatigue != sheet.0.fatigue_damage {
                 sheet.0.fatigue_damage = fatigue;
                 if let Some(saved) = world.0.as_mut().and_then(|w| w.players.get_mut(&player.0)) {

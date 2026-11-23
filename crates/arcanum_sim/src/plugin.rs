@@ -56,6 +56,7 @@ impl Plugin for SimPlugin {
             .init_resource::<RestRequests>()
             .init_resource::<StopRestRequests>()
             .init_resource::<WaitingTowns>()
+            .init_resource::<crate::BedRequests>()
             .init_resource::<crate::Scripts>()
             .init_resource::<crate::ScriptReports>()
             .init_resource::<InventoryAcks>()

@@ -173,7 +173,7 @@ fn door_tile(map: &LoadedMap, id: MapObjectId) -> Option<TileLoc> {
     crate::object_location(map.map_object(id)?)
 }
 
-/// A player's request to use a door, waiting for their PC to be in range. `seq` is the move it
+/// A player's request to use a door or scenery, waiting for their PC to be in range. `seq` is the move it
 /// came with: a newer move drops it.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingUse {
@@ -241,6 +241,7 @@ pub fn use_portals(
     mut outbox: ResMut<Outbox>,
     pcs: Query<UserQuery, With<PlayerControlled>>,
     mut scripts: crate::ScriptHost,
+    mut beds: ResMut<crate::BedRequests>,
 ) {
     let mut pending: Vec<Waiting> = pcs.iter().filter_map(|(e, _, p, w, u, ..)| u.map(|u| (e, p.0, w.is_some(), *u))).collect();
     for (player, door, seq) in requests.0.drain(..) {
@@ -255,6 +256,16 @@ pub fn use_portals(
             commands.entity(entity).remove::<PendingUse>();
             // The door's "use" script first (0x428c17): it may handle the use itself.
             let Ok((.., keys, player)) = pcs.get(entity) else { continue };
+            // Scenery: a bed opens the sleep window on it, which runs its script (0x428c74);
+            // other scenery has only its script.
+            if map.map_object(use_.door).is_some_and(|o| o.object_type == arcanum_formats::object::TYPE_SCENERY) {
+                if map.map_object(use_.door).is_some_and(|o| crate::is_bed(o, &map.prototypes)) {
+                    beds.0.push((player.0, use_.door));
+                } else {
+                    scripts.hook(&mut world, &mut map, crate::ScriptObject::Map(use_.door), crate::EVENT_USE, player.0);
+                }
+                continue;
+            }
             if scripts.hook(&mut world, &mut map, crate::ScriptObject::Map(use_.door), crate::EVENT_USE, player.0) == crate::HookResult::SkipDefault {
                 continue;
             }
@@ -376,7 +387,12 @@ mod tests {
                     .build()
             };
             let mut sector = SectorBuilder::new();
-            sector.objects = vec![door(72, 0), door(90, OPF_LOCKED), door(110, OPF_LOCKED | OPF_LOCKED_NIGHT)];
+            // A bed (scenery, art category 22) at (120, 120).
+            let bed = ObjectBuilder::new(arcanum_formats::object::TYPE_SCENERY)
+                .field("current_aid", Value::Int32((0x4000_0000u32 | crate::BED_CATEGORY << 6) as i32))
+                .field("location", Value::Int64(Some(120 | (120i64 << 32))))
+                .build();
+            sector.objects = vec![door(72, 0), door(90, OPF_LOCKED), door(110, OPF_LOCKED | OPF_LOCKED_NIGHT), bed];
             std::fs::write(folder.join(SectorId::new(1, 1).file_name()), sector.build()).unwrap();
         }
 
@@ -401,6 +417,7 @@ mod tests {
         const DOOR: MapObjectId = MapObjectId { sector: SectorId(1 << 26 | 1), index: 0 };
         const LOCKED: MapObjectId = MapObjectId { sector: SectorId(1 << 26 | 1), index: 1 };
         const NIGHT_LOCKED: MapObjectId = MapObjectId { sector: SectorId(1 << 26 | 1), index: 2 };
+        const BED: MapObjectId = MapObjectId { sector: SectorId(1 << 26 | 1), index: 3 };
 
         #[test]
         fn a_door_runs_its_use_script_first_and_the_script_can_keep_it_shut() {
@@ -432,6 +449,43 @@ mod tests {
             assert!(save.scripts.flags.contains(&9));
             assert!(save.players[&PlayerId(7)].script_state.flags.contains(&4), "the triggering PC's flag");
             assert!(sim.app.world().resource::<crate::ScriptReports>().0.is_empty());
+        }
+
+        #[test]
+        fn a_bed_refuses_without_its_script_saying_so_then_sleeps_twice_as_well() {
+            use crate::script::tests::{always, block};
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            let mut sim = booted(dir.path(), &[(7, t(119, 120))], BTreeMap::new());
+            sim.take_deltas();
+            assert!(sim.app.world().resource::<LoadedMap>().map_object(BED).is_some_and(|o| crate::is_bed(o, &sim.app.world().resource::<LoadedMap>().prototypes)));
+            let use_bed = |sim: &mut SimApp, seq: u32| {
+                sim.receive([(PlayerId(7), PlayerIntent::UsePortal { door: BED, seq })]);
+                sim.update();
+                sim.take_deltas()
+            };
+            // No script: the default, "You cannot sleep here. Find an inn and pay for a bed."
+            let deltas = use_bed(&mut sim, 0);
+            assert!(deltas.contains(&(PlayerId(7), LedgerDelta::RestRefused { message: crate::CANNOT_SLEEP_HERE })), "{deltas:?}");
+            // A script that handles the use (a paid inn bed): the sleep window opens on the bed.
+            let script = arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(1, &[]))] };
+            sim.app.world_mut().resource_mut::<crate::Scripts>().0.get_or_insert_with(Default::default).insert(600, script);
+            sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(crate::ScriptObject::Map(BED), crate::EVENT_USE, crate::Attachment::new(0, 0, 600));
+            let deltas = use_bed(&mut sim, 1);
+            assert!(deltas.contains(&(PlayerId(7), LedgerDelta::RestWindow { mode: crate::RestMode::Sleep })), "{deltas:?}");
+            sim.receive([(PlayerId(7), PlayerIntent::Rest { option: crate::RestOption::Hours(1) })]);
+            sim.update();
+            let resting = {
+                let world = sim.app.world_mut();
+                world.query_filtered::<&crate::Resting, With<PlayerControlled>>().single(world).ok().copied()
+            };
+            assert_eq!(resting.and_then(|r| r.bed), Some(BED), "resting in the bed: twice the healing");
+            let mut ended = false;
+            for _ in 0..crate::FIRST_STEP_TICKS + 1 {
+                sim.update();
+                ended |= sim.take_deltas().contains(&(PlayerId(7), LedgerDelta::RestEnded));
+            }
+            assert!(ended);
         }
 
         #[test]
