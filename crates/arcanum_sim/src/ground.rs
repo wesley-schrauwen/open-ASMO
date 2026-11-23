@@ -439,6 +439,7 @@ pub fn pick_up_items(
     vfs: Option<Res<crate::SimVfs>>,
     mut outbox: ResMut<Outbox>,
     mut pcs: Query<PickerQuery>,
+    mut scripts: crate::ScriptHost,
 ) {
     let mut fresh: std::collections::HashMap<Entity, PendingPickUp> = std::collections::HashMap::new();
     for (player, item, seq) in requests.0.drain(..) {
@@ -466,6 +467,13 @@ pub fn pick_up_items(
         commands.entity(entity).remove::<PendingPickUp>();
         let player = controlled.0;
         // A container opens unless locked, jammed or held; its source rolls on the first opening.
+        if map.container_object(want.item).is_some() {
+            // The container's "use" script first (0x428c17): it may handle the opening itself.
+            let attachee = crate::ScriptObject::ground(want.item).expect("a container");
+            if scripts.hook(&mut world, &mut map, attachee, crate::EVENT_USE, player) == crate::HookResult::SkipDefault {
+                continue;
+            }
+        }
         if let Some(object) = map.container_object(want.item) {
             let flags = map.prototypes.int(object, "container_flags").unwrap_or(0);
             let lock = map.prototypes.int(object, "container_key_id").unwrap_or(0);

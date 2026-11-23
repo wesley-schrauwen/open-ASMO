@@ -94,11 +94,18 @@ pub struct SectorDelta {
     /// mobile objects.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub container_flags: BTreeMap<u32, i32>,
+    /// Script attachments a script changed, by object (index in the sector's list) and event
+    /// ([`crate::script_host`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub object_scripts: BTreeMap<u32, BTreeMap<u32, crate::Attachment>>,
+    /// The same for the sector's mobile objects.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mobile_scripts: BTreeMap<u32, BTreeMap<u32, crate::Attachment>>,
 }
 
 impl SectorDelta {
     pub fn is_empty(&self) -> bool {
-        self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty()
+        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty()
     }
 }
 

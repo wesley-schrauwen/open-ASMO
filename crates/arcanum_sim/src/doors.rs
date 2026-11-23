@@ -222,7 +222,7 @@ fn use_door(map: &mut LoadedMap, world: &mut WorldState, closing: &mut ClosingDo
     true
 }
 
-type UserQuery<'a> = (Entity, &'a NetId, &'a Position, Option<&'a Walking>, Option<&'a PendingUse>, Option<&'a crate::Inventory>);
+type UserQuery<'a> = (Entity, &'a NetId, &'a Position, Option<&'a Walking>, Option<&'a PendingUse>, Option<&'a crate::Inventory>, &'a PlayerControlled);
 /// PCs and NPCs.
 type Critter = Or<(With<PlayerControlled>, With<Npc>)>;
 /// A PC with a use waiting: its tile and whether it walks.
@@ -240,20 +240,25 @@ pub fn use_portals(
     session: Res<Session>,
     mut outbox: ResMut<Outbox>,
     pcs: Query<UserQuery, With<PlayerControlled>>,
+    mut scripts: crate::ScriptHost,
 ) {
-    let mut pending: Vec<Waiting> = pcs.iter().filter_map(|(e, _, p, w, u, _)| u.map(|u| (e, p.0, w.is_some(), *u))).collect();
+    let mut pending: Vec<Waiting> = pcs.iter().filter_map(|(e, _, p, w, u, ..)| u.map(|u| (e, p.0, w.is_some(), *u))).collect();
     for (player, door, seq) in requests.0.drain(..) {
         let Some(SessionPlayer::InWorld(net_id)) = session.players.get(&player) else { continue };
-        let Some((entity, _, &Position(at), walking, _, _)) = pcs.iter().find(|pc| pc.1 == net_id) else { continue };
+        let Some((entity, _, &Position(at), walking, ..)) = pcs.iter().find(|pc| pc.1 == net_id) else { continue };
         pending.retain(|p| p.0 != entity);
         pending.push((entity, at, walking.is_some(), PendingUse { door, seq }));
     }
     for (entity, at, walking, use_) in pending {
         let in_range = door_tile(&map, use_.door).is_some_and(|t| within(at, t, USE_RANGE));
         if in_range {
-            let keys = pcs.get(entity).ok().and_then(|pc| pc.5);
-            use_door(&mut map, &mut world, &mut closing, &session, &mut outbox, use_.door, keys);
             commands.entity(entity).remove::<PendingUse>();
+            // The door's "use" script first (0x428c17): it may handle the use itself.
+            let Ok((.., keys, player)) = pcs.get(entity) else { continue };
+            if scripts.hook(&mut world, &mut map, crate::ScriptObject::Map(use_.door), crate::EVENT_USE, player.0) == crate::HookResult::SkipDefault {
+                continue;
+            }
+            use_door(&mut map, &mut world, &mut closing, &session, &mut outbox, use_.door, keys);
         } else if walking {
             commands.entity(entity).insert(use_);
         } else {
@@ -396,6 +401,38 @@ mod tests {
         const DOOR: MapObjectId = MapObjectId { sector: SectorId(1 << 26 | 1), index: 0 };
         const LOCKED: MapObjectId = MapObjectId { sector: SectorId(1 << 26 | 1), index: 1 };
         const NIGHT_LOCKED: MapObjectId = MapObjectId { sector: SectorId(1 << 26 | 1), index: 2 };
+
+        #[test]
+        fn a_door_runs_its_use_script_first_and_the_script_can_keep_it_shut() {
+            use crate::script::tests::{always, block, line, n, op};
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            // The door carries script 500 for "use" (as a save that already changed it).
+            let mut changes = BTreeMap::new();
+            let delta: &mut crate::SectorDelta = changes.entry(DOOR.sector).or_default();
+            delta.object_scripts.insert(DOOR.index, BTreeMap::from([(crate::EVENT_USE, crate::Attachment::new(0, 0, 500))]));
+            let mut sim = booted(dir.path(), &[(7, t(71, 80))], changes);
+            sim.take_deltas();
+            // Count the uses, set global flag 9 and PC flag 4; the first use is the script's own.
+            let script = arcanum_formats::script::Script {
+                description: String::new(),
+                flags: 0,
+                lines: vec![
+                    always(block(0xb, &[op(0, 0), op(0, 0), n(1)])),
+                    always(block(0x64, &[n(9)])),
+                    always(block(0xa, &[op(6, (1 << 16) | 4), n(1)])),
+                    line(block(4, &[op(0, 0), n(1)]), block(1, &[]), block(2, &[])),
+                ],
+            };
+            sim.app.world_mut().resource_mut::<crate::Scripts>().0.get_or_insert_with(Default::default).insert(500, script);
+            assert_eq!(changed(&use_door(&mut sim, 7, DOOR, 0), 7), None, "the script handled it: shut");
+            assert_eq!(changed(&use_door(&mut sim, 7, DOOR, 1), 7), Some(true), "then the default: open");
+            let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+            assert_eq!(save.sector_changes[&DOOR.sector].object_scripts[&DOOR.index][&crate::EVENT_USE].counters[0], 2, "counted and saved");
+            assert!(save.scripts.flags.contains(&9));
+            assert!(save.players[&PlayerId(7)].script_state.flags.contains(&4), "the triggering PC's flag");
+            assert!(sim.app.world().resource::<crate::ScriptReports>().0.is_empty());
+        }
 
         #[test]
         fn a_night_lock_holds_only_at_night() {
