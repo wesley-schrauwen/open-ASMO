@@ -357,3 +357,61 @@ fn a_skilled_pc_picks_a_locked_chest_on_the_start_map_with_a_lockpick() {
     sim.update();
     assert!(sim.take_deltas().iter().any(|(_, d)| *d == LedgerDelta::PileOpened { pile: chest }), "and it opens");
 }
+
+/// A world for real scripts: object 1 is the only PC.
+struct Scripted<'a> {
+    vfs: &'a Vfs,
+    library: arcanum_sim::ScriptLibrary,
+    globals: arcanum_sim::ScriptGlobals,
+    pc: arcanum_sim::PcScriptState,
+}
+
+impl arcanum_sim::ScriptContext for Scripted<'_> {
+    type Object = u32;
+    fn script(&mut self, number: u32) -> Option<std::sync::Arc<arcanum_formats::script::Script>> {
+        self.library.get(self.vfs, number)
+    }
+    fn globals(&mut self) -> &mut arcanum_sim::ScriptGlobals {
+        &mut self.globals
+    }
+    fn pc_state(&mut self, object: u32) -> Option<&mut arcanum_sim::PcScriptState> {
+        (object == 1).then_some(&mut self.pc)
+    }
+    fn random(&mut self, low: i32, _high: i32) -> i32 {
+        low
+    }
+    fn is_day(&self) -> bool {
+        true
+    }
+}
+
+#[test]
+fn real_scripts_run_and_the_unbuilt_types_are_counted() {
+    use arcanum_sim::{Attachment, HookResult, Invocation, Unsupported, run_hook};
+    let Some(vfs) = vfs() else { return };
+    let library = arcanum_sim::ScriptLibrary::new(&vfs);
+    let numbers: Vec<u32> = library.index.files.keys().copied().collect();
+    assert!(numbers.len() >= 2399, "{}", numbers.len());
+    let mut world = Scripted { vfs: &vfs, library, globals: Default::default(), pc: Default::default() };
+    let invocation = Invocation { attachee: 50, triggerer: 1, other: None, event: 1, start_line: 0 };
+    // 01621Open_Bed_CM.scr: global flag 2273 decides.
+    assert_eq!(run_hook(&mut world, &mut Attachment::new(0, 0, 1621), invocation).result, HookResult::SkipDefault);
+    world.globals.set_flag(2273, true);
+    assert_eq!(run_hook(&mut world, &mut Attachment::new(0, 0, 1621), invocation).result, HookResult::RunDefault);
+    // Every script from its first line: what stops them.
+    let (mut finished, mut stops) = (0, std::collections::BTreeMap::<String, usize>::new());
+    for number in numbers {
+        world.globals = Default::default();
+        let run = run_hook(&mut world, &mut Attachment::new(0, 0, number), invocation);
+        match run.unsupported.first() {
+            None => finished += 1,
+            Some(Unsupported::Condition { kind, .. }) => *stops.entry(format!("condition {kind:#x}")).or_default() += 1,
+            Some(Unsupported::Action { kind, .. }) => *stops.entry(format!("action {kind:#x}")).or_default() += 1,
+            Some(Unsupported::ObjectSet { kind, .. }) => *stops.entry(format!("set {kind:#x}")).or_default() += 1,
+        }
+    }
+    let mut top: Vec<_> = stops.into_iter().collect();
+    top.sort_by_key(|t| std::cmp::Reverse(t.1));
+    eprintln!("{finished} scripts ran to an end; stopped by: {:?}", &top[..top.len().min(15)]);
+    assert!(finished > 0);
+}

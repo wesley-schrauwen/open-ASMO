@@ -40,6 +40,9 @@ pub struct WorldSave {
     /// The number the next dropped item gets.
     #[serde(default)]
     pub next_dropped: u32,
+    /// The scripts' global variables and flags and the story state ([`crate::script`]).
+    #[serde(default)]
+    pub scripts: crate::ScriptGlobals,
 }
 
 fn default_first_year() -> u32 {
@@ -55,6 +58,9 @@ pub struct PlayerSave {
     /// blueprint's starting kit ([`crate::starting_kit`]).
     #[serde(default)]
     pub inventory: Option<crate::Inventory>,
+    /// The PC's script variables and flags ([`crate::script`]).
+    #[serde(default)]
+    pub script_state: crate::PcScriptState,
 }
 
 /// What changed in one sector since the original data. Objects are named by their place in the
@@ -137,6 +143,7 @@ impl WorldSave {
             time: crate::GameTime::at_hour(start.clock.hour),
             first_year: start.clock.year,
             next_dropped: 0,
+            scripts: Default::default(),
         }
     }
 
@@ -195,7 +202,7 @@ impl WorldState {
     pub fn add_player(&mut self, start: Option<&StartMap>, player: PlayerId, blueprint: CharacterBlueprint) -> bool {
         let Some(start) = start else { return false };
         let save = self.0.get_or_insert_with(|| WorldSave::new_game(start));
-        save.players.insert(player, PlayerSave { blueprint, position: start.position, inventory: None });
+        save.players.insert(player, PlayerSave { blueprint, position: start.position, inventory: None, script_state: Default::default() });
         true
     }
 }

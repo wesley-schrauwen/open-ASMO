@@ -557,7 +557,7 @@ mod tests {
         let mut save = WorldSave { map: MAP.into(), ..WorldSave::new_game(&crate::StartMap { map: MAP.into(), position: TileLoc { x: 0, y: 0 }, clock: Default::default() }) };
         for &(id, name, position) in players {
             let sheet = CharacterSheet { name: name.into(), ..Default::default() };
-            save.players.insert(PlayerId(id), PlayerSave { blueprint: CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None }, position, inventory: None });
+            save.players.insert(PlayerId(id), PlayerSave { blueprint: CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None }, position, inventory: None, script_state: Default::default() });
         }
         save
     }
