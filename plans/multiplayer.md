@@ -118,3 +118,12 @@ Three boundaries keep the transport swappable, for example to Steamworks later:
 - [World milestone](world_milestone.md): the first networked world and its trust model.
 - [Combat design](combat_design.md): turn-based companion AI and the per-cycle party stance.
 - [Companions](companions.md): follower management.
+
+## Big moves wait for every player (owner's decision, 2026-11-23)
+
+A teleport, a map change (stairs up or down, entering a building such as a cathedral),
+anything instanced, or another sudden big movement does not happen at once. Every player
+sees a popup naming who caused it ("Virgil wants to go downstairs"), and the party moves only
+once all have ticked it. This holds whether a script or the map's jump points cause it.
+Quests and story progress go ahead without asking. Open questions are listed in
+`plans/scripts.md` → Multiplayer.

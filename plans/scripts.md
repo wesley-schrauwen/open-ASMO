@@ -28,21 +28,19 @@ Here:
   - fades and teleports (actions 0x66/0x67) are skipped in multiplayer in the original, and
     here they move only the PCs involved.
 - **Randomness** comes from the host's `HostRng`.
-- **Shared story moments wait for everyone** (owner's decision, 2026-11-23):
-  - When a script does something that moves the story on for the whole party, every player
-    sees a popup naming who did it, e.g. "Virgil has continued the quest". Each player ticks
-    it, and the script goes on only when all have.
-  - Candidates (to confirm with the owner as each is built):
-    - teleports and map changes (0x2c, 0x66);
-    - fades, movies and end slides (0x67, scripts 997/999);
-    - the story state rising (0x2b);
-    - quest state changes (0x10, 0x11).
-    - Private things (a PC's own gold, items, float text, its own dialogue) do not wait.
-  - For the runner this means a run can **pause** at such an action and **resume** after the
-    vote. Its state (line, locals, local objects, loop, pending script replacement) must be
-    a value the host can keep across ticks (and in the save), not a stack frame.
-  - Open: what happens while waiting (the clock, the other players' actions, combat), a
-    timeout or the host deciding, a player leaving mid-vote, and whether anyone can say no.
+- **Big moves wait for everyone** (owner's decision, 2026-11-23):
+  - What waits: a teleport, a map change (stairs up or down, entering a building such as a
+    cathedral), anything instanced, or another sudden big movement. Every player sees a
+    popup naming who caused it, and it happens only once all have ticked it.
+  - Scripts: teleports (0x2c, 0x66) and their fades (0x67).
+  - Not scripts: the map's jump points and stairs; see `plans/multiplayer.md`.
+  - What does not wait: quests, the story state, reputation, gold, items, float text and
+    dialogue.
+  - For the runner: a run must be able to **pause** at a teleport and **resume** after the
+    vote. Its state (line, locals, local objects, loop, pending script replacement) must be a
+    value the host keeps across ticks, and in the save, not a stack frame.
+  - Open: what happens while waiting (the clock, the other players, combat); a timeout or the
+    host deciding; a player leaving mid-vote; whether anyone can say no.
 
 ## File format (`arcanum_formats::script`, done)
 
