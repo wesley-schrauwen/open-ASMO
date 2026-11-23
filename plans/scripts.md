@@ -28,6 +28,21 @@ Here:
   - fades and teleports (actions 0x66/0x67) are skipped in multiplayer in the original, and
     here they move only the PCs involved.
 - **Randomness** comes from the host's `HostRng`.
+- **Shared story moments wait for everyone** (owner's decision, 2026-11-23):
+  - When a script does something that moves the story on for the whole party, every player
+    sees a popup naming who did it, e.g. "Virgil has continued the quest". Each player ticks
+    it, and the script goes on only when all have.
+  - Candidates (to confirm with the owner as each is built):
+    - teleports and map changes (0x2c, 0x66);
+    - fades, movies and end slides (0x67, scripts 997/999);
+    - the story state rising (0x2b);
+    - quest state changes (0x10, 0x11).
+    - Private things (a PC's own gold, items, float text, its own dialogue) do not wait.
+  - For the runner this means a run can **pause** at such an action and **resume** after the
+    vote. Its state (line, locals, local objects, loop, pending script replacement) must be
+    a value the host can keep across ticks (and in the save), not a stack frame.
+  - Open: what happens while waiting (the clock, the other players' actions, combat), a
+    timeout or the host deciding, a player leaving mid-vote, and whether anyone can say no.
 
 ## File format (`arcanum_formats::script`, done)
 
