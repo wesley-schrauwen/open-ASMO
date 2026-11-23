@@ -216,3 +216,48 @@ fn every_prototype_parses_to_the_last_byte() {
     eprintln!("prototypes by type: {by_type:?}");
     assert!(failed.is_empty(), "{} failed, e.g. {:?}", failed.len(), &failed[..failed.len().min(5)]);
 }
+
+/// The game's archives and the Arcanum module's (`modules/*.dat`), where the scripts are.
+fn archives_with_module() -> Vec<ArcanumArchive> {
+    let mut all = archives();
+    if let Ok(rd) = std::fs::read_dir(game_dir().join("modules")) {
+        let mut paths: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("dat"))).collect();
+        paths.sort();
+        all.extend(paths.iter().filter_map(|p| ArcanumArchive::open(p).ok()));
+    }
+    all
+}
+
+#[test]
+fn every_script_parses_to_the_last_byte() {
+    use arcanum_formats::script::{HEADER_SIZE, LINE_SIZE, Script, ScriptIndex};
+    let mut count = 0;
+    let mut kinds = (0, 0);
+    for a in archives_with_module() {
+        let names: Vec<String> = a.list_dir("scr").unwrap_or_default().into_iter().map(|p| p.rsplit(['/', '\\']).next().unwrap_or(p).to_string()).collect();
+        let index = ScriptIndex::new(names.iter().map(String::as_str));
+        for (&number, name) in &index.files {
+            let path = index.path(number).unwrap();
+            let data = a.read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let script = Script::parse(&data).unwrap_or_else(|e| panic!("{path}: {e}"));
+            assert_eq!(data.len(), HEADER_SIZE + script.lines.len() * LINE_SIZE, "{name}");
+            for line in &script.lines {
+                kinds.0 = kinds.0.max(line.condition.kind);
+                kinds.1 = kinds.1.max(line.then.kind.max(line.otherwise.kind));
+            }
+            count += 1;
+        }
+        if let Some(bed) = index.path(1729) {
+            let script = Script::parse(&a.read(&bed).unwrap()).unwrap();
+            assert_eq!(script.lines.len(), 6, "01729Bed_Use.scr");
+            assert_eq!(script.lines[5].then.kind, 1, "its last line runs the default");
+        }
+    }
+    if count == 0 {
+        eprintln!("skipping: no scripts found");
+        return;
+    }
+    eprintln!("parsed {count} scripts; condition types up to {}, action types up to {}", kinds.0, kinds.1);
+    assert!(count >= 2399, "{count}");
+    assert!(kinds.0 <= 52 && kinds.1 <= 141, "{kinds:?}");
+}

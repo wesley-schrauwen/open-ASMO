@@ -6,6 +6,7 @@ pub mod map;
 pub mod mes;
 pub mod object;
 mod object_fields;
+pub mod script;
 pub mod sector;
 
 #[cfg(any(test, feature = "test-util"))]

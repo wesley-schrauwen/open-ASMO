@@ -1420,3 +1420,14 @@ the bed's script refusing with "You cannot sleep here."); the combat check ("You
 with enemies near.", 0x4b3d90); followers resting; the hit points (nothing damages them, so
 "Until Healed" ends after an hour); death ending a rest; the followers' script hook (0x57bac0)
 and 0x457450 at the start; the multiplayer button's window (0x5700c0).
+
+**Beds wait for scripts.** Using scenery of art category 22 (beds, `scenery.mes` 22000-22011)
+opens the sleep window on the bed (0x428c74 → 0x460820 → 0x57b180) without the town map check.
+It first runs the bed's "use" script (0x441980, attach point 1). The hook returns 1 ("run the
+default") when the bed has no script at that point, and a 1 refuses with `SleepUI.mes` 8 ("You
+cannot sleep here. Find an inn and pay for a bed."). So every bed without a script refuses, and
+an inn bed lets the PC sleep only when its script skips the default (returns 0, once the bill
+is paid). Then occupancy (0x45f2d0): the bed's `scenery_whos_in_me` (field 0x46) set refuses
+with 10 ("That bed is occupied."); otherwise it takes the PC, sets bit 0x1000 in the PC's
+field 0xda and hides it (0x43d0e0 with 0x100, likely); 0x45f3a0 undoes this when the window
+closes. Each hour in a bed heals twice.

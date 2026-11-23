@@ -13,16 +13,17 @@ A reimplementation of *Arcanum: Of Steamworks and Magick Obscura* (2001) in Rust
 
 Planned for the finished game:
 
-- Upscaled 4K art.
+- 4K art: the original art upscaled on the player's own machine, from their own copy.
+- A 3D mode with new art made from scratch.
 - Resampled audio.
 - Updated animations.
 
 ## Game data
 
-This repository contains no original game assets. The finished game will ship with upscaled art
-and resampled audio, but **players will still need a valid copy of Arcanum on
-[Steam](https://store.steampowered.com/)** to play. The client reads the rest of the game data
-from that installation.
+This repository contains no original game assets, and the finished game will not ship upscaled
+versions of them: the client upscales the original art on the player's machine. **Players will
+still need a valid copy of Arcanum on [Steam](https://store.steampowered.com/)** to play. The
+client reads the game data from that installation.
 
 Point the client at the installed game folder (the one with `arcanum1.dat`):
 
@@ -52,7 +53,8 @@ NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FO
 DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
 OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-The MIT License covers this project's source code only. It does not cover the upscaled art,
-resampled audio or other assets derived from the original game. *Arcanum: Of Steamworks and
+The MIT License covers this project's source code only. It does not cover the original game's
+assets, anything derived from them (such as art upscaled on a player's machine or resampled audio),
+or the new art packs, which carry their own licences. *Arcanum: Of Steamworks and
 Magick Obscura* and its assets are the property of their respective owners. This project is not
 affiliated with or endorsed by them.
