@@ -451,3 +451,4 @@ fn doors_and_containers_near_the_start_carry_their_use_scripts() {
     eprintln!("use scripts (type, script) -> count: {found:?}; skip/run default/unsupported: {results:?}");
     assert!(!found.is_empty(), "the start map has use scripts (scenery 1274 among them)");
 }
+

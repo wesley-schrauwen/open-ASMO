@@ -20,7 +20,8 @@ pub enum PlayerIntent {
     /// in each [`StateSync`](crate::LedgerDelta::StateSync). Sent unreliably: the client sends
     /// it again until a sync shows it was taken.
     Move { seq: u32, path: Vec<TileLoc> },
-    /// Open or close a door. The PC must be within [`USE_RANGE`](crate::USE_RANGE) of it: the
+    /// Open or close a door, or use scenery (a bed opens the sleep window on it,
+    /// [`crate::rest`]). The PC must be within [`USE_RANGE`](crate::USE_RANGE) of it: the
     /// host waits while the PC walks there on move `seq` (or the last one) and drops the request
     /// if it stops short or a newer move comes.
     UsePortal { door: crate::MapObjectId, seq: u32 },

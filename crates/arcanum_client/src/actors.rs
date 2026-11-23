@@ -577,7 +577,8 @@ fn click_to_move(
     if local.0.is_some_and(|(id, _)| unconscious(&party, id)) {
         return;
     }
-    let Some(origin) = client.filter(|c| !c.map.sectors.is_empty()).and_then(|c| c.origin) else { return };
+    let Some(client) = client.filter(|c| !c.map.sectors.is_empty()) else { return };
+    let Some(origin) = client.origin else { return };
     let cursor = match debug {
         Some(mut click) if click.frames > 0 => {
             click.frames -= 1;
@@ -630,8 +631,14 @@ fn click_to_move(
         }
         return;
     }
+    // Scenery that does something when used (a bed, or one with a "use" script) is walked to
+    // and used; other scenery lets the click through to the ground (builder's call).
+    let usable_scenery = |object: &MapObject| {
+        object.object_type == arcanum_formats::object::TYPE_SCENERY
+            && object.id.and_then(|id| client.map.map_object(id)).is_some_and(|o| arcanum_sim::is_bed(o, &client.map.prototypes) || arcanum_sim::attachments(o, &client.map.prototypes).contains_key(&arcanum_sim::EVENT_USE))
+    };
     if let Some((_, _, _, _, object)) = hit.and_then(|e| objects.get(e).ok())
-        && object.object_type == TYPE_PORTAL
+        && (object.object_type == TYPE_PORTAL || usable_scenery(object))
         && let Some(door) = object.id
     {
         debug!("click at {cursor} is on door {door:?}");

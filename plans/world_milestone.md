@@ -1421,7 +1421,7 @@ with enemies near.", 0x4b3d90); followers resting; the hit points (nothing damag
 "Until Healed" ends after an hour); death ending a rest; the followers' script hook (0x57bac0)
 and 0x457450 at the start; the multiplayer button's window (0x5700c0).
 
-**Beds wait for scripts.** Using scenery of art category 22 (beds, `scenery.mes` 22000-22011)
+**Beds (built with the script engine, `plans/scripts.md` step 3b).** Using scenery of art category 22 (beds, `scenery.mes` 22000-22011)
 opens the sleep window on the bed (0x428c74 → 0x460820 → 0x57b180) without the town map check.
 It first runs the bed's "use" script (0x441980, attach point 1). The hook returns 1 ("run the
 default") when the bed has no script at that point, and a 1 refuses with `SleepUI.mes` 8 ("You
