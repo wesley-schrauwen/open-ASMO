@@ -1,6 +1,7 @@
 pub mod art;
 pub mod art_id;
 pub mod cp1252;
+pub mod dialog;
 pub mod font;
 pub mod map;
 pub mod mes;

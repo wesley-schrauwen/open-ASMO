@@ -18,7 +18,9 @@
 //! - **Built:**
 //!   - conditions: 0 always, 1 daytime, 3 local flag, 4 equal, 5 at most, 0x2b global flag;
 //!   - actions: 1-3, 5, 6, 8, 9, 0xa-0xf (flags, assignment, arithmetic, object variables),
-//!     0x12-0x14 (loops over a set), 0x25 random, 0x2a/0x2b story state, 0x64/0x65 global flags;
+//!     0x12-0x14 (loops over a set), 0x18 (a line of the script's dialogue file in the
+//!     triggerer's message box), 0x25 random, 0x2a/0x2b story state, 0x60-0x62 and 0x69 (the
+//!     day, hour, minute, hours since the start), 0x64/0x65 global flags;
 //!   - object sets: the attachee (0), the triggerer (1), the loop's object (0xa), a local object
 //!     variable (0xb), the other object (0xc).
 //! - **Not built yet** (builder's call): anything else stops the script and runs the default,
@@ -165,15 +167,21 @@ pub trait ScriptContext {
     fn pc_state(&mut self, object: Self::Object) -> Option<&mut PcScriptState>;
     /// A number from `low` to `high`, both included.
     fn random(&mut self, low: i32, high: i32) -> i32;
-    /// Whether it is day (0x45acf0).
-    fn is_day(&self) -> bool;
+    /// The game time.
+    fn now(&self) -> crate::GameTime;
+    /// Line `line` of script `script`'s dialogue file, as `reader` sees it (by its gender).
+    fn dialog_text(&mut self, script: u32, line: i32, reader: Self::Object) -> Option<String>;
+    /// Shows `text` in `to`'s message box (a PC's player; others: nobody).
+    fn show_message(&mut self, to: Self::Object, text: String);
 }
 
-/// Script numbers to parsed scripts: the index of `scr/` and the scripts read so far.
+/// Script numbers to parsed scripts: the index of `scr/` and the scripts and dialogue files
+/// read so far.
 #[derive(Debug, Default)]
 pub struct ScriptLibrary {
     pub index: ScriptIndex,
     loaded: std::collections::HashMap<u32, Option<Arc<Script>>>,
+    dialogs: std::collections::HashMap<u32, Option<Arc<arcanum_formats::dialog::DialogFile>>>,
 }
 
 impl ScriptLibrary {
@@ -181,7 +189,7 @@ impl ScriptLibrary {
     pub fn new(vfs: &arcanum_vfs::Vfs) -> Self {
         let names = vfs.list_dir(arcanum_formats::script::DIR).unwrap_or_default();
         let index = ScriptIndex::new(names.iter().map(|p| p.rsplit(['/', '\\']).next().unwrap_or(p)));
-        Self { index, loaded: Default::default() }
+        Self { index, loaded: Default::default(), dialogs: Default::default() }
     }
 
     /// Script `number`, read on first use; `None` if it is not there or does not parse.
@@ -190,9 +198,23 @@ impl ScriptLibrary {
         self.loaded.entry(number).or_insert_with(|| index.path(number).and_then(|p| vfs.read(&p).ok()).and_then(|d| Script::parse(&d).ok()).map(Arc::new)).clone()
     }
 
+    /// Script `number`'s dialogue file (`dlg/` beside `scr/`), read on first use.
+    pub fn dialog(&mut self, vfs: &arcanum_vfs::Vfs, number: u32) -> Option<Arc<arcanum_formats::dialog::DialogFile>> {
+        let index = &self.index;
+        self.dialogs
+            .entry(number)
+            .or_insert_with(|| index.path(number).and_then(|p| arcanum_formats::dialog::dialog_path(&p)).and_then(|p| vfs.read(&p).ok()).map(|d| Arc::new(arcanum_formats::dialog::DialogFile::parse(&d))))
+            .clone()
+    }
+
     /// Puts a script in by hand (tests).
     pub fn insert(&mut self, number: u32, script: Script) {
         self.loaded.insert(number, Some(Arc::new(script)));
+    }
+
+    /// Puts a dialogue file in by hand (tests).
+    pub fn insert_dialog(&mut self, number: u32, dialog: arcanum_formats::dialog::DialogFile) {
+        self.dialogs.insert(number, Some(Arc::new(dialog)));
     }
 }
 
@@ -288,7 +310,7 @@ fn condition<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &m
     let mut value = |i: usize| get(ctx, attachment, run, block.operands[i]);
     Some(match block.kind {
         0 => true,
-        1 => ctx.is_day(),
+        1 => ctx.now().is_day(),
         3 => {
             let bit = value(0);
             attachment.flags & (1 << (bit & 31)) != 0
@@ -376,6 +398,28 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
         0x14 => {
             let Some((_, _, start)) = run.looping.take() else { return Some(Step::Next) };
             loop_exit(script, start)
+        }
+        0x18 => {
+            // A line of the script's dialogue file in the triggerer's message box (0x44b390).
+            let number = value(ctx, attachment, run, 0);
+            let triggerer = run.invocation.triggerer;
+            if let Some(text) = ctx.dialog_text(attachment.number, number, triggerer) {
+                ctx.show_message(triggerer, text);
+            }
+            Step::Next
+        }
+        0x60 | 0x61 | 0x62 | 0x69 => {
+            // The day (0x45a8d0: days + 1), the hour (0x45a870), the minute (0x45a8b0), the
+            // hours since the start (0x45a890: days * 24 + hour).
+            let now = ctx.now();
+            let v = match block.kind {
+                0x60 => now.days as i32 + 1,
+                0x61 => now.hour() as i32,
+                0x62 => now.minute() as i32,
+                _ => (now.days * 24 + now.hour()) as i32,
+            };
+            set(ctx, attachment, run, ops[0], v);
+            Step::Next
         }
         0x25 => {
             let (a, b) = (value(ctx, attachment, run, 0), value(ctx, attachment, run, 1));
@@ -501,7 +545,8 @@ pub(crate) mod tests {
         pub scripts: std::collections::HashMap<u32, Arc<Script>>,
         pub globals: ScriptGlobals,
         pub pcs: BTreeMap<u32, PcScriptState>,
-        pub day: bool,
+        pub now: crate::GameTime,
+        pub messages: Vec<(u32, String)>,
     }
 
     impl ScriptContext for TestWorld {
@@ -518,8 +563,14 @@ pub(crate) mod tests {
         fn random(&mut self, low: i32, _high: i32) -> i32 {
             low
         }
-        fn is_day(&self) -> bool {
-            self.day
+        fn now(&self) -> crate::GameTime {
+            self.now
+        }
+        fn dialog_text(&mut self, script: u32, line: i32, _reader: u32) -> Option<String> {
+            Some(format!("{script}:{line}"))
+        }
+        fn show_message(&mut self, to: u32, text: String) {
+            self.messages.push((to, text));
         }
     }
 
@@ -642,5 +693,24 @@ pub(crate) mod tests {
         invoke(&mut w, &mut Attachment::new(0, 0, 100));
         assert_eq!(w.globals.var(1), 1, "one object: once round");
         assert_eq!((w.globals.story_state, w.globals.var(2)), (3, 3), "the story state only rises");
+    }
+
+    #[test]
+    fn the_inn_bed_check_compares_hours_and_shows_a_dialogue_line() {
+        // As 01990Inn_Bed_Use.scr, lines 27-31: paid until global var 1043 (hours); "now <=
+        // paid" sleeps, else line 2 of its dialogue and the default (refused).
+        let lines = vec![
+            always(block(0xa, &[op(2, 1), op(1, 1043)])),
+            always(block(0x69, &[op(2, 0)])),
+            line(block(5, &[op(2, 0), op(2, 1)]), block(1, &[]), block(0, &[])),
+            always(block(0x18, &[n(2), n(6)])),
+            always(block(2, &[])),
+        ];
+        let mut w = world(lines, 0);
+        w.now = crate::GameTime { days: 2, ms: 5 * crate::HOUR_MS };
+        assert_eq!(invoke(&mut w, &mut Attachment::new(0, 0, 100)).result, HookResult::RunDefault);
+        assert_eq!(w.messages, vec![(1, "100:2".to_string())], "to the triggerer");
+        w.globals.set_var(1043, 2 * 24 + 5);
+        assert_eq!(invoke(&mut w, &mut Attachment::new(0, 0, 100)).result, HookResult::SkipDefault, "paid until this hour");
     }
 }

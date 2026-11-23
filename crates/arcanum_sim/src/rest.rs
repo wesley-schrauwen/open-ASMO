@@ -233,7 +233,7 @@ pub fn start_resting(
             outbox.0.push((player, LedgerDelta::RestRefused { message: ALREADY_UNCONSCIOUS }));
             continue;
         }
-        if scripts.hook(&mut world, &mut map, crate::ScriptObject::Map(bed), crate::EVENT_USE, player) == crate::HookResult::RunDefault {
+        if scripts.hook(&mut world, &mut map, &mut outbox, crate::ScriptObject::Map(bed), crate::EVENT_USE, player) == crate::HookResult::RunDefault {
             outbox.0.push((player, LedgerDelta::RestRefused { message: CANNOT_SLEEP_HERE }));
             continue;
         }

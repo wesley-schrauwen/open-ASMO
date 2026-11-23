@@ -8,7 +8,8 @@
 //!   and saved ([`crate::SectorDelta::object_scripts`] / `mobile_scripts`).
 //! - **The world:** global state is the save's [`crate::ScriptGlobals`]; a PC's variables and
 //!   flags are its [`crate::PlayerSave::script_state`]; random numbers come from the
-//!   [`crate::HostRng`]; day is 6:00 to 17:59.
+//!   [`crate::HostRng`]; day is 6:00 to 17:59. Lines a script shows (action 0x18) go to the
+//!   PC's player as [`crate::LedgerDelta::ScriptMessage`], in the text for the PC's gender.
 //! - **Events** wired so far: [`EVENT_USE`] on doors ([`crate::use_portals`]) and containers
 //!   ([`crate::pick_up_items`]), before their default (0x428c17 runs the hook before the use).
 //! - Unsupported condition and action types met in the game are kept in [`ScriptReports`].
@@ -129,7 +130,9 @@ struct HostWorld<'a> {
     globals: &'a mut ScriptGlobals,
     players: &'a mut BTreeMap<PlayerId, crate::PlayerSave>,
     rng: &'a mut crate::HostRng,
-    day: bool,
+    now: crate::GameTime,
+    /// Lines for players' message boxes.
+    messages: Vec<(PlayerId, String)>,
 }
 
 impl ScriptContext for HostWorld<'_> {
@@ -152,15 +155,31 @@ impl ScriptContext for HostWorld<'_> {
         self.rng.range(low, high)
     }
 
-    fn is_day(&self) -> bool {
-        self.day
+    fn now(&self) -> crate::GameTime {
+        self.now
+    }
+
+    fn dialog_text(&mut self, script: u32, line: i32, reader: ScriptObject) -> Option<String> {
+        let female = match reader {
+            ScriptObject::Pc(player) => self.players.get(&player).is_some_and(|p| p.blueprint.sheet.gender == arcanum_rules::FEMALE),
+            _ => false,
+        };
+        let dialog = self.library.dialog(self.vfs?, script)?;
+        dialog.text(line, female).map(str::to_string)
+    }
+
+    fn show_message(&mut self, to: ScriptObject, text: String) {
+        if let ScriptObject::Pc(player) = to {
+            self.messages.push((player, text));
+        }
     }
 }
 
 impl ScriptHost<'_> {
     /// Runs `object`'s script for `event`, triggered by `player`'s PC (0x441980). A changed
     /// attachment is kept and saved; the answer says whether the default still happens.
-    pub fn hook(&mut self, world: &mut WorldState, map: &mut LoadedMap, object: ScriptObject, event: u32, player: PlayerId) -> HookResult {
+    /// Lines it shows go to their players through `outbox`.
+    pub fn hook(&mut self, world: &mut WorldState, map: &mut LoadedMap, outbox: &mut crate::Outbox, object: ScriptObject, event: u32, player: PlayerId) -> HookResult {
         let mut attachment = map.attachment(object, event);
         if attachment.number == 0 {
             return HookResult::RunDefault;
@@ -171,9 +190,12 @@ impl ScriptHost<'_> {
         let library = self.scripts.0.get_or_insert_with(|| vfs.map(ScriptLibrary::new).unwrap_or_default());
         let before = attachment;
         let number = attachment.number;
-        let mut ctx = HostWorld { library, vfs, globals: &mut save.scripts, players: &mut save.players, rng: &mut self.rng, day: self.clock.now.is_day() };
+        let mut ctx = HostWorld { library, vfs, globals: &mut save.scripts, players: &mut save.players, rng: &mut self.rng, now: self.clock.now, messages: Vec::new() };
         let invocation = Invocation { attachee: object, triggerer: ScriptObject::Pc(player), other: None, event, start_line: 0 };
         let run = crate::run_hook(&mut ctx, &mut attachment, invocation);
+        for (to, text) in std::mem::take(&mut ctx.messages) {
+            outbox.0.push((to, crate::LedgerDelta::ScriptMessage { text }));
+        }
         for unsupported in run.unsupported {
             self.reports.0.push((number, unsupported));
         }

@@ -470,7 +470,7 @@ pub fn pick_up_items(
         if map.container_object(want.item).is_some() {
             // The container's "use" script first (0x428c17): it may handle the opening itself.
             let attachee = crate::ScriptObject::ground(want.item).expect("a container");
-            if scripts.hook(&mut world, &mut map, attachee, crate::EVENT_USE, player) == crate::HookResult::SkipDefault {
+            if scripts.hook(&mut world, &mut map, &mut outbox, attachee, crate::EVENT_USE, player) == crate::HookResult::SkipDefault {
                 continue;
             }
         }

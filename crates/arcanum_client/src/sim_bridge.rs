@@ -278,6 +278,9 @@ fn receive_deltas(
         if let (LedgerDelta::SpellResult { message }, Some(results)) = (delta, skill_results.as_mut()) {
             results.0.push(crate::skill_use::UseResult::Spell(*message));
         }
+        if let (LedgerDelta::ScriptMessage { text }, Some(results)) = (delta, skill_results.as_mut()) {
+            results.0.push(crate::skill_use::UseResult::Text(text.clone()));
+        }
         if let (LedgerDelta::RestRefused { message }, Some(results)) = (delta, skill_results.as_mut()) {
             results.0.push(crate::skill_use::UseResult::Rest(*message));
         }
