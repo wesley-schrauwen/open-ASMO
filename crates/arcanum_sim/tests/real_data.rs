@@ -408,10 +408,46 @@ fn real_scripts_run_and_the_unbuilt_types_are_counted() {
             Some(Unsupported::Condition { kind, .. }) => *stops.entry(format!("condition {kind:#x}")).or_default() += 1,
             Some(Unsupported::Action { kind, .. }) => *stops.entry(format!("action {kind:#x}")).or_default() += 1,
             Some(Unsupported::ObjectSet { kind, .. }) => *stops.entry(format!("set {kind:#x}")).or_default() += 1,
+            Some(Unsupported::Trap { .. }) => *stops.entry("trap".into()).or_default() += 1,
         }
     }
     let mut top: Vec<_> = stops.into_iter().collect();
     top.sort_by_key(|t| std::cmp::Reverse(t.1));
     eprintln!("{finished} scripts ran to an end; stopped by: {:?}", &top[..top.len().min(15)]);
     assert!(finished > 0);
+}
+
+
+#[test]
+fn doors_and_containers_near_the_start_carry_their_use_scripts() {
+    use arcanum_formats::map::{MAP_LIST, parse_map_list, start_map};
+    use arcanum_formats::mes::MesFile;
+    use arcanum_formats::object::{TYPE_CONTAINER, TYPE_PORTAL, TYPE_SCENERY};
+    use arcanum_sim::{EVENT_USE, Invocation, attachments, run_hook};
+    let Some(vfs) = vfs() else { return };
+    let list = parse_map_list(&MesFile::parse(&vfs.read(MAP_LIST).unwrap()).unwrap()).unwrap();
+    let name = start_map(&list).unwrap().name.clone();
+    let mut map = arcanum_sim::LoadedMap::default();
+    map.open(Some(&vfs), &name);
+    map.load_around(Some(&vfs), TileLoc { x: 90330, y: 84122 });
+    let library = arcanum_sim::ScriptLibrary::new(&vfs);
+    let mut world = Scripted { vfs: &vfs, library, globals: Default::default(), pc: Default::default() };
+    let objects = map.sectors.values().flat_map(|s| s.objects.iter()).chain(map.mobiles.values().flatten());
+    let mut found = std::collections::BTreeMap::<(u32, u32), usize>::new();
+    let mut results = (0, 0, 0);
+    for object in objects.filter(|o| [TYPE_PORTAL, TYPE_CONTAINER, TYPE_SCENERY].contains(&o.object_type)) {
+        let Some(mut attachment) = attachments(object, &map.prototypes).get(&EVENT_USE).copied() else { continue };
+        *found.entry((object.object_type, attachment.number)).or_default() += 1;
+        let run = run_hook(&mut world, &mut attachment, Invocation { attachee: 50, triggerer: 1, other: None, event: EVENT_USE, start_line: 0 });
+        match (run.result, run.unsupported.is_empty()) {
+            (_, false) => results.2 += 1,
+            (arcanum_sim::HookResult::SkipDefault, true) => {
+                results.0 += 1;
+                eprintln!("skips the default: script {} on type {}", attachment.number, object.object_type);
+            }
+            (arcanum_sim::HookResult::RunDefault, true) => results.1 += 1,
+        }
+    }
+    eprintln!("use scripts (type, script) -> count: {found:?}; skip/run default/unsupported: {results:?}");
+    assert!(!found.is_empty(), "the start map has use scripts (scenery 1274 among them)");
 }

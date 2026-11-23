@@ -24,6 +24,8 @@
 //! - **Not built yet** (builder's call): anything else stops the script and runs the default,
 //!   recorded in [`ScriptRun::unsupported`], rather than guessing at a half-run.
 //!
+//! Traps (scripts 30000-30007) are not built: they run the default and are reported.
+//!
 //! Not copied: the theft checks before a use (0x4bbfe0, 0x4bbe40); the NPC dialogue special
 //! cases (event 9); the client gate (clients never run scripts here).
 
@@ -125,7 +127,13 @@ pub enum Unsupported {
     Condition { line: usize, kind: u32 },
     Action { line: usize, kind: u32 },
     ObjectSet { line: usize, kind: i8 },
+    /// A trap script ([`TRAP_SCRIPTS`]), sprung before any line runs (0x4bcb70).
+    Trap { number: u32 },
 }
+
+/// The trap scripts (30000-30007): 0x4bcb70 springs the trap instead of running lines, and the
+/// use does not happen.
+pub const TRAP_SCRIPTS: std::ops::RangeInclusive<u32> = 30000..=30007;
 
 /// How a run went.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,6 +226,10 @@ struct Run<O> {
 
 fn run<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, invocation: Invocation<C::Object>, depth: usize, unsupported: &mut Vec<Unsupported>) -> HookResult {
     if attachment.number == 0 || depth > MAX_DEPTH {
+        return HookResult::RunDefault;
+    }
+    if TRAP_SCRIPTS.contains(&attachment.number) {
+        unsupported.push(Unsupported::Trap { number: attachment.number });
         return HookResult::RunDefault;
     }
     let Some(script) = ctx.script(attachment.number) else { return HookResult::RunDefault };

@@ -163,9 +163,24 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      - action 0x18 (89);
      - condition 0x14 (80);
      - object set 8, critters near (67).
-3. **Use** (event 1) on doors, containers and scenery through the runner, so the default use
-   can be skipped. Beds: the sleep window's bed path (`plans/world_milestone.md` → "Beds wait
-   for scripts"), with occupancy and double healing.
+3. **Use on doors and containers** (`arcanum_sim::script_host`). Done.
+   - Attachments are read from `scripts_idx`, the object's own or its prototype's. It is a
+     sparse array: bit `e` of the bitset marks event `e`, with one 12-byte `{flags, counters,
+     number}` entry per set bit, in order.
+   - A changed attachment is kept in the sector's changes (`object_scripts`, `mobile_scripts`)
+     and saved.
+   - `ScriptHost::hook` runs the script with the acting player's PC as the triggerer. Doors
+     (`use_portals`) and containers (`pick_up_items`) run it before their default.
+   - **Traps** (scripts 30000-30007) are sprung by 0x4bcb70 before any line, and the use does
+     not happen. Not built: they run the default and are reported. Traps need their own step
+     (Disarm Traps, damage).
+   - **Start map** (around the start): 20 containers and 1 piece of scenery carry use
+     scripts. Most are traps, plus 1180 ("Grave_Container_Use") and others not built yet,
+     which run the default. 1621 ("Search the bed") keeps its bed shut until global flag 2273
+     is set.
+3b. **Beds and scenery use:** clicking scenery walks to it and uses it, running its use
+   script. A bed (art category 22) takes the sleep window's bed path
+   (`plans/world_milestone.md` → "Beds wait for scripts"), with occupancy and double healing.
 4. **Gold and items:** conditions 2 and 0x11; actions 0x23, 0x29 and 0x42. These are the inn
    beds' needs; check with `02429Black_Root_Inn_Bed_Use.scr`.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
