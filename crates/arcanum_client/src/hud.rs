@@ -8,7 +8,8 @@
 //!   used.
 //! - Top bar buttons, 34x34 at y 2: character (169) at x 4, log (187) 41, town map (193) 78,
 //!   inventory (186) 115; five maintained-spell slots (188-192) at x 281 + 50 n, y 3; the
-//!   clock ([`crate::hud_clock`]).
+//!   sleep button (137, 23x23) at (605, 9) ([`crate::rest_window`]); the clock
+//!   ([`crate::hud_clock`]).
 //! - Bottom bar buttons, 39x39 (table 0x5c6470..0x5c64b0): combat (470) at (86, 457), skills
 //!   (472) at (693, 456), spells (473) at (649, 494), schematics (471) at (693, 539); ten hotkey
 //!   slots, 32x32 at y 445 (0x5cb494, 0x5cb4bc).
@@ -79,6 +80,8 @@ pub enum HudAction {
     Inventory,
     /// Shows or hides the bottom bar's spells view ([`crate::spell_bar`]).
     Spells,
+    /// Opens or closes the sleep window ([`crate::rest_window`]).
+    Sleep,
 }
 
 /// Which pool a vial shows.
@@ -150,6 +153,18 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
             for n in 0..5 {
                 top.spawn((ImageNode::new(assets.load(art(&format!("SplSlt{}.ART", n + 1)))), at(rect(Vec2::new(281.0 + 50.0 * n as f32, 3.0), Vec2::splat(32.0)))));
             }
+            // The sleep button (art 137, 0x5c6538): two frames, normal and pressed.
+            let frames = assets.load(art("lilgrnbut.art"));
+            top.spawn((
+                HudAction::Sleep,
+                BoxHelp::Intgame(1009),
+                Button,
+                ActivateOnPress,
+                Hovered::default(),
+                FrameButton { frames, normal: 0, pressed: 1, hover: 0 },
+                ImageNode::default(),
+                at(rect(Vec2::new(605.0, 9.0), Vec2::splat(23.0))),
+            ));
             crate::hud_clock::spawn_clock(top, &assets);
         });
     let local = |r: Rect| Rect { min: r.min - Vec2::new(0.0, BOTTOM_TOP), max: r.max - Vec2::new(0.0, BOTTOM_TOP) };

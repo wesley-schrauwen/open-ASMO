@@ -245,6 +245,7 @@ fn receive_deltas(
     data: Option<Res<CreationData>>,
     mut inventory: Option<ResMut<crate::inventory_screen::PcInventory>>,
     mut skill_results: Option<ResMut<crate::skill_use::SkillResults>>,
+    mut rest: Option<ResMut<crate::rest_window::RestPanel>>,
 ) {
     let Some(link) = link else { return };
     let deltas = link.0.recv_deltas();
@@ -276,6 +277,12 @@ fn receive_deltas(
         }
         if let (LedgerDelta::SpellResult { message }, Some(results)) = (delta, skill_results.as_mut()) {
             results.0.push(crate::skill_use::UseResult::Spell(*message));
+        }
+        if let (LedgerDelta::RestRefused { message }, Some(results)) = (delta, skill_results.as_mut()) {
+            results.0.push(crate::skill_use::UseResult::Rest(*message));
+        }
+        if let Some(rest) = rest.as_mut() {
+            rest.receive(delta);
         }
         if let (LedgerDelta::PileOpened { pile }, Some(inv)) = (delta, inventory.as_mut()) {
             inv.open_pile(*pile);

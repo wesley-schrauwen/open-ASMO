@@ -600,6 +600,74 @@ mod tests {
         }
 
         #[test]
+        fn sleeping_jumps_the_clock_an_hour_a_step_and_heals_fatigue() {
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            let mut sim = booted(dir.path(), &[(7, t(89, 80))], BTreeMap::new());
+            sim.take_deltas();
+            let set_damage = |sim: &mut SimApp, damage: i32| {
+                let world = sim.app.world_mut();
+                world.query_filtered::<&mut crate::Sheet, With<PlayerControlled>>().single_mut(world).unwrap().0.fatigue_damage = damage;
+            };
+            let ask = |sim: &mut SimApp, intent: PlayerIntent| {
+                sim.receive([(PlayerId(7), intent)]);
+                sim.update();
+                sim.take_deltas()
+            };
+            // Unconscious: refused.
+            let max = sim.app.world().resource::<crate::SimRules>().0.derived(&arcanum_rules::CharacterSheet::default()).fatigue;
+            set_damage(&mut sim, max);
+            let deltas = ask(&mut sim, PlayerIntent::RestWindow);
+            assert!(deltas.contains(&(PlayerId(7), LedgerDelta::RestRefused { message: crate::ALREADY_UNCONSCIOUS })), "{deltas:?}");
+            // In the wilderness (no town map): sleeping.
+            set_damage(&mut sim, 20);
+            sim.update();
+            let deltas = ask(&mut sim, PlayerIntent::RestWindow);
+            assert!(deltas.contains(&(PlayerId(7), LedgerDelta::RestWindow { mode: crate::RestMode::Sleep })), "{deltas:?}");
+            let start = sim.app.world().resource::<crate::GameClock>().now;
+            ask(&mut sim, PlayerIntent::Rest { option: crate::RestOption::Hours(2) });
+            // Resting, the PC does not walk.
+            ask(&mut sim, PlayerIntent::Move { seq: 1, path: vec![t(89, 80), t(88, 80)] });
+            let walking = {
+                let world = sim.app.world_mut();
+                world.query_filtered::<(), (With<PlayerControlled>, With<crate::Walking>)>().iter(world).count()
+            };
+            assert_eq!(walking, 0, "moves are dropped while resting");
+            let mut ended = 0;
+            for _ in 0..crate::FIRST_STEP_TICKS + crate::STEP_TICKS {
+                sim.update();
+                ended += sim.take_deltas().iter().filter(|d| d == &&(PlayerId(7), LedgerDelta::RestEnded)).count();
+            }
+            assert_eq!(ended, 1);
+            let now = sim.app.world().resource::<crate::GameClock>().now;
+            let passed = (now.days - start.days) as u64 * crate::DAY_MS as u64 + now.ms as u64 - start.ms as u64;
+            assert!((2 * crate::HOUR_MS as u64..2 * crate::HOUR_MS as u64 + 10_000).contains(&passed), "two hours and a few ticks: {passed}");
+            let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+            assert_eq!(save.players[&PlayerId(7)].blueprint.sheet.fatigue_damage, 0, "rested, and the recovery due caught up");
+            // Stopped early.
+            set_damage(&mut sim, 20);
+            ask(&mut sim, PlayerIntent::Rest { option: crate::RestOption::Hours(24) });
+            let deltas = ask(&mut sim, PlayerIntent::StopRest);
+            assert!(deltas.contains(&(PlayerId(7), LedgerDelta::RestEnded)), "{deltas:?}");
+            let left = {
+                let world = sim.app.world_mut();
+                world.query_filtered::<(), With<crate::Resting>>().iter(world).count()
+            };
+            assert_eq!(left, 0);
+        }
+
+        #[test]
+        fn nobody_rests_with_another_player_in_the_world() {
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            let mut sim = booted(dir.path(), &[(7, t(89, 80)), (9, t(100, 100))], BTreeMap::new());
+            sim.take_deltas();
+            sim.receive([(PlayerId(7), PlayerIntent::RestWindow)]);
+            sim.update();
+            assert!(sim.take_deltas().iter().all(|(_, d)| !matches!(d, LedgerDelta::RestWindow { .. } | LedgerDelta::RestRefused { .. })));
+        }
+
+        #[test]
         fn the_key_opens_a_locked_door_and_leaves_it_locked() {
             let dir = tempfile::tempdir().unwrap();
             write_map(dir.path());

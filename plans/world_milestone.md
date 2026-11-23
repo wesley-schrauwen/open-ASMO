@@ -1380,3 +1380,43 @@ items only); skills on the bar; clearing a slot (the original has no way either)
 Not done: spells being cast or maintained ending (none are maintained yet); the turn ending in
 turn-based combat (0x4b7c90); a PC down on load lying at once (0x435b30) rather than falling;
 NPCs falling unconscious (nothing tires them).
+
+## Sleeping and waiting (after falling unconscious)
+
+- **Opening** (0x57b180; `arcanum_sim::rest`, `rest_window.rs`): the S key (0x54c6bf) or the
+  top bar's sleep button (`lilgrnbut.art`, art 137, at (605, 9), 0x5c6538; hover help
+  `intgame.mes` 1009) sends `PlayerIntent::RestWindow`. The host checks in the original's
+  order: unconscious refuses with `mes/SleepUI.mes` 11; the PC's sector's `townmap_info` decides
+  the mode: 0 (wilderness) is sleeping, a `Rules/TownMap.mes` line with `[w:1]` (20 towns,
+  the crash site among them) is waiting, any other refuses with 20 ("You cannot wait here.").
+  Another player in the world: no answer (the original has no sleeping in multiplayer). S or
+  the button again closes the window and stops a rest (0x57b450).
+- **The window** (0x57b4f0): `Sleep_Base.ART` (art 565, 227x152) at (573, 42); one row per
+  option, 8 sleeping, 7 waiting: `FateBut.ART` (art 293, 18x13) at (8, 3 + 18 k) and the text
+  (`SleepUI.mes` k, or 12 + k waiting) in Flare12Font at (36, 2 + 18 k). Options (0x5cb340):
+  1, 2, 4, 8, 24 hours, until morning (7:00), until evening (20:00), until healed (sleeping only).
+- **Resting** (0x57b710, step 0x57b7f0): the first hour 50 ms after the click, then one every
+  200 ms (2 and 6 host ticks). Each jumps the clock an hour (0x45c200: the clock only; time
+  events catch up on later ticks). Sleeping heals each hour (0x45e910): hit point damage by the
+  heal rate, fatigue damage by three times it (twice that in a bed). Then the option decides:
+  hours counted down, the hour reached, or hit point damage left; every option takes at least
+  an hour. The fatigue recovery due meanwhile (80 game s each) catches up as the original's
+  overdue time events do, so an hour's sleep takes back up to 45 + 3 times the heal rate.
+  Meanwhile moves, uses, pick-ups, lock picks and casts are dropped; the PC stops walking.
+  The host sends `RestEnded`; the client fades the screen to black while resting.
+- **Also found:** the PC has no hit point recovery outside rest (the hourly "Resting" time
+  event, 0x45ea00, heals only NPCs that are not followers); poison ticks every 120 game s
+  (0x4b1170) and does not stop healing.
+- **Builder's calls:** Escape closes the window when not resting; the fade takes 0.4 s and
+  clears at once; the row text is white.
+- **Checked:** unit tests for the healing, the options' ends, the town map modes and the
+  window's state; host tests: refused when unconscious, sleeping in the wilderness (two hours
+  pass, moves dropped, fatigue healed and saved, `RestEnded`), stopping early, no answer with
+  two players. 519 tests pass. A screenshot at the crash site shows the waiting window
+  (`DEBUG_ARCANUM_PANEL=sleep`). Resting was not clicked through in the real game.
+
+Not done: beds (scenery category 22, 0x428c74: twice the healing, "That bed is occupied.",
+the bed's script refusing with "You cannot sleep here."); the combat check ("You cannot sleep
+with enemies near.", 0x4b3d90); followers resting; the hit points (nothing damages them, so
+"Until Healed" ends after an hour); death ending a rest; the followers' script hook (0x57bac0)
+and 0x457450 at the start; the multiplayer button's window (0x5700c0).

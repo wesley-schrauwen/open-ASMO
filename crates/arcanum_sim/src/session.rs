@@ -64,6 +64,7 @@ pub fn handle_intents(
     mut pickups: ResMut<crate::PickUpRequests>,
     mut picks: ResMut<crate::PickLockRequests>,
     mut casts: ResMut<crate::CastRequests>,
+    (mut rests, mut stops): (ResMut<crate::RestRequests>, ResMut<crate::StopRestRequests>),
 ) {
     for (player, intent) in inbox.0.drain(..) {
         match intent {
@@ -93,6 +94,9 @@ pub fn handle_intents(
             PlayerIntent::PickUp { item, seq } => pickups.0.push((player, item, seq)),
             PlayerIntent::PickLock { target, tool, seq } => picks.0.push((player, target, tool, seq)),
             PlayerIntent::Cast { spell, target } => casts.0.push((player, spell, target)),
+            PlayerIntent::RestWindow => rests.0.push((player, None)),
+            PlayerIntent::Rest { option } => rests.0.push((player, Some(option))),
+            PlayerIntent::StopRest => stops.0.push(player),
         }
     }
 }

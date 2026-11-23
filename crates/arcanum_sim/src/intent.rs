@@ -41,6 +41,13 @@ pub enum PlayerIntent {
     PickLock { target: crate::LockTarget, tool: Option<i32>, seq: u32 },
     /// Cast `spell` on a door or container from where the PC stands ([`crate::magick`]).
     Cast { spell: usize, target: crate::LockTarget },
+    /// Open the sleep window ([`crate::rest`]): the host answers with
+    /// [`RestWindow`](crate::LedgerDelta::RestWindow) or [`RestRefused`](crate::LedgerDelta::RestRefused).
+    RestWindow,
+    /// Rest for `option`; the host sends [`RestEnded`](crate::LedgerDelta::RestEnded) when done.
+    Rest { option: crate::RestOption },
+    /// Stop resting.
+    StopRest,
     /// The number of the last state sync the client applied. Sent unreliably, about twice a
     /// second; a client far behind gets a [`Resync`](crate::LedgerDelta::Resync).
     SyncAck { number: u32 },

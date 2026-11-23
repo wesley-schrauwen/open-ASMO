@@ -90,6 +90,7 @@ fn main() {
             arcanum_client::skill_use::SkillUsePlugin,
             arcanum_client::hotkey_bar::HotkeyBarPlugin,
             arcanum_client::spell_bar::SpellBarPlugin,
+            arcanum_client::rest_window::RestWindowPlugin,
             arcanum_client::cursor::CursorPlugin,
         ));
 
@@ -145,6 +146,20 @@ fn main() {
                 if !*done && inventory.shown().is_some() {
                     *done = true;
                     panel.open = true;
+                }
+            })
+            .run_if(in_state(AppState::InGame)),
+        );
+    }
+
+    // Debugging aid: `DEBUG_ARCANUM_PANEL=sleep` asks for the sleep window once the PC is in.
+    if std::env::var("DEBUG_ARCANUM_PANEL").is_ok_and(|v| v == "sleep") {
+        app.add_systems(
+            Update,
+            (|pc: Res<arcanum_client::sim_bridge::LocalPc>, link: Option<Res<arcanum_client::sim_bridge::HostLink>>, mut done: Local<bool>| {
+                if let (false, Some(_), Some(link)) = (*done, pc.0, link) {
+                    *done = true;
+                    let _ = link.0.send_intent(arcanum_sim::PlayerIntent::RestWindow);
                 }
             })
             .run_if(in_state(AppState::InGame)),

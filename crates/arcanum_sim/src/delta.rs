@@ -124,6 +124,12 @@ pub enum LedgerDelta {
     SkillResult { message: u32 },
     /// Why the player's spell was not cast: a `mes/spell.mes` line for the message box.
     SpellResult { message: u32 },
+    /// The player may rest: the sleep window opens, sleeping or waiting ([`crate::rest`]).
+    RestWindow { mode: crate::RestMode },
+    /// Why the player may not rest: a `mes/SleepUI.mes` line for the message box.
+    RestRefused { message: u32 },
+    /// The player's PC stopped resting.
+    RestEnded,
     /// This PC leads the party: out of combat every member moves at its speed, capped
     /// ([`PartyPace`](crate::PartyPace)). Sent to each player once it is known.
     PartyLeader { net_id: NetId },

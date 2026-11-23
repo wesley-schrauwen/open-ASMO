@@ -101,6 +101,8 @@ pub struct CreationData {
     pub skill_ui: MesFile,
     /// Spell texts (the cast refusals, 600-604).
     pub spell: MesFile,
+    /// The sleep window's rows and refusals (`mes/SleepUI.mes`, 0-20).
+    pub sleep_ui: MesFile,
     /// The calendar's first year (`rules/gameinit.mes`), for the clock's date.
     pub first_year: u32,
 }
@@ -124,6 +126,7 @@ impl CreationData {
             item: mes("mes/item.mes").unwrap_or_default(),
             skill_ui: mes("mes/skill_ui.mes").unwrap_or_default(),
             spell: mes("mes/spell.mes").unwrap_or_default(),
+            sleep_ui: mes("mes/SleepUI.mes").unwrap_or_default(),
             first_year: arcanum_sim::GameStart::load(vfs).year,
         })
     }

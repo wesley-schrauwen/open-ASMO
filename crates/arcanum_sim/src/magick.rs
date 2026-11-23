@@ -15,15 +15,15 @@
 //!   jam and does not open it.
 //! - **Recovery** (0x45d5a0 schedules a time event 80 000 game ms after fatigue is spent; its
 //!   handler 0x45e610 heals): every [`RECOVERY_MS`] the fatigue damage drops by the heal rate
-//!   (stat 12, `(CN + 1) / 3`), down to 0. (0x45e910's three times the rate is another path,
-//!   likely resting.)
+//!   (stat 12, `(CN + 1) / 3`), down to 0. (0x45e910's three times the rate is resting,
+//!   [`crate::rest`].)
 //! - **Unconscious** (0x45d800): at fatigue 0 or below the PC casts nothing
 //!   ([`crate::unconscious`]).
 //!
 //! Not built: the cast animation and its eye candy and sounds (`SpellEyeCandy.mes`: cast art
 //! 10, sound 9020; destination art 16, sound 9025); the charge waiting for the animation; mana
 //! stored in worn items, drawn first; line of sight ("You cannot see the target.", 604); the
-//! tech-aptitude roll (read as dead code); other spells; healing faster at rest.
+//! tech-aptitude roll (read as dead code); other spells.
 
 use arcanum_rules::{CharacterSheet, SPELLS_PER_COLLEGE};
 use bevy_ecs::prelude::{Commands, Component, Entity, Query, Res, ResMut, Resource};

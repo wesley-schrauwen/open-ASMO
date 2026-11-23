@@ -30,6 +30,7 @@ pub mod new_game;
 pub mod premade;
 pub mod options;
 pub mod resource_pack;
+pub mod rest_window;
 pub mod screens;
 pub mod settings;
 pub mod sim_bridge;

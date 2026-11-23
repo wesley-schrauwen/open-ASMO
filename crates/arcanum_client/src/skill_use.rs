@@ -32,6 +32,8 @@ pub enum Armed {
 pub enum UseResult {
     Skill(u32),
     Spell(u32),
+    /// A `mes/SleepUI.mes` line: why the PC may not rest ([`crate::rest_window`]).
+    Rest(u32),
 }
 
 /// The host's answers to skill uses and casts, waiting for the message box.
@@ -71,6 +73,7 @@ fn show_results(mut results: ResMut<SkillResults>, data: Option<Res<crate::creat
             .and_then(|d| match line {
                 UseResult::Skill(n) => d.skill_ui.get(n),
                 UseResult::Spell(n) => d.spell.get(n),
+                UseResult::Rest(n) => d.sleep_ui.get(n),
             })
             .unwrap_or("")
             .to_string();

@@ -121,6 +121,11 @@ impl GameClock {
         Self { now, carry: 0 }
     }
 
+    /// Jumps `ms` ahead at once (0x45c200: resting).
+    pub fn jump(&mut self, ms: u64) {
+        self.now = self.now.plus_ms(ms);
+    }
+
     /// Advances by one host tick of real time.
     pub fn tick(&mut self) {
         // One tick is 1000 / TICK_HZ real ms: GAME_SPEED * 1000 / TICK_HZ game ms, kept exact.
