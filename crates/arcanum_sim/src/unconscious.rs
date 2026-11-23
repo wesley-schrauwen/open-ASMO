@@ -48,9 +48,12 @@ pub fn update_consciousness(mut commands: Commands, rules: Res<SimRules>, mut wo
     }
 }
 
-/// Drops what unconscious PCs' players ask them to do (0x4348e0).
+/// PCs that take no requests: unconscious or resting.
+type Idle = Or<(With<Unconscious>, With<crate::Resting>)>;
+
+/// Drops what unconscious (0x4348e0) and resting ([`crate::rest`]) PCs' players ask them to do.
 pub fn gate_unconscious(
-    pcs: Query<&PlayerControlled, With<Unconscious>>,
+    pcs: Query<&PlayerControlled, Idle>,
     mut moves: ResMut<crate::MoveRequests>,
     mut uses: ResMut<crate::UseRequests>,
     mut pickups: ResMut<crate::PickUpRequests>,

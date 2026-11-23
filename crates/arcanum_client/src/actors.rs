@@ -571,6 +571,7 @@ fn click_to_move(
     inventory: Option<Res<crate::inventory_screen::InventoryPanel>>,
     armed: Option<ResMut<crate::skill_use::SkillTargeting>>,
     (link, party, local): (Option<Res<HostLink>>, Res<Party>, Res<LocalPc>),
+    rest: Option<Res<crate::rest_window::RestPanel>>,
 ) {
     // An unconscious PC does nothing (0x4348e0).
     if local.0.is_some_and(|(id, _)| unconscious(&party, id)) {
@@ -589,6 +590,10 @@ fn click_to_move(
         None if buttons.just_pressed(MouseButton::Left) && !keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) => {
             let Some((cursor, size)) = windows.iter().find_map(|w| w.cursor_position().map(|c| (c, w.size()))) else { return };
             if crate::hud::covers(size, cursor, panel.is_some_and(|p| p.open) || inventory.is_some_and(|p| p.open)) {
+                return;
+            }
+            // The sleep window takes its clicks; while resting, nothing reaches the world.
+            if rest.is_some_and(|r| r.resting || r.covers(crate::inventory_screen::screen_point(size, cursor))) {
                 return;
             }
             cursor
