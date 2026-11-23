@@ -18,9 +18,10 @@
 //! | 0x40 | n x 0x84 | lines |
 //!
 //! A line is three blocks of 0x2c bytes: the condition, the action when it holds, the action
-//! when it does not. A block is a type (`u32` at +0x00), four operand tags (`i8` at +0x04..+0x07)
-//! and four operand values (`i32` at +0x0c..+0x18); the rest is unused garbage, as are the
-//! operands a type does not use. What each tag means is [`OperandKind`] (getter 0x44ba70).
+//! when it does not. A block is a type (`u32` at +0x00), eight operand tags (`i8` at
+//! +0x04..+0x0b) and eight operand values (`i32` at +0x0c..+0x2b); the operands a type does not
+//! use are garbage. A scalar operand's tag is an [`OperandKind`] (getter 0x44ba70); an object
+//! operand's tag is an object set (0x44b4e0).
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -106,11 +107,14 @@ impl Operand {
     }
 }
 
+/// Operands per block.
+pub const OPERANDS: usize = 8;
+
 /// A condition or an action: its type and operands.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Block {
     pub kind: u32,
-    pub operands: [Operand; 4],
+    pub operands: [Operand; OPERANDS],
 }
 
 impl Block {

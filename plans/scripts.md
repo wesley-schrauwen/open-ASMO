@@ -42,8 +42,10 @@ Here:
   - the capacity at 0x38;
   - a stale pointer at 0x3c.
 - **Lines:** each is 0x84 bytes: a condition block, a then block and an else block, 0x2c bytes
-  each. A block is a type (`u32`), operand tags (`i8` at +4..+0xb) and operand values (`i32`
-  from +0xc). Operands a type does not use are garbage.
+  each. A block is a type (`u32`), eight operand tags (`i8` at +4..+0xb) and eight operand
+  values (`i32` from +0xc). Operands a type does not use are garbage. Operands are read in
+  order (action 0xa: operand 0 := operand 1; 0xb: operand 0 := operand 1 + operand 2). An
+  object operand's tag is an object set kind.
 - **Checked:** all 2487 scripts in the archives parse exactly. Condition types run 0-52,
   action types 0-141.
 
