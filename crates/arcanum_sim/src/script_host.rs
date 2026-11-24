@@ -115,9 +115,11 @@ pub struct ScriptReports(pub Vec<(u32, crate::Unsupported)>);
 
 /// What the host needs to run a script.
 #[derive(SystemParam)]
-pub struct ScriptHost<'w> {
+pub struct ScriptHost<'w, 's> {
     scripts: ResMut<'w, Scripts>,
     started: ResMut<'w, crate::StartedDialogues>,
+    critters: Query<'w, 's, CritterQuery<'static>>,
+    changed_inventories: ResMut<'w, ScriptInventories>,
     teleports: ResMut<'w, crate::big_move::ScriptTeleports>,
     reports: ResMut<'w, ScriptReports>,
     rng: ResMut<'w, crate::HostRng>,
@@ -125,10 +127,27 @@ pub struct ScriptHost<'w> {
     vfs: Option<Res<'w, crate::SimVfs>>,
 }
 
+/// How far the vicinity reaches (sets 8 and 9), in tiles (builder's call: the original takes a
+/// view-sized rectangle round the attachee, 0x440ff0).
+pub const VICINITY: u32 = 10;
+
+/// What the script host needs of the critters: their ids, tiles, and who they are.
+type CritterQuery<'a> = (&'a crate::NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>);
+
 /// The world as a running script sees it.
 struct HostWorld<'a> {
     library: &'a mut ScriptLibrary,
-    map: &'a LoadedMap,
+    map: &'a mut LoadedMap,
+    /// The acting player (set 0x15).
+    player: PlayerId,
+    /// The critters: object, tile, id.
+    critters: Vec<(ScriptObject, arcanum_formats::map::TileLoc, crate::NetId)>,
+    /// Lines floated over objects.
+    floats: Vec<(crate::NetId, String)>,
+    /// PCs whose inventory a script changed.
+    inventories: std::collections::BTreeSet<PlayerId>,
+    /// Sectors whose changes a script touched.
+    sectors: std::collections::BTreeSet<arcanum_formats::map::SectorId>,
     vfs: Option<&'a arcanum_vfs::Vfs>,
     globals: &'a mut ScriptGlobals,
     players: &'a mut BTreeMap<PlayerId, crate::PlayerSave>,
@@ -207,9 +226,164 @@ impl ScriptContext for HostWorld<'_> {
     fn teleport(&mut self, object: ScriptObject, map: i32, to: arcanum_formats::map::TileLoc) {
         self.teleports.push((object, map, to));
     }
+
+    fn gold(&mut self, object: ScriptObject) -> i32 {
+        self.inventory(object).map_or(0, |i| i.gold())
+    }
+
+    fn change_gold(&mut self, object: ScriptObject, n: i32) {
+        let Some(mut inventory) = self.inventory(object) else { return };
+        if n < 0 && inventory.gold() < -n {
+            return;
+        }
+        inventory.change_gold(n);
+        self.set_inventory(object, inventory);
+    }
+
+    fn has_item_named(&mut self, object: ScriptObject, name: i32) -> bool {
+        let Some(inventory) = self.inventory(object) else { return false };
+        inventory.items.iter().any(|i| self.item_name(i.prototype) == Some(name))
+    }
+
+    fn transfer_item_named(&mut self, name: i32, from: ScriptObject, to: ScriptObject) {
+        let (Some(source), Some(target)) = (self.inventory(from), self.inventory(to)) else { return };
+        let Some(item) = source.items.iter().find(|i| self.item_name(i.prototype) == Some(name)).cloned() else { return };
+        let Some((rest, item)) = source.take_out(item.location) else { return };
+        let mut target = target;
+        let placed = target.insert_item(crate::CarriedItem { location: 0, ..item }, self.item_facts(), i32::MAX, 0).is_ok();
+        if !placed {
+            return;
+        }
+        self.set_inventory(from, rest);
+        self.set_inventory(to, target);
+    }
+
+    fn create_item(&mut self, basic: i32, into: ScriptObject) {
+        let Some(mut target) = self.inventory(into) else { return };
+        let Ok(basic) = u32::try_from(basic) else { return };
+        let placed = target.insert(basic + crate::BASIC_TO_PROTOTYPE, 1, self.item_facts(), i32::MAX, 0).is_ok();
+        if placed {
+            self.set_inventory(into, target);
+        }
+    }
+
+    fn object_type(&mut self, object: ScriptObject) -> i32 {
+        match object {
+            ScriptObject::Pc(_) => arcanum_formats::object::TYPE_PC as i32,
+            ScriptObject::Map(id) => self.map.map_object(id).map_or(0, |o| o.object_type as i32),
+            ScriptObject::Mobile { sector, index } => self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).map_or(0, |o| o.object_type as i32),
+        }
+    }
+
+    fn float_text(&mut self, object: ScriptObject, text: String) {
+        if let Some(&(_, _, net_id)) = self.critters.iter().find(|c| c.0 == object) {
+            self.floats.push((net_id, text));
+        }
+    }
+
+    fn attachment(&mut self, object: ScriptObject, event: u32) -> crate::Attachment {
+        self.map.attachment(object, event)
+    }
+
+    fn set_attachment(&mut self, object: ScriptObject, event: u32, attachment: crate::Attachment) {
+        if self.map.attachment(object, event) == attachment {
+            return;
+        }
+        self.map.set_attachment(object, event, attachment);
+        match object {
+            ScriptObject::Map(id) => {
+                self.sectors.insert(id.sector);
+            }
+            ScriptObject::Mobile { sector, .. } => {
+                self.sectors.insert(sector);
+            }
+            ScriptObject::Pc(_) => {}
+        }
+    }
+
+    fn critters_near(&mut self, centre: ScriptObject) -> Vec<ScriptObject> {
+        let Some(&(_, at, _)) = self.critters.iter().find(|c| c.0 == centre) else {
+            return Vec::new();
+        };
+        self.critters.iter().filter(|c| crate::within_radius(at, c.1, VICINITY)).map(|c| c.0).collect()
+    }
+
+    fn player(&mut self) -> Option<ScriptObject> {
+        Some(ScriptObject::Pc(self.player))
+    }
 }
 
-impl ScriptHost<'_> {
+impl HostWorld<'_> {
+    /// An object's inventory: a PC's (its save's), an NPC's, or a container's.
+    fn inventory(&self, object: ScriptObject) -> Option<crate::Inventory> {
+        match object {
+            ScriptObject::Pc(p) => self.players.get(&p)?.inventory.clone(),
+            ScriptObject::Mobile { sector, index } => {
+                let o = self.map.mobiles.get(&sector)?.get(index as usize)?;
+                match o.object_type {
+                    arcanum_formats::object::TYPE_NPC => self.map.npc_inventory(sector, index),
+                    arcanum_formats::object::TYPE_CONTAINER => self.map.pile(GroundItemId::Container { sector, index }).map(|p| p.inventory),
+                    _ => None,
+                }
+            }
+            ScriptObject::Map(_) => None,
+        }
+    }
+
+    fn set_inventory(&mut self, object: ScriptObject, inventory: crate::Inventory) {
+        match object {
+            ScriptObject::Pc(p) => {
+                if let Some(saved) = self.players.get_mut(&p) {
+                    saved.inventory = Some(inventory);
+                    self.inventories.insert(p);
+                }
+            }
+            ScriptObject::Mobile { sector, index } => {
+                let kind = self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).map(|o| o.object_type);
+                if kind == Some(arcanum_formats::object::TYPE_NPC) {
+                    self.map.set_npc_inventory(sector, index, inventory);
+                } else if let Some(mut pile) = self.map.pile(GroundItemId::Container { sector, index }) {
+                    pile.inventory = inventory;
+                    self.map.set_pile(GroundItemId::Container { sector, index }, Some(pile));
+                }
+                self.sectors.insert(sector);
+            }
+            ScriptObject::Map(_) => {}
+        }
+    }
+
+    /// An item prototype's `name` (obj_f_name, field 0x16).
+    fn item_name(&self, prototype: u32) -> Option<i32> {
+        self.map.prototypes.get(prototype)?.int("name")
+    }
+
+    /// Item facts for placing items, with the art's sizes.
+    fn item_facts(&self) -> impl Fn(u32) -> Option<crate::ItemInfo> + '_ {
+        let (prototypes, art) = (self.map.prototypes.clone(), self.map.art.clone());
+        let vfs = self.vfs;
+        move |n| prototypes.get(n).map(|p| crate::ItemInfo::of(p, |id| crate::world::art_size(vfs, art.as_deref(), id)))
+    }
+}
+
+/// PCs whose inventory a script changed: [`sync_script_inventories`] sends them.
+#[derive(Resource, Debug, Default)]
+pub struct ScriptInventories(pub std::collections::BTreeSet<PlayerId>);
+
+/// Copies inventories scripts changed from the save to the PCs and their players.
+pub fn sync_script_inventories(mut changed: ResMut<ScriptInventories>, world: Res<WorldState>, acks: Res<crate::InventoryAcks>, mut outbox: ResMut<crate::Outbox>, mut pcs: Query<(&crate::NetId, &crate::PlayerControlled, &mut crate::Inventory)>) {
+    if changed.0.is_empty() {
+        return;
+    }
+    for player in std::mem::take(&mut changed.0) {
+        let Some(saved) = world.0.as_ref().and_then(|w| w.players.get(&player)).and_then(|p| p.inventory.clone()) else { continue };
+        let Some((&net_id, _, mut inventory)) = pcs.iter_mut().find(|pc| pc.1.0 == player) else { continue };
+        *inventory = saved.clone();
+        let ack = acks.0.get(&player).copied().unwrap_or(0);
+        outbox.0.push((player, crate::LedgerDelta::Inventory { net_id, ack, inventory: saved }));
+    }
+}
+
+impl ScriptHost<'_, '_> {
     /// Runs `object`'s script for `event`, triggered by `player`'s PC (0x441980). A changed
     /// attachment is kept and saved; the answer says whether the default still happens.
     /// Lines it shows go to their players through `outbox`.
@@ -224,13 +398,50 @@ impl ScriptHost<'_> {
         let library = self.scripts.0.get_or_insert_with(|| vfs.map(ScriptLibrary::new).unwrap_or_default());
         let before = attachment;
         let number = attachment.number;
-        let mut ctx = HostWorld { library, map, vfs, globals: &mut save.scripts, players: &mut save.players, rng: &mut self.rng, now: self.clock.now, messages: Vec::new(), dialogs: Vec::new(), teleports: Vec::new() };
+        let critters = self
+            .critters
+            .iter()
+            .filter_map(|(&net_id, position, pc, npc)| {
+                let object = match (pc, npc) {
+                    (Some(pc), _) => ScriptObject::Pc(pc.0),
+                    (_, Some(npc)) => npc.object(),
+                    _ => return None,
+                };
+                Some((object, position.0, net_id))
+            })
+            .collect();
+        let mut ctx = HostWorld {
+            library,
+            map,
+            player,
+            critters,
+            floats: Vec::new(),
+            inventories: Default::default(),
+            sectors: Default::default(),
+            vfs,
+            globals: &mut save.scripts,
+            players: &mut save.players,
+            rng: &mut self.rng,
+            now: self.clock.now,
+            messages: Vec::new(),
+            dialogs: Vec::new(),
+            teleports: Vec::new(),
+        };
         let invocation = Invocation { attachee: object, triggerer: ScriptObject::Pc(player), other: None, event, start_line: 0 };
         let run = crate::run_hook(&mut ctx, &mut attachment, invocation);
         for (to, text) in std::mem::take(&mut ctx.messages) {
             outbox.0.push((to, crate::LedgerDelta::ScriptMessage { text }));
         }
         self.started.0.append(&mut ctx.dialogs);
+        // Floats go to everyone in the world (the original to those who can see it).
+        let players: Vec<PlayerId> = ctx.players.keys().copied().collect();
+        for (speaker, text) in std::mem::take(&mut ctx.floats) {
+            for &to in &players {
+                outbox.0.push((to, crate::LedgerDelta::FloatText { speaker, text: text.clone(), colour: crate::FloatColour::White, voice: None }));
+            }
+        }
+        self.changed_inventories.0.append(&mut ctx.inventories);
+        let touched = std::mem::take(&mut ctx.sectors);
         for (object, map, to) in std::mem::take(&mut ctx.teleports) {
             self.teleports.0.push(crate::big_move::ScriptTeleport { causer: player, object, map, to });
         }
@@ -239,6 +450,9 @@ impl ScriptHost<'_> {
         }
         let excess = self.reports.0.len().saturating_sub(REPORTS_KEPT);
         self.reports.0.drain(..excess);
+        for sector in touched {
+            crate::ground::save_change(world, map, sector);
+        }
         if attachment != before {
             map.set_attachment(object, event, attachment);
             let sector = match object {

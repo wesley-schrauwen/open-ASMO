@@ -66,6 +66,7 @@ impl Plugin for SimPlugin {
             .init_resource::<crate::big_move::VoteRequests>()
             .init_resource::<crate::big_move::MapIds>()
             .init_resource::<crate::big_move::LastTiles>()
+            .init_resource::<crate::script_host::ScriptInventories>()
             .init_resource::<crate::barter::BarterRequests>()
             .init_resource::<crate::DialogueReports>()
             .init_resource::<crate::GenericLines>()
@@ -74,7 +75,7 @@ impl Plugin for SimPlugin {
             .init_resource::<crate::ScriptReports>()
             .init_resource::<InventoryAcks>()
             .init_resource::<ClosingDoors>()
-            .add_systems(FixedUpdate, ((handle_intents, gate_unconscious).chain(), boot_world, apply_sheet_requests, apply_inventory_requests, crate::barter::apply_barter, update_party_pace, advance_clock, apply_moves, (walk, crate::big_move::step_on_jump_points).chain(), use_portals, pick_up_items, (pick_locks, cast_spells, start_resting, rest_steps, recover_fatigue, update_consciousness, crate::talk_to_npcs, crate::run_conversations, crate::barter::open_barters, crate::big_move::run_big_moves).chain(), close_doors, stream_sectors, spawn_npcs, update_activity, npc_idle, sync_state, advance_tick, write_save).chain());
+            .add_systems(FixedUpdate, ((handle_intents, gate_unconscious).chain(), boot_world, apply_sheet_requests, apply_inventory_requests, crate::barter::apply_barter, update_party_pace, advance_clock, apply_moves, (walk, crate::big_move::step_on_jump_points).chain(), use_portals, pick_up_items, (pick_locks, cast_spells, start_resting, rest_steps, recover_fatigue, update_consciousness, crate::talk_to_npcs, crate::run_conversations, crate::barter::open_barters, crate::big_move::run_big_moves, crate::script_host::sync_script_inventories).chain(), close_doors, stream_sectors, spawn_npcs, update_activity, npc_idle, sync_state, advance_tick, write_save).chain());
     }
 }
 
