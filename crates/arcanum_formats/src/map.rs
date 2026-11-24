@@ -171,9 +171,55 @@ impl MapProperties {
     }
 }
 
+/// One jump point of `map.jmp` (Arcanum.exe loads `%s\map.jmp`, 0x4e3000): stepping on
+/// `from` takes the party to `to` on map `map` (`None`: this map).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JumpPoint {
+    /// Always 0 in the data.
+    pub flags: u32,
+    pub from: TileLoc,
+    /// A `Rules/MapList.mes` id (the file holds `id - 4999`; -1 is this map).
+    pub map: Option<u32>,
+    pub to: TileLoc,
+}
+
+/// The map list id the file's map index stands for (index 1 is 5000, the start map).
+pub const JUMP_MAP_BASE: u32 = 4999;
+
+/// Parses `map.jmp`: a `u32` count, then 32-byte entries (flags, pad, source location, map,
+/// pad, destination location; locations x in the low dword, y in the high). A short file gives
+/// the entries it holds.
+pub fn parse_jump_points(data: &[u8]) -> Vec<JumpPoint> {
+    let u32_at = |o: usize| data.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+    let count = u32_at(0).unwrap_or(0) as usize;
+    (0..count)
+        .map_while(|i| {
+            let o = 4 + 32 * i;
+            let (flags, fx, fy, map, tx, ty) = (u32_at(o)?, u32_at(o + 8)?, u32_at(o + 12)?, u32_at(o + 16)?, u32_at(o + 24)?, u32_at(o + 28)?);
+            let map = (map != u32::MAX).then(|| map.wrapping_add(JUMP_MAP_BASE));
+            Some(JumpPoint { flags, from: TileLoc { x: fx, y: fy }, map, to: TileLoc { x: tx, y: ty } })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn jump_points_read_their_tiles_and_maps() {
+        let mut data = 2u32.to_le_bytes().to_vec();
+        for (x, y, map, tx, ty) in [(110u32, 92u32, 1u32, 61976u32, 65664u32), (436, 215, u32::MAX, 304, 219)] {
+            for v in [0, 0, x, y, map, 0, tx, ty] {
+                data.extend(u32::to_le_bytes(v));
+            }
+        }
+        let points = parse_jump_points(&data);
+        assert_eq!(points[0], JumpPoint { flags: 0, from: TileLoc { x: 110, y: 92 }, map: Some(5000), to: TileLoc { x: 61976, y: 65664 } });
+        assert_eq!(points[1].map, None, "-1: this map");
+        assert!(parse_jump_points(&0u32.to_le_bytes()).is_empty());
+        assert_eq!(parse_jump_points(&data[..40]).len(), 1, "a short file gives what it holds");
+    }
 
     fn hex(s: &str) -> Vec<u8> {
         let digits: Vec<u8> = s.bytes().filter(|b| !b.is_ascii_whitespace()).collect();

@@ -23,6 +23,12 @@
 //!   Clients get `EnterMap`, the new map's changes and each PC's `Teleported`. Talks, barter and
 //!   loot windows on the old map end.
 //!
+//! - **Jump points** (`map.jmp`, [`step_on_jump_points`]): a PC placed on a jump point's tile
+//!   (each step that ends there, 0x444270 → 0x4101d0 → 0x4e3450) asks for a teleport to its
+//!   map (`None`: this one) and tile, as a script's does (0x4d3380, no fade), so it goes to the
+//!   same vote. NPCs and followers do not set them off; the flags are never read. Landing on
+//!   another jump point sets that one off too (the original chains up to 9 deep).
+//!
 //! Not built: teleports of NPCs and other objects (reported in [`TeleportReports`]);
 //! followers; fades (0x66's fade and delay, 0x67); votes kept in the save (a vote open when the
 //! host stops is lost); the map's own start position and `MapList.mes` types.
@@ -232,6 +238,25 @@ impl MoveWorld<'_, '_> {
         crate::ground::broadcast(&self.session, &mut self.outbox, LedgerDelta::EnterMap { map: name.to_string() });
         if !changes.is_empty() {
             crate::ground::broadcast(&self.session, &mut self.outbox, LedgerDelta::MapChanges { changes });
+        }
+    }
+}
+
+/// Where each PC stood last tick, to see which ones arrived somewhere.
+#[derive(Resource, Debug, Default)]
+pub struct LastTiles(BTreeMap<PlayerId, TileLoc>);
+
+/// A PC that arrived on a jump point's tile asks for its teleport (0x4101d0).
+pub fn step_on_jump_points(map: Res<LoadedMap>, mut last: ResMut<LastTiles>, mut teleports: ResMut<ScriptTeleports>, pcs: Query<(&PlayerControlled, &Position)>) {
+    for (controlled, position) in &pcs {
+        let player = controlled.0;
+        let before = last.0.insert(player, position.0);
+        if before.is_none_or(|b| b == position.0) {
+            continue;
+        }
+        if let Some(jump) = map.jump_points.iter().find(|j| j.from == position.0) {
+            let map = jump.map.map_or(THIS_MAP, |id| id as i32);
+            teleports.0.push(ScriptTeleport { causer: player, object: ScriptObject::Pc(player), map, to: jump.to });
         }
     }
 }

@@ -238,6 +238,8 @@ pub struct LoadedMap {
     /// Whether day locks hold now ([`crate::lock_day`]): doors locked by day or by night block
     /// accordingly. Set from the game clock ([`LoadedMap::set_lock_day`]).
     pub lock_day: bool,
+    /// The map's jump points (`map.jmp`, [`crate::big_move`]).
+    pub jump_points: Vec<arcanum_formats::map::JumpPoint>,
 }
 
 impl LoadedMap {
@@ -260,6 +262,9 @@ impl LoadedMap {
             }
         }
         self.read_mobiles(vfs, name);
+        if let Ok(data) = vfs.read(&format!("maps/{name}/map.jmp")) {
+            self.jump_points = arcanum_formats::map::parse_jump_points(&data);
+        }
         let path = format!("maps/{name}/map.prp");
         if !vfs.exists(&path) {
             return;
@@ -1193,6 +1198,27 @@ mod tests {
         let gait = crate::Gait::human(crate::walk_fps(8, 0));
         let slowest = gait.step_seconds(TileLoc { x: 1, y: 0 }, TileLoc { x: 0, y: 1 });
         (tiles as f64 * crate::TICK_HZ * slowest).ceil() as usize + 1
+    }
+
+    #[test]
+    fn stepping_on_a_jump_point_teleports_the_pc() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        // A jump point at (69, 80) to (75, 75) on this map (-1).
+        let mut jmp = 1u32.to_le_bytes().to_vec();
+        for v in [0u32, 0, 69, 80, u32::MAX, 0, 75, 75] {
+            jmp.extend(v.to_le_bytes());
+        }
+        std::fs::write(dir.path().join("maps").join(MAP).join("map.jmp"), jmp).unwrap();
+        let mut sim = booted(dir.path(), save(&[(7, "A", TileLoc { x: 70, y: 80 })]));
+        assert_eq!(sim.app.world().resource::<LoadedMap>().jump_points.len(), 1);
+        sim.take_deltas();
+        send_move(&mut sim, 7, 1, &[(70, 80), (69, 80)]);
+        walk_ticks(&mut sim, ticks_for(1) + 1);
+        assert_eq!(position(&mut sim, 7), TileLoc { x: 75, y: 75 }, "jumped on arrival");
+        assert!(sim.take_deltas().iter().any(|(_, d)| matches!(d, LedgerDelta::Teleported { to, .. } if *to == TileLoc { x: 75, y: 75 })));
+        walk_ticks(&mut sim, 3);
+        assert_eq!(position(&mut sim, 7), TileLoc { x: 75, y: 75 }, "once");
     }
 
     #[test]

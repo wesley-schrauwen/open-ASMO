@@ -238,8 +238,15 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      Real data: a teleport to map 5001 opens `BessieToonesMine-fixed` with 16 NPCs round the
      tile.
    - **Not built:** teleporting NPCs and objects; followers; fades and delays (0x66 teleports
-     without them, 0x67 does nothing); votes in the save; the map's jump points and stairs
-     (next); the client's open dialogue, barter and loot windows are not closed by the switch.
+     without them, 0x67 does nothing); votes in the save; the client's open dialogue, barter
+     and loot windows are not closed by the switch.
+   - **Jump points** (built next, `feat/jump-points`): `maps/<map>/map.jmp` (loader 0x4e30a0 /
+     0x4e3800): a `u32` count, then 32-byte entries (flags, pad, source x/y, map, pad, destination
+     x/y); the map is `id - 4999`, -1 this map; the flags are never read. A PC placed on a
+     source tile (0x444270 → 0x4101d0 → 0x4e3450; each step ending there) queues a teleport
+     (0x4d3380, no fade); NPCs and followers do not. Here it goes to the same vote. Data: 45 jump
+     points on 17 maps, 22 to the same map; every destination map is listed. Stairs and doors
+     to other maps are script teleports on their "use" (the `_TEL` scripts), built above.
 5. **Gold and items:** conditions 2 and 0x11; actions 0x23, 0x29 and 0x42.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,
