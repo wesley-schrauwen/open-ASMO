@@ -43,6 +43,9 @@ pub struct WorldSave {
     /// The scripts' global variables and flags and the story state ([`crate::script`]).
     #[serde(default)]
     pub scripts: crate::ScriptGlobals,
+    /// The changes of the maps the party has left, by folder name ([`crate::big_move`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub other_maps: BTreeMap<String, BTreeMap<SectorId, SectorDelta>>,
 }
 
 fn default_first_year() -> u32 {
@@ -155,6 +158,7 @@ impl WorldSave {
             first_year: start.clock.year,
             next_dropped: 0,
             scripts: Default::default(),
+            other_maps: BTreeMap::new(),
         }
     }
 

@@ -214,12 +214,21 @@ fn leave_world(
     }
 }
 
-/// Opens the host's map and reads the sectors around the PC from the client's game data.
-fn load_sectors(mut client: ResMut<ClientMap>, map: Res<LocalMap>, pc: Res<LocalPc>, vfs: Option<Res<VfsResource>>) {
+/// A map tile or object sprite.
+type MapSprite = Or<(With<GroundTile>, With<MapObject>)>;
+
+/// Opens the host's map and reads the sectors around the PC from the client's game data. A new
+/// map (a teleport, [`arcanum_sim::big_move`]) clears the old one's tiles and objects.
+fn load_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, map: Res<LocalMap>, pc: Res<LocalPc>, vfs: Option<Res<VfsResource>>, sprites: Query<Entity, MapSprite>) {
     let (Some(name), Some((_, at))) = (&map.0, pc.0) else { return };
     let Some(vfs) = vfs else { return };
     let Ok(vfs) = vfs.0.read() else { return };
     if client.map.name.as_deref() != Some(name.as_str()) {
+        if client.map.name.is_some() {
+            for sprite in &sprites {
+                commands.entity(sprite).despawn();
+            }
+        }
         client.map.open(Some(&vfs), name);
         client.drawn.clear();
         let corner = at.sector();

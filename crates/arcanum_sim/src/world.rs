@@ -1583,6 +1583,63 @@ mod tests {
     }
 
     #[test]
+    fn a_teleport_to_another_map_takes_the_party_and_keeps_each_maps_changes() {
+        use crate::script::tests::{always, block, n, op};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        // "Other": a copy of the test map.
+        let (from, to) = (dir.path().join("maps").join(MAP), dir.path().join("maps").join("Other"));
+        std::fs::create_dir_all(&to).unwrap();
+        for entry in std::fs::read_dir(&from).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+        }
+        std::fs::create_dir_all(dir.path().join("Rules")).unwrap();
+        std::fs::write(dir.path().join("Rules/MapList.mes"), format!("{{5000}}{{{MAP}, 70, 70}}\n{{5001}}{{Other, 75, 75}}\n")).unwrap();
+        let mut s = save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]);
+        s.sector_changes.insert(SectorId::new(1, 1), crate::SectorDelta { portals: [(0, true)].into(), ..Default::default() });
+        let mut sim = booted(dir.path(), s);
+        let teleport_on = |sim: &mut SimApp, map: i32, at: TileLoc| {
+            let npc_object = crate::ScriptObject::Mobile { sector: SectorId::new(1, 1), index: 0 };
+            sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 700));
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            let go = block(0x2c, &[op(0, 0), n(map), n(at.x as i32), n(at.y as i32)]);
+            library.insert(700, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(go), always(block(1, &[]))] });
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0).unwrap().0
+        };
+        let npc = teleport_on(&mut sim, 5001, TileLoc { x: 79, y: 81 });
+        sim.take_deltas();
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.contains(&(PlayerId(7), LedgerDelta::Despawn { net_id: npc })), "the old map's NPCs go");
+        assert!(deltas.contains(&(PlayerId(7), LedgerDelta::EnterMap { map: "Other".into() })), "{deltas:?}");
+        assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::Teleported { to, .. } if *to == TileLoc { x: 79, y: 81 })));
+        assert!(!deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::MapChanges { .. })), "Other has no changes yet");
+        let entered = deltas.iter().position(|(_, d)| matches!(d, LedgerDelta::EnterMap { .. })).unwrap();
+        assert!(deltas[entered..].iter().any(|(_, d)| matches!(d, LedgerDelta::Spawn { kind: EntityKind::Npc { .. }, .. })), "Other's NPCs come, after EnterMap");
+        {
+            let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+            assert_eq!(save.map, "Other");
+            assert_eq!(save.players[&PlayerId(7)].position, TileLoc { x: 79, y: 81 });
+            assert!(save.sector_changes.is_empty());
+            assert!(save.other_maps[MAP][&SectorId::new(1, 1)].portals[&0], "Test's changes kept");
+            assert_eq!(sim.app.world().resource::<LoadedMap>().name.as_deref(), Some("Other"));
+        }
+        // And back: Test's changes come back with it.
+        let npc = teleport_on(&mut sim, 5000, TileLoc { x: 79, y: 80 });
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::MapChanges { changes } if changes[&SectorId::new(1, 1)].portals[&0])));
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(save.map, MAP);
+        assert!(save.other_maps.is_empty() || !save.other_maps.contains_key(MAP));
+    }
+
+    #[test]
     fn a_lone_player_teleports_at_once_and_other_maps_are_reported() {
         use crate::script::tests::{always, block, n, op};
         let dir = tempfile::tempdir().unwrap();

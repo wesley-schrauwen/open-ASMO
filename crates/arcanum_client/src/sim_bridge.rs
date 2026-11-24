@@ -310,6 +310,12 @@ fn receive_deltas(
         if let LedgerDelta::EnterMap { map: name } = delta {
             map.0 = Some(name.clone());
         }
+        // A teleport: the map around the new tile loads at once.
+        if let LedgerDelta::Teleported { net_id, to } = delta
+            && pc.0.is_some_and(|(id, _)| id == *net_id)
+        {
+            pc.0 = Some((*net_id, *to));
+        }
         if let LedgerDelta::Spawn { net_id, kind: EntityKind::Pc { player }, position, .. } = delta
             && *player == link.0.player()
         {

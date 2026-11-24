@@ -230,8 +230,16 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      is put to every player's vote (`plans/multiplayer.md`); with one player it happens at once.
      The PC jumps (`Teleported`), standing; its position is saved.
    - **Found on the way:** object sets 0 and 1 were the wrong way round (0 is the triggerer).
-   - **Not built:** other maps (next: map switching); teleporting NPCs and objects; followers;
-     fades and delays (0x66 teleports without them, 0x67 does nothing); votes in the save.
+   - **Other maps** (built next, `feat/map-switch`): the whole party goes, after the same vote.
+     The old map's changes go into `WorldSave::other_maps`, the new map's come out; the old map's
+     NPCs despawn, the new map opens around the tile and its NPCs spawn as its sectors load.
+     Clients get `EnterMap`, the map's changes and `Teleported`, and clear the old map's
+     sprites. Talks end; barter and loot windows on the old map close on the host.
+     Real data: a teleport to map 5001 opens `BessieToonesMine-fixed` with 16 NPCs round the
+     tile.
+   - **Not built:** teleporting NPCs and objects; followers; fades and delays (0x66 teleports
+     without them, 0x67 does nothing); votes in the save; the map's jump points and stairs
+     (next); the client's open dialogue, barter and loot windows are not closed by the switch.
 5. **Gold and items:** conditions 2 and 0x11; actions 0x23, 0x29 and 0x42.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,

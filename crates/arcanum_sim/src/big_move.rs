@@ -16,10 +16,16 @@
 //!   - with one player in the world there is nobody to wait for: it happens at once (builder's
 //!     call).
 //! - The script does not wait for the vote (the original's run goes on too).
+//! - **Another map** (0x4d3460 → 0x45c720): the whole party goes (every PC, as followers do in
+//!   the original), to the same tile. The old map's changes are kept in the save
+//!   ([`crate::WorldSave::other_maps`]) and the new map's taken out; the old map's NPCs go
+//!   (`Despawn`), the new map opens around the tile and its NPCs come as its sectors load.
+//!   Clients get `EnterMap`, the new map's changes and each PC's `Teleported`. Talks, barter and
+//!   loot windows on the old map end.
 //!
-//! Not built: teleports to other maps, of NPCs and of other objects (reported in
-//! [`TeleportReports`]); followers; fades (0x66's fade and delay, 0x67); votes kept in the save
-//! (a vote open when the host stops is lost).
+//! Not built: teleports of NPCs and other objects (reported in [`TeleportReports`]);
+//! followers; fades (0x66's fade and delay, 0x67); votes kept in the save (a vote open when the
+//! host stops is lost); the map's own start position and `MapList.mes` types.
 
 use std::collections::BTreeMap;
 
@@ -58,6 +64,8 @@ pub struct Vote {
     pub causer: PlayerId,
     /// The PCs that go, by player.
     pub movers: Vec<PlayerId>,
+    /// Another map (its folder name), or this one.
+    pub map: Option<String>,
     pub to: TileLoc,
     /// Each voter's answer so far.
     pub ballots: BTreeMap<PlayerId, Option<bool>>,
@@ -98,40 +106,58 @@ pub struct VoteAsk {
 
 type MoverQuery<'a> = (Entity, &'a NetId, &'a PlayerControlled, &'a mut Position, &'a Sheet);
 
+/// What a move changes.
+#[derive(bevy_ecs::system::SystemParam)]
+pub struct MoveWorld<'w, 's> {
+    commands: Commands<'w, 's>,
+    session: Res<'w, Session>,
+    map: ResMut<'w, LoadedMap>,
+    world: ResMut<'w, WorldState>,
+    outbox: ResMut<'w, Outbox>,
+    populated: ResMut<'w, crate::PopulatedSectors>,
+    vfs: Option<Res<'w, crate::SimVfs>>,
+    pcs: Query<'w, 's, MoverQuery<'static>>,
+    npcs: Query<'w, 's, (Entity, &'static NetId), With<crate::Npc>>,
+    talking: Query<'w, 's, (Entity, &'static PlayerControlled), With<crate::Conversation>>,
+}
+
 /// Turns script teleports into votes, counts the answers and moves the PCs.
-#[allow(clippy::too_many_arguments)]
 pub fn run_big_moves(
-    mut commands: Commands,
     mut teleports: ResMut<ScriptTeleports>,
     mut answers: ResMut<VoteRequests>,
     mut moves: ResMut<BigMoves>,
     (mut reports, mut ids): (ResMut<TeleportReports>, ResMut<MapIds>),
-    (session, map, vfs): (Res<Session>, Res<LoadedMap>, Option<Res<crate::SimVfs>>),
-    mut world: ResMut<WorldState>,
-    mut outbox: ResMut<Outbox>,
-    mut pcs: Query<MoverQuery>,
+    mut w: MoveWorld,
 ) {
-    let voters: Vec<PlayerId> = session.players.iter().filter(|(_, s)| matches!(s, SessionPlayer::InWorld(_))).map(|(&p, _)| p).collect();
-    let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
-    let vfs = vfs_guard.as_deref();
+    let voters: Vec<PlayerId> = w.session.players.iter().filter(|(_, s)| matches!(s, SessionPlayer::InWorld(_))).map(|(&p, _)| p).collect();
     for asked in teleports.0.drain(..) {
-        let same_map = asked.map == THIS_MAP || (asked.map > 0 && ids.name(vfs, asked.map as u32).is_some_and(|n| Some(n) == map.name.as_deref()));
         let ScriptObject::Pc(mover) = asked.object else {
             reports.0.push(format!("teleport of {:?} to map {} {:?}", asked.object, asked.map, asked.to));
             continue;
         };
-        if !same_map {
-            reports.0.push(format!("teleport of {mover:?} to map {} {:?}", asked.map, asked.to));
-            continue;
-        }
-        let vote = Vote { id: moves.next, causer: asked.causer, movers: vec![mover], to: asked.to, ballots: voters.iter().map(|&p| (p, None)).collect() };
+        let name = if asked.map == THIS_MAP {
+            None
+        } else {
+            let vfs_guard = w.vfs.as_ref().and_then(|v| v.0.read().ok());
+            match u32::try_from(asked.map).ok().and_then(|id| ids.name(vfs_guard.as_deref(), id)) {
+                Some(name) => Some(name.to_string()),
+                None => {
+                    reports.0.push(format!("teleport of {mover:?} to unknown map {} {:?}", asked.map, asked.to));
+                    continue;
+                }
+            }
+        };
+        let map = name.filter(|n| Some(n.as_str()) != w.map.name.as_deref());
+        // A map change takes the whole party; a move within the map, the PC.
+        let movers = if map.is_some() { voters.clone() } else { vec![mover] };
+        let vote = Vote { id: moves.next, causer: asked.causer, movers, map, to: asked.to, ballots: voters.iter().map(|&p| (p, None)).collect() };
         moves.next += 1;
         if voters.len() <= 1 {
-            go(&mut commands, &vote, &mut world, &mut outbox, &session, &mut pcs);
+            w.go(&vote);
             continue;
         }
-        let causer = pcs.iter().find(|pc| pc.2.0 == asked.causer).map(|pc| pc.4.0.name.clone()).unwrap_or_default();
-        crate::ground::broadcast(&session, &mut outbox, LedgerDelta::MoveVote { ask: VoteAsk { id: vote.id, causer } });
+        let causer = w.pcs.iter().find(|pc| pc.2.0 == asked.causer).map(|pc| pc.4.0.name.clone()).unwrap_or_default();
+        crate::ground::broadcast(&w.session, &mut w.outbox, LedgerDelta::MoveVote { ask: VoteAsk { id: vote.id, causer } });
         moves.votes.push(vote);
     }
     for (player, id, yes) in answers.0.drain(..) {
@@ -146,10 +172,10 @@ pub fn run_big_moves(
         let declined = vote.ballots.values().any(|b| *b == Some(false));
         let agreed = vote.ballots.values().all(|b| *b == Some(true));
         if declined {
-            crate::ground::broadcast(&session, &mut outbox, LedgerDelta::VoteEnded { id: vote.id, passed: false });
+            crate::ground::broadcast(&w.session, &mut w.outbox, LedgerDelta::VoteEnded { id: vote.id, passed: false });
         } else if agreed {
-            go(&mut commands, &vote, &mut world, &mut outbox, &session, &mut pcs);
-            crate::ground::broadcast(&session, &mut outbox, LedgerDelta::VoteEnded { id: vote.id, passed: true });
+            w.go(&vote);
+            crate::ground::broadcast(&w.session, &mut w.outbox, LedgerDelta::VoteEnded { id: vote.id, passed: true });
         } else {
             open.push(vote);
         }
@@ -157,15 +183,55 @@ pub fn run_big_moves(
     moves.votes = open;
 }
 
-/// Moves the vote's PCs onto its tile (0x4d39a0: as given, standing, the walk dropped).
-fn go(commands: &mut Commands, vote: &Vote, world: &mut ResMut<WorldState>, outbox: &mut Outbox, session: &Session, pcs: &mut Query<MoverQuery>) {
-    for (entity, &net_id, controlled, mut position, _) in pcs.iter_mut() {
-        if !vote.movers.contains(&controlled.0) {
-            continue;
+impl MoveWorld<'_, '_> {
+    /// Does a move: another map first, then the PCs onto the tile (0x4d39a0: as given,
+    /// standing, the walk dropped).
+    fn go(&mut self, vote: &Vote) {
+        if let Some(name) = &vote.map {
+            self.switch_map(name, vote.to);
         }
-        position.0 = vote.to;
-        commands.entity(entity).remove::<(crate::Walking, crate::PendingTalk)>();
-        crate::movement::record_position(world, controlled.0, vote.to);
-        crate::ground::broadcast(session, outbox, LedgerDelta::Teleported { net_id, to: vote.to });
+        for (entity, &net_id, controlled, mut position, _) in self.pcs.iter_mut() {
+            if !vote.movers.contains(&controlled.0) {
+                continue;
+            }
+            position.0 = vote.to;
+            self.commands.entity(entity).remove::<(crate::Walking, crate::PendingTalk)>();
+            crate::movement::record_position(&mut self.world, controlled.0, vote.to);
+            crate::ground::broadcast(&self.session, &mut self.outbox, LedgerDelta::Teleported { net_id, to: vote.to });
+        }
+    }
+
+    /// Leaves the loaded map for `name`, around tile `to`.
+    fn switch_map(&mut self, name: &str, to: TileLoc) {
+        let Some(save) = self.world.0.as_mut() else { return };
+        // The old map's NPCs go; its changes are kept.
+        for (entity, &net_id) in &self.npcs {
+            self.commands.entity(entity).despawn();
+            crate::ground::broadcast(&self.session, &mut self.outbox, LedgerDelta::Despawn { net_id });
+        }
+        for (entity, controlled) in &self.talking {
+            self.commands.entity(entity).remove::<crate::Conversation>();
+            self.outbox.0.push((controlled.0, LedgerDelta::DialogueEnded));
+        }
+        for (entity, ..) in self.pcs.iter() {
+            self.commands.entity(entity).remove::<(crate::barter::BarterOpen, crate::LootOpen, crate::PendingPickUp)>();
+        }
+        let old = std::mem::replace(&mut save.map, name.to_string());
+        let changes = std::mem::take(&mut save.sector_changes);
+        if !changes.is_empty() {
+            save.other_maps.insert(old, changes);
+        }
+        save.sector_changes = save.other_maps.remove(name).unwrap_or_default();
+        let vfs_guard = self.vfs.as_ref().and_then(|v| v.0.read().ok());
+        let vfs = vfs_guard.as_deref();
+        self.map.open(vfs, name);
+        self.map.changes = save.sector_changes.clone();
+        self.map.load_around(vfs, to);
+        self.populated.0.clear();
+        let changes = save.sector_changes.clone();
+        crate::ground::broadcast(&self.session, &mut self.outbox, LedgerDelta::EnterMap { map: name.to_string() });
+        if !changes.is_empty() {
+            crate::ground::broadcast(&self.session, &mut self.outbox, LedgerDelta::MapChanges { changes });
+        }
     }
 }
