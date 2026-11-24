@@ -25,9 +25,11 @@ format and language are checked against all 709 `.dlg` files.
   action 4 starts the conversation: the dialogue file is the running script's own (its
   number), and the start line is operand 0 (`0x567460`). The script then ends, skipping the
   default.
-- **Without a script, or if it runs the default:** the NPC barks a generic line over its head
-  (0x5681c0): lines 1900-1999 if its reaction is 4 or more, else 2000-2099, from the generic
-  files. Not when it cannot talk (0x4ad800: dead, asleep, busy, fighting someone else).
+- **Without a script, or if it runs the default:** the NPC barks over its head (0x5681c0 →
+  0x4132a0): the generic greeting of a `G:` line (0x419260), with the arguments
+  `1 0, 2 0, ..., 8 0` (0x5a0a60) when the NPC follows the PC, else none. There is no
+  conversation. Not when it cannot talk (0x4ad800). The earlier "1900-1999 / 2000-2099" reading
+  was wrong: 1900-1999 is the PC's newspaper option.
 - `0x567460` refuses when either party is dead or down, or the NPC cannot talk. Both turn to
   face each other and stop walking.
 - **One line and no options** (state 4): the line just floats, and there is no conversation.
@@ -49,7 +51,7 @@ format and language are checked against all 709 `.dlg` files.
     were chosen").
 - **Options after an NPC line** are the PC options after it in number order, up to the next
   NPC line. They pass gender, intelligence and the test, and at most 5 are shown. If none
-  pass, the PC says a random goodbye (generic 400-499) and the conversation ends.
+  pass, the PC is offered one goodbye (`gd_pc2` 400-499, action 1: it ends; 0x414e60).
 - **Checked:** 709 files, 15287 NPC lines, 39472 PC options; opcode counts match the agent's
   tally. 12 tests and 11 results meet an unknown opcode: such a test fails, and such a result
   stops.
@@ -94,8 +96,8 @@ format and language are checked against all 709 `.dlg` files.
 ### Text
 
 - `@pcname@` and `@npcname@` are replaced with the names.
-- An NPC line `G:` (optionally `G:i n, ...`) is a generic reaction line from the `gd_*`
-  files. `I:` is a generic idle line (1000), after which options are shown.
+- An NPC line `G:` (optionally `G: k n, k fl n, ...`) is a generic greeting; `I:` an insult
+  (`gd_rce` 1000). Both are followed by the line's options. See "Generic lines" below.
 - PC options with a prefix take a random generic line:
   - from `gd_pc2m` / `gd_pc2f` by the NPC's gender, or the `gd_dumb_*` pair for a dumb PC;
   - `Y:` 1-99, `N:` 100-199, `S:` 200-299, `B:` 300-399 barter, `E:` 400-499 goodbye, `T:`
@@ -106,6 +108,62 @@ format and language are checked against all 709 `.dlg` files.
   - Any other option text is shown as written.
 - **Voice:** `sound/speech/<dialogue number, 5 digits>/v<voice>_<m|f>.mp3` by the speaker's
   gender, falling back to `m`. None for voice 0.
+
+## Generic lines (0x418250-0x41a520; checked 2026-11-24)
+
+- **Files** (table 0x5a063c, `mes\%s.mes`): `gd_pc2m/f` and `gd_dumb_pc2m/f` (the PC's lines, to
+  a male or female NPC); `gd_cls_*` (class, 50 lines per `npc_social_class`, 11 classes noble to
+  bandit), `gd_cls_pc2*`; `gd_rce_*` (50 per PC race, the first block for the NPC's own race);
+  `gd_npc_*`; `gd_sto_*` (0x41a440, its own table). `m2f` is a male speaker to a female
+  listener. The `dumb` files (0x45fc00: Intelligence 4 or less, or 0x4c2690 in 0x37/0x4a/0x4b)
+  are for a dumb speaker: the NPC for its lines (0x418480, 0x4185f0), the PC for its own (0x4182d0,
+  0x418390). NPC dumb files have one block per kind (no class or race offset); the PC's
+  `gd_cls_dumb_pc2` keeps the class offset.
+- **Picking** (0x4d4550, 0x4cef00): count the lines in `lo..=hi`, then take `lo + r`. A gap in a
+  block makes some picks empty: `gd_cls_m2m` has no 8113, so 1 in 45 greetings of a wizard to a
+  male PC at the best level says nothing.
+- **Overrides** (0x418870): first the NPC's override dialogue, the file of its script attachment
+  31 (`scripts_idx` entry 0x1f), at a fixed line: class blocks `base / 1000 + 9999` (8000 →
+  10007), race blocks `base / 1000 + 10999` (1000 → 11000), `gd_npc` blocks
+  `base / 100 + 11999`, story `10000 + state`. 21 such files exist (`*Override*.dlg`, the
+  followers). Only override lines carry a voice.
+- **`G:` (0x419260):** arguments `k line`, `k fl line` or `k 0` for cases `k` 0-9: a line goes
+  there (0x4197d0 → 0x414e60), `fl` closes with it (0x413a30, state 4), `0` turns the case off.
+  The cases, in order:
+  - 0 the NPC is dead (`gd_npc` 1500, speak with dead);
+  - the NPC cannot talk (0x4af210): `gd_npc` 3000, and nothing more;
+  - 1 the PC has a bad associate (0x45f460, `gd_cls` 18000);
+  - 2 invisible (PC flags & 1, 22000); 3 body spell (& 0x3c, 19000); 4 polymorph (& 0x20000,
+    20000); these four close the talk unless the NPC's class is 2;
+  - 6 shrunk (& 0x80000, `gd_rce` 6000);
+  - 7 underwear (armour type 0, 16000); 8 barbarian armour (type 7, 17000);
+  - 5 is read by nobody; mirror image (21000) was not found;
+  - 9 the greeting: one in five, a reputation's comment (0x4c1f80, 0x4c2100), else by meeting
+    (0x4c0c40) and reaction level (0x4c0fc0), tables 0x4197a8 / 0x41978c:
+
+    | Level | 0 | 1-2 | 3 | 4-5 | 6 |
+    |---|---|---|---|---|---|
+    | First meeting | cls 8000 | cls 9000 | cls 10000 | rce 2000 | rce 3000 |
+    | Met before | cls 11000 | cls 12000 | cls 13000 | rce 4000 | rce 5000 |
+
+  Then the options after the `G:` line.
+- **Option prefixes** (0x416c10; letters at 0x5a0ab4: `z y x w u t s q p n l k h f e d c b a`,
+  plus exact `I:` and `R:`):
+  - `Y N S E F K W` `gd_pc2` blocks; `B` 300 (1600 with a follower), barter;
+  - `A` thanks (`gd_cls_pc2` 1000); `I` insult (`gd_cls_pc2` 3000; 0x4191e0: reaction -10,
+    below 21 the NPC insults back, `gd_rce` 1000, and the talk ends);
+  - `C` the story question (`gd_pc2` 1700 + story state; 0x41a3e0: the NPC answers from
+    `gd_sto`, its race + 100 × story state, and the PC gets one option, a thanks from
+    `gd_cls_pc2` 1000, that goes on to the response);
+  - `T:` training 500, `H:` healing 700, `D:`/`X:` directions and map marks 1300 / 1400, `R:`
+    rumours (`gd_cls_pc2` 2000), `L:` the world map 2300, `P:` newspapers 1900, `Q:N` a quest
+    line (0x4c4c00), `U:N` skill training 900, `Z:N` a spell 1000.
+  - The result runs before the prefix's action, except for barter (0x413130).
+- **Data** (702 of the 709 files; the 7 with spaces in their names were not dumped): 416 `G:`
+  lines (24 with arguments, 14 with a `k` 9); 15 `I:` NPC lines and 122 `I:`
+  options.
+- **Not determined:** what class 2 stands for in the close check; 0x4c2690's 0x37/0x4a/0x4b;
+  actions 4, 6, 7, 9 and 0x1a-0x1d.
 
 ## The window (0x4c9280, "TC")
 
@@ -191,4 +249,24 @@ format and language are checked against all 709 `.dlg` files.
      call).
    - `DEBUG_ARCANUM_TALK=1` talks to the nearest NPC once in the world.
    - **Not checked by eye:** the display was asleep and screenshots came out black.
-4. **Generic lines** (`gd_*.mes`, the prefixes), barter (`B:`), and the other windows.
+4. **Generic lines** (`arcanum_sim::dialogue`). Built.
+   - `G:` lines: the greeting by class or race block, meeting and reaction level, and the `k` 9
+     argument (a line, `fl` a closing line, `0` nothing). The options after the line follow.
+   - `I:` NPC lines: the race insult.
+   - Overrides from the NPC's attachment 31 dialogue, with their voices.
+   - Options: `A:` thanks, `I:` insult (reaction -10, the NPC insults back below 21), `C:` the
+     story question (the `gd_sto` answer, then one thanks to the response).
+   - No options left: one goodbye that ends the talk.
+   - Barks: an NPC whose dialogue script runs the default (or has none) says the greeting over
+     its head (`TalkRequests::barks`); no conversation.
+   - **Not built:**
+     - the `G:` cases 0-8 (dead, cannot talk, bad associates, spells, armour);
+     - reputation greetings;
+     - the follower arguments for barks; can-talk (0x4ad800) and hostility (0x4ae120);
+     - `B: T: H: D: X: R: P: L: Q: U: Z:` (left out and reported).
+   - **Real data:**
+     - 9856 greetings (every class, gender, dumb, PC race, level and meeting) find a line,
+       except the `gd_cls_m2m` 8113 gap.
+     - Virgil still opens with his own line and offers both options.
+   - The client needed no change: generic lines arrive as floats and options.
+5. **Barter** (`B:`), training, healing, directions, rumours, newspapers and the other windows.

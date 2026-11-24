@@ -1406,6 +1406,28 @@ mod tests {
     }
 
     #[test]
+    fn an_npc_without_a_dialogue_script_barks_a_greeting() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        std::fs::create_dir_all(dir.path().join("mes")).unwrap();
+        for pair in ["m2m", "m2f"] {
+            std::fs::write(dir.path().join(format!("mes/gd_cls_{pair}.mes")), "{10000}{Good day.}").unwrap();
+        }
+        let mut sim = booted(dir.path(), save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]));
+        sim.take_deltas();
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0).unwrap().0
+        };
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        let float = LedgerDelta::FloatText { speaker: npc, text: "Good day.".into(), colour: crate::FloatColour::White, voice: None };
+        assert!(deltas.contains(&(PlayerId(7), float)), "a first, neutral greeting: {deltas:?}");
+        assert!(!deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::DialogueOptions { .. } | LedgerDelta::DialogueEnded)), "no conversation");
+    }
+
+    #[test]
     fn npcs_spawn_with_their_sector_and_reach_every_player() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());

@@ -540,3 +540,50 @@ fn virgil_greets_the_pc_at_the_crash_site() {
     assert!(next.as_deref().is_some_and(|t| t.starts_with("[The man's jaw drops open.]")), "{next:?}");
     assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::DialogueOptions { options, .. } if !options.is_empty())), "{deltas:?}");
 }
+
+/// Every greeting (class and race blocks, both genders, dumb or not, met or not, each reaction
+/// level) finds a line in the real `gd_*` files, but for one gap in the data.
+#[test]
+fn every_generic_greeting_has_a_line() {
+    use arcanum_rules::{CharacterSheet, FEMALE, MALE, RulesData};
+    use arcanum_sim::{Attachment, GenericLines, HostRng, Inventory, LedgerDelta, NetId, NpcInfo, NpcReaction, PcScriptState, ReputationEffects, Say, ScriptGlobals, Talk};
+
+    let Some(vfs) = vfs() else { return };
+    let rules = RulesData::default();
+    let reputations = ReputationEffects::default();
+    let mut generic = GenericLines::default();
+    let mut rng = HostRng::default();
+    let (mut tried, mut missing) = (0, Vec::new());
+    for npc_male in [true, false] {
+        for dumb in [false, true] {
+            for class in 0..11 {
+                for pc_gender in [MALE, FEMALE] {
+                    for pc_race in 0..8u8 {
+                        for (level, base) in [101, 90, 70, 50, 30, 10, 0].into_iter().enumerate() {
+                            for met in [false, true] {
+                                let sheet = CharacterSheet { gender: pc_gender, race: pc_race, ..Default::default() };
+                                let (mut inventory, mut pc, mut globals, mut attachment): (Inventory, PcScriptState, ScriptGlobals, Attachment) = Default::default();
+                                // Looks and race do not count, so the base is the reaction.
+                                let reaction = NpcReaction { base, race: 0, origin: 0, faction: 0, only_reputation: true };
+                                let mut talk = Talk { rules: &rules, sheet: &sheet, inventory: &mut inventory, pc: &mut pc, globals: &mut globals, npc: &mut attachment, met, npc_key: "npc".into(), npc_reaction: reaction, reputations: &reputations, gold_changed: false, unbuilt: Vec::new() };
+                                assert_eq!(arcanum_sim::level(talk.reaction()), level as u32);
+                                let info = NpcInfo { name: "N".into(), male: npc_male, reaction, class, dumb, overrides: None };
+                                let mut say = Say { npc_net: NetId(1), dialog: 0, pc_name: "P", npc: &info, generic: &mut generic, vfs: Some(&vfs), rng: &mut rng, deltas: Vec::new(), jumps: 0 };
+                                say.greeting("", &mut talk);
+                                tried += 1;
+                                if !say.deltas.iter().any(|d| matches!(d, LedgerDelta::FloatText { text, .. } if !text.is_empty())) {
+                                    missing.push((npc_male, dumb, class, pc_gender, pc_race, level, met));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("greetings: {tried} tried, {} without a line", missing.len());
+    // gd_cls_m2m's wizard block (8100-8149) has no 8113: the original counts 45 lines and picks
+    // 8100 + r, so one pick in 45 finds nothing there, as here.
+    missing.retain(|&(npc_male, dumb, class, pc_gender, _, level, met)| !(npc_male && !dumb && class == 2 && pc_gender == MALE && level == 0 && !met));
+    assert!(missing.is_empty(), "{:?}", &missing[..missing.len().min(20)]);
+}
