@@ -317,5 +317,22 @@ format and language are checked against all 709 `.dlg` files.
    - The direction (0x4b8d50) and the distance (0x4b96f0, divided by 3168) were not read: here
      the screen angle of the line between the tiles, and the tile distance.
    - Scripts: action 0x31 marks an area known for PCs, 0x54 stores an object's area.
+8. **The other tests and results** (built, `feat/dialogue-tests`; 0x4150d0 table 0x415b04,
+   0x415ba0 table 0x41672c).
+   - Every test opcode is built: `al` alignment (stat 0x13), `ma` / `ta` the aptitude up /
+     down, `na` (alignment at least -a, or at most a when a < 0), `tr S L` training rank, `sk S
+     L` skill level (12-15 the tech skills), `sc C L` college level (L ≤ 0: at most -L), `fo` /
+     `pa` (nobody follows yet), `wa` / `wt` the NPC's `npc_flags` 0x8 / 0x20, and `in` / `ni`
+     by the item's `name` (obj_f_name, as 2804 or 5222; -N: the NPC's or its substitute's).
+     The earlier `in` test used basic prototype numbers: wrong.
+   - Results: `in` moves an item by name (0x415fed: N > 0 PC to NPC, N < 0 NPC or its
+     substitute container to PC; nothing made; no room: stays here, the original drops or
+     destroys it); `al` set / add / at least / at most on the base alignment; `tr S L` one
+     rank at a time with the level the rank needs; `xp N` adds `Rules/xp_quest.mes` line N
+     (normal difficulty; no levelling yet); `fp` a fate point.
+   - The sheet gains `alignment`, `experience` and `fate_points` (pre-mades read stats
+     0x12-0x14); changes are applied after the step and sent (`SheetUpdate`).
+   - **Not built:** `co` attack, `nk` kill, followers (`jo uw lv wa sc so`), `et`, the windows
+     (`ce su ii ri`), `np` news, `or`.
    - **Not built:** finding areas by passing near them; the world map. Real data: the start
      tile is in area 2, the Crash Site; Bessie Toone's mine is area 1, Shrouded Hills.

@@ -553,6 +553,7 @@ fn every_generic_greeting_has_a_line() {
     let reputations = ReputationEffects::default();
     let mut generic = GenericLines::default();
     let mut rng = HostRng::default();
+    let prototypes = arcanum_formats::object::Prototypes::default();
     let (mut tried, mut missing) = (0, Vec::new());
     for npc_male in [true, false] {
         for dumb in [false, true] {
@@ -565,7 +566,7 @@ fn every_generic_greeting_has_a_line() {
                                 let (mut inventory, mut pc, mut globals, mut attachment): (Inventory, PcScriptState, ScriptGlobals, Attachment) = Default::default();
                                 // Looks and race do not count, so the base is the reaction.
                                 let reaction = NpcReaction { base, race: 0, origin: 0, faction: 0, only_reputation: true };
-                                let mut talk = Talk { rules: &rules, sheet: &sheet, inventory: &mut inventory, pc: &mut pc, globals: &mut globals, npc: &mut attachment, met, npc_key: "npc".into(), npc_reaction: reaction, reputations: &reputations, gold_changed: false, unbuilt: Vec::new(), trained: Vec::new(), pc_area: 0 };
+                                let mut talk = Talk { rules: &rules, sheet: &sheet, inventory: &mut inventory, pc: &mut pc, globals: &mut globals, npc: &mut attachment, met, npc_key: "npc".into(), npc_reaction: reaction, reputations: &reputations, gold_changed: false, unbuilt: Vec::new(), sheet_changes: Default::default(), pc_area: 0, prototypes: &prototypes, npc_flags: 0, npc_inventory: None, npc_stock: None, npc_inventory_changed: false, xp_quest: None, item_info: &|_| None };
                                 assert_eq!(arcanum_sim::level(talk.reaction()), level as u32);
                                 let info = NpcInfo { name: "N".into(), male: npc_male, reaction, class, dumb, overrides: None };
                                 let mut say = Say { npc_net: NetId(1), dialog: 0, pc_name: "P", npc: &info, generic: &mut generic, vfs: Some(&vfs), rng: &mut rng, deltas: Vec::new(), jumps: 0, areas: &arcanum_sim::areas::NO_AREAS, pc_at: TileLoc { x: 0, y: 0 } };
