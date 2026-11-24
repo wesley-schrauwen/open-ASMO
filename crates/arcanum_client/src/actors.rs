@@ -172,6 +172,8 @@ pub struct WalkLocalPc {
     pub item: Option<(GroundItemId, TileLoc)>,
     /// A lock to pick, and its tile: the same.
     pub pick: Option<(arcanum_sim::LockTarget, Option<i32>, TileLoc)>,
+    /// An NPC to talk to, and its tile: the same.
+    pub talk: Option<(NetId, TileLoc)>,
 }
 
 impl WalkLocalPc {
@@ -212,6 +214,7 @@ impl WalkLocalPc {
         self.door = None;
         self.item = None;
         self.pick = None;
+        self.talk = None;
     }
 
     /// The player clicked door `door` on tile `at`.
@@ -221,6 +224,7 @@ impl WalkLocalPc {
         self.door = Some((door, at));
         self.item = None;
         self.pick = None;
+        self.talk = None;
     }
 
     /// The player clicked item `item` lying on tile `at`.
@@ -230,6 +234,17 @@ impl WalkLocalPc {
         self.door = None;
         self.item = Some((item, at));
         self.pick = None;
+        self.talk = None;
+    }
+
+    /// The player clicked NPC `npc` standing on tile `at`.
+    pub fn click_talk(&mut self, npc: NetId, at: TileLoc) {
+        self.goal = None;
+        self.last_goal = None;
+        self.door = None;
+        self.item = None;
+        self.pick = None;
+        self.talk = Some((npc, at));
     }
 
     /// The player aimed Pick Locks at `target` on tile `at`.
@@ -239,6 +254,7 @@ impl WalkLocalPc {
         self.door = None;
         self.item = None;
         self.pick = Some((target, tool, at));
+        self.talk = None;
     }
 }
 
@@ -553,6 +569,9 @@ pub struct DebugClick {
     pub frames: u32,
 }
 
+/// An actor as a click sees it.
+type PickedActor<'a> = (Entity, &'a Sprite, &'a bevy::sprite::Anchor, &'a GlobalTransform, &'a Actor);
+
 /// A left click on the map walks the local PC to the tile under the cursor (0x54de50, the game
 /// window's mouse handler). With Shift held the click does nothing, as in the original.
 #[allow(clippy::too_many_arguments)]
@@ -571,7 +590,7 @@ fn click_to_move(
     inventory: Option<Res<crate::inventory_screen::InventoryPanel>>,
     armed: Option<ResMut<crate::skill_use::SkillTargeting>>,
     (link, party, local): (Option<Res<HostLink>>, Res<Party>, Res<LocalPc>),
-    rest: Option<Res<crate::rest_window::RestPanel>>,
+    (rest, dialogue, actors): (Option<Res<crate::rest_window::RestPanel>>, Option<Res<crate::dialogue_ui::DialogueState>>, Query<PickedActor>),
 ) {
     // An unconscious PC does nothing (0x4348e0).
     if local.0.is_some_and(|(id, _)| unconscious(&party, id)) {
@@ -595,6 +614,10 @@ fn click_to_move(
             }
             // The sleep window takes its clicks; while resting, nothing reaches the world.
             if rest.is_some_and(|r| r.resting || r.covers(crate::inventory_screen::screen_point(size, cursor))) {
+                return;
+            }
+            // While talking, the options panel takes the clicks (builder's call: the world none).
+            if dialogue.as_ref().is_some_and(|d| d.talking()) {
                 return;
             }
             cursor
@@ -631,6 +654,13 @@ fn click_to_move(
         }
         return;
     }
+    // An NPC under the cursor: walk to it and talk (0x42af00).
+    let npcs = actors.iter().filter(|a| !a.4.pc).map(|(e, s, a, t, _)| (e, s, a, t));
+    if let Some((_, _, _, _, npc)) = crate::picking::pick(world, npcs, &images).and_then(|e| actors.get(e).ok()) {
+        debug!("click at {cursor} is on NPC {:?}", npc.net_id);
+        walk.click_talk(npc.net_id, npc.at);
+        return;
+    }
     // Scenery that does something when used (a bed, or one with a "use" script) is walked to
     // and used; other scenery lets the click through to the ground (builder's call).
     let usable_scenery = |object: &MapObject| {
@@ -661,7 +691,7 @@ fn click_to_move(
 /// Plans the local PC's path to [`WalkLocalPc::goal`] on the client's map, walks it and sends it
 /// to the host.
 fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>>, pc: Res<LocalPc>, link: Option<Res<HostLink>>, mut actors: Query<&mut Actor>) {
-    if walk.goal.is_none() && walk.door.is_none() && walk.item.is_none() && walk.pick.is_none() {
+    if walk.goal.is_none() && walk.door.is_none() && walk.item.is_none() && walk.pick.is_none() && walk.talk.is_none() {
         return;
     }
     let (Some(client), Some((net_id, _))) = (client, pc.0) else { return };
@@ -671,7 +701,7 @@ fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>
     let Some(mut actor) = actors.iter_mut().find(|a| a.net_id == net_id) else { return };
     let goal = walk.goal.take();
     // A door or an item: walk near it, then use it or pick it up.
-    let target = walk.door.take().map(|(d, at)| (Target::Door(d), at)).or(walk.item.take().map(|(i, at)| (Target::Item(i), at))).or(walk.pick.take().map(|(p, tool, at)| (Target::Pick(p, tool), at)));
+    let target = walk.door.take().map(|(d, at)| (Target::Door(d), at)).or(walk.item.take().map(|(i, at)| (Target::Item(i), at))).or(walk.pick.take().map(|(p, tool, at)| (Target::Pick(p, tool), at))).or(walk.talk.take().map(|(n, at)| (Target::Talk(n), at)));
     // Mid-step, the path starts from the tile being stepped onto.
     let from = actor.steps.front().copied().unwrap_or(actor.at);
     let send = |intent: PlayerIntent| {
@@ -728,6 +758,7 @@ enum Target {
     Door(MapObjectId),
     Item(GroundItemId),
     Pick(arcanum_sim::LockTarget, Option<i32>),
+    Talk(NetId),
 }
 
 impl Target {
@@ -736,6 +767,7 @@ impl Target {
             Self::Door(door) => PlayerIntent::UsePortal { door, seq },
             Self::Item(item) => PlayerIntent::PickUp { item, seq },
             Self::Pick(target, tool) => PlayerIntent::PickLock { target, tool, seq },
+            Self::Talk(npc) => PlayerIntent::Talk { npc, seq },
         }
     }
 }
