@@ -627,3 +627,24 @@ fn a_teleport_opens_another_real_map() {
     eprintln!("{npcs} NPCs in the mine near the entrance");
     assert_eq!(sim.app.world().resource::<WorldState>().0.as_ref().unwrap().map, "BessieToonesMine-fixed");
 }
+
+/// Every map's jump points read, and every map they lead to is in `Rules/MapList.mes`.
+#[test]
+fn every_jump_point_leads_to_a_listed_map() {
+    use arcanum_formats::map::{MAP_LIST, parse_jump_points, parse_map_list};
+
+    let Some(vfs) = vfs() else { return };
+    let list = parse_map_list(&arcanum_formats::mes::MesFile::parse(&vfs.read(MAP_LIST).unwrap()).unwrap()).unwrap();
+    let ids: std::collections::BTreeSet<u32> = list.iter().map(|e| e.id).collect();
+    let (mut maps, mut points, mut unknown) = (0, 0, Vec::new());
+    for folder in vfs.list_dir("maps").unwrap_or_default() {
+        let Ok(data) = vfs.read(&format!("{folder}/map.jmp")) else { continue };
+        let jumps = parse_jump_points(&data);
+        maps += usize::from(!jumps.is_empty());
+        points += jumps.len();
+        unknown.extend(jumps.iter().filter_map(|j| j.map).filter(|m| !ids.contains(m)).map(|m| (folder.clone(), m)));
+    }
+    eprintln!("{points} jump points on {maps} maps");
+    assert_eq!((points, maps), (45, 17));
+    assert!(unknown.is_empty(), "{unknown:?}");
+}
