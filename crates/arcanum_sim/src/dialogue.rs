@@ -59,7 +59,9 @@
 //! - **Services** (`plans/dialogue.md`): `R:` rumours, `T:` training to Apprentice, `Q:` quest
 //!   lines, and the price dialogue they share.
 //!
-//! Not built: the other prefixes (`H: D: X: P: L: U: Z:`; left out and reported); the
+//! - **Directions** (`D:` / `X:`, [`crate::areas`]): a list of unknown areas, then the way there.
+//!
+//! Not built: the other prefixes (`H: P: L: U: Z:`; left out and reported); the
 //! `G:` special cases and the reputation greetings (0x4c1f80, one in five); the NPC's can-talk
 //! checks (0x4ad800) and hostility at choice time (0x4ae120); alignment, aptitude, training and the
 //! rest of the tests and results; turning to face each other.
@@ -139,6 +141,10 @@ pub enum OptionAct {
     Train { skill: usize, ret: i32 },
     /// Accepting a price (action 4, 0x418b30): pay, then the service.
     Pay { price: i32, service: Service, ret: i32 },
+    /// An area of a directions list (actions 0x13 / 0x16).
+    Direct { area: u32, price: i32, mark: bool, ret: i32 },
+    /// The next page of the directions list of option line `option` (actions 0x12 / 0x15).
+    MoreDirections { option: i32, offset: usize, ret: i32 },
 }
 
 /// What an NPC is paid for (the price dialogue's stored action).
@@ -148,6 +154,8 @@ pub enum Service {
     Rumour(u32),
     /// Training skill `k` to Apprentice (action 7, 0x418f30).
     Train(usize),
+    /// Directions to an area, and with `mark` marking it on the map (0x41a150 / 0x41a290).
+    Directions { area: u32, mark: bool },
 }
 
 /// The Apprentice rank: the only one an NPC trains (0x418f30 grants rank 1).
@@ -279,6 +287,8 @@ pub struct Talk<'a> {
     pub unbuilt: Vec<String>,
     /// Skills trained to Apprentice this step.
     pub trained: Vec<usize>,
+    /// The area the PC is in ([`crate::areas`]; 0 none).
+    pub pc_area: u32,
 }
 
 impl Talk<'_> {
@@ -371,6 +381,9 @@ impl Talk<'_> {
             "ra" => (i32::from(self.sheet.race) + 1 == a.abs()) == (a > 0),
             "ps" => passes(self.rules.skill_level(self.sheet, 11), a),
             "ha" => passes(self.rules.skill_level(self.sheet, 9), a),
+            // An area known; the PC in area N (`-N`: not).
+            "ar" => self.pc.areas.contains(&a.unsigned_abs()) == (a > 0),
+            "ia" => (self.pc_area == a.unsigned_abs()) == (a > 0),
             _ => return None,
         })
     }
@@ -417,6 +430,7 @@ impl Talk<'_> {
                 "rq" => set_in(&mut self.globals.quelled, a.unsigned_abs(), true),
                 "rp" => set_in(&mut self.pc.reputations, a.unsigned_abs(), a > 0),
                 "fl" => return Some(a),
+                "mm" => set_in(&mut self.pc.areas, a.unsigned_abs(), true),
                 "re" => self.change_reaction(a, t.change),
                 op => self.unbuilt.push(format!("result {op}")),
             }
@@ -636,7 +650,7 @@ pub fn run_conversations(
     mut reports: ResMut<DialogueReports>,
     (session, rules, vfs, acks): (Res<Session>, Res<SimRules>, Option<Res<crate::SimVfs>>, Res<crate::InventoryAcks>),
     (mut rng, mut reputations): (ResMut<crate::HostRng>, ResMut<ReputationTable>),
-    (mut outbox, mut barters): (ResMut<Outbox>, ResMut<crate::barter::BarterStarts>),
+    (mut outbox, mut barters, mut areas): (ResMut<Outbox>, ResMut<crate::barter::BarterStarts>, ResMut<crate::areas::AreaTable>),
     mut pcs: Query<TalkerQuery>,
     npcs: Query<(&NetId, &NpcSource)>,
 ) {
@@ -646,6 +660,7 @@ pub fn run_conversations(
     let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
     let vfs = vfs_guard.as_deref();
     let library = scripts.0.get_or_insert_with(|| vfs.map(crate::ScriptLibrary::new).unwrap_or_default());
+    areas.load(vfs);
     let reputations = &*reputations.0.get_or_insert_with(|| {
         vfs.and_then(|v| v.read(crate::GAME_REP).ok()).and_then(|d| MesFile::parse(&d).ok()).map(|m| crate::ReputationEffects::parse(&m)).unwrap_or_default()
     });
@@ -654,7 +669,7 @@ pub fn run_conversations(
     steps.extend(requests.end.drain(..).map(|p| (p, Step::End)));
     steps.extend(requests.barks.drain(..).map(|(p, npc)| (p, Step::Bark(npc))));
     for (player, step) in steps {
-        let Some((entity, &pc_net, _, _, mut sheet, mut inventory, conversation, ..)) = pcs.iter_mut().find(|pc| pc.2.0 == player) else { continue };
+        let Some((entity, &pc_net, _, &Position(pc_at), mut sheet, mut inventory, conversation, ..)) = pcs.iter_mut().find(|pc| pc.2.0 == player) else { continue };
         let Some(save) = world.0.as_mut() else { continue };
         let Some(saved) = save.players.get_mut(&player) else { continue };
         let (npc_object, dialog, current) = match (&step, conversation.as_deref()) {
@@ -685,6 +700,8 @@ pub fn run_conversations(
             npc_info.overrides = vfs.and_then(|v| library.dialog(v, override_number)).map(|f| (override_number, f));
         }
         let met = saved.script_state.met.contains(&key);
+        let areas = &*areas;
+        let pc_area = map.name.as_deref().map_or(0, |m| areas.area_at(m, pc_at));
         let mut talk = Talk {
             rules: &rules.0,
             sheet: &sheet.0,
@@ -699,8 +716,9 @@ pub fn run_conversations(
             gold_changed: false,
             unbuilt: Vec::new(),
             trained: Vec::new(),
+            pc_area,
         };
-        let mut say = Say { npc_net, dialog, pc_name: &sheet.0.name, npc: &npc_info, generic: &mut generic, vfs, rng: &mut rng, deltas: Vec::new(), jumps: 0 };
+        let mut say = Say { npc_net, dialog, pc_name: &sheet.0.name, npc: &npc_info, generic: &mut generic, vfs, rng: &mut rng, deltas: Vec::new(), jumps: 0, areas, pc_at };
         let next = match step {
             Step::Start(s) => say.show(&file, s.line, &mut talk),
             Step::Choose(i) => match current.as_ref().and_then(|c| c.options.get(i)) {
@@ -711,6 +729,14 @@ pub fn run_conversations(
                         OptionAct::Respond(n) => say.respond(&file, n, &mut talk, 0),
                         OptionAct::Train { skill, ret } => say.train(&file, skill, ret, &mut talk),
                         OptionAct::Pay { price, service, ret } => say.pay(&file, price, service, ret, &mut talk),
+                        OptionAct::Direct { area, price, mark, ret } => {
+                            if price > 0 {
+                                say.ask_price(&file, price, Service::Directions { area, mark }, ret, &mut talk)
+                            } else {
+                                say.direct(&file, area, mark, ret, &mut talk)
+                            }
+                        }
+                        OptionAct::MoreDirections { option, offset, ret } => say.directions(&file, option, offset, ret, &mut talk),
                     }
                 }
                 None => Shown::Stay,
@@ -844,6 +870,10 @@ pub struct Say<'a> {
     pub deltas: Vec<LedgerDelta>,
     /// Lines gone to by `G:` arguments this step.
     pub jumps: usize,
+    /// The areas, for directions.
+    pub areas: &'a crate::areas::AreaTable,
+    /// Where the PC stands.
+    pub pc_at: arcanum_formats::map::TileLoc,
 }
 
 /// A generic NPC block's kind.
@@ -855,6 +885,8 @@ pub enum Block {
     Race,
     /// `gd_npc`, 100 lines (0x418780; override `base / 100 + 11999`).
     Npc,
+    /// `gd_npc`, the 10 lines of one direction (0x418780 with `lo, lo + 9`).
+    NpcTen,
 }
 
 /// Who says a generic NPC line to whom.
@@ -891,7 +923,7 @@ pub fn npc_line(generic: &mut GenericLines, vfs: Option<&arcanum_vfs::Vfs>, rng:
     let number = match block {
         Block::Class => base as i32 / 1000 + 9999,
         Block::Race => base as i32 / 1000 + 10999,
-        Block::Npc => base as i32 / 100 + 11999,
+        Block::Npc | Block::NpcTen => base as i32 / 100 + 11999,
     };
     if let Some(said) = override_line(who, number) {
         return Some(said);
@@ -907,6 +939,7 @@ pub fn npc_line(generic: &mut GenericLines, vfs: Option<&arcanum_vfs::Vfs>, rng:
             (format!("mes/gd_rce_{dumb}{pair}.mes"), if npc.dumb { 0 } else { index * 50 }, 50)
         }
         Block::Npc => (format!("mes/gd_npc_{pair}.mes"), 0, 100),
+        Block::NpcTen => (format!("mes/gd_npc_{pair}.mes"), 0, 10),
     };
     let lo = base + offset;
     Some((pick_line(generic, vfs, rng, &path, lo, lo + len - 1, who.pc_name, &npc.name)?, None))
@@ -1016,6 +1049,10 @@ impl Say<'_> {
             } else {
                 (n, option)
             };
+            // Directions with every area known already are left out (0x419e20).
+            if matches!(prefix(option.text.trim()), Some('D' | 'X')) && self.unknown_areas(&option.text.trim()[2..], talk).is_empty() {
+                continue;
+            }
             match self.option_text(&option.text, talk) {
                 Some(text) => shown.push(Offered { text, act: OptionAct::Line(n) }),
                 None => talk.unbuilt.push(format!("option {}", option.text.trim().chars().take(2).collect::<String>())),
@@ -1040,6 +1077,9 @@ impl Say<'_> {
             // Rumours (gd_cls_pc2 2000) and training (gd_pc2 500): the arguments stay hidden.
             Some('R') => self.pc_class_line(2000, talk),
             Some('T') => self.pc_line(500, 599, talk),
+            // Directions and map marks (gd_pc2 1300 / 1400).
+            Some('D') => self.pc_line(1300, 1399, talk),
+            Some('X') => self.pc_line(1400, 1499, talk),
             Some('I') if text.len() == 2 => self.pc_class_line(3000, talk),
             Some('C') => {
                 let line = 1700 + talk.globals.story_state.max(0) as u32;
@@ -1075,6 +1115,7 @@ impl Say<'_> {
             }
             Some('R') => return self.rumours(file, &text[2..], entry.response(), talk),
             Some('T') => return self.training_list(file, &text[2..], entry.response(), talk),
+            Some('D' | 'X') => return self.directions(file, line, 0, entry.response(), talk),
             // The story question (0x41a3e0): the answer, then one "thanks" to go on.
             Some('C') => {
                 if let Some((said, voice)) = self.story_line(talk) {
@@ -1201,12 +1242,57 @@ impl Say<'_> {
         talk.change_gold(-price);
         match service {
             Service::Rumour(n) => self.tell_rumour(file, n, ret, talk),
+            Service::Directions { area, mark } => self.direct(file, area, mark, ret, talk),
             Service::Train(skill) => {
                 talk.trained.push(skill);
                 let thanks = self.pc_line(1000, 1099, talk);
                 self.say_then_back(file, Block::Class, 6000, &[], thanks, ret, talk)
             }
         }
+    }
+
+    /// The areas of a directions option's list the PC does not know yet.
+    fn unknown_areas(&self, args: &str, talk: &Talk) -> Vec<u32> {
+        let (_, list) = priced_list(args);
+        list.into_iter().filter_map(|a| u32::try_from(a).ok()).filter(|a| self.areas.areas.contains_key(a) && !talk.pc.areas.contains(a)).collect()
+    }
+
+    /// A directions list (0x419e70): `gd_npc` 100 (`D:`) or 500 (`X:`), then up to four unknown
+    /// areas from `offset`, a "more" (`gd_pc2` 600) or a "back" (800).
+    fn directions(&mut self, file: &DialogFile, option: i32, offset: usize, ret: i32, talk: &mut Talk) -> Shown {
+        let Some(text) = file.lines.get(&option).map(|e| e.text.trim().to_string()) else { return self.back(file, ret, talk) };
+        let mark = prefix(&text) == Some('X');
+        let (price, _) = priced_list(&text[2..]);
+        let unknown = self.unknown_areas(&text[2..], talk);
+        self.npc_says_with(Block::Npc, if mark { 500 } else { 100 }, &[], talk);
+        let mut options: Vec<Offered> = unknown.iter().skip(offset).take(4).filter_map(|&area| Some(Offered { text: self.areas.areas.get(&area)?.name.clone(), act: OptionAct::Direct { area, price, mark, ret } })).collect();
+        let (more, act) = if unknown.len() > offset + 4 { (self.pc_line(600, 699, talk), OptionAct::MoreDirections { option, offset: offset + 4, ret }) } else { (self.pc_line(800, 899, talk), OptionAct::Respond(ret)) };
+        if let Some(more) = more {
+            options.push(Offered { text: more, act });
+        }
+        if options.is_empty() { self.back(file, ret, talk) } else { Shown::Line(0, options) }
+    }
+
+    /// The way to an area (0x41a150 / 0x41a290): the direction (0-7) and the distance
+    /// (0x4b96f0 / 3168) pick a `gd_npc` row: `D:` 200 below 2, 300 below 100, else 400; `X:`
+    /// 600 below 2, else 700 with the distance, and the area is known now. Then a "thanks".
+    pub fn direct(&mut self, file: &DialogFile, area: u32, mark: bool, ret: i32, talk: &mut Talk) -> Shown {
+        let Some(target) = self.areas.areas.get(&area).map(|a| a.at) else { return self.back(file, ret, talk) };
+        let rotation = crate::areas::direction(self.pc_at, target);
+        let distance = ((f64::from(target.x) - f64::from(self.pc_at.x)).hypot(f64::from(target.y) - f64::from(self.pc_at.y)) / 3168.0) as i32;
+        let base = match (mark, distance) {
+            (false, d) if d < 2 => 200,
+            (false, d) if d < 100 => 300,
+            (false, _) => 400,
+            (true, d) if d < 2 => 600,
+            (true, _) => 700,
+        };
+        self.npc_says_with(Block::NpcTen, base + rotation * 10, &[distance], talk);
+        if mark {
+            talk.pc.areas.insert(area);
+        }
+        let thanks = self.pc_class_line(1000, talk);
+        self.say_then_back_quiet(file, thanks, ret, talk)
     }
 
     /// Quest `n`'s option line for this PC (0x4c4c00).
@@ -1256,7 +1342,7 @@ mod tests {
 
     fn talk_with<'a>(rules: &'a RulesData, sheet: &'a CharacterSheet, inventory: &'a mut Inventory, pc: &'a mut PcScriptState, globals: &'a mut ScriptGlobals, npc: &'a mut Attachment) -> Talk<'a> {
         let npc_reaction = crate::NpcReaction { base: 50, race: 0, origin: 0, faction: 0, only_reputation: false };
-        Talk { rules, sheet, inventory, pc, globals, npc, met: false, npc_key: "npc".into(), npc_reaction, reputations: &NO_REPUTATIONS, gold_changed: false, unbuilt: Vec::new(), trained: Vec::new() }
+        Talk { rules, sheet, inventory, pc, globals, npc, met: false, npc_key: "npc".into(), npc_reaction, reputations: &NO_REPUTATIONS, gold_changed: false, unbuilt: Vec::new(), trained: Vec::new(), pc_area: 0 }
     }
 
     #[test]
@@ -1396,7 +1482,7 @@ mod tests {
         ]);
         let info = npc(1);
         let mut rng = crate::HostRng::default();
-        let mut say = Say { npc_net: NetId(7), dialog: 1, pc_name: "Vel", npc: &info, generic: &mut generic, vfs: None, rng: &mut rng, deltas: Vec::new(), jumps: 0 };
+        let mut say = Say { npc_net: NetId(7), dialog: 1, pc_name: "Vel", npc: &info, generic: &mut generic, vfs: None, rng: &mut rng, deltas: Vec::new(), jumps: 0, areas: &crate::areas::NO_AREAS, pc_at: arcanum_formats::map::TileLoc { x: 0, y: 0 } };
         let Shown::Line(1, options) = say.show(&file, 1, &mut talk) else { panic!("options follow") };
         assert_eq!(floats(&say.deltas), [("Priest hello, Vel.".to_string(), FloatColour::White)]);
         assert_eq!(options, [Offered { text: "Thank you, Father.".into(), act: OptionAct::Line(2) }], "A: thanks; B: not built");
@@ -1437,7 +1523,7 @@ mod tests {
         let overrides = DialogFile::parse(b"{11000}{Mind your tongue, @pcname@.}{}{}{4}{}{}");
         info.overrides = Some((1848, std::sync::Arc::new(overrides)));
         let mut rng = crate::HostRng::default();
-        let mut say = Say { npc_net: NetId(7), dialog: 1, pc_name: "Vel", npc: &info, generic: &mut generic, vfs: None, rng: &mut rng, deltas: Vec::new(), jumps: 0 };
+        let mut say = Say { npc_net: NetId(7), dialog: 1, pc_name: "Vel", npc: &info, generic: &mut generic, vfs: None, rng: &mut rng, deltas: Vec::new(), jumps: 0, areas: &crate::areas::NO_AREAS, pc_at: arcanum_formats::map::TileLoc { x: 0, y: 0 } };
         let Shown::Line(_, options) = say.show(&file, 1, &mut talk) else { panic!() };
         let texts: Vec<&str> = options.iter().map(|o| o.text.as_str()).collect();
         assert_eq!(texts, ["You stink.", "What news?"]);
@@ -1503,7 +1589,7 @@ mod tests {
         ]);
         let info = npc(0);
         let mut rng = crate::HostRng::default();
-        let mut say = Say { npc_net: NetId(7), dialog: 1, pc_name: "Vel", npc: &info, generic: &mut generic, vfs: None, rng: &mut rng, deltas: Vec::new(), jumps: 0 };
+        let mut say = Say { npc_net: NetId(7), dialog: 1, pc_name: "Vel", npc: &info, generic: &mut generic, vfs: None, rng: &mut rng, deltas: Vec::new(), jumps: 0, areas: &crate::areas::NO_AREAS, pc_at: arcanum_formats::map::TileLoc { x: 0, y: 0 } };
         let Shown::Line(_, options) = say.show(&file, 1, &mut talk) else { panic!() };
         let texts: Vec<&str> = options.iter().map(|o| o.text.as_str()).collect();
         assert_eq!(texts, ["Heard anything?", "Heard anything?", "Train me.", "About the tome."], "Q:1000 shows line 7");
@@ -1547,5 +1633,56 @@ mod tests {
         say.pay(&file, price, service, ret, &mut talk);
         assert_eq!(talk.trained, [9]);
         assert_eq!(floats(&say.deltas).last().unwrap().0, "There, done.");
+    }
+
+    #[test]
+    fn directions_list_unknown_areas_and_x_marks_them() {
+        use crate::areas::{Area, AreaTable};
+        let file = DialogFile::parse(
+            b"{1}{Need anything?}{}{}{}{}{}\n\
+              {2}{D:$0, 1, 3}{}{1}{}{1}{}\n\
+              {3}{X:$0, 1}{}{1}{}{1}{}\n\
+              {4}{D:$0, 2}{}{1}{}{1}{}",
+        );
+        let rules = RulesData::default();
+        let sheet = CharacterSheet { gender: arcanum_rules::MALE, ..Default::default() };
+        let (mut inventory, mut pc, mut globals, mut attachment): (Inventory, PcScriptState, ScriptGlobals, Attachment) = Default::default();
+        pc.areas.insert(2);
+        let mut talk = talk_with(&rules, &sheet, &mut inventory, &mut pc, &mut globals, &mut attachment);
+        let area = |id, x, y, name: &str| Area { id, at: arcanum_formats::map::TileLoc { x, y }, name: name.into(), description: String::new(), radius: 5 };
+        let areas = AreaTable::of(vec![area(1, 100, 1000, "Shrouded Hills"), area(2, 50, 50, "Crash Site"), area(3, 100, 100, "Black Root")]);
+        let mut generic = generic_with(&[
+            ("mes/gd_npc_m2m.mes", "{100}{Where to?}{500}{Which place?}{230}{East of here.}{730}{%d miles east.}"),
+            ("mes/gd_pc2m.mes", "{1300}{Directions?}{1400}{Mark my map?}{800}{Never mind.}"),
+            ("mes/gd_cls_pc2m.mes", "{1000}{Thanks.}"),
+        ]);
+        let info = npc(0);
+        let mut rng = crate::HostRng::default();
+        let mut say = Say { npc_net: NetId(7), dialog: 1, pc_name: "Vel", npc: &info, generic: &mut generic, vfs: None, rng: &mut rng, deltas: Vec::new(), jumps: 0, areas: &areas, pc_at: arcanum_formats::map::TileLoc { x: 100, y: 90 } };
+        let Shown::Line(_, options) = say.show(&file, 1, &mut talk) else { panic!() };
+        let texts: Vec<&str> = options.iter().map(|o| o.text.as_str()).collect();
+        assert_eq!(texts, ["Directions?", "Mark my map?"], "D:2 left out: the Crash Site is known");
+        say.deltas.clear();
+        let Shown::Line(_, options) = say.chosen(&file, 2, &mut talk, 0) else { panic!() };
+        assert_eq!(floats(&say.deltas)[0].0, "Where to?");
+        let names: Vec<&str> = options.iter().map(|o| o.text.as_str()).collect();
+        assert_eq!(names, ["Shrouded Hills", "Black Root", "Never mind."]);
+        // Black Root is 10 tiles along y: screen down-right, rotation 3; near: row 200 + 30.
+        say.deltas.clear();
+        let OptionAct::Direct { area, price, mark, ret } = options[1].act else { panic!() };
+        assert_eq!((area, price, mark, ret), (3, 0, false, 1));
+        say.direct(&file, area, mark, ret, &mut talk);
+        assert_eq!(floats(&say.deltas)[0].0, "East of here.");
+        assert!(!talk.pc.areas.contains(&3), "D: does not mark");
+        // X: marks Shrouded Hills, 910 tiles away: still under 2 × 3168, so row 600 + direction.
+        let Shown::Line(_, options) = say.chosen(&file, 3, &mut talk, 0) else { panic!() };
+        let OptionAct::Direct { area, mark, .. } = options[0].act else { panic!() };
+        say.direct(&file, area, mark, 1, &mut talk);
+        assert!(talk.pc.areas.contains(&1), "X: marks it known");
+        assert!(talk.passes_test("ar 1") && !talk.passes_test("ar 3") && talk.passes_test("ar -3"));
+        talk.pc_area = 2;
+        assert!(talk.passes_test("ia 2") && talk.passes_test("ia -3"));
+        talk.run_result("mm 9");
+        assert!(talk.pc.areas.contains(&9));
     }
 }

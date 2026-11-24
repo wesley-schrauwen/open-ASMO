@@ -565,10 +565,10 @@ fn every_generic_greeting_has_a_line() {
                                 let (mut inventory, mut pc, mut globals, mut attachment): (Inventory, PcScriptState, ScriptGlobals, Attachment) = Default::default();
                                 // Looks and race do not count, so the base is the reaction.
                                 let reaction = NpcReaction { base, race: 0, origin: 0, faction: 0, only_reputation: true };
-                                let mut talk = Talk { rules: &rules, sheet: &sheet, inventory: &mut inventory, pc: &mut pc, globals: &mut globals, npc: &mut attachment, met, npc_key: "npc".into(), npc_reaction: reaction, reputations: &reputations, gold_changed: false, unbuilt: Vec::new(), trained: Vec::new() };
+                                let mut talk = Talk { rules: &rules, sheet: &sheet, inventory: &mut inventory, pc: &mut pc, globals: &mut globals, npc: &mut attachment, met, npc_key: "npc".into(), npc_reaction: reaction, reputations: &reputations, gold_changed: false, unbuilt: Vec::new(), trained: Vec::new(), pc_area: 0 };
                                 assert_eq!(arcanum_sim::level(talk.reaction()), level as u32);
                                 let info = NpcInfo { name: "N".into(), male: npc_male, reaction, class, dumb, overrides: None };
-                                let mut say = Say { npc_net: NetId(1), dialog: 0, pc_name: "P", npc: &info, generic: &mut generic, vfs: Some(&vfs), rng: &mut rng, deltas: Vec::new(), jumps: 0 };
+                                let mut say = Say { npc_net: NetId(1), dialog: 0, pc_name: "P", npc: &info, generic: &mut generic, vfs: Some(&vfs), rng: &mut rng, deltas: Vec::new(), jumps: 0, areas: &arcanum_sim::areas::NO_AREAS, pc_at: TileLoc { x: 0, y: 0 } };
                                 say.greeting("", &mut talk);
                                 tried += 1;
                                 if !say.deltas.iter().any(|d| matches!(d, LedgerDelta::FloatText { text, .. } if !text.is_empty())) {
@@ -647,4 +647,18 @@ fn every_jump_point_leads_to_a_listed_map() {
     eprintln!("{points} jump points on {maps} maps");
     assert_eq!((points, maps), (45, 17));
     assert!(unknown.is_empty(), "{unknown:?}");
+}
+
+/// The areas load; the start tile is in the Crash Site (area 2); maps with an `Area:` give it.
+#[test]
+fn the_start_is_in_the_crash_site_area() {
+    let Some(vfs) = vfs() else { return };
+    let mut table = arcanum_sim::areas::AreaTable::default();
+    let table = table.load(Some(&vfs));
+    eprintln!("{} areas, {} maps with an area", table.areas.len(), table.map_areas.len());
+    assert!(table.areas.len() >= 80);
+    assert_eq!(table.areas[&2].name, "Crash Site");
+    let start = StartMap::load(&vfs).unwrap();
+    assert_eq!(table.area_at(&start.map, start.position), 2);
+    assert_eq!(table.area_at("BessieToonesMine-fixed", TileLoc { x: 96, y: 126 }), 1, "the mine is Shrouded Hills'");
 }

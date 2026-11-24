@@ -304,3 +304,18 @@ format and language are checked against all 709 `.dlg` files.
    - **Not built:** `U:`, `H:` (skill use and spells on the PC), `D:` / `X:` (areas), `P:`
      (newspapers), `L:` (no world map); what quells rumours; the rumour's timestamp and logbook.
    - **Real data:** every `Q:` names a row of `gamequest.mes`; `T:` lists name skills 0-15.
+7. **Areas and directions** (`arcanum_sim::areas`). Built.
+   - `mes/gamearea.mes` (82 areas: centre on the world map, name, description, radius) and
+     `MapList.mes`'s `Area:` (73 maps). An object's area (0x4cb6a0): its map's, else on the world
+     map the nearest centre within the area's radius (the original's region test 0x4be380 is not
+     decoded); 0 none. Known areas are kept per PC (`PcScriptState::areas`).
+   - Dialogue: tests `ar` (known) and `ia` (in it), result `mm` (mark). `D:` / `X:`
+     (`$price, areas`, 0x419e70): left out when all are known (0x419e20); `gd_npc` 100 / 500,
+     up to four unknown areas by name, "more" (`gd_pc2` 600) or "back" (800); the price
+     dialogue when priced; then `gd_npc` 200/300/400 (`D:`) or 600/700 (`X:`, with the
+     distance) + 10 × the direction, and `X:` marks the area; a "thanks" back.
+   - The direction (0x4b8d50) and the distance (0x4b96f0, divided by 3168) were not read: here
+     the screen angle of the line between the tiles, and the tile distance.
+   - Scripts: action 0x31 marks an area known for PCs, 0x54 stores an object's area.
+   - **Not built:** finding areas by passing near them; the world map. Real data: the start
+     tile is in area 2, the Crash Site; Bessie Toone's mine is area 1, Shrouded Hills.
