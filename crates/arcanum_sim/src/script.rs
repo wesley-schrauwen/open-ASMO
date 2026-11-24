@@ -113,6 +113,10 @@ pub struct PcScriptState {
     /// The NPCs this PC has talked to ([`crate::dialogue`]).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub met: BTreeSet<String>,
+    /// NPCs' stored reaction toward this PC, by NPC ([`crate::reaction`]; the original keeps
+    /// it on the NPC, `npc_reaction_pc_idx` / `npc_reaction_level_idx`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub reactions: BTreeMap<String, i32>,
 }
 
 impl PcScriptState {

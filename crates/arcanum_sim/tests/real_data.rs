@@ -527,4 +527,16 @@ fn virgil_greets_the_pc_at_the_crash_site() {
     let (text, voice) = line.expect("Virgil speaks");
     assert!(text.starts_with("I can't believe it"), "{text}");
     assert_eq!(voice.as_deref(), Some("sound/speech/01324/v1_m.mp3"));
+    // His reaction gates the options; one of each pair shows.
+    let options = options.expect("options");
+    assert_eq!(options, ["What are you going on about?", "By the gods, man! I almost died here! Didn't you see the crash?"]);
+    sim.receive([(PlayerId(1), PlayerIntent::Choose { option: 0 })]);
+    sim.update();
+    let deltas = sim.take_deltas();
+    let next = deltas.iter().find_map(|(_, d)| match d {
+        LedgerDelta::FloatText { speaker, text, .. } if *speaker == npc => Some(text.clone()),
+        _ => None,
+    });
+    assert!(next.as_deref().is_some_and(|t| t.starts_with("[The man's jaw drops open.]")), "{next:?}");
+    assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::DialogueOptions { options, .. } if !options.is_empty())), "{deltas:?}");
 }
