@@ -39,8 +39,9 @@ Here:
   - For the runner: a run must be able to **pause** at a teleport and **resume** after the
     vote. Its state (line, locals, local objects, loop, pending script replacement) must be a
     value the host keeps across ticks, and in the save, not a stack frame.
-  - Open: what happens while waiting (the clock, the other players, combat); a timeout or the
-    host deciding; a player leaving mid-vote; whether anyone can say no.
+  - Decided (2026-11-24, `plans/multiplayer.md`): the clock runs and all can act while waiting;
+    anyone can decline, which cancels the move; leavers drop out; no timeout. Still open: combat
+    during a vote.
 
 ## File format (`arcanum_formats::script`, done)
 
@@ -100,10 +101,13 @@ Here:
   - The two agents disagreed on 1/4/5/6. The table settles it: 1 and 4 call 0x444c80 and
     0x444cf0 (globals), 5 and 6 call 0x444db0 and 0x444e30 (the PC's).
 - **Object sets** (0x44b4e0):
-  - 0 attachee; 1 triggerer; 0xa the loop's object; 0xb a local object variable;
-  - 0xc the "other" object; 0x15 the local player;
-  - 2/3 the attachee's followers; 0xd/0xe the followers and the attachee;
-  - 8/9 critters near the triggerer; 0xf/0x10 scenery; 0x11/0x12 containers; 0x13/0x14
+  - 0 triggerer; 1 attachee (corrected 2026-11-24: 0x44b4e0 reads +0x8 and +0x10 of the run's
+    objects, which 0x441980 fills with its first argument, the triggerer, and its second, the
+    attachee whose `scripts_idx` it reads; the teleports' set 0 moving the PC confirms it);
+  - 0xa the loop's object; 0xb a local object variable; 0xc the "other" object; 0x15 the
+    local player;
+  - 2/3 the triggerer's followers (0x4411c0 on +0x8); 0xd/0xe the followers and the triggerer;
+  - 8/9 critters near the triggerer (to check against +0x8 as well); 0xf/0x10 scenery; 0x11/0x12 containers; 0x13/0x14
     portals; 0x16/0x17 items;
   - 4-7 not decoded.
 - **Globals** (0x4446e0 init; saved by 0x4448d0 / loaded by 0x444930): 2000 variables, 100
@@ -213,6 +217,21 @@ Decoded so far, with confidence; the rest are named by the helper they call.
        again.") and the bed refuses.
      - Paying happens in the innkeeper's dialogue (not built).
    - **Real data:** 543 of the 2399 scripts now run to an end from their first line.
+4b. **Teleports** (`arcanum_sim::big_move`). Same map built.
+   - **The original:** action 0x2c (0x4481a1): objects (operand 0), map (a `Rules/MapList.mes`
+     id, 5000 the start map), x, y. It queues the move (0x4d3380) and the run goes on; the move
+     happens after (0x4d3330 → 0x4d3460 / 0x4d39a0): followers come along to the same tile, the
+     tile is used as given, the camera recentres. 0x66 (0x449a85) is the same with a fade, sound
+     and delay first (operands 0-2; objects 3, map 4, x 5, y 6); 0x67 a fade alone. 0x66 and 0x67
+     are skipped in multiplayer (`[0x62ac6c] & 1`).
+   - **Data:** 457 teleport actions in 357 scripts; the object is set 0 (the triggerer) in 440,
+     1 in 8, set 21 in 9. Maps 5000-5075 and more; 5000 in 157.
+   - **Here:** the run does not wait (as the original). A teleport of a PC within the loaded map
+     is put to every player's vote (`plans/multiplayer.md`); with one player it happens at once.
+     The PC jumps (`Teleported`), standing; its position is saved.
+   - **Found on the way:** object sets 0 and 1 were the wrong way round (0 is the triggerer).
+   - **Not built:** other maps (next: map switching); teleporting NPCs and objects; followers;
+     fades and delays (0x66 teleports without them, 0x67 does nothing); votes in the save.
 5. **Gold and items:** conditions 2 and 0x11; actions 0x23, 0x29 and 0x42.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,

@@ -56,6 +56,8 @@ pub enum PlayerIntent {
     Choose { option: usize },
     /// Leave the conversation.
     EndTalk,
+    /// Answer vote `id` on a big move ([`crate::big_move`]): go along, or not.
+    Vote { id: u32, yes: bool },
     /// The number of the last state sync the client applied. Sent unreliably, about twice a
     /// second; a client far behind gets a [`Resync`](crate::LedgerDelta::Resync).
     SyncAck { number: u32 },

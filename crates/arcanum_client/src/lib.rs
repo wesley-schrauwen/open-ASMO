@@ -15,6 +15,7 @@ pub mod cursor;
 pub mod editor_tabs;
 pub mod create_character;
 pub mod dialogue_ui;
+pub mod vote_popup;
 pub mod fonts;
 pub mod hotkey_bar;
 pub mod hud;

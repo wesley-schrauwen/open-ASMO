@@ -213,6 +213,9 @@ pub trait ScriptContext {
     fn is_npc(&mut self, _object: Self::Object) -> bool {
         false
     }
+    /// Asks for `object` to go to tile `to` of map `map` (a `Rules/MapList.mes` id; action 0x2c,
+    /// 0x4d3380). The move happens after the run, if at all.
+    fn teleport(&mut self, _object: Self::Object, _map: i32, _to: arcanum_formats::map::TileLoc) {}
     /// `object`'s leader, if it follows someone (0x45de00); nobody follows anyone yet.
     fn leader(&mut self, _object: Self::Object) -> Option<Self::Object> {
         None
@@ -432,6 +435,22 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
             run.replace = Some(value(ctx, attachment, run, 0).max(0) as u32);
             Step::Next
         }
+        // Teleport (0x4481a1): objects, map, x, y; queued, the run goes on. 0x66 (0x449a85) is
+        // the same with a fade, a sound and a delay first (operands 0-2, not built); 0x67 is a
+        // fade alone (not built: nothing happens). The original skips 0x66 and 0x67 in
+        // multiplayer ([0x62ac6c] & 1); here 0x66 teleports as 0x2c does.
+        0x2c | 0x66 => {
+            let first = if block.kind == 0x2c { 0 } else { 3 };
+            let who = objects(run, ops[first], line, unsupported)?;
+            let map = value(ctx, attachment, run, first + 1);
+            let (x, y) = (value(ctx, attachment, run, first + 2), value(ctx, attachment, run, first + 3));
+            let to = arcanum_formats::map::TileLoc { x: x.max(0) as u32, y: y.max(0) as u32 };
+            for object in who {
+                ctx.teleport(object, map, to);
+            }
+            Step::Next
+        }
+        0x67 => Step::Next,
         8 | 9 => {
             let bit = 1 << (value(ctx, attachment, run, 0) & 31);
             attachment.flags = if block.kind == 8 { attachment.flags | bit } else { attachment.flags & !bit };
@@ -545,8 +564,11 @@ fn loop_exit(script: &Script, from: usize) -> Step {
 fn objects<O: Copy>(run: &Run<O>, operand: Operand, line: usize, unsupported: &mut Vec<Unsupported>) -> Option<Vec<O>> {
     let inv = &run.invocation;
     Some(match operand.tag {
-        0 => vec![inv.attachee],
-        1 => vec![inv.triggerer],
+        // Set 0 is the hook's first object, the triggerer; 1 its second, the attachee whose
+        // script runs (0x44b4e0 reads +0x8 and +0x10 of the run's objects, which 0x441980
+        // fills with its first and second arguments; checked 2026-11-24).
+        0 => vec![inv.triggerer],
+        1 => vec![inv.attachee],
         0xa => run.looping.as_ref().and_then(|(set, at, _)| set.get(*at)).copied().into_iter().collect(),
         0xb => usize::try_from(operand.value).ok().and_then(|i| run.objects.get(i).copied().flatten()).into_iter().collect(),
         0xc => inv.other.into_iter().collect(),
@@ -717,9 +739,9 @@ pub(crate) mod tests {
             always(block(0xb, &[op(1, 5), op(2, 0), n(3)])),       // global var 5 = 10
             always(block(0xe, &[op(0, 2), op(1, 5), n(0)])),       // divide by 0: nothing
             always(block(0xd, &[op(0, 2), op(1, 5), n(2)])),       // counter 2 = 20
-            always(block(0xa, &[op(5, (1 << 16) | 9), n(4)])),     // the triggerer's PC var 9 = 4
+            always(block(0xa, &[op(5, 9), n(4)])),                 // the triggerer's (set 0) PC var 9 = 4
             always(block(0xa, &[op(6, (0xc << 16) | 3), n(1)])),   // the other's PC flag 3
-            always(block(0xa, &[op(6, 40), n(1)])),                // the attachee is no PC: ignored
+            always(block(0xa, &[op(6, (1 << 16) | 40), n(1)])),    // the attachee (set 1) is no PC: ignored
             always(block(8, &[n(6)])),                             // local flag 6
             line(block(5, &[op(0, 2), n(19)]), block(1, &[]), block(3, &[n(10)])),
             always(block(1, &[])),

@@ -118,6 +118,7 @@ pub struct ScriptReports(pub Vec<(u32, crate::Unsupported)>);
 pub struct ScriptHost<'w> {
     scripts: ResMut<'w, Scripts>,
     started: ResMut<'w, crate::StartedDialogues>,
+    teleports: ResMut<'w, crate::big_move::ScriptTeleports>,
     reports: ResMut<'w, ScriptReports>,
     rng: ResMut<'w, crate::HostRng>,
     clock: Res<'w, crate::GameClock>,
@@ -137,6 +138,8 @@ struct HostWorld<'a> {
     messages: Vec<(PlayerId, String)>,
     /// Conversations scripts started.
     dialogs: Vec<crate::StartedDialogue>,
+    /// Teleports asked for: object, map, tile.
+    teleports: Vec<(ScriptObject, i32, arcanum_formats::map::TileLoc)>,
 }
 
 impl ScriptContext for HostWorld<'_> {
@@ -200,6 +203,10 @@ impl ScriptContext for HostWorld<'_> {
         };
         self.dialogs.push(crate::StartedDialogue { player: pc, npc, dialog, line });
     }
+
+    fn teleport(&mut self, object: ScriptObject, map: i32, to: arcanum_formats::map::TileLoc) {
+        self.teleports.push((object, map, to));
+    }
 }
 
 impl ScriptHost<'_> {
@@ -217,13 +224,16 @@ impl ScriptHost<'_> {
         let library = self.scripts.0.get_or_insert_with(|| vfs.map(ScriptLibrary::new).unwrap_or_default());
         let before = attachment;
         let number = attachment.number;
-        let mut ctx = HostWorld { library, map, vfs, globals: &mut save.scripts, players: &mut save.players, rng: &mut self.rng, now: self.clock.now, messages: Vec::new(), dialogs: Vec::new() };
+        let mut ctx = HostWorld { library, map, vfs, globals: &mut save.scripts, players: &mut save.players, rng: &mut self.rng, now: self.clock.now, messages: Vec::new(), dialogs: Vec::new(), teleports: Vec::new() };
         let invocation = Invocation { attachee: object, triggerer: ScriptObject::Pc(player), other: None, event, start_line: 0 };
         let run = crate::run_hook(&mut ctx, &mut attachment, invocation);
         for (to, text) in std::mem::take(&mut ctx.messages) {
             outbox.0.push((to, crate::LedgerDelta::ScriptMessage { text }));
         }
         self.started.0.append(&mut ctx.dialogs);
+        for (object, map, to) in std::mem::take(&mut ctx.teleports) {
+            self.teleports.0.push(crate::big_move::ScriptTeleport { causer: player, object, map, to });
+        }
         for unsupported in run.unsupported {
             self.reports.0.push((number, unsupported));
         }
