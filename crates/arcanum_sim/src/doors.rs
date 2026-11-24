@@ -437,7 +437,7 @@ mod tests {
                 lines: vec![
                     always(block(0xb, &[op(0, 0), op(0, 0), n(1)])),
                     always(block(0x64, &[n(9)])),
-                    always(block(0xa, &[op(6, (1 << 16) | 4), n(1)])),
+                    always(block(0xa, &[op(6, 4), n(1)])),
                     line(block(4, &[op(0, 0), n(1)]), block(1, &[]), block(2, &[])),
                 ],
             };

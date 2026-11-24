@@ -65,7 +65,7 @@ pub struct ActorDeltas(pub Vec<LedgerDelta>);
 impl ActorDeltas {
     /// Whether this module handles `delta`.
     pub fn wants(delta: &LedgerDelta) -> bool {
-        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. } | LedgerDelta::PartyLeader { .. } | LedgerDelta::PcStatus { .. } | LedgerDelta::Speed { .. })
+        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. } | LedgerDelta::PartyLeader { .. } | LedgerDelta::PcStatus { .. } | LedgerDelta::Speed { .. } | LedgerDelta::Teleported { .. })
     }
 }
 
@@ -397,6 +397,13 @@ impl Actor {
         base + self.slide
     }
 
+    /// Puts the actor on `position` at once, standing (a teleport).
+    pub fn jump(&mut self, position: TileLoc) {
+        self.at = position;
+        self.slide = Vec2::ZERO;
+        self.walk([]);
+    }
+
     /// Puts the actor on `position`, standing, its sprite sliding there from where it is drawn.
     pub fn correct(&mut self, position: TileLoc) {
         self.slide = self.drawn_offset() + tile_to_world(self.at, position);
@@ -548,6 +555,14 @@ fn apply_actor_deltas(
                             walk.corrected(host.position);
                         }
                     }
+                }
+            }
+            LedgerDelta::Teleported { net_id, to } => {
+                // A teleport: there at once, standing (no slide across the map).
+                let Some(Ok((_, mut a))) = by_id.get(&net_id).map(|&e| actors.get_mut(e)) else { continue };
+                a.jump(to);
+                if Some(net_id) == local {
+                    walk.corrected(to);
                 }
             }
             LedgerDelta::Despawn { net_id } => {

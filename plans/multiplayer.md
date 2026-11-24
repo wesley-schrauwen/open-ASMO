@@ -125,5 +125,10 @@ A teleport, a map change (stairs up or down, entering a building such as a cathe
 anything instanced, or another sudden big movement does not happen at once. Every player
 sees a popup naming who caused it ("Virgil wants to go downstairs"), and the party moves only
 once all have ticked it. This holds whether a script or the map's jump points cause it.
-Quests and story progress go ahead without asking. Open questions are listed in
-`plans/scripts.md` → Multiplayer.
+Quests and story progress go ahead without asking.
+
+Owner's rules for the vote (2026-11-24):
+- **While waiting** the clock runs and every player can act; only the move waits.
+- **Anyone can decline:** the popup has yes and no; one "no" cancels the move, and the script
+  goes on as if the teleport had not happened.
+- **Leavers** drop out of the vote; there is no timeout.

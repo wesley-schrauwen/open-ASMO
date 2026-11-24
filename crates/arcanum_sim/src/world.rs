@@ -1526,6 +1526,92 @@ mod tests {
     }
 
     #[test]
+    fn a_script_teleport_waits_for_every_players_yes_and_one_no_cancels_it() {
+        use crate::script::tests::{always, block, n, op};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "Virgil", TileLoc { x: 79, y: 80 }), (8, "Sogg", TileLoc { x: 70, y: 70 })]));
+        // NPC "A"'s dialogue script teleports the triggerer (set 0) to (75, 75) on this map.
+        let npc_object = crate::ScriptObject::Mobile { sector: SectorId::new(1, 1), index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 700));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            let teleport = block(0x2c, &[op(0, 0), n(crate::big_move::THIS_MAP), n(75), n(75)]);
+            library.insert(700, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(teleport), always(block(1, &[]))] });
+        }
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0).unwrap().0
+        };
+        let position = |sim: &mut SimApp, player: u64| pcs(sim).into_iter().find(|p| p.1 .0 == player).unwrap().2;
+        sim.take_deltas();
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        let id = deltas.iter().find_map(|(p, d)| match d { LedgerDelta::MoveVote { ask } if p.0 == 8 => Some(ask.id), _ => None }).expect("both players are asked");
+        assert!(deltas.iter().any(|(p, d)| p.0 == 7 && matches!(d, LedgerDelta::MoveVote { ask } if ask.causer == "Virgil")));
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Vote { id, yes: true })]);
+        sim.update();
+        assert_eq!(position(&mut sim, 7), TileLoc { x: 79, y: 80 }, "Sogg has not answered");
+        sim.receive([(PlayerId(8), crate::PlayerIntent::Vote { id, yes: true })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert_eq!(position(&mut sim, 7), TileLoc { x: 75, y: 75 });
+        assert!(deltas.iter().any(|(p, d)| p.0 == 8 && matches!(d, LedgerDelta::Teleported { to, .. } if *to == TileLoc { x: 75, y: 75 })));
+        assert!(deltas.iter().any(|(_, d)| *d == LedgerDelta::VoteEnded { id, passed: true }));
+        assert_eq!(sim.app.world().resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(7)].position, TileLoc { x: 75, y: 75 }, "saved");
+        // Again, from (75, 75) the NPC is out of reach: walk back by teleporting the PC there.
+        {
+            let world = sim.app.world_mut();
+            let mut q = world.query::<(&PlayerControlled, &mut Position)>();
+            for (p, mut at) in q.iter_mut(world) {
+                if p.0 == PlayerId(7) {
+                    at.0 = TileLoc { x: 79, y: 80 };
+                }
+            }
+        }
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        let id = deltas.iter().find_map(|(_, d)| match d { LedgerDelta::MoveVote { ask } => Some(ask.id), _ => None }).unwrap();
+        sim.receive([(PlayerId(8), crate::PlayerIntent::Vote { id, yes: false })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.iter().any(|(_, d)| *d == LedgerDelta::VoteEnded { id, passed: false }), "one no cancels it");
+        assert_eq!(position(&mut sim, 7), TileLoc { x: 79, y: 80 });
+    }
+
+    #[test]
+    fn a_lone_player_teleports_at_once_and_other_maps_are_reported() {
+        use crate::script::tests::{always, block, n, op};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]));
+        let npc_object = crate::ScriptObject::Mobile { sector: SectorId::new(1, 1), index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 700));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            let here = block(0x2c, &[op(0, 0), n(crate::big_move::THIS_MAP), n(75), n(76)]);
+            let elsewhere = block(0x2c, &[op(0, 0), n(5007), n(306), n(303)]);
+            library.insert(700, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(here), always(elsewhere), always(block(1, &[]))] });
+        }
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0).unwrap().0
+        };
+        sim.take_deltas();
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(!deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::MoveVote { .. })), "nobody to wait for");
+        assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::Teleported { to, .. } if *to == TileLoc { x: 75, y: 76 })));
+        let reports = &sim.app.world().resource::<crate::big_move::TeleportReports>().0;
+        assert_eq!(reports.len(), 1, "map 5007 is not this one: {reports:?}");
+    }
+
+    #[test]
     fn an_npc_trains_a_skill_to_apprentice_for_gold() {
         use crate::script::tests::{always, block, n};
         let dir = tempfile::tempdir().unwrap();

@@ -171,6 +171,12 @@ pub enum LedgerDelta {
     Barter { view: crate::barter::BarterView },
     /// The barter NPC refuses a trade, in the window's text line.
     BarterLine { text: String },
+    /// A big move waits for every player's answer ([`crate::big_move`]).
+    MoveVote { ask: crate::big_move::VoteAsk },
+    /// A vote ended: the move happened (`passed`) or someone declined.
+    VoteEnded { id: u32, passed: bool },
+    /// A PC jumped to `to` (a teleport): clients put it there at once.
+    Teleported { net_id: NetId, to: TileLoc },
     /// A PC's speed stat changed (it raised its dexterity): clients time its walk from it.
     Speed { net_id: NetId, speed: i32 },
     /// An entity is gone.

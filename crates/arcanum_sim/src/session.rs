@@ -65,6 +65,7 @@ pub fn handle_intents(
     mut picks: ResMut<crate::PickLockRequests>,
     mut casts: ResMut<crate::CastRequests>,
     (mut rests, mut stops, mut talks): (ResMut<crate::RestRequests>, ResMut<crate::StopRestRequests>, ResMut<crate::TalkRequests>),
+    mut votes: ResMut<crate::big_move::VoteRequests>,
 ) {
     for (player, intent) in inbox.0.drain(..) {
         match intent {
@@ -100,6 +101,7 @@ pub fn handle_intents(
             PlayerIntent::Talk { npc, seq } => talks.talk.push((player, npc, seq)),
             PlayerIntent::Choose { option } => talks.choose.push((player, option)),
             PlayerIntent::EndTalk => talks.end.push(player),
+            PlayerIntent::Vote { id, yes } => votes.0.push((player, id, yes)),
         }
     }
 }
