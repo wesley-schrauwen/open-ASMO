@@ -583,7 +583,8 @@ fn every_generic_greeting_has_a_line() {
     }
     eprintln!("greetings: {tried} tried, {} without a line", missing.len());
     // gd_cls_m2m's wizard block (8100-8149) has no 8113: the original counts 45 lines and picks
-    // 8100 + r, so one pick in 45 finds nothing there, as here.
+    // 8100 + r, so one pick in 45 misses. It then shows "Error! Missing line 8113 in ..."
+    // (0x4d43a0); here the NPC says nothing.
     missing.retain(|&(npc_male, dumb, class, pc_gender, _, level, met)| !(npc_male && !dumb && class == 2 && pc_gender == MALE && level == 0 && !met));
     assert!(missing.is_empty(), "{:?}", &missing[..missing.len().min(20)]);
 }

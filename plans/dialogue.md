@@ -120,8 +120,10 @@ format and language are checked against all 709 `.dlg` files.
   0x418390). NPC dumb files have one block per kind (no class or race offset); the PC's
   `gd_cls_dumb_pc2` keeps the class offset.
 - **Picking** (0x4d4550, 0x4cef00): count the lines in `lo..=hi`, then take `lo + r`. A gap in a
-  block makes some picks empty: `gd_cls_m2m` has no 8113, so 1 in 45 greetings of a wizard to a
-  male PC at the best level says nothing.
+  block makes some picks miss: `gd_cls_m2m` has no 8113, so 1 in 45 greetings of a wizard to a
+  male PC at the best level hits it. The original then says "Error! Missing line 8113 in
+  mes\gd_cls_m2m.mes" (0x4d43a0 formats 0x5b8cc4 when the lookup fails). Here the NPC says
+  nothing (builder's call).
 - **Overrides** (0x418870): first the NPC's override dialogue, the file of its script attachment
   31 (`scripts_idx` entry 0x1f), at a fixed line: class blocks `base / 1000 + 9999` (8000 →
   10007), race blocks `base / 1000 + 10999` (1000 → 11000), `gd_npc` blocks
@@ -266,7 +268,7 @@ format and language are checked against all 709 `.dlg` files.
      - `B: T: H: D: X: R: P: L: Q: U: Z:` (left out and reported).
    - **Real data:**
      - 9856 greetings (every class, gender, dumb, PC race, level and meeting) find a line,
-       except the `gd_cls_m2m` 8113 gap.
+       except the `gd_cls_m2m` 8113 gap (the original shows an error line there; here, nothing).
      - Virgil still opens with his own line and offers both options.
    - The client needed no change: generic lines arrive as floats and options.
 5. **Barter** (`B:`), training, healing, directions, rumours, newspapers and the other windows.

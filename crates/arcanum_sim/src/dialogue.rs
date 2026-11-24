@@ -777,7 +777,8 @@ impl Say<'_> {
         if talk.female() && !entry.female_text.is_empty() { &entry.female_text } else { &entry.text }
     }
 
-    /// A random line of `lo..=hi` of `path`, names put in (0x4d4550, 0x4cef00, 0x4d43a0).
+    /// A random line of `lo..=hi` of `path`, names put in (0x4d4550, 0x4cef00, 0x4d43a0). A pick
+    /// that lands in a gap gives nothing; the original shows "Error! Missing line %d in %s".
     fn pick(&mut self, path: &str, lo: u32, hi: u32) -> Option<String> {
         let count = self.generic.file(self.vfs, path)?.messages.keys().filter(|k| (lo..=hi).contains(k)).count();
         if count == 0 {
