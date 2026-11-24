@@ -565,7 +565,7 @@ fn every_generic_greeting_has_a_line() {
                                 let (mut inventory, mut pc, mut globals, mut attachment): (Inventory, PcScriptState, ScriptGlobals, Attachment) = Default::default();
                                 // Looks and race do not count, so the base is the reaction.
                                 let reaction = NpcReaction { base, race: 0, origin: 0, faction: 0, only_reputation: true };
-                                let mut talk = Talk { rules: &rules, sheet: &sheet, inventory: &mut inventory, pc: &mut pc, globals: &mut globals, npc: &mut attachment, met, npc_key: "npc".into(), npc_reaction: reaction, reputations: &reputations, gold_changed: false, unbuilt: Vec::new() };
+                                let mut talk = Talk { rules: &rules, sheet: &sheet, inventory: &mut inventory, pc: &mut pc, globals: &mut globals, npc: &mut attachment, met, npc_key: "npc".into(), npc_reaction: reaction, reputations: &reputations, gold_changed: false, unbuilt: Vec::new(), trained: Vec::new() };
                                 assert_eq!(arcanum_sim::level(talk.reaction()), level as u32);
                                 let info = NpcInfo { name: "N".into(), male: npc_male, reaction, class, dumb, overrides: None };
                                 let mut say = Say { npc_net: NetId(1), dialog: 0, pc_name: "P", npc: &info, generic: &mut generic, vfs: Some(&vfs), rng: &mut rng, deltas: Vec::new(), jumps: 0 };
