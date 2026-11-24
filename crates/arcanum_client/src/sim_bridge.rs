@@ -308,6 +308,11 @@ fn receive_deltas(
             inv.barter_refused(text.clone());
         }
         if let LedgerDelta::EnterMap { map: name } = delta {
+            if map.0.as_ref().is_some_and(|old| old != name)
+                && let Some(inv) = inventory.as_mut()
+            {
+                inv.left_map();
+            }
             map.0 = Some(name.clone());
         }
         // A teleport: the map around the new tile loads at once.

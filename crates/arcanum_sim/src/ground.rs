@@ -158,6 +158,20 @@ impl LoadedMap {
         items
     }
 
+    /// The item prototypes of a critter's stored list whose items are flagged `item_flags`
+    /// 0x2000 (kept when it restocks).
+    pub fn kept_kinds(&self, critter: &Object) -> std::collections::BTreeSet<u32> {
+        let ids = match critter.field("critter_inventory_list_idx") {
+            Some(Value::Array(Some(list))) => list.object_ids().unwrap_or_default(),
+            _ => Vec::new(),
+        };
+        ids.iter()
+            .filter_map(|id| self.stored_items.get(id))
+            .filter(|item| self.prototypes.int(item, "item_flags").unwrap_or(0) & 0x2000 != 0)
+            .filter_map(|item| item.prototype.prototype())
+            .collect()
+    }
+
     /// NPC `index` of `sector`'s mobile objects' inventory: as changed (bartered), else as stored.
     pub fn npc_inventory(&self, sector: SectorId, index: u32) -> Option<Inventory> {
         if let Some(changed) = self.changes.get(&sector).and_then(|c| c.npc_inventories.get(&index)) {

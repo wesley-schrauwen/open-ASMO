@@ -177,6 +177,8 @@ pub struct PcInventory {
     barter_opened: bool,
     /// The barter NPC's last refusal.
     barter_line: Option<String>,
+    /// The party left the map: the window closes.
+    left_map: bool,
 }
 
 impl PcInventory {
@@ -214,6 +216,14 @@ impl PcInventory {
             self.barter_line = None;
         }
         self.barter = Some(view);
+    }
+
+    /// The party went to another map: the loot and barter windows close (their host side is
+    /// gone).
+    pub fn left_map(&mut self) {
+        self.barter = None;
+        self.opened = None;
+        self.left_map = true;
     }
 
     /// The barter NPC refused a trade.
@@ -382,6 +392,9 @@ fn open_loot(mut inventory: ResMut<PcInventory>, mut panel: ResMut<InventoryPane
         *panel = InventoryPanel { open: true, pile: None, barter: true };
         scroll.0 = 0;
     }
+    if std::mem::take(&mut inventory.left_map) && panel.two_sided() {
+        panel.open = false;
+    }
 }
 
 /// The other side's items: the pile, or the barter NPC's goods.
@@ -424,7 +437,7 @@ fn one_panel_at_a_time(mut inventory: ResMut<InventoryPanel>, mut character: Res
 }
 
 #[allow(clippy::too_many_arguments)]
-fn show_panel(mut commands: Commands, mut panel: ResMut<InventoryPanel>, roots: Query<Entity, With<InventoryScreen>>, assets: Res<AssetServer>, mut inventory: ResMut<PcInventory>, client: Option<Res<crate::world_render::ClientMap>>, mut shown: Local<(Option<GroundItemId>, bool)>) {
+fn show_panel(mut commands: Commands, mut panel: ResMut<InventoryPanel>, roots: Query<Entity, With<InventoryScreen>>, assets: Res<AssetServer>, mut inventory: ResMut<PcInventory>, client: Option<Res<crate::world_render::ClientMap>>, mut shown: Local<(Option<GroundItemId>, bool)>, fonts: Option<Res<ArcanumFonts>>) {
     if !panel.is_changed() {
         return;
     }
@@ -475,6 +488,13 @@ fn show_panel(mut commands: Commands, mut panel: ResMut<InventoryPanel>, roots: 
             if panel.barter {
                 // Barter (art 235); the NPC's portrait and name are not drawn yet.
                 screen.spawn(image("Barter.ART", 0.0, 0.0, 358.0, 400.0));
+                // The NPC's name, centred on x 215 at y 102 (0x5727b0).
+                let name = inventory.barter().map(|v| v.npc_name.clone()).unwrap_or_default();
+                let fonts = fonts.as_deref().cloned().unwrap_or_default();
+                screen.spawn((bevy::picking::Pickable::IGNORE, Node { justify_content: JustifyContent::Center, overflow: Overflow::clip(), ..at(band(115.0, 102.0, 200.0, 20.0)) })).with_children(|cell| {
+                    let mut t = cell.spawn((TextColor(SCREEN_WHITE), bevy::picking::Pickable::IGNORE));
+                    fonts.insert_text(&mut t, &name, UiFont::Body);
+                });
                 screen.spawn((BarterText, bevy::picking::Pickable::IGNORE, Node { overflow: Overflow::clip(), ..at(band(BARTER_LINE.min.x, BARTER_LINE.min.y, BARTER_LINE.width(), BARTER_LINE.height())) }));
             } else if loot {
                 screen.spawn(image("Loot.ART", 0.0, 0.0, 358.0, 400.0));
@@ -1091,7 +1111,7 @@ mod tests {
         let mut stock = Inventory::default();
         stock.change_gold(40);
         stock.items.push(CarriedItem { prototype: 6049, location: 3, quantity: 0, keys: vec![] });
-        let view = BarterView { npc: arcanum_sim::NetId(4), npc_male: true, stock, buy: [(3, Offer { price: 12, line: "I will sell that for 12 coins.".into() })].into(), sell: Default::default(), npc_gold: 40 };
+        let view = BarterView { npc: arcanum_sim::NetId(4), npc_male: true, npc_name: "Bates".into(), stock, buy: [(3, Offer { price: 12, line: "I will sell that for 12 coins.".into() })].into(), sell: Default::default(), npc_gold: 40 };
         let mut inventory = PcInventory::default();
         inventory.barter_view(view.clone());
         assert!(inventory.barter_opened);
@@ -1103,6 +1123,8 @@ mod tests {
         assert_eq!(inventory.barter_line.as_deref(), Some("No."));
         let panel = InventoryPanel { open: true, pile: None, barter: true };
         assert!(panel.two_sided() && panel.side() == Some(BARTER_SIDE));
+        inventory.left_map();
+        assert!(inventory.barter().is_none() && inventory.left_map, "another map: the window closes");
     }
 }
 

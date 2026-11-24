@@ -108,11 +108,15 @@ pub struct SectorDelta {
     /// hold the map's stored list ([`crate::barter`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub npc_inventories: BTreeMap<u32, crate::Inventory>,
+    /// When each shopkeeper restocks, by index in the sector's mobile objects
+    /// ([`crate::barter`], 0x4640c0).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub npc_restock: BTreeMap<u32, crate::GameTime>,
 }
 
 impl SectorDelta {
     pub fn is_empty(&self) -> bool {
-        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty() && self.npc_inventories.is_empty()
+        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty() && self.npc_inventories.is_empty() && self.npc_restock.is_empty()
     }
 }
 
