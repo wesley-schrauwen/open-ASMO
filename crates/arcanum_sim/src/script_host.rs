@@ -366,6 +366,25 @@ impl ScriptContext for HostWorld<'_> {
         crate::reaction_to(&saved.script_state, &crate::met_key(npc), &crate::NpcReaction::of(o, &self.map.prototypes), self.rules, &saved.blueprint.sheet, self.reputations)
     }
 
+    fn change_reaction(&mut self, npc: ScriptObject, pc: ScriptObject, delta: i32) {
+        let (ScriptObject::Mobile { .. }, ScriptObject::Pc(p)) = (npc, pc) else { return };
+        if delta == 0 || !self.is_npc(npc) {
+            return;
+        }
+        let ScriptObject::Mobile { sector, index } = npc else { return };
+        let Some(base) = self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).map(|o| crate::NpcReaction::of(o, &self.map.prototypes).base) else { return };
+        let key = crate::met_key(npc);
+        if let Some(saved) = self.players.get_mut(&p) {
+            let stored = saved.script_state.reactions.get(&key).copied().unwrap_or(base);
+            saved.script_state.reactions.insert(key, stored + delta);
+        }
+    }
+
+    fn distance(&mut self, a: ScriptObject, b: ScriptObject) -> i32 {
+        let (Some(a), Some(b)) = (self.location(a), self.location(b)) else { return 0 };
+        (f64::from(a.x) - f64::from(b.x)).hypot(f64::from(a.y) - f64::from(b.y)) as i32
+    }
+
     fn has_met(&mut self, npc: ScriptObject, pc: ScriptObject) -> bool {
         if npc == pc {
             return true;
