@@ -262,6 +262,35 @@ pub fn reaction_to(pc: &PcScriptState, npc_key: &str, npc: &crate::NpcReaction, 
     stored + npc.modifier(rules.derived(sheet).reaction, sheet.race, reputation)
 }
 
+/// What a step changes on the PC's sheet, applied after it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SheetChanges {
+    /// Skills and the training rank they get.
+    pub training: Vec<(usize, u8)>,
+    /// The new base alignment.
+    pub alignment: Option<i32>,
+    pub experience: i32,
+    pub fate_points: i32,
+}
+
+impl SheetChanges {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Applies them to `sheet`.
+    pub fn apply(&self, sheet: &mut CharacterSheet) {
+        for &(skill, rank) in &self.training {
+            sheet.training[skill] = rank;
+        }
+        if let Some(a) = self.alignment {
+            sheet.alignment = a;
+        }
+        sheet.experience += self.experience;
+        sheet.fate_points += self.fate_points;
+    }
+}
+
 /// `n` as a threshold: `n >= 0` at least `n`, `n < 0` at most `-n`.
 pub fn passes(value: i32, n: i32) -> bool {
     if n < 0 { value <= -n } else { value >= n }
@@ -285,8 +314,21 @@ pub struct Talk<'a> {
     pub gold_changed: bool,
     /// Opcodes not built yet that were met.
     pub unbuilt: Vec<String>,
-    /// Skills trained to Apprentice this step.
-    pub trained: Vec<usize>,
+    /// Changes to the PC's sheet this step: training, alignment, experience, fate points.
+    pub sheet_changes: SheetChanges,
+    /// The item prototypes (an item's `name` is what `in` and `ni` name).
+    pub prototypes: &'a arcanum_formats::object::Prototypes,
+    /// The NPC's `npc_flags` (tests `wa`, `wt`).
+    pub npc_flags: i32,
+    /// The NPC's inventory, and its substitute container's (results `in -N`); changed ones are
+    /// kept after the step.
+    pub npc_inventory: Option<Inventory>,
+    pub npc_stock: Option<Inventory>,
+    pub npc_inventory_changed: bool,
+    /// `Rules/xp_quest.mes`, for `xp`.
+    pub xp_quest: Option<&'a MesFile>,
+    /// Item facts, for moving items.
+    pub item_info: &'a dyn Fn(u32) -> Option<crate::ItemInfo>,
     /// The area the PC is in ([`crate::areas`]; 0 none).
     pub pc_area: u32,
 }
@@ -296,9 +338,65 @@ impl Talk<'_> {
         self.inventory.gold()
     }
 
-    fn has(&self, basic: i32) -> bool {
-        let prototype = basic as u32 + crate::BASIC_TO_PROTOTYPE;
-        self.inventory.items.iter().any(|i| i.prototype == prototype)
+    /// An item's `name` (obj_f_name, field 0x16), what `in` / `ni` name.
+    fn item_name(&self, prototype: u32) -> Option<i32> {
+        self.prototypes.get(prototype)?.int("name")
+    }
+
+    /// Whether the PC carries an item named `name` (0x462480).
+    fn has(&self, name: i32) -> bool {
+        self.inventory.items.iter().any(|i| self.item_name(i.prototype) == Some(name))
+    }
+
+    /// Whether the NPC (or its substitute container) carries an item named `name`.
+    fn npc_has(&self, name: i32) -> bool {
+        [&self.npc_inventory, &self.npc_stock].into_iter().flatten().any(|inv| inv.items.iter().any(|i| self.item_name(i.prototype) == Some(name)))
+    }
+
+    /// The PC's training rank in `skill`, counting this step's changes.
+    fn rank(&self, skill: usize) -> u8 {
+        self.sheet_changes.training.iter().rev().find(|(k, _)| *k == skill).map_or(self.sheet.training[skill], |&(_, r)| r)
+    }
+
+    fn alignment(&self) -> i32 {
+        self.sheet_changes.alignment.unwrap_or(self.sheet.alignment)
+    }
+
+    /// Result `in` (0x415fed): `N > 0` the PC gives its first item named N to the NPC; `N < 0`
+    /// the NPC (or its substitute container) gives one named -N to the PC. Nothing is made.
+    /// A receiver without room: the original drops the item at its feet (the PC) or, for an
+    /// NPC, drops it (a follower) or destroys it; here it stays where it was.
+    fn give_item(&mut self, n: i32, info: &dyn Fn(u32) -> Option<crate::ItemInfo>, carry: i32, aptitude: i32) {
+        let name = n.abs();
+        if n > 0 {
+            let Some(item) = self.inventory.items.iter().find(|i| self.item_name(i.prototype) == Some(name)).cloned() else { return };
+            let Some(npc) = self.npc_inventory.as_mut() else { return };
+            let mut changed = npc.clone();
+            if changed.insert_item(crate::CarriedItem { location: 0, ..item.clone() }, info, i32::MAX, 0).is_ok() {
+                *npc = changed;
+                self.inventory.items.retain(|i| i.location != item.location);
+                self.npc_inventory_changed = true;
+                self.gold_changed = true;
+            }
+            return;
+        }
+        for source in [true, false] {
+            let names = |inv: &Inventory| inv.items.iter().find(|i| self.prototypes.get(i.prototype).and_then(|p| p.int("name")) == Some(name)).cloned();
+            let held = if source { self.npc_inventory.as_ref().and_then(names) } else { self.npc_stock.as_ref().and_then(names) };
+            let Some(item) = held else { continue };
+            let mut mine = self.inventory.clone();
+            if mine.insert_item(crate::CarriedItem { location: 0, ..item.clone() }, info, carry, aptitude).is_err() {
+                return;
+            }
+            *self.inventory = mine;
+            let inv = if source { self.npc_inventory.as_mut() } else { self.npc_stock.as_mut() };
+            if let Some(inv) = inv {
+                inv.items.retain(|i| i.location != item.location);
+            }
+            self.npc_inventory_changed = true;
+            self.gold_changed = true;
+            return;
+        }
     }
 
     /// Gives (`n > 0`) or takes (`n < 0`) gold; a PC with no gold yet gets a stack next to
@@ -374,7 +472,26 @@ impl Talk<'_> {
             "re" => passes(self.reaction(), a),
             "$$" => passes(self.gold(), a),
             "in" if a > 0 => self.has(a),
+            "in" => self.npc_has(-a),
             "ni" if a > 0 => !self.has(a),
+            "ni" => !self.npc_has(-a),
+            // Alignment (stat 0x13), the aptitude (stat 0x10: magick up, tech down), and "na"
+            // (0x4159bc: alignment at least -a, or at most a when a is negative).
+            "al" => passes(self.alignment(), a),
+            "ma" => passes(self.rules.aptitude(self.sheet), a),
+            "ta" => passes(-self.rules.aptitude(self.sheet), a),
+            "na" => if a >= 0 { self.alignment() >= -a } else { self.alignment() <= a },
+            // Training rank and skill level of skill S (12-15 the tech skills), spell college C.
+            "tr" => usize::try_from(a).ok().filter(|&k| k < arcanum_rules::SKILLS).is_some_and(|k| passes(i32::from(self.rank(k)), b)),
+            "sk" => usize::try_from(a).ok().filter(|&k| k < arcanum_rules::SKILLS).is_some_and(|k| passes(self.rules.skill_level(self.sheet, k), b)),
+            "sc" => usize::try_from(a).ok().and_then(|c| self.sheet.spells.get(c)).is_some_and(|&l| if b > 0 { l >= b } else { l <= -b }),
+            // Follows the PC (nobody follows anyone yet): 0 not, 1 yes, others always pass.
+            "fo" => a != 1,
+            // A party member named N: none yet.
+            "pa" => a < 0,
+            // The NPC's `npc_flags` 0x8 / 0x20: 0 clear, else set.
+            "wa" => (self.npc_flags & 0x8 != 0) == (a != 0),
+            "wt" => (self.npc_flags & 0x20 != 0) == (a != 0),
             "ch" => passes(self.stat(7), a),
             "pe" => passes(self.stat(5), a),
             "le" => passes(self.sheet.level, a),
@@ -431,6 +548,41 @@ impl Talk<'_> {
                 "rp" => set_in(&mut self.pc.reputations, a.unsigned_abs(), a > 0),
                 "fl" => return Some(a),
                 "mm" => set_in(&mut self.pc.areas, a.unsigned_abs(), true),
+                "in" => {
+                    let info = self.item_info;
+                    let (carry, aptitude) = (self.rules.derived(self.sheet).carry_weight, self.rules.aptitude(self.sheet));
+                    self.give_item(a, info, carry, aptitude);
+                }
+                // Alignment (0x415f19): set, add (+/-), at least (>), at most (<), as `re`.
+                "al" => {
+                    use arcanum_formats::dialog::Change;
+                    let now = self.alignment();
+                    self.sheet_changes.alignment = Some(match t.change {
+                        Change::Add => now + a,
+                        Change::Set => a,
+                        Change::AtLeast => now.max(a),
+                        Change::AtMost => now.min(a),
+                    });
+                }
+                // Training (0x4161eb): only one rank up (or down) at a time, with the level the rank needs.
+                "tr" => {
+                    if let (Ok(skill), Ok(rank)) = (usize::try_from(a), u8::try_from(b))
+                        && skill < arcanum_rules::SKILLS
+                        && rank <= 3
+                    {
+                        let now = self.rank(skill);
+                        let step_ok = !(now < rank && now + 1 != rank);
+                        if step_ok && self.rules.skill_level(self.sheet, skill) >= RANK_LEVELS[rank as usize] {
+                            self.sheet_changes.training.push((skill, rank));
+                        }
+                    }
+                }
+                // Experience from `Rules/xp_quest.mes` line N (0x4c53c0 → 0x45f110), normal difficulty.
+                "xp" => {
+                    let amount = self.xp_quest.and_then(|m| m.get(a.max(0) as u32)).map_or(0, |t| arcanum_formats::dialog::atoi(t.as_bytes()));
+                    self.sheet_changes.experience += amount;
+                }
+                "fp" => self.sheet_changes.fate_points += 1,
                 "re" => self.change_reaction(a, t.change),
                 op => self.unbuilt.push(format!("result {op}")),
             }
@@ -700,6 +852,19 @@ pub fn run_conversations(
             npc_info.overrides = vfs.and_then(|v| library.dialog(v, override_number)).map(|f| (override_number, f));
         }
         let met = saved.script_state.met.contains(&key);
+        let prototypes = map.prototypes.clone();
+        let art = map.art.clone();
+        let item_info = crate::item_info(&prototypes, |id| crate::world::art_size(vfs, art.as_deref(), id));
+        let (npc_flags, npc_inv, stock_id) = match npc_object {
+            ScriptObject::Mobile { sector, index } => (
+                map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).and_then(|o| map.prototypes.int(o, "npc_flags")).unwrap_or(0),
+                map.npc_inventory(sector, index),
+                map.substitute(sector, index),
+            ),
+            _ => (0, None, None),
+        };
+        let npc_stock = stock_id.and_then(|id| map.pile(id)).map(|p| p.inventory);
+        let xp_quest = generic.file(vfs, "Rules/xp_quest.mes").cloned();
         let areas = &*areas;
         let pc_area = map.name.as_deref().map_or(0, |m| areas.area_at(m, pc_at));
         let mut talk = Talk {
@@ -715,8 +880,15 @@ pub fn run_conversations(
             reputations,
             gold_changed: false,
             unbuilt: Vec::new(),
-            trained: Vec::new(),
+            sheet_changes: SheetChanges::default(),
             pc_area,
+            prototypes: &prototypes,
+            npc_flags,
+            npc_inventory: npc_inv.clone(),
+            npc_stock: npc_stock.clone(),
+            npc_inventory_changed: false,
+            xp_quest: xp_quest.as_ref(),
+            item_info: &item_info,
         };
         let mut say = Say { npc_net, dialog, pc_name: &sheet.0.name, npc: &npc_info, generic: &mut generic, vfs, rng: &mut rng, deltas: Vec::new(), jumps: 0, areas, pc_at };
         let next = match step {
@@ -748,7 +920,8 @@ pub fn run_conversations(
             }
         };
         let gold_changed = talk.gold_changed;
-        let trained = std::mem::take(&mut talk.trained);
+        let sheet_changes = std::mem::take(&mut talk.sheet_changes);
+        let npc_changes = talk.npc_inventory_changed.then(|| (talk.npc_inventory.take(), talk.npc_stock.take()));
         for op in talk.unbuilt.drain(..) {
             reports.0.push((dialog, op));
         }
@@ -774,10 +947,22 @@ pub fn run_conversations(
             saved.script_state.met.insert(key);
             outbox.0.push((player, LedgerDelta::DialogueEnded));
         }
-        if !trained.is_empty() {
-            for skill in trained {
-                sheet.0.training[skill] = sheet.0.training[skill].max(APPRENTICE);
+        let mut touched = Vec::new();
+        if let (Some((npc_inv, npc_stock)), ScriptObject::Mobile { sector, index }) = (npc_changes, npc_object) {
+            if let Some(inv) = npc_inv {
+                map.set_npc_inventory(sector, index, inv);
             }
+            if let (Some(stock), Some(id)) = (npc_stock, stock_id)
+                && let Some(mut pile) = map.pile(id)
+            {
+                pile.inventory = stock;
+                map.set_pile(id, Some(pile));
+                touched.push(id.sector());
+            }
+            touched.push(sector);
+        }
+        if !sheet_changes.is_empty() {
+            sheet_changes.apply(&mut sheet.0);
             saved.blueprint.sheet = sheet.0.clone();
             outbox.0.push((player, LedgerDelta::SheetUpdate { ack: 0, sheet: sheet.0.clone() }));
         }
@@ -792,8 +977,11 @@ pub fn run_conversations(
         if npc_attachment != before {
             map.set_attachment(npc_object, EVENT_DIALOGUE, npc_attachment);
             if let ScriptObject::Mobile { sector, .. } = npc_object {
-                crate::ground::save_change(&mut world, &map, sector);
+                touched.push(sector);
             }
+        }
+        for sector in touched {
+            crate::ground::save_change(&mut world, &map, sector);
         }
     }
 }
@@ -1244,7 +1432,7 @@ impl Say<'_> {
             Service::Rumour(n) => self.tell_rumour(file, n, ret, talk),
             Service::Directions { area, mark } => self.direct(file, area, mark, ret, talk),
             Service::Train(skill) => {
-                talk.trained.push(skill);
+                talk.sheet_changes.training.push((skill, APPRENTICE));
                 let thanks = self.pc_line(1000, 1099, talk);
                 self.say_then_back(file, Block::Class, 6000, &[], thanks, ret, talk)
             }
@@ -1339,10 +1527,33 @@ mod tests {
     use super::*;
 
     static NO_REPUTATIONS: std::sync::LazyLock<crate::ReputationEffects> = std::sync::LazyLock::new(Default::default);
+    static NO_PROTOTYPES: std::sync::LazyLock<arcanum_formats::object::Prototypes> = std::sync::LazyLock::new(Default::default);
 
     fn talk_with<'a>(rules: &'a RulesData, sheet: &'a CharacterSheet, inventory: &'a mut Inventory, pc: &'a mut PcScriptState, globals: &'a mut ScriptGlobals, npc: &'a mut Attachment) -> Talk<'a> {
         let npc_reaction = crate::NpcReaction { base: 50, race: 0, origin: 0, faction: 0, only_reputation: false };
-        Talk { rules, sheet, inventory, pc, globals, npc, met: false, npc_key: "npc".into(), npc_reaction, reputations: &NO_REPUTATIONS, gold_changed: false, unbuilt: Vec::new(), trained: Vec::new(), pc_area: 0 }
+        Talk {
+            rules,
+            sheet,
+            inventory,
+            pc,
+            globals,
+            npc,
+            met: false,
+            npc_key: "npc".into(),
+            npc_reaction,
+            reputations: &NO_REPUTATIONS,
+            gold_changed: false,
+            unbuilt: Vec::new(),
+            sheet_changes: SheetChanges::default(),
+            pc_area: 0,
+            prototypes: &NO_PROTOTYPES,
+            npc_flags: 0,
+            npc_inventory: Some(Inventory::default()),
+            npc_stock: None,
+            npc_inventory_changed: false,
+            xp_quest: None,
+            item_info: &|_| None,
+        }
     }
 
     #[test]
@@ -1388,8 +1599,8 @@ mod tests {
         assert!(!talk.passes_test("ru -7"));
         assert_eq!(talk.run_result("gv 3 9, fl 120, gv 4 1"), Some(120), "fl ends the result");
         assert_eq!((talk.globals.var(3), talk.globals.var(4)), (9, 0));
-        assert!(!talk.passes_test("tr 1 1"), "not built: fails");
-        assert_eq!(talk.unbuilt.last().map(String::as_str), Some("test tr"));
+        assert!(!talk.passes_test("tr 1 1") && talk.passes_test("tr 1 0"), "no training in skill 1");
+        assert!(talk.unbuilt.is_empty(), "every test opcode is built: {:?}", talk.unbuilt);
     }
 
     #[test]
@@ -1631,7 +1842,7 @@ mod tests {
         let OptionAct::Pay { price, service, ret } = options[0].act else { panic!() };
         assert_eq!(service, Service::Train(9));
         say.pay(&file, price, service, ret, &mut talk);
-        assert_eq!(talk.trained, [9]);
+        assert_eq!(talk.sheet_changes.training, [(9, APPRENTICE)]);
         assert_eq!(floats(&say.deltas).last().unwrap().0, "There, done.");
     }
 
@@ -1684,5 +1895,50 @@ mod tests {
         assert!(talk.passes_test("ia 2") && talk.passes_test("ia -3"));
         talk.run_result("mm 9");
         assert!(talk.pc.areas.contains(&9));
+    }
+
+    #[test]
+    fn alignment_aptitude_skills_training_and_items_by_name() {
+        use arcanum_formats::object::{Object, Prototypes, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, prototype_id};
+        let rules = RulesData::default();
+        let mut sheet = CharacterSheet { gender: arcanum_rules::MALE, alignment: 30, ..Default::default() };
+        sheet.skills[9] = 1;
+        sheet.spells[2] = 3;
+        let (mut inventory, mut pc, mut globals, mut attachment): (Inventory, PcScriptState, ScriptGlobals, Attachment) = Default::default();
+        let mut prototypes = Prototypes::default();
+        for (number, name) in [(6049, 2804), (6050, 5222)] {
+            let mut o = Object::parse_instance(&ObjectBuilder::new(arcanum_formats::object::TYPE_WEAPON).field("name", Value::Int32(name)).build()).unwrap();
+            o.id = prototype_id(number);
+            prototypes.insert(o);
+        }
+        inventory.items.push(crate::CarriedItem { prototype: 6049, location: 0, quantity: 0, keys: vec![] });
+        let one_cell = |_: u32| Some(crate::ItemInfo { kind: arcanum_formats::object::TYPE_WEAPON, inventory_art: 0, cells: (1, 1), weight: 1, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 0, item_flags: 0, worth: 0 });
+        let mut talk = talk_with(&rules, &sheet, &mut inventory, &mut pc, &mut globals, &mut attachment);
+        talk.prototypes = &prototypes;
+        talk.item_info = &one_cell;
+        talk.npc_inventory = Some(Inventory { items: vec![crate::CarriedItem { prototype: 6050, location: 3, quantity: 0, keys: vec![] }], ..Default::default() });
+        talk.npc_flags = 0x8;
+        assert!(talk.passes_test("al 30, al -40, na 40") && !talk.passes_test("al 31") && !talk.passes_test("na -40"));
+        let apt = rules.aptitude(&sheet);
+        assert!(talk.passes_test(&format!("ma {apt}, ta {}", -apt)) && !talk.passes_test(&format!("ma {}", apt + 1)), "aptitude {apt}: magick up, tech down");
+        assert!(talk.passes_test("sk 9 4, sk 9 -4, sc 2 3, sc 2 -3") && !talk.passes_test("sc 2 4"));
+        assert!(talk.passes_test("wa 1, wt 0, fo 0, pa -7") && !talk.passes_test("fo 1"));
+        assert!(talk.passes_test("in 2804, in -5222, ni 5222, ni -2804"), "items by name, the NPC's with -N");
+        // Results: alignment like reaction, training one rank at a time, items move.
+        talk.run_result("al +5");
+        talk.run_result("al <20");
+        assert_eq!(talk.sheet_changes.alignment, Some(20));
+        talk.run_result("tr 9 2, tr 9 1");
+        assert_eq!(talk.sheet_changes.training, [(9, 1)], "not two ranks at once; Apprentice at level 4 >= 1");
+        assert!(talk.passes_test("tr 9 1"));
+        talk.run_result("fp, in 2804, in -5222");
+        assert_eq!(talk.sheet_changes.fate_points, 1);
+        assert!(talk.passes_test("ni 2804, in 5222"), "the dagger went, the sword came");
+        assert!(talk.npc_inventory_changed && talk.npc_has(2804) && !talk.npc_has(5222));
+        let mut changed = sheet.clone();
+        talk.sheet_changes.apply(&mut changed);
+        assert_eq!((changed.alignment, changed.training[9], changed.fate_points), (20, 1, 1));
+        assert!(talk.unbuilt.is_empty(), "{:?}", talk.unbuilt);
     }
 }

@@ -95,6 +95,14 @@ pub struct CharacterSheet {
     /// 0x45d550 / 0x45d5a0). Not a character choice: the editor leaves it alone.
     #[cfg_attr(feature = "serde", serde(default))]
     pub fatigue_damage: i32,
+    /// Alignment (stat 0x13; dialogue `al`), experience (stat 0x12; `xp`) and fate points
+    /// (stat 0x14; `fp`). Not shown on the character screen yet.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub alignment: i32,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub experience: i32,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub fate_points: i32,
     pub draft: Draft,
 }
 
@@ -119,6 +127,9 @@ impl Default for CharacterSheet {
             tech: [0; DISCIPLINES],
             spells: [0; COLLEGES],
             fatigue_damage: 0,
+            alignment: 0,
+            experience: 0,
+            fate_points: 0,
             draft: Draft::default(),
         }
     }
