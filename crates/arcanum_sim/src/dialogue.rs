@@ -26,14 +26,37 @@
 //! prototype numbers (+20, as `InvenSource`; to confirm). A test the host cannot check yet fails;
 //! a result it cannot do yet is skipped; both are reported ([`DialogueReports`]).
 //!
-//! **Generic option texts** (`Y: N: S: E: F: K: W:`) are a random line of the range from
-//! `mes/gd_pc2m.mes` or `gd_pc2f.mes` by the NPC's gender (the `gd_dumb_` pair for a PC of
-//! Intelligence 4 or less). Other prefixed options, and `G:` NPC lines, are not built: the option
-//! is left out, a `G:` line ends the conversation.
+//! **Generic lines** come from the `mes/gd_*.mes` files (table 0x5a063c), picked at random in a
+//! block (0x4d4550 counts the lines in `lo..=hi`, the pick is `lo + r`). Files go by the NPC's and
+//! the PC's genders (`m2f`: a male NPC to a female PC), and their `dumb` twins for a speaker of
+//! Intelligence 4 or less (0x45fc00). Before a generic NPC line the NPC's override dialogue (its
+//! script attachment [`EVENT_OVERRIDE`], 0x418870) is asked for a fixed line number; that line
+//! carries a voice, generic ones do not.
+//! - **`G:` NPC lines** ([`Say::greeting`], 0x419260): `G: k line, k fl line, ...` with `k` 0-9.
+//!   `k` 0-8 are special cases (dead, bad associates, invisible, body spell, polymorph, shrunk,
+//!   underwear, barbarian armour), none built. `k` 9 is the greeting: a line number goes to that
+//!   line, `fl n` closes with line `n`, `0` says nothing. Else the greeting is by meeting and
+//!   reaction level (0x4c0fc0): first meeting `gd_cls` 8000 / 9000 / 10000 for levels 0 / 1-2 / 3,
+//!   `gd_rce` 2000 / 3000 for 4-5 / 6; met before, 11000 / 12000 / 13000 and 4000 / 5000. The
+//!   options after the `G:` line follow.
+//! - **`I:` NPC lines**: an insult, `gd_rce` 1000 (0x4185f0); options follow.
+//! - **Class blocks** (`gd_cls`) are 50 lines per `npc_social_class` (the dumb file has one block);
+//!   **race blocks** (`gd_rce`) 50 per PC race, the first for the NPC's own race (dumb: one).
+//! - **Option texts** (0x416c10), to the NPC's gender: `Y: N: S: E: F: K: W:` from `gd_pc2`;
+//!   `A:` thanks (`gd_cls_pc2` 1000) and `I:` an insult (`gd_cls_pc2` 3000), by the NPC's class;
+//!   `C:` the story question (`gd_pc2` 1700 + story state).
+//! - **Choosing** (0x413130): the result runs first. `I:` lowers the NPC's reaction by 10
+//!   (0x4191e0); below 21 the NPC insults back and the talk ends. `C:` (0x41a3e0): the NPC answers
+//!   from `gd_sto` (its race + 100 × story state), and the PC gets one "thanks" option that goes
+//!   on to the option's response.
+//! - **No options:** the PC gets a goodbye (`gd_pc2` 400-499) that ends the talk (0x414e60).
+//! - **Barks** (0x5681c0 → 0x4132a0): when the NPC's dialogue script runs the default (or it has
+//!   none), the NPC says the greeting over its head, and there is no conversation.
 //!
-//! Not built: barks for NPCs without a script (0x5681c0); the NPC's can-talk checks (0x4ad800);
-//! reaction, alignment, aptitude, training and the rest of the tests and results; turning to face
-//! each other.
+//! Not built: the other prefixes (`B: T: H: D: X: R: P: L: Q: U: Z:`; left out and reported); the
+//! `G:` special cases and the reputation greetings (0x4c1f80, one in five); the NPC's can-talk
+//! checks (0x4ad800) and hostility at choice time (0x4ae120); alignment, aptitude, training and the
+//! rest of the tests and results; turning to face each other.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -47,6 +70,9 @@ use crate::{Attachment, Inventory, LedgerDelta, LoadedMap, NetId, Outbox, PcScri
 
 /// The dialogue event (attach point 9).
 pub const EVENT_DIALOGUE: u32 = 9;
+/// The attach point whose script names the NPC's override dialogue (0x418870 reads
+/// `scripts_idx` entry 0x1f).
+pub const EVENT_OVERRIDE: u32 = 31;
 /// Most options shown.
 pub const MAX_OPTIONS: usize = arcanum_formats::dialog::MAX_OPTIONS;
 /// How far `-n` responses may chain.
@@ -86,7 +112,23 @@ pub struct Conversation {
     pub npc_object: ScriptObject,
     pub dialog: u32,
     pub line: i32,
-    pub options: Vec<(i32, String)>,
+    pub options: Vec<Offered>,
+}
+
+/// An option offered: its text and what choosing it does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Offered {
+    pub text: String,
+    pub act: OptionAct,
+}
+
+/// What an offered option does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OptionAct {
+    /// A PC option of the file: its result, then its response.
+    Line(i32),
+    /// A generic option: this response only (0 ends).
+    Respond(i32),
 }
 
 /// A walk to an NPC to talk to it; `seq` is the move it came with.
@@ -102,6 +144,8 @@ pub struct TalkRequests {
     pub talk: Vec<(PlayerId, NetId, u32)>,
     pub choose: Vec<(PlayerId, usize)>,
     pub end: Vec<PlayerId>,
+    /// NPCs whose dialogue script ran the default: they bark at the PC.
+    pub barks: Vec<(PlayerId, ScriptObject)>,
 }
 
 /// The reputation effects on reaction, read on first use.
@@ -221,6 +265,11 @@ impl Talk<'_> {
         self.sheet.gender == FEMALE
     }
 
+    /// The NPC has met the PC before (0x4c0c40: a stored reaction; here also a finished talk).
+    pub fn has_met(&self) -> bool {
+        self.met || self.pc.reactions.contains_key(&self.npc_key)
+    }
+
     pub fn intelligence(&self) -> i32 {
         self.stat(4)
     }
@@ -242,7 +291,7 @@ impl Talk<'_> {
             "ru" => self.pc.rumours.contains(&a.unsigned_abs()) == (a >= 0),
             "rq" => self.globals.quelled.contains(&a.unsigned_abs()) == (a >= 0),
             "rp" => self.pc.reputations.contains(&a.unsigned_abs()) == (a > 0),
-            "me" => (self.met || self.pc.reactions.contains_key(&self.npc_key)) == (a != 0),
+            "me" => self.has_met() == (a != 0),
             "re" => passes(self.reaction(), a),
             "$$" => passes(self.gold(), a),
             "in" if a > 0 => self.has(a),
@@ -343,6 +392,69 @@ pub fn is_prefixed(text: &str) -> bool {
     b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'
 }
 
+/// The prefix letter of a generic text, upper case.
+fn prefix(text: &str) -> Option<char> {
+    is_prefixed(text).then(|| text.trim_start().as_bytes()[0].to_ascii_uppercase() as char)
+}
+
+/// What a `G:` argument says for its case (0x419260).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GreetingArg {
+    /// `k n`: go to NPC line `n`, with its options.
+    Line(i32),
+    /// `k fl n`: close with line `n`.
+    Closing(i32),
+    /// `k 0`: the case is off (for `k` 9: say nothing).
+    Off,
+}
+
+/// The arguments after `G:`: `k line` or `k fl line`, comma separated, `k` 0-9.
+pub fn greeting_args(text: &str) -> [Option<GreetingArg>; 10] {
+    use arcanum_formats::dialog::atoi;
+    let mut out = [None; 10];
+    for part in text.split(',') {
+        let mut words = part.split_whitespace();
+        let Some(k) = words.next().and_then(|w| usize::try_from(atoi(w.as_bytes())).ok()).filter(|&k| k < 10) else { continue };
+        out[k] = match words.next() {
+            Some(w) if w.eq_ignore_ascii_case("fl") => Some(GreetingArg::Closing(words.next().map_or(0, |n| atoi(n.as_bytes())))),
+            Some(w) => Some(match atoi(w.as_bytes()) {
+                0 => GreetingArg::Off,
+                n => GreetingArg::Line(n),
+            }),
+            None => continue,
+        };
+    }
+    out
+}
+
+/// The greeting block for a reaction level (0x419260's tables 0x4197a8 and 0x41978c): class
+/// (`true`) or race, and its base. Levels past 6 have none.
+pub fn greeting_block(met: bool, level: u32) -> Option<(bool, u32)> {
+    Some(match (met, level) {
+        (false, 0) => (true, 8000),
+        (false, 1 | 2) => (true, 9000),
+        (false, 3) => (true, 10000),
+        (false, 4 | 5) => (false, 2000),
+        (false, 6) => (false, 3000),
+        (true, 0) => (true, 11000),
+        (true, 1 | 2) => (true, 12000),
+        (true, 3) => (true, 13000),
+        (true, 4 | 5) => (false, 4000),
+        (true, 6) => (false, 5000),
+        _ => return None,
+    })
+}
+
+/// The file name part for a speaker of `from_male` to a listener (`m2f`: male to female).
+fn genders(from_male: bool, to_male: bool) -> &'static str {
+    match (from_male, to_male) {
+        (true, true) => "m2m",
+        (true, false) => "m2f",
+        (false, true) => "f2m",
+        (false, false) => "f2f",
+    }
+}
+
 /// The options after NPC line `line` that `talk` may choose (0x414f50): the PC options up to the
 /// next NPC line, by gender, intelligence and test, at most [`MAX_OPTIONS`].
 pub fn options(file: &DialogFile, line: i32, talk: &mut Talk) -> Vec<(i32, DialogLine)> {
@@ -434,8 +546,11 @@ pub fn talk_to_npcs(
         if talking {
             continue;
         }
-        // The NPC's dialogue script (0x57cc70); its action 4 starts the conversation.
-        scripts.hook(&mut world, &mut map, &mut outbox, source.object(), EVENT_DIALOGUE, player.0);
+        // The NPC's dialogue script (0x57cc70); its action 4 starts the conversation. If it runs
+        // the default, the NPC barks (0x5681c0).
+        if scripts.hook(&mut world, &mut map, &mut outbox, source.object(), EVENT_DIALOGUE, player.0) == crate::HookResult::RunDefault {
+            requests.barks.push((player.0, source.object()));
+        }
     }
 }
 
@@ -456,7 +571,7 @@ pub fn run_conversations(
     mut pcs: Query<TalkerQuery>,
     npcs: Query<(&NetId, &NpcSource)>,
 ) {
-    if started.0.is_empty() && requests.choose.is_empty() && requests.end.is_empty() {
+    if started.0.is_empty() && requests.choose.is_empty() && requests.end.is_empty() && requests.barks.is_empty() {
         return;
     }
     let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
@@ -468,12 +583,15 @@ pub fn run_conversations(
     let mut steps: Vec<(PlayerId, Step)> = started.0.drain(..).map(|s| (s.player, Step::Start(s))).collect();
     steps.extend(requests.choose.drain(..).map(|(p, i)| (p, Step::Choose(i))));
     steps.extend(requests.end.drain(..).map(|p| (p, Step::End)));
+    steps.extend(requests.barks.drain(..).map(|(p, npc)| (p, Step::Bark(npc))));
     for (player, step) in steps {
         let Some((entity, &pc_net, _, _, sheet, mut inventory, conversation, ..)) = pcs.iter_mut().find(|pc| pc.2.0 == player) else { continue };
         let Some(save) = world.0.as_mut() else { continue };
         let Some(saved) = save.players.get_mut(&player) else { continue };
         let (npc_object, dialog, current) = match (&step, conversation.as_deref()) {
             (Step::Start(s), _) => (s.npc, s.dialog, None),
+            (Step::Bark(_), Some(_)) => continue,
+            (Step::Bark(npc), None) => (*npc, 0, None),
             (_, Some(c)) => (c.npc_object, c.dialog, Some(c.clone())),
             (_, None) => continue,
         };
@@ -482,11 +600,21 @@ pub fn run_conversations(
             _ => None,
         };
         let Some(npc_net) = npc_net else { continue };
-        let Some(file) = vfs.and_then(|v| library.dialog(v, dialog)) else { continue };
+        let file = match step {
+            Step::Bark(_) => Default::default(),
+            _ => match vfs.and_then(|v| library.dialog(v, dialog)) {
+                Some(file) => file,
+                None => continue,
+            },
+        };
         let key = met_key(npc_object);
         let mut npc_attachment = map.attachment(npc_object, EVENT_DIALOGUE);
         let before = npc_attachment;
-        let npc_info = npc_details(&map, npc_object, &mut generic, vfs);
+        let mut npc_info = npc_details(&map, npc_object, &mut generic, vfs);
+        let override_number = map.attachment(npc_object, EVENT_OVERRIDE).number;
+        if override_number != 0 {
+            npc_info.overrides = vfs.and_then(|v| library.dialog(v, override_number)).map(|f| (override_number, f));
+        }
         let met = saved.script_state.met.contains(&key);
         let mut talk = Talk {
             rules: &rules.0,
@@ -502,17 +630,24 @@ pub fn run_conversations(
             gold_changed: false,
             unbuilt: Vec::new(),
         };
-        let mut say = Say { npc_net, dialog, pc_name: &sheet.0.name, npc: &npc_info, generic: &mut generic, vfs, rng: &mut rng, deltas: Vec::new() };
+        let mut say = Say { npc_net, dialog, pc_name: &sheet.0.name, npc: &npc_info, generic: &mut generic, vfs, rng: &mut rng, deltas: Vec::new(), jumps: 0 };
         let next = match step {
             Step::Start(s) => say.show(&file, s.line, &mut talk),
             Step::Choose(i) => match current.as_ref().and_then(|c| c.options.get(i)) {
-                Some((line, text)) => {
-                    say.float(pc_net, text.clone(), FloatColour::Green, None);
-                    say.chosen(&file, *line, &mut talk, 0)
+                Some(offered) => {
+                    say.float(pc_net, offered.text.clone(), FloatColour::Green, None);
+                    match offered.act {
+                        OptionAct::Line(line) => say.chosen(&file, line, &mut talk, 0),
+                        OptionAct::Respond(n) => say.respond(&file, n, &mut talk, 0),
+                    }
                 }
                 None => Shown::Stay,
             },
             Step::End => Shown::End,
+            Step::Bark(_) => {
+                say.greeting("", &mut talk);
+                Shown::Stay
+            }
         };
         let gold_changed = talk.gold_changed;
         for op in talk.unbuilt.drain(..) {
@@ -524,7 +659,7 @@ pub fn run_conversations(
         let mut ended = false;
         match next {
             Shown::Line(line, options) => {
-                let texts = options.iter().map(|(_, t)| t.clone()).collect();
+                let texts = options.iter().map(|o| o.text.clone()).collect();
                 commands.entity(entity).insert(Conversation { npc: npc_net, npc_object, dialog, line, options });
                 outbox.0.push((player, LedgerDelta::DialogueOptions { npc: npc_net, options: texts }));
             }
@@ -557,22 +692,30 @@ enum Step {
     Start(StartedDialogue),
     Choose(usize),
     End,
+    Bark(ScriptObject),
 }
 
 /// What follows a step.
-enum Shown {
-    /// An NPC line with these options (line, text).
-    Line(i32, Vec<(i32, String)>),
+pub enum Shown {
+    /// An NPC line with these options.
+    Line(i32, Vec<Offered>),
     End,
-    /// Nothing changes (a choice that is not there).
+    /// Nothing changes (a choice that is not there, a bark).
     Stay,
 }
 
-/// The NPC's name and gender.
-struct NpcInfo {
-    name: String,
-    male: bool,
-    reaction: crate::NpcReaction,
+/// What the generic lines need of the NPC.
+#[derive(Debug, Clone)]
+pub struct NpcInfo {
+    pub name: String,
+    pub male: bool,
+    pub reaction: crate::NpcReaction,
+    /// `npc_social_class` (0x45d010): the class block of `gd_cls` files.
+    pub class: i32,
+    /// Intelligence 4 or less (0x45fc00): the `dumb` files.
+    pub dumb: bool,
+    /// The override dialogue (its number and file).
+    pub overrides: Option<(u32, std::sync::Arc<DialogFile>)>,
 }
 
 fn met_key(npc: ScriptObject) -> String {
@@ -591,24 +734,38 @@ fn npc_details(map: &LoadedMap, npc: ScriptObject, generic: &mut GenericLines, v
         ScriptObject::Pc(_) => None,
     };
     let none = crate::NpcReaction { base: crate::BASE_REACTION, race: 0, origin: 0, faction: 0, only_reputation: false };
-    let Some(object) = object else { return NpcInfo { name: String::new(), male: true, reaction: none } };
+    let Some(object) = object else { return NpcInfo { name: String::new(), male: true, reaction: none, class: 0, dumb: false, overrides: None } };
     let description = map.prototypes.int(object, "description");
     let name = description.and_then(|d| generic.file(vfs, "mes/description.mes")?.get(d as u32).map(str::to_string)).unwrap_or_default();
     let stats = object.ints("critter_stat_base_idx").or_else(|| map.prototypes.of(object)?.ints("critter_stat_base_idx"));
-    let male = stats.and_then(|s| s.get(26).copied()).is_none_or(|g| g == 1);
-    NpcInfo { name, male, reaction: crate::NpcReaction::of(object, &map.prototypes) }
+    let male = stats.as_ref().and_then(|s| s.get(26).copied()).is_none_or(|g| g == 1);
+    // Intelligence is stat 4 (the base here: the NPC's effects are not built).
+    let dumb = stats.and_then(|s| s.get(4).copied()).is_some_and(|i| i <= 4);
+    let class = map.prototypes.int(object, "npc_social_class").unwrap_or(0);
+    NpcInfo { name, male, reaction: crate::NpcReaction::of(object, &map.prototypes), class, dumb, overrides: None }
 }
 
 /// What one step says, to whom.
-struct Say<'a> {
-    npc_net: NetId,
-    dialog: u32,
-    pc_name: &'a str,
-    npc: &'a NpcInfo,
-    generic: &'a mut GenericLines,
-    vfs: Option<&'a arcanum_vfs::Vfs>,
-    rng: &'a mut crate::HostRng,
-    deltas: Vec<LedgerDelta>,
+pub struct Say<'a> {
+    pub npc_net: NetId,
+    pub dialog: u32,
+    pub pc_name: &'a str,
+    pub npc: &'a NpcInfo,
+    pub generic: &'a mut GenericLines,
+    pub vfs: Option<&'a arcanum_vfs::Vfs>,
+    pub rng: &'a mut crate::HostRng,
+    pub deltas: Vec<LedgerDelta>,
+    /// Lines gone to by `G:` arguments this step.
+    pub jumps: usize,
+}
+
+/// A generic NPC block's kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Block {
+    /// `gd_cls`, by the NPC's class (0x418480; override `base / 1000 + 9999`).
+    Class,
+    /// `gd_rce`, by the PC's race (0x4185f0; override `base / 1000 + 10999`).
+    Race,
 }
 
 impl Say<'_> {
@@ -616,74 +773,189 @@ impl Say<'_> {
         self.deltas.push(LedgerDelta::FloatText { speaker, text, colour, voice });
     }
 
-    /// Shows NPC line `line` and offers its options (0x414e60).
+    fn line_text<'f>(entry: &'f DialogLine, talk: &Talk) -> &'f str {
+        if talk.female() && !entry.female_text.is_empty() { &entry.female_text } else { &entry.text }
+    }
+
+    /// A random line of `lo..=hi` of `path`, names put in (0x4d4550, 0x4cef00, 0x4d43a0). A pick
+    /// that lands in a gap gives nothing; the original shows "Error! Missing line %d in %s".
+    fn pick(&mut self, path: &str, lo: u32, hi: u32) -> Option<String> {
+        let count = self.generic.file(self.vfs, path)?.messages.keys().filter(|k| (lo..=hi).contains(k)).count();
+        if count == 0 {
+            return None;
+        }
+        let id = lo + self.rng.range(0, count as i32 - 1) as u32;
+        let text = self.generic.file(self.vfs, path)?.get(id)?.to_string();
+        Some(with_names(&text, self.pc_name, &self.npc.name))
+    }
+
+    /// Line `number` of the NPC's override dialogue, with its voice (0x418870).
+    fn override_line(&self, number: i32, talk: &Talk) -> Option<(String, Option<String>)> {
+        let (dialog, file) = self.npc.overrides.as_ref()?;
+        let entry = file.lines.get(&number)?;
+        let text = with_names(Self::line_text(entry, talk), self.pc_name, &self.npc.name);
+        Some((text, voice_path(*dialog, entry.voice(), talk.female())))
+    }
+
+    /// The NPC says a generic line of `block` at `base` over its head.
+    fn npc_says(&mut self, block: Block, base: u32, talk: &Talk) {
+        if let Some((text, voice)) = self.npc_line(block, base, talk) {
+            self.float(self.npc_net, text, FloatColour::White, voice);
+        }
+    }
+
+    fn npc_line(&mut self, block: Block, base: u32, talk: &Talk) -> Option<(String, Option<String>)> {
+        let number = base as i32 / 1000 + if block == Block::Class { 9999 } else { 10999 };
+        if let Some(said) = self.override_line(number, talk) {
+            return Some(said);
+        }
+        let dumb = if self.npc.dumb { "dumb_" } else { "" };
+        let pair = genders(self.npc.male, !talk.female());
+        let (path, offset) = match block {
+            Block::Class => (format!("mes/gd_cls_{dumb}{pair}.mes"), self.npc.class.max(0) as u32 * 50),
+            Block::Race => {
+                let pc = i32::from(talk.sheet.race);
+                let index = if pc == self.npc.reaction.race { 0 } else { pc as u32 + 1 };
+                (format!("mes/gd_rce_{dumb}{pair}.mes"), index * 50)
+            }
+        };
+        let lo = base + if self.npc.dumb { 0 } else { offset };
+        Some((self.pick(&path, lo, lo + 49)?, None))
+    }
+
+    /// The NPC's answer to the story question (0x41a440): `gd_sto`, its race + 100 × story state;
+    /// override `10000 + state`.
+    fn story_line(&mut self, talk: &Talk) -> Option<(String, Option<String>)> {
+        let state = talk.globals.story_state.max(0);
+        if let Some(said) = self.override_line(10000 + state, talk) {
+            return Some(said);
+        }
+        let id = (self.npc.reaction.race.max(0) + state * 100) as u32;
+        let path = format!("mes/gd_sto_{}.mes", genders(self.npc.male, !talk.female()));
+        Some((self.pick(&path, id, id)?, None))
+    }
+
+    /// A PC line of `gd_pc2` (0x4182d0), to the NPC's gender.
+    fn pc_line(&mut self, lo: u32, hi: u32, talk: &Talk) -> Option<String> {
+        let dumb = if talk.intelligence() <= 4 { "dumb_" } else { "" };
+        let path = format!("mes/gd_{dumb}pc2{}.mes", if self.npc.male { 'm' } else { 'f' });
+        self.pick(&path, lo, hi)
+    }
+
+    /// A PC line of `gd_cls_pc2` by the NPC's class (0x418390).
+    fn pc_class_line(&mut self, base: u32, talk: &Talk) -> Option<String> {
+        let dumb = if talk.intelligence() <= 4 { "dumb_" } else { "" };
+        let path = format!("mes/gd_cls_{dumb}pc2{}.mes", if self.npc.male { 'm' } else { 'f' });
+        let lo = base + self.npc.class.max(0) as u32 * 50;
+        self.pick(&path, lo, lo + 49)
+    }
+
+    /// The generic greeting (0x419260) for `G:` with these arguments: floats it, or says where
+    /// the talk goes. The special cases `k` 0-8 are not built.
+    pub fn greeting(&mut self, args: &str, talk: &mut Talk) -> Greeting {
+        match greeting_args(args)[9] {
+            Some(GreetingArg::Line(n)) => return Greeting::Goto(n),
+            Some(GreetingArg::Closing(n)) => return Greeting::Closing(n),
+            Some(GreetingArg::Off) => return Greeting::Said,
+            None => {}
+        }
+        if let Some((class, base)) = greeting_block(talk.has_met(), crate::level(talk.reaction())) {
+            self.npc_says(if class { Block::Class } else { Block::Race }, base, talk);
+        }
+        Greeting::Said
+    }
+
+    /// Shows NPC line `line` and offers its options (0x416840, 0x414e60).
     fn show(&mut self, file: &DialogFile, line: i32, talk: &mut Talk) -> Shown {
         let Some(entry) = file.lines.get(&line).filter(|e| e.is_npc()) else { return Shown::End };
-        let text = if talk.female() && !entry.female_text.is_empty() { &entry.female_text } else { &entry.text };
-        if text.trim_start().starts_with("G:") || text.trim_start().starts_with("g:") {
-            talk.unbuilt.push("line G:".into());
-            return Shown::End;
-        }
-        let idle = text.trim() == "I:";
-        if !idle {
-            let text = with_names(text, self.pc_name, &self.npc.name);
-            self.float(self.npc_net, text, FloatColour::White, voice_path(self.dialog, entry.voice(), talk.female()));
-        }
-        if let Some(closing) = talk.run_result(&entry.result) {
-            if let Some(last) = file.lines.get(&closing) {
-                let text = if talk.female() && !last.female_text.is_empty() { &last.female_text } else { &last.text };
+        let closing = talk.run_result(&entry.result);
+        let text = Self::line_text(entry, talk).trim();
+        match prefix(text) {
+            Some('G') => match self.greeting(&text[2..], talk) {
+                Greeting::Goto(n) if self.jumps < MAX_JUMPS => {
+                    self.jumps += 1;
+                    return self.show(file, n, talk);
+                }
+                Greeting::Goto(_) => return Shown::End,
+                Greeting::Closing(n) => return self.show_closing(file, n, talk),
+                Greeting::Said => {}
+            },
+            Some('I') if text.len() == 2 => self.npc_says(Block::Race, 1000, talk),
+            _ => {
                 let text = with_names(text, self.pc_name, &self.npc.name);
-                self.float(self.npc_net, text, FloatColour::White, voice_path(self.dialog, last.voice(), talk.female()));
+                self.float(self.npc_net, text, FloatColour::White, voice_path(self.dialog, entry.voice(), talk.female()));
             }
-            return Shown::End;
+        }
+        if let Some(closing) = closing {
+            return self.show_closing(file, closing, talk);
         }
         let mut shown = Vec::new();
         for (n, option) in options(file, line, talk) {
             match self.option_text(&option.text, talk) {
-                Some(text) => shown.push((n, text)),
+                Some(text) => shown.push(Offered { text, act: OptionAct::Line(n) }),
                 None => talk.unbuilt.push(format!("option {}", option.text.trim().chars().take(2).collect::<String>())),
             }
         }
         if shown.is_empty() {
-            return Shown::End;
+            // 0x414e60: a goodbye that ends the talk.
+            let Some(text) = self.pc_line(400, 499, talk) else { return Shown::End };
+            shown.push(Offered { text, act: OptionAct::Respond(0) });
         }
         Shown::Line(line, shown)
     }
 
     /// The text an option shows (0x416c10): as written with names, or a generic line.
     fn option_text(&mut self, text: &str, talk: &Talk) -> Option<String> {
-        if !is_prefixed(text) {
-            return Some(with_names(text, self.pc_name, &self.npc.name));
+        let text = text.trim();
+        match prefix(text) {
+            None => Some(with_names(text, self.pc_name, &self.npc.name)),
+            Some('A') => self.pc_class_line(1000, talk),
+            Some('I') if text.len() == 2 => self.pc_class_line(3000, talk),
+            Some('C') => {
+                let line = 1700 + talk.globals.story_state.max(0) as u32;
+                self.pc_line(line, line, talk)
+            }
+            Some(_) => {
+                let range = generic_range(text)?;
+                self.pc_line(range.start, range.end - 1, talk)
+            }
         }
-        let range = generic_range(text)?;
-        let dumb = talk.intelligence() <= 4;
-        let file = match (dumb, self.npc.male) {
-            (false, true) => "mes/gd_pc2m.mes",
-            (false, false) => "mes/gd_pc2f.mes",
-            (true, true) => "mes/gd_dumb_pc2m.mes",
-            (true, false) => "mes/gd_dumb_pc2f.mes",
-        };
-        let lines: Vec<u32> = {
-            let mes = self.generic.file(self.vfs, file)?;
-            let mut keys: Vec<u32> = mes.messages.keys().copied().filter(|k| range.contains(k)).collect();
-            keys.sort_unstable();
-            keys
-        };
-        if lines.is_empty() {
-            return None;
-        }
-        let pick = lines[self.rng.range(0, lines.len() as i32 - 1) as usize];
-        let line = self.generic.file(self.vfs, file)?.get(pick)?.to_string();
-        Some(with_names(&line, self.pc_name, &self.npc.name))
     }
 
-    /// The PC chose option `line`: its result, then its response (0x413130).
+    /// The PC chose option `line`: its result, then what its prefix does, then its response
+    /// (0x413130, 0x414810).
     fn chosen(&mut self, file: &DialogFile, line: i32, talk: &mut Talk, depth: usize) -> Shown {
         let Some(entry) = file.lines.get(&line).filter(|e| !e.is_npc()) else { return Shown::End };
         if let Some(closing) = talk.run_result(&entry.result) {
             return self.show_closing(file, closing, talk);
         }
-        match entry.response() {
+        let text = entry.text.trim();
+        match prefix(text) {
+            // An insult (0x4191e0): reaction -10; below 21 the NPC insults back and leaves.
+            Some('I') if text.len() == 2 => {
+                talk.change_reaction(-10, arcanum_formats::dialog::Change::Add);
+                if talk.reaction() < 21 {
+                    self.npc_says(Block::Race, 1000, talk);
+                    return Shown::End;
+                }
+            }
+            // The story question (0x41a3e0): the answer, then one "thanks" to go on.
+            Some('C') => {
+                if let Some((said, voice)) = self.story_line(talk) {
+                    self.float(self.npc_net, said, FloatColour::White, voice);
+                }
+                if let Some(thanks) = self.pc_class_line(1000, talk) {
+                    return Shown::Line(line, vec![Offered { text: thanks, act: OptionAct::Respond(entry.response()) }]);
+                }
+            }
+            _ => {}
+        }
+        self.respond(file, entry.response(), talk, depth)
+    }
+
+    /// Follows a response: a line, 0 the end, `-n` line `n` (a PC option taken as chosen).
+    fn respond(&mut self, file: &DialogFile, response: i32, talk: &mut Talk, depth: usize) -> Shown {
+        match response {
             0 => Shown::End,
             n if n > 0 => self.show(file, n, talk),
             n => match file.lines.get(&-n) {
@@ -696,12 +968,22 @@ impl Say<'_> {
 
     fn show_closing(&mut self, file: &DialogFile, line: i32, talk: &mut Talk) -> Shown {
         if let Some(last) = file.lines.get(&line) {
-            let text = if talk.female() && !last.female_text.is_empty() { &last.female_text } else { &last.text };
-            let text = with_names(text, self.pc_name, &self.npc.name);
+            let text = with_names(Self::line_text(last, talk), self.pc_name, &self.npc.name);
             self.float(self.npc_net, text, FloatColour::White, voice_path(self.dialog, last.voice(), talk.female()));
         }
         Shown::End
     }
+}
+
+/// Where a `G:` line leaves the talk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Greeting {
+    /// The greeting was said (or nothing); the line's options follow.
+    Said,
+    /// Go to this NPC line.
+    Goto(i32),
+    /// Close with this line.
+    Closing(i32),
 }
 
 #[cfg(test)]
@@ -792,5 +1074,129 @@ mod tests {
         assert!(is_prefixed("E:") && is_prefixed("T:5,6") && !is_prefixed("Every day."));
         assert_eq!(generic_range("E:"), Some(400..500));
         assert_eq!(generic_range("B:"), None);
+    }
+
+    fn generic_with(files: &[(&str, &str)]) -> GenericLines {
+        let mut generic = GenericLines::default();
+        for (path, text) in files {
+            generic.0.insert(path.to_string(), Some(MesFile::parse(text.as_bytes()).unwrap()));
+        }
+        generic
+    }
+
+    fn npc(class: i32) -> NpcInfo {
+        let reaction = crate::NpcReaction { base: 50, race: 0, origin: 0, faction: 0, only_reputation: false };
+        NpcInfo { name: "Kietzel".into(), male: true, reaction, class, dumb: false, overrides: None }
+    }
+
+    fn floats(deltas: &[LedgerDelta]) -> Vec<(String, FloatColour)> {
+        deltas.iter().filter_map(|d| match d { LedgerDelta::FloatText { text, colour, .. } => Some((text.clone(), *colour)), _ => None }).collect()
+    }
+
+    #[test]
+    fn greeting_arguments_name_a_case_and_a_line() {
+        let args = greeting_args(" 1 10, 2 10, 4 fl 730, 8 0, 9 2");
+        assert_eq!(args[1], Some(GreetingArg::Line(10)));
+        assert_eq!(args[3], None);
+        assert_eq!(args[4], Some(GreetingArg::Closing(730)));
+        assert_eq!(args[8], Some(GreetingArg::Off));
+        assert_eq!(args[9], Some(GreetingArg::Line(2)));
+        assert_eq!(greeting_args("1 3,2 6")[2], Some(GreetingArg::Line(6)));
+        assert_eq!(greeting_block(false, 0), Some((true, 8000)));
+        assert_eq!(greeting_block(false, 2), Some((true, 9000)));
+        assert_eq!(greeting_block(true, 3), Some((true, 13000)));
+        assert_eq!(greeting_block(false, 5), Some((false, 2000)));
+        assert_eq!(greeting_block(true, 6), Some((false, 5000)));
+        assert_eq!(greeting_block(true, 7), None);
+        assert_eq!(prefix(" e:"), Some('E'));
+    }
+
+    #[test]
+    fn a_g_line_greets_by_class_and_reaction_then_its_options_follow() {
+        let file = DialogFile::parse(
+            b"{1}{G:}{}{}{}{}{}\n\
+              {2}{A:}{}{1}{}{0}{}\n\
+              {3}{B:}{}{1}{}{0}{}\n\
+              {10}{G: 9 20}{}{}{}{}{}\n\
+              {20}{Over here.}{}{}{}{}{}\n\
+              {30}{G: 9 fl 31}{}{}{}{}{}\n\
+              {31}{Begone.}{}{}{}{}{}",
+        );
+        let rules = RulesData::default();
+        let sheet = CharacterSheet { gender: arcanum_rules::MALE, ..Default::default() };
+        let (mut inventory, mut pc, mut globals, mut attachment) = Default::default();
+        let mut talk = talk_with(&rules, &sheet, &mut inventory, &mut pc, &mut globals, &mut attachment);
+        assert_eq!(crate::level(talk.reaction()), 3, "a neutral first meeting");
+        let mut generic = generic_with(&[
+            ("mes/gd_cls_m2m.mes", "{10000}{Noble hello.}{10050}{Priest hello, @pcname@.}{13050}{Priest again.}"),
+            ("mes/gd_cls_pc2m.mes", "{1050}{Thank you, Father.}"),
+            ("mes/gd_pc2m.mes", "{400}{Farewell.}"),
+        ]);
+        let info = npc(1);
+        let mut rng = crate::HostRng::default();
+        let mut say = Say { npc_net: NetId(7), dialog: 1, pc_name: "Vel", npc: &info, generic: &mut generic, vfs: None, rng: &mut rng, deltas: Vec::new(), jumps: 0 };
+        let Shown::Line(1, options) = say.show(&file, 1, &mut talk) else { panic!("options follow") };
+        assert_eq!(floats(&say.deltas), [("Priest hello, Vel.".to_string(), FloatColour::White)]);
+        assert_eq!(options, [Offered { text: "Thank you, Father.".into(), act: OptionAct::Line(2) }], "A: thanks; B: not built");
+        assert_eq!(talk.unbuilt, ["option B:"]);
+        talk.met = true;
+        say.deltas.clear();
+        say.show(&file, 1, &mut talk);
+        assert_eq!(floats(&say.deltas)[0].0, "Priest again.");
+        say.deltas.clear();
+        let Shown::Line(20, options) = say.show(&file, 10, &mut talk) else { panic!("9 20 goes to line 20") };
+        assert_eq!(floats(&say.deltas)[0].0, "Over here.");
+        assert_eq!(options, [Offered { text: "Farewell.".into(), act: OptionAct::Respond(0) }], "no options: a goodbye that ends");
+        say.deltas.clear();
+        assert!(matches!(say.show(&file, 30, &mut talk), Shown::End));
+        assert_eq!(floats(&say.deltas)[0].0, "Begone.");
+    }
+
+    #[test]
+    fn overrides_insults_and_the_story_question() {
+        let file = DialogFile::parse(
+            b"{1}{Well?}{}{}{}{}{}\n\
+              {2}{I:}{}{1}{}{1}{}\n\
+              {3}{C:}{}{1}{}{1}{}\n\
+              {10}{I:}{}{}{}{}{}",
+        );
+        let rules = RulesData::default();
+        let sheet = CharacterSheet { gender: arcanum_rules::MALE, ..Default::default() };
+        let (mut inventory, mut pc, mut globals, mut attachment): (Inventory, PcScriptState, ScriptGlobals, Attachment) = Default::default();
+        globals.story_state = 2;
+        let mut talk = talk_with(&rules, &sheet, &mut inventory, &mut pc, &mut globals, &mut attachment);
+        let mut generic = generic_with(&[
+            ("mes/gd_cls_pc2m.mes", "{3000}{You stink.}{1000}{Thanks.}"),
+            ("mes/gd_pc2m.mes", "{1702}{What news?}"),
+            ("mes/gd_rce_m2m.mes", "{1000}{Same to you.}"),
+            ("mes/gd_sto_m2m.mes", "{200}{The war goes badly.}"),
+        ]);
+        let mut info = npc(0);
+        let overrides = DialogFile::parse(b"{11000}{Mind your tongue, @pcname@.}{}{}{4}{}{}");
+        info.overrides = Some((1848, std::sync::Arc::new(overrides)));
+        let mut rng = crate::HostRng::default();
+        let mut say = Say { npc_net: NetId(7), dialog: 1, pc_name: "Vel", npc: &info, generic: &mut generic, vfs: None, rng: &mut rng, deltas: Vec::new(), jumps: 0 };
+        let Shown::Line(_, options) = say.show(&file, 1, &mut talk) else { panic!() };
+        let texts: Vec<&str> = options.iter().map(|o| o.text.as_str()).collect();
+        assert_eq!(texts, ["You stink.", "What news?"]);
+        // The insult: reaction -10, still 21 or more, so on to line 1.
+        let before = talk.reaction();
+        say.deltas.clear();
+        assert!(matches!(say.chosen(&file, 2, &mut talk, 0), Shown::Line(1, _)));
+        assert_eq!(talk.reaction(), before - 10);
+        talk.pc.reactions.insert("npc".into(), 25);
+        say.deltas.clear();
+        assert!(matches!(say.chosen(&file, 2, &mut talk, 0), Shown::End), "below 21: insulted back");
+        let said = &say.deltas[0];
+        assert!(matches!(said, LedgerDelta::FloatText { text, voice: Some(v), .. } if text == "Mind your tongue, Vel." && v == "sound/speech/01848/v4_m.mp3"), "{said:?}");
+        // The story question: the answer, then one thanks that goes on to the response.
+        say.deltas.clear();
+        let Shown::Line(_, options) = say.chosen(&file, 3, &mut talk, 0) else { panic!() };
+        assert_eq!(floats(&say.deltas)[0].0, "The war goes badly.");
+        assert_eq!(options, [Offered { text: "Thanks.".into(), act: OptionAct::Respond(1) }]);
+        // An I: NPC line insults by race (the override first).
+        say.deltas.clear();
+        say.show(&file, 10, &mut talk);
+        assert_eq!(floats(&say.deltas)[0].0, "Mind your tongue, Vel.");
     }
 }
