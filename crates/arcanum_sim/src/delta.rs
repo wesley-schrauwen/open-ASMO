@@ -167,6 +167,10 @@ pub enum LedgerDelta {
     OpenRefused { message: u32 },
     /// The player's PC could not take an item: `mes/item.mes` `message` (too heavy, no room).
     ItemRefused { message: u32 },
+    /// The player's barter window opened or changed ([`crate::barter`]).
+    Barter { view: crate::barter::BarterView },
+    /// The barter NPC refuses a trade, in the window's text line.
+    BarterLine { text: String },
     /// A PC's speed stat changed (it raised its dexterity): clients time its walk from it.
     Speed { net_id: NetId, speed: i32 },
     /// An entity is gone.

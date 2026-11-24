@@ -271,4 +271,5 @@ format and language are checked against all 709 `.dlg` files.
        except the `gd_cls_m2m` 8113 gap (the original shows an error line there; here, nothing).
      - Virgil still opens with his own line and offers both options.
    - The client needed no change: generic lines arrive as floats and options.
-5. **Barter** (`B:`), training, healing, directions, rumours, newspapers and the other windows.
+5. **Barter** (`B:`): see `plans/barter.md`.
+6. Training, healing, directions, rumours, newspapers and the other windows.

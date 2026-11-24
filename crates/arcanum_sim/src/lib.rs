@@ -18,6 +18,7 @@ pub mod delta;
 pub mod dialogue;
 pub mod doors;
 pub mod gait;
+pub mod barter;
 pub mod ground;
 pub mod inventory;
 pub mod keys;

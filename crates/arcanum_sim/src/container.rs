@@ -179,7 +179,7 @@ mod tests {
         use arcanum_formats::object::{TYPE_GENERIC, TYPE_GOLD};
         let info = |n: u32| {
             let kind = if n == crate::GOLD { TYPE_GOLD } else { TYPE_GENERIC };
-            Some(ItemInfo { kind, inventory_art: 0, cells: (1, 1), weight: 1, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 0, item_flags: 0 })
+            Some(ItemInfo { kind, inventory_art: 0, cells: (1, 1), weight: 1, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 0, item_flags: 0, worth: 0 })
         };
         let source = InventorySource { gold: (10, 10), items: vec![(100, 1), (0, 2), (100, 3)] };
         let mut contents = Inventory::container();

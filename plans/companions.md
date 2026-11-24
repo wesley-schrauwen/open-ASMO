@@ -12,6 +12,11 @@ The player manages their followers directly, the same way they manage their own 
 - **Armour:** what each follower wears.
 - **Items:** which items each follower may use and which they may not (for example, whether a
   follower may drink healing potions or use scrolls on their own).
+- **No choosing their own items:** followers do not pick their own gear. The original equips a
+  follower with the best of what it is given (probably 0x4654f0, called after inventory
+  changes; not confirmed). Here that is
+  switched off: a follower uses only what the player assigns. The original's behaviour is copied
+  first, then switched off (owner's call).
 - And so on: other per-follower choices to be added as the design grows.
 
 ## New followers

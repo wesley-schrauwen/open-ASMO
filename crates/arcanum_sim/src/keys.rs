@@ -100,7 +100,7 @@ mod tests {
             2 => TYPE_KEY_RING,
             _ => arcanum_formats::object::TYPE_GENERIC,
         };
-        Some(ItemInfo { kind, inventory_art: 0, cells: (1, 1), weight: 1, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 0, item_flags: 0 })
+        Some(ItemInfo { kind, inventory_art: 0, cells: (1, 1), weight: 1, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 0, item_flags: 0, worth: 0 })
     }
 
     fn key(location: i32, keys: Vec<i32>) -> CarriedItem {

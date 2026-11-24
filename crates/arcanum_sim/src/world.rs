@@ -780,6 +780,126 @@ mod tests {
     }
 
     #[test]
+    fn barter_opens_from_the_dialogue_and_trades_for_gold() {
+        use arcanum_formats::object::{Array, Object, ObjectId, TYPE_GOLD, TYPE_WEAPON, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, object_id_bytes, prototype_id};
+        use crate::InventoryRequest;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let guid = |n: u8| ObjectId { kind: ObjectId::KIND_GUID, payload: [n; 16] };
+        // A shopkeeper at (72, 70) with a dagger at grid location 3.
+        let mut dagger = ObjectBuilder::new(TYPE_WEAPON).field("flags", Value::Int32(crate::OF_INVENTORY)).field("item_inv_location", Value::Int32(3));
+        dagger.prototype = prototype_id(6049);
+        dagger.id = guid(9);
+        std::fs::write(folder.join("G_D.mob"), dagger.build()).unwrap();
+        let data = object_id_bytes(&guid(9)).to_vec();
+        let shop = ObjectBuilder::new(TYPE_NPC)
+            .field("current_aid", Value::Int32(0x2800_2000))
+            .field("location", at(72, 70))
+            .field("npc_retail_price_multiplier", Value::Int32(100))
+            .field("critter_inventory_list_idx", Value::Array(Some(Array { elem_size: 24, id: 0, data, bitset: vec![] })));
+        std::fs::write(folder.join("G_0S.mob"), shop.build()).unwrap();
+        std::fs::create_dir_all(dir.path().join("mes")).unwrap();
+        std::fs::write(dir.path().join("mes/gd_pc2m.mes"), "{300}{Let us trade.}{400}{Bye.}").unwrap();
+        std::fs::write(dir.path().join("mes/gd_cls_m2m.mes"), "{2000}{You do not have enough coins.}").unwrap();
+        let proto = |number: u32, kind: u32, worth: i32| {
+            let mut o = Object::parse_instance(&ObjectBuilder::new(kind).field("item_weight", Value::Int32(1)).field("item_worth", Value::Int32(worth)).build()).unwrap();
+            o.id = prototype_id(number);
+            o
+        };
+        let mut s = save(&[(1, "A", TileLoc { x: 71, y: 70 })]);
+        let mut gold = crate::Inventory::default();
+        gold.change_gold(500);
+        s.players.get_mut(&PlayerId(1)).unwrap().inventory = Some(gold);
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        let mut prototypes = Prototypes::default();
+        prototypes.insert(proto(crate::GOLD, TYPE_GOLD, 1));
+        prototypes.insert(proto(6049, TYPE_WEAPON, 100));
+        sim.app.world_mut().resource_mut::<LoadedMap>().prototypes = Arc::new(prototypes);
+        sim.boot(s);
+        sim.update();
+        sim.update();
+        let (npc, npc_object) = {
+            let world = sim.app.world_mut();
+            let map = world.resource::<LoadedMap>();
+            let index = map.mobiles[&SectorId::new(1, 1)].iter().position(|o| o.object_type == TYPE_NPC && crate::object_location(o) == Some(TileLoc { x: 72, y: 70 })).unwrap() as u32;
+            let npc = *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == index).unwrap().0;
+            (npc, crate::ScriptObject::Mobile { sector: SectorId::new(1, 1), index })
+        };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 700));
+        {
+            use crate::script::tests::{always, block, n};
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            library.insert(700, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(4, &[n(1)]))] });
+            library.insert_dialog(700, arcanum_formats::dialog::DialogFile::parse(b"{1}{Want to trade?}{}{}{}{}{}\n{2}{B:}{}{1}{}{0}{gf 1 1}"));
+        }
+        sim.take_deltas();
+        sim.receive([(PlayerId(1), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.contains(&(PlayerId(1), LedgerDelta::DialogueOptions { npc, options: vec!["Let us trade.".into()] })), "{deltas:?}");
+        sim.receive([(PlayerId(1), crate::PlayerIntent::Choose { option: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.contains(&(PlayerId(1), LedgerDelta::DialogueEnded)));
+        let view = deltas.iter().find_map(|(_, d)| match d { LedgerDelta::Barter { view } => Some(view.clone()), _ => None }).expect("the window opens");
+        assert_eq!(view.stock.items.iter().map(|i| i.location).collect::<Vec<_>>(), [3]);
+        let price = view.buy[&3].price;
+        assert!(price > 100, "more than its worth: {price}");
+        assert!(!sim.app.world().resource::<WorldState>().0.as_ref().unwrap().scripts.flag(1), "B: runs no result");
+        // Buy the dagger.
+        sim.receive([(PlayerId(1), crate::PlayerIntent::Inventory { seq: 1, request: InventoryRequest::Buy { from: 3, to: None } })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        let mine = deltas.iter().rev().find_map(|(_, d)| match d { LedgerDelta::Inventory { inventory, ack: 1, .. } => Some(inventory.clone()), _ => None }).unwrap();
+        assert_eq!(mine.gold(), 500 - price);
+        let dagger_at = mine.items.iter().find(|i| i.prototype == 6049).expect("bought").location;
+        let view = deltas.iter().rev().find_map(|(_, d)| match d { LedgerDelta::Barter { view } => Some(view.clone()), _ => None }).unwrap();
+        assert_eq!(view.npc_gold, price);
+        assert!(view.stock.items.iter().all(|i| i.prototype != 6049));
+        let pays = view.sell[&dagger_at].price;
+        assert_eq!(pays, crate::barter::sell_price(100, crate::barter::haggle(0, 8), 100, 1, 1));
+        // Sell it back.
+        sim.receive([(PlayerId(1), crate::PlayerIntent::Inventory { seq: 2, request: InventoryRequest::Sell { from: dagger_at, to: Some(5) } })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        let mine = deltas.iter().rev().find_map(|(_, d)| match d { LedgerDelta::Inventory { inventory, ack: 2, .. } => Some(inventory.clone()), _ => None }).unwrap();
+        assert_eq!(mine.gold(), 500 - price + pays);
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        let shop = &save.sector_changes[&SectorId::new(1, 1)].npc_inventories[&npc_object_index(npc_object)];
+        assert!(shop.items.iter().any(|i| i.prototype == 6049 && i.location == 5), "back on the shelf, saved");
+        assert_eq!(shop.gold(), price - pays);
+        // Too poor: the class line (gd_cls 2000, 0x413910), and nothing moves.
+        {
+            let world = sim.app.world_mut();
+            let mut pc = world.query_filtered::<&mut crate::Inventory, With<PlayerControlled>>().single_mut(world).unwrap();
+            let gold = pc.gold();
+            pc.change_gold(10 - gold);
+        }
+        sim.receive([(PlayerId(1), crate::PlayerIntent::Inventory { seq: 3, request: InventoryRequest::Buy { from: 5, to: None } })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.contains(&(PlayerId(1), LedgerDelta::BarterLine { text: "You do not have enough coins.".into() })), "{deltas:?}");
+        let mine = deltas.iter().rev().find_map(|(_, d)| match d { LedgerDelta::Inventory { inventory, ack: 3, .. } => Some(inventory.clone()), _ => None }).unwrap();
+        assert_eq!(mine.gold(), 10);
+        sim.receive([(PlayerId(1), crate::PlayerIntent::Inventory { seq: 4, request: InventoryRequest::CloseBarter })]);
+        sim.update();
+        assert!(sim.app.world_mut().query::<&crate::barter::BarterOpen>().iter(sim.app.world()).next().is_none(), "closed");
+    }
+
+    fn npc_object_index(object: crate::ScriptObject) -> u32 {
+        match object {
+            crate::ScriptObject::Mobile { index, .. } => index,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
     fn containers_open_through_the_host() {
         use arcanum_formats::object::{Array, Object, ObjectId, TYPE_CONTAINER, TYPE_GOLD, TYPE_WEAPON, Value};
         use arcanum_formats::test_util::{ObjectBuilder, object_id_bytes, prototype_id};
