@@ -1526,6 +1526,53 @@ mod tests {
     }
 
     #[test]
+    fn an_npc_trains_a_skill_to_apprentice_for_gold() {
+        use crate::script::tests::{always, block, n};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        std::fs::create_dir_all(dir.path().join("mes")).unwrap();
+        std::fs::write(dir.path().join("mes/gd_cls_m2m.mes"), "{1000}{%d coins.}{3000}{What shall I teach?}{6000}{Done.}").unwrap();
+        std::fs::write(dir.path().join("mes/gd_pc2m.mes"), "{1}{Yes.}{100}{No.}{500}{Train me.}{800}{Forget it.}{1000}{Thank you.}").unwrap();
+        std::fs::write(dir.path().join("mes/skill.mes"), "{9}{Haggle}").unwrap();
+        let mut s = save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]);
+        let player = s.players.get_mut(&PlayerId(7)).unwrap();
+        player.blueprint.sheet.skills[9] = 1;
+        let mut gold = crate::Inventory::default();
+        gold.change_gold(500);
+        player.inventory = Some(gold);
+        let mut sim = booted(dir.path(), s);
+        let npc_object = crate::ScriptObject::Mobile { sector: SectorId::new(1, 1), index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 700));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            library.insert(700, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(4, &[n(1)]))] });
+            library.insert_dialog(700, arcanum_formats::dialog::DialogFile::parse(b"{1}{Hello.}{}{}{}{}{}\n{2}{T:9}{}{1}{}{0}{}"));
+        }
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0).unwrap().0
+        };
+        sim.take_deltas();
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        for (option, expect) in [(0, "Haggle"), (0, "Yes."), (0, "Thank you.")] {
+            sim.receive([(PlayerId(7), crate::PlayerIntent::Choose { option })]);
+            sim.update();
+            let deltas = sim.take_deltas();
+            assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::DialogueOptions { options, .. } if options[0] == expect)), "{expect}: {deltas:?}");
+            if expect == "Thank you." {
+                let sheet = deltas.iter().find_map(|(_, d)| match d { LedgerDelta::SheetUpdate { sheet, .. } => Some(sheet.clone()), _ => None }).expect("the sheet goes to the client");
+                assert_eq!(sheet.training[9], 1, "Apprentice");
+                let gold = deltas.iter().find_map(|(_, d)| match d { LedgerDelta::Inventory { inventory, .. } => Some(inventory.gold()), _ => None }).unwrap();
+                assert!((300..500).contains(&gold), "{gold}");
+            }
+        }
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(save.players[&PlayerId(7)].blueprint.sheet.training[9], 1, "saved");
+    }
+
+    #[test]
     fn an_npc_without_a_dialogue_script_barks_a_greeting() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());
