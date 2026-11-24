@@ -95,14 +95,14 @@ pub fn spawn_npcs(
     let players: Vec<PlayerId> = session.players.iter().filter(|(_, s)| matches!(s, SessionPlayer::InWorld(_))).map(|(&p, _)| p).collect();
     for id in new {
         populated.0.insert(id);
-        for object in map.mobiles.get(&id).into_iter().flatten().filter(|o| o.object_type == TYPE_NPC) {
+        for (index, object) in map.mobiles.get(&id).into_iter().flatten().enumerate().filter(|(_, o)| o.object_type == TYPE_NPC) {
             let (Some(position), Some(art), Some(prototype)) = (crate::object_location(object), map.prototypes.art_id(object), object.prototype.prototype()) else { continue };
             let net_id = ids.0.allocate();
             let look = Appearance { art, speed: NPC_SPEED };
             let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
             let gait = Gait::load(art, NPC_SPEED, |p| vfs_guard.as_deref().and_then(|v| v.read(p).ok()));
             let standpoints = crate::Standpoints::of(object, &map.prototypes, position);
-            commands.spawn((net_id, Npc { prototype }, Position(position), look, gait, standpoints));
+            commands.spawn((net_id, Npc { prototype }, crate::NpcSource { sector: id, index: index as u32 }, Position(position), look, gait, standpoints));
             let spawn = look.spawn(net_id, EntityKind::Npc { prototype }, position);
             outbox.0.extend(players.iter().map(|&p| (p, spawn.clone())));
         }
@@ -1354,6 +1354,55 @@ mod tests {
         }
         let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
         assert_eq!(save.players[&PlayerId(7)].position, stop);
+    }
+
+    #[test]
+    fn talking_to_an_npc_runs_its_dialogue_script_and_the_conversation_follows_the_choices() {
+        use crate::script::tests::{always, block, n};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]));
+        sim.take_deltas();
+        // NPC "A" (the sector's first mobile object) has script 700 for dialogue: start at line 1.
+        let npc_object = crate::ScriptObject::Mobile { sector: SectorId::new(1, 1), index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 700));
+        let dialog = arcanum_formats::dialog::DialogFile::parse(
+            b"{1}{Hello, @pcname@.}{Hello, lady.}{}{2}{}{lf 0 1}\n{2}{Give me gold.}{}{5}{}{10}{$$ 10}\n{3}{Bye.}{}{5}{}{0}{}\n{4}{Again?}{}{5}{me 1}{0}{}\n{10}{Thanks.}{}{}{}{}{}",
+        );
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            library.insert(700, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(4, &[n(1)]))] });
+            library.insert_dialog(700, dialog);
+        }
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0).unwrap().0
+        };
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        let float = LedgerDelta::FloatText { speaker: npc, text: "Hello, Virgil.".into(), colour: crate::FloatColour::White, voice: Some("sound/speech/00700/v2_m.mp3".into()) };
+        assert!(deltas.contains(&(PlayerId(7), float)), "{deltas:?}");
+        assert!(deltas.contains(&(PlayerId(7), LedgerDelta::DialogueOptions { npc, options: vec!["Give me gold.".into(), "Bye.".into()] })), "not met yet: no \"Again?\"");
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Choose { option: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::FloatText { text, colour: crate::FloatColour::Green, .. } if text == "Give me gold.")));
+        assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::FloatText { text, .. } if text == "Thanks.")));
+        assert!(deltas.contains(&(PlayerId(7), LedgerDelta::DialogueEnded)), "no options after \"Thanks.\": the end");
+        assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::Inventory { inventory, .. } if inventory.items.iter().any(|i| i.prototype == crate::GOLD && i.quantity == 10))));
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(save.players[&PlayerId(7)].script_state.met.len(), 1, "met");
+        assert_eq!(save.sector_changes[&SectorId::new(1, 1)].mobile_scripts[&0][&crate::EVENT_DIALOGUE].flags, 1, "the NPC's flag 0, saved");
+        // Again: now "Again?" shows.
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.contains(&(PlayerId(7), LedgerDelta::DialogueOptions { npc, options: vec!["Give me gold.".into(), "Bye.".into(), "Again?".into()] })), "{deltas:?}");
+        sim.receive([(PlayerId(7), crate::PlayerIntent::EndTalk)]);
+        sim.update();
+        assert!(sim.take_deltas().contains(&(PlayerId(7), LedgerDelta::DialogueEnded)));
     }
 
     #[test]

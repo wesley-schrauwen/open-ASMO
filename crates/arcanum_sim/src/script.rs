@@ -17,7 +17,10 @@
 //!   replace the attachment's script after the run.
 //! - **Built:**
 //!   - conditions: 0 always, 1 daytime, 3 local flag, 4 equal, 5 at most, 0x2b global flag;
-//!   - actions: 1-3, 5, 6, 8, 9, 0xa-0xf (flags, assignment, arithmetic, object variables),
+//!     0x12 (is the set's leader the other object: nobody follows anyone yet); and the flag
+//!     tests on a set's objects (0xc-0x10 `spell_flags`, 0x1b/0x1e `flags`, 0x25/0x26
+//!     `critter_flags`, 0x27/0x34 `npc_flags`), all members or any by the set's kind;
+//!   - actions: 1-3, 4 (start a conversation, [`crate::dialogue`]), 5, 6, 8, 9, 0xa-0xf (flags, assignment, arithmetic, object variables),
 //!     0x12-0x14 (loops over a set), 0x18 (a line of the script's dialogue file in the
 //!     triggerer's message box), 0x25 random, 0x2a/0x2b story state, 0x60-0x62 and 0x69 (the
 //!     day, hour, minute, hours since the start), 0x64/0x65 global flags;
@@ -59,6 +62,9 @@ pub struct ScriptGlobals {
     /// Only rises (action 0x2b, 0x4450a0).
     #[serde(default)]
     pub story_state: i32,
+    /// Rumours quelled (dialogue `rq`, 0x4c5690).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub quelled: BTreeSet<u32>,
 }
 
 impl ScriptGlobals {
@@ -89,13 +95,31 @@ impl ScriptGlobals {
     }
 }
 
-/// A PC's script variables and flags (fields 0x111 and 0x110), saved with the PC.
+/// A PC's script variables and flags (fields 0x111 and 0x110), and what dialogue keeps for it:
+/// quest states, rumours known, reputations, the NPCs met. Saved with the PC.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PcScriptState {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub vars: BTreeMap<u32, i32>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub flags: BTreeSet<u32>,
+    /// Quest states that are not 0 (0x4c4cb0 / 0x4c4d20).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub quests: BTreeMap<u32, i32>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub rumours: BTreeSet<u32>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub reputations: BTreeSet<u32>,
+    /// The NPCs this PC has talked to ([`crate::dialogue`]).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub met: BTreeSet<String>,
+}
+
+impl PcScriptState {
+    /// Quest `n`'s state (0 when never set).
+    pub fn quest(&self, n: i32) -> i32 {
+        u32::try_from(n).ok().and_then(|n| self.quests.get(&n)).copied().unwrap_or(0)
+    }
 }
 
 /// A script attached to an object for one event (an entry of field 0x20): the script's own
@@ -173,7 +197,41 @@ pub trait ScriptContext {
     fn dialog_text(&mut self, script: u32, line: i32, reader: Self::Object) -> Option<String>;
     /// Shows `text` in `to`'s message box (a PC's player; others: nobody).
     fn show_message(&mut self, to: Self::Object, text: String);
+    /// Starts a conversation between `attachee` and `triggerer` in dialogue file `dialog` at
+    /// line `line` (action 4, 0x567460).
+    fn start_dialog(&mut self, _attachee: Self::Object, _triggerer: Self::Object, _dialog: u32, _line: i32) {}
+    /// Field `field` of `object`'s data (its own or its prototype's); `None` for PCs and objects
+    /// without it.
+    fn object_int(&mut self, _object: Self::Object, _field: &str) -> Option<i32> {
+        None
+    }
+    /// Whether `object` is an NPC.
+    fn is_npc(&mut self, _object: Self::Object) -> bool {
+        false
+    }
+    /// `object`'s leader, if it follows someone (0x45de00); nobody follows anyone yet.
+    fn leader(&mut self, _object: Self::Object) -> Option<Self::Object> {
+        None
+    }
 }
+
+/// Object set kinds where one member passing is enough (0x4451b0); the others need all.
+pub const ANY_SET_KINDS: [i8; 9] = [3, 5, 7, 9, 0xe, 0x10, 0x12, 0x14, 0x17];
+
+/// The flag tests on a set's objects (0x4451b0): condition type, field, bits, NPCs only.
+const FLAG_CONDITIONS: [(u32, &str, i32, bool); 11] = [
+    (0xc, "spell_flags", 0x20000, false),
+    (0xd, "spell_flags", 0x80000, false),
+    (0xe, "spell_flags", 0x3c, false),
+    (0xf, "spell_flags", 0x1, false),
+    (0x10, "spell_flags", 0x40000, false),
+    (0x1b, "flags", 0x2, false),
+    (0x1e, "flags", 0x400000, false),
+    (0x25, "critter_flags", 0x8, true),
+    (0x26, "critter_flags", 0x4, true),
+    (0x27, "npc_flags", 0x20, true),
+    (0x34, "npc_flags", 0x8, true),
+];
 
 /// Script numbers to parsed scripts: the index of `scr/` and the scripts and dialogue files
 /// read so far.
@@ -288,7 +346,7 @@ fn run<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, invocation: I
 }
 
 fn step<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut Run<C::Object>, script: &Script, line: usize, current: &Line, unsupported: &mut Vec<Unsupported>) -> Step {
-    let holds = match condition(ctx, attachment, run, &current.condition) {
+    let holds = match condition(ctx, attachment, run, &current.condition, line, unsupported) {
         Some(holds) => holds,
         None => {
             unsupported.push(Unsupported::Condition { line, kind: current.condition.kind });
@@ -306,7 +364,22 @@ fn step<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut Ru
 }
 
 /// A condition's truth (0x4451b0); `None` when it is not built.
-fn condition<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut Run<C::Object>, block: &Block) -> Option<bool> {
+fn condition<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut Run<C::Object>, block: &Block, line: usize, unsupported: &mut Vec<Unsupported>) -> Option<bool> {
+    // Tests on the members of the set in operand 0: all must pass, or any for the "any" kinds.
+    let over_set = |ctx: &mut C, run: &Run<C::Object>, unsupported: &mut Vec<Unsupported>, test: &mut dyn FnMut(&mut C, C::Object) -> bool| -> Option<bool> {
+        let set = block.operands[0];
+        let members = objects(run, set, line, unsupported)?;
+        let passed = members.iter().filter(|&&o| test(ctx, o)).count();
+        Some(if ANY_SET_KINDS.contains(&set.tag) { passed > 0 } else { passed == members.len() && passed > 0 })
+    };
+    if let Some(&(_, field, bits, npc_only)) = FLAG_CONDITIONS.iter().find(|c| c.0 == block.kind) {
+        return over_set(ctx, run, unsupported, &mut |ctx, o| (!npc_only || ctx.is_npc(o)) && ctx.object_int(o, field).is_some_and(|v| v & bits != 0));
+    }
+    if block.kind == 0x12 {
+        // The set's leader is the object in operand 1 (0x45de00).
+        let other = objects(run, block.operands[1], line, unsupported)?.first().copied();
+        return over_set(ctx, run, unsupported, &mut |ctx, o| other.is_some() && ctx.leader(o) == other);
+    }
     let mut value = |i: usize| get(ctx, attachment, run, block.operands[i]);
     Some(match block.kind {
         0 => true,
@@ -340,6 +413,13 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
         1 => Step::SkipDefault,
         2 => Step::RunDefault,
         3 => Step::Jump(value(ctx, attachment, run, 0).max(0) as usize),
+        4 => {
+            // Dialogue in the running script's own file, at line operand 0; the script ends,
+            // skipping the default (0x447282).
+            let line = value(ctx, attachment, run, 0);
+            ctx.start_dialog(run.invocation.attachee, run.invocation.triggerer, attachment.number, line);
+            Step::SkipDefault
+        }
         5 => {
             run.replace = Some(0);
             Step::Next

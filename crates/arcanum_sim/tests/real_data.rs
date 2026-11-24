@@ -476,3 +476,55 @@ fn the_inn_bed_script_tells_an_unpaying_pc_to_pay() {
     world.globals.set_var(1043, 20);
     assert_eq!(run_hook(&mut world, &mut Attachment::new(0, 1, 1990), invocation).result, HookResult::SkipDefault);
 }
+
+#[test]
+fn virgil_greets_the_pc_at_the_crash_site() {
+    use arcanum_rules::{CharacterBlueprint, CharacterSheet, RulesData};
+    use arcanum_sim::{EVENT_DIALOGUE, LedgerDelta, LoadedMap, NetId, NpcSource, PlayerId, PlayerIntent, PlayerSave, SimApp, SimVfs, WorldSave};
+    use std::sync::{Arc, RwLock};
+    let Some(vfs) = vfs() else { return };
+    let start = StartMap::load(&vfs).unwrap();
+    let rules = RulesData::load(&vfs).unwrap();
+    // Find Virgil: the NPC whose dialogue script is 1324 ("Virgil").
+    let mut map = LoadedMap::default();
+    map.open(Some(&vfs), &start.map);
+    map.load_around(Some(&vfs), start.position);
+    let virgil = map.mobiles.iter().flat_map(|(&s, objects)| objects.iter().enumerate().map(move |(i, o)| (s, i, o))).find(|(_, _, o)| arcanum_sim::attachments(o, &map.prototypes).get(&EVENT_DIALOGUE).is_some_and(|a| a.number == 1324));
+    let Some((sector, index, object)) = virgil else { panic!("no Virgil near the start") };
+    let at = arcanum_sim::object_location(object).unwrap();
+    // A PC beside him.
+    let mut save = WorldSave::new_game(&start);
+    let sheet = CharacterSheet { name: "Virgil's Hero".into(), ..Default::default() };
+    let here = TileLoc { x: at.x + 1, y: at.y };
+    save.players.insert(PlayerId(1), PlayerSave { blueprint: CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None }, position: here, inventory: None, script_state: Default::default() });
+    let mut sim = SimApp::new(rules);
+    sim.use_manual_clock();
+    sim.app.insert_resource(SimVfs(Arc::new(RwLock::new(vfs))));
+    sim.boot(save);
+    for _ in 0..3 {
+        sim.update();
+    }
+    sim.take_deltas();
+    let npc = {
+        let world = sim.app.world_mut();
+        world.query::<(&NetId, &NpcSource)>().iter(world).find(|(_, s)| s.sector == sector && s.index == index as u32).map(|(n, _)| *n)
+    };
+    let npc = npc.expect("Virgil spawned");
+    sim.receive([(PlayerId(1), PlayerIntent::Talk { npc, seq: 0 })]);
+    sim.update();
+    let deltas = sim.take_deltas();
+    let line = deltas.iter().find_map(|(_, d)| match d {
+        LedgerDelta::FloatText { speaker, text, voice, .. } if *speaker == npc => Some((text.clone(), voice.clone())),
+        _ => None,
+    });
+    let options = deltas.iter().find_map(|(_, d)| match d {
+        LedgerDelta::DialogueOptions { options, .. } => Some(options.clone()),
+        _ => None,
+    });
+    let reports = sim.app.world().resource::<arcanum_sim::ScriptReports>().0.clone();
+    let dialogue_reports = sim.app.world().resource::<arcanum_sim::DialogueReports>().0.clone();
+    eprintln!("Virgil says {line:?}; options {options:?}; script reports {reports:?}; dialogue reports {dialogue_reports:?}");
+    let (text, voice) = line.expect("Virgil speaks");
+    assert!(text.starts_with("I can't believe it"), "{text}");
+    assert_eq!(voice.as_deref(), Some("sound/speech/01324/v1_m.mp3"));
+}

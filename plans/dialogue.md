@@ -129,15 +129,39 @@ format and language are checked against all 709 `.dlg` files.
 ## Steps
 
 1. **The file and its language** (`arcanum_formats::dialog`) and this plan. Done.
-2. **Conversations on the host:**
-   - talking to an NPC (its event 9 script, action 4);
-   - the NPC's line, with names replaced and the result run;
-   - the options: gender, intelligence, tests;
-   - choosing: the result, then the response;
-   - ending; bark lines for NPCs with no script.
-   - Tests and results for variables, flags, the NPC's flags and counters, reaction, gold,
-     story state and quests, as far as their state exists. Others make an option fail, or a
-     result stop, and are reported.
+2. **Conversations on the host** (`arcanum_sim::dialogue`). Done.
+   - **Talking:** `PlayerIntent::Talk` walks to the NPC. Within use range the NPC's event 9
+     script runs (`ScriptHost`). Its action 4 starts the conversation in the script's own
+     dialogue file (`StartedDialogues`; any script may start one).
+   - **Lines:** text by the PC's gender, names put in, the result run. The line floats for
+     every player (`FloatText`, white, with the voice file; the PC's gender picks `_m`/`_f`,
+     builder's call).
+   - **Options:** only the talker gets them (`DialogueOptions`), and chooses with `Choose`.
+     The chosen option floats green; its result runs, then its response. `-n` takes an NPC
+     line as shown and a PC option as chosen (builder's reading).
+   - **Ending:** `EndTalk`, response 0, or no options left (`DialogueEnded`). The PC has then
+     met the NPC.
+   - **Tests built:** `gv gf pv pf lf lc qu qa qb ss ru rq rp me $$ in ni ch pe le ra ps ha`.
+   - **Results built:** `$$ gv gf pv pf lf lc qu ss ru rq rp fl`.
+     - The NPC's `lf`/`lc` are its event 9 attachment's flags and counters, saved.
+     - Quests, rumours, reputations and the NPCs met are saved with each PC; quelled rumours
+       globally.
+     - Gold changes send the inventory.
+     - A test not built fails, and a result not built is skipped; both are reported
+       (`DialogueReports`).
+   - **Generic options:** `Y N S E F K W` take a random line from `gd_pc2m`/`gd_pc2f` (the
+     `gd_dumb_` pair at Intelligence ≤ 4). Other prefixes are left out, and a `G:` line ends
+     the conversation.
+   - **Script runner additions:**
+     - action 4;
+     - condition 0x12 (leader; nobody follows anyone yet, so false);
+     - flag tests on a set's objects (0xc-0x10, 0x1b, 0x1e, 0x25-0x27, 0x34).
+   - **NPCs** carry `NpcSource` (sector, mobile index), so scripts can name them.
+   - **Real data:**
+     - Virgil (script 1324) at the crash site speaks his first line with its voice.
+     - All his options test his reaction (`re62` / `re-61`). Reaction is not built, so they
+       fail and the conversation ends there.
+     - **Reaction is next.**
 3. **The client:**
    - floating lines over heads;
    - the options panel, with hover and click;
