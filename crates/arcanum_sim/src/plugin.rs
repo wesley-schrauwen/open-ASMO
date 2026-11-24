@@ -68,6 +68,7 @@ impl Plugin for SimPlugin {
             .init_resource::<crate::big_move::LastTiles>()
             .init_resource::<crate::script_host::ScriptInventories>()
             .init_resource::<crate::script_host::TimedScripts>()
+            .init_resource::<crate::areas::AreaTable>()
             .init_resource::<crate::barter::BarterRequests>()
             .init_resource::<crate::DialogueReports>()
             .init_resource::<crate::GenericLines>()

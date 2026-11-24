@@ -11,6 +11,7 @@
 
 pub mod activity;
 pub mod big_move;
+pub mod areas;
 pub mod blocking;
 pub mod clock;
 pub mod container;

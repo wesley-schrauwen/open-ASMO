@@ -110,6 +110,9 @@ pub struct PcScriptState {
     pub rumours: BTreeSet<u32>,
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub reputations: BTreeSet<u32>,
+    /// The areas this PC knows ([`crate::areas`], 0x4caf50).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub areas: BTreeSet<u32>,
     /// The NPCs this PC has talked to ([`crate::dialogue`]).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub met: BTreeSet<String>,
@@ -272,6 +275,10 @@ pub trait ScriptContext {
     /// Runs script `script` from `line` for `triggerer` and `attachee` in `delay_ms` game
     /// milliseconds (action 0x36, time event type 4).
     fn schedule(&mut self, _script: u32, _line: i32, _triggerer: Self::Object, _attachee: Self::Object, _delay_ms: u64) {}
+    /// The area `object` is in (0x4cb6a0); 0 for none.
+    fn area_of(&mut self, _object: Self::Object) -> i32 {
+        0
+    }
     /// "The player" (set 0x15, 0x40da50): the acting player's PC.
     fn player(&mut self) -> Option<Self::Object> {
         None
@@ -716,6 +723,22 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
             let o = objects(run, ops[1], line, unsupported)?.first().copied();
             let v = o.map_or(0, |o| ctx.stat(o, stat));
             set(ctx, attachment, run, ops[2], v);
+            Step::Next
+        }
+        // An area a PC knows now (0x4cafd0) / the area an object is in (0x4cb6a0).
+        0x31 => {
+            let area = value(ctx, attachment, run, 0);
+            for o in objects(run, ops[1], line, unsupported)? {
+                if let (Some(pc), Ok(a)) = (ctx.pc_state(o), u32::try_from(area)) {
+                    pc.areas.insert(a);
+                }
+            }
+            Step::Next
+        }
+        0x54 => {
+            let o = objects(run, ops[0], line, unsupported)?.first().copied();
+            let area = o.map_or(0, |o| ctx.area_of(o));
+            set(ctx, attachment, run, ops[1], area);
             Step::Next
         }
         // Rumours: known by a PC (0x4c57e0) / quelled for everyone (0x4c5690).

@@ -122,6 +122,7 @@ pub struct ScriptHost<'w, 's> {
     rules: Res<'w, crate::SimRules>,
     reputations: ResMut<'w, crate::ReputationTable>,
     timed: ResMut<'w, TimedScripts>,
+    areas: ResMut<'w, crate::areas::AreaTable>,
     changed_inventories: ResMut<'w, ScriptInventories>,
     teleports: ResMut<'w, crate::big_move::ScriptTeleports>,
     reports: ResMut<'w, ScriptReports>,
@@ -153,6 +154,7 @@ struct HostWorld<'a> {
     sectors: std::collections::BTreeSet<arcanum_formats::map::SectorId>,
     rules: &'a arcanum_rules::RulesData,
     reputations: &'a crate::ReputationEffects,
+    areas: &'a crate::areas::AreaTable,
     /// Scripts to run later (action 0x36).
     scheduled: Vec<TimedScript>,
     vfs: Option<&'a arcanum_vfs::Vfs>,
@@ -383,6 +385,11 @@ impl ScriptContext for HostWorld<'_> {
         self.scheduled.push(TimedScript { at: self.now.plus_ms(delay_ms), script, line, triggerer, attachee });
     }
 
+    fn area_of(&mut self, object: ScriptObject) -> i32 {
+        let (Some(at), Some(map)) = (self.location(object), self.map.name.clone()) else { return 0 };
+        self.areas.area_at(&map, at) as i32
+    }
+
     fn player(&mut self) -> Option<ScriptObject> {
         Some(ScriptObject::Pc(self.player))
     }
@@ -573,7 +580,9 @@ impl ScriptHost<'_, '_> {
         let reputations = &*self.reputations.0.get_or_insert_with(|| {
             vfs.and_then(|v| v.read(crate::GAME_REP).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).map(|m| crate::ReputationEffects::parse(&m)).unwrap_or_default()
         });
+        let areas = self.areas.load(vfs);
         let mut ctx = HostWorld {
+            areas,
             rules: &self.rules.0,
             reputations,
             scheduled: Vec::new(),
