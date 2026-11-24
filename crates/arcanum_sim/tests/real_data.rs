@@ -588,3 +588,42 @@ fn every_generic_greeting_has_a_line() {
     missing.retain(|&(npc_male, dumb, class, pc_gender, _, level, met)| !(npc_male && !dumb && class == 2 && pc_gender == MALE && level == 0 && !met));
     assert!(missing.is_empty(), "{:?}", &missing[..missing.len().min(20)]);
 }
+
+/// A script teleport to Bessie Toone's mine (map 5001, `Rules/MapList.mes`) opens that map
+/// around the tile, with its NPCs, and keeps the start map's name for the way back.
+#[test]
+fn a_teleport_opens_another_real_map() {
+    use std::sync::{Arc, RwLock};
+
+    use arcanum_rules::{CharacterBlueprint, CharacterSheet, RulesData};
+    use arcanum_sim::big_move::{ScriptTeleport, ScriptTeleports};
+    use arcanum_sim::{LoadedMap, PlayerId, Position, ScriptObject, SimApp, SimVfs, WorldState};
+
+    let Some(vfs) = vfs() else { return };
+    let start = StartMap::load(&vfs).unwrap();
+    let mut world = WorldState::default();
+    let sheet = CharacterSheet { name: "Virgil".into(), ..Default::default() };
+    world.add_player(Some(&start), PlayerId(1), CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None });
+    let mut sim = SimApp::new(RulesData::default());
+    sim.use_manual_clock();
+    sim.app.insert_resource(SimVfs(Arc::new(RwLock::new(vfs))));
+    sim.boot(world.0.unwrap());
+    sim.update();
+    sim.update();
+    let to = TileLoc { x: 96, y: 126 };
+    sim.app.world_mut().resource_mut::<ScriptTeleports>().0.push(ScriptTeleport { causer: PlayerId(1), object: ScriptObject::Pc(PlayerId(1)), map: 5001, to });
+    sim.update();
+    sim.update();
+    let map = sim.app.world().resource::<LoadedMap>();
+    assert_eq!(map.name.as_deref(), Some("BessieToonesMine-fixed"));
+    assert!(map.errors.is_empty(), "{:?}", map.errors);
+    assert!(map.sectors.contains_key(&to.sector()), "the tile's sector");
+    let reports = &sim.app.world().resource::<arcanum_sim::big_move::TeleportReports>().0;
+    assert!(reports.is_empty(), "{reports:?}");
+    let world = sim.app.world_mut();
+    let pcs: Vec<TileLoc> = world.query_filtered::<&Position, bevy_ecs::query::With<arcanum_sim::PlayerControlled>>().iter(world).map(|p| p.0).collect();
+    assert_eq!(pcs, vec![to]);
+    let npcs = world.query::<&arcanum_sim::Npc>().iter(world).count();
+    eprintln!("{npcs} NPCs in the mine near the entrance");
+    assert_eq!(sim.app.world().resource::<WorldState>().0.as_ref().unwrap().map, "BessieToonesMine-fixed");
+}
