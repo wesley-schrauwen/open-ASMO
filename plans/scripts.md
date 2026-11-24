@@ -247,7 +247,38 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      (0x4d3380, no fade); NPCs and followers do not. Here it goes to the same vote. Data: 45 jump
      points on 17 maps, 22 to the same map; every destination map is listed. Stairs and doors
      to other maps are script teleports on their "use" (the `_TEL` scripts), built above.
-5. **Gold and items:** conditions 2 and 0x11; actions 0x23, 0x29 and 0x42.
+4c. **Quests, gold, items, calls and the vicinity** (built, `feat/script-gaps`; names from
+   `semes/condition.mes` and `semes/action.mes`, whose numbers are the types).
+   - **Conditions** (0x4451b0; over a set: count 0 is false, else all must pass, or one for
+     the "anyone" sets):
+     - 2 gold at least (0x464780); 6 a PC's quest state exactly (0x4c4cb0: botched, flag
+       0x100, reads 6; not a PC, the global quest state: not built, 0); 0x11 carries an item
+       whose `name` is N (0x462480); 0x14 is named N and not `flags` 0x8000000; 0x16 dead
+       (0x45d8d0: hit points below 1; nothing takes damage yet, so never); 0x2f identified
+       (0x464370); 0x32 items being rewielded (never here).
+   - **Actions** (0x447226):
+     - 0x10 set a PC's quest (0x4c4d20): only upwards, never from 4, 5 or 6. Not built: the
+       global quest states (2 → 4/5/6), the quest XP at 4, the giver's reaction (at least 41 at
+       2, +10 at 4), the timestamp.
+     - 0x17 float a line of the script's dialogue over each object (0x44b1f0), to every player;
+       the original's duration and "a PC near" check are not built.
+     - 0x22 object type (raw `obj_f_type`); 0x23 gold (0x464830: a take larger than the gold
+       does nothing); 0x29 move the first item named N (0x4617f0; no room, it stays); 0x42 make
+       an item of basic prototype N inside (no room: the original leaves it on the floor; here
+       it is not made).
+     - 0x51 call the script at another object's point P from line L with triggerer T (0x44b170
+       → 0x441980; result ignored, attachment kept; nested up to the runner's depth); 0x63
+       change a script (the running one's number if it is the same object and point).
+   - **Sets:** 8/9 everyone / anyone in the vicinity: PCs and NPCs round the attachee
+     (0x440fc0, mask 0x18000; the original's area is a view-sized rectangle, here 10 tiles);
+     0x15 the player: the acting player's PC.
+   - **Host:** scripts change PCs' inventories in the save; `sync_script_inventories` copies
+     them to the PCs and sends them. NPC and container inventories are kept in the sector's
+     changes.
+   - **Real data:** from their first line, 1731 of 2399 scripts now run to an end (1085
+     before). Next most common stops: action 0x5b (119, magic/tech adjust), 0x7 (35), 0x1d (24,
+     reaction), 0x21 (21), 0x36 (20).
+5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,
    teleports, combat-related actions, the remaining conditions.

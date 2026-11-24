@@ -1695,6 +1695,72 @@ mod tests {
     }
 
     #[test]
+    fn scripts_take_gold_give_items_set_quests_float_lines_and_read_types() {
+        use crate::script::tests::{always, block, line, n, op};
+        use arcanum_formats::object::{Object, TYPE_GOLD, TYPE_WEAPON, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, prototype_id};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut s = save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]);
+        let mut gold = crate::Inventory::default();
+        gold.change_gold(500);
+        s.players.get_mut(&PlayerId(7)).unwrap().inventory = Some(gold);
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        let proto = |number: u32, kind: u32| {
+            let mut o = Object::parse_instance(&ObjectBuilder::new(kind).field("item_weight", Value::Int32(1)).build()).unwrap();
+            o.id = prototype_id(number);
+            o
+        };
+        let mut prototypes = Prototypes::default();
+        prototypes.insert(proto(crate::GOLD, TYPE_GOLD));
+        prototypes.insert(proto(6049, TYPE_WEAPON));
+        sim.app.world_mut().resource_mut::<LoadedMap>().prototypes = Arc::new(prototypes);
+        sim.boot(s);
+        sim.update();
+        sim.update();
+        let npc_object = crate::ScriptObject::Mobile { sector: SectorId::new(1, 1), index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 700));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            let pc = op(0, 0);
+            let npc = op(1, 0);
+            let lines = vec![
+                line(block(2, &[pc, n(10)]), block(0x23, &[pc, n(-10)]), block(1, &[])),           // 10 gold, or stop
+                always(block(0x42, &[n((6049 - crate::BASIC_TO_PROTOTYPE) as i32), pc])),           // a dagger
+                always(block(0x10, &[pc, n(1000), n(2)])),                                          // quest 1000: 2
+                always(block(0x10, &[pc, n(1000), n(1)])),                                          // never down
+                line(block(6, &[pc, n(1000), n(2)]), block(0x17, &[n(1), npc]), block(1, &[])),     // "Thanks."
+                always(block(0x22, &[npc, op(2, 0)])),                                              // local 0 = type
+                line(block(4, &[op(2, 0), n(TYPE_NPC as i32)]), block(0x64, &[n(5)]), block(0, &[])),
+                always(block(1, &[])),
+            ];
+            library.insert(700, arcanum_formats::script::Script { description: String::new(), flags: 0, lines });
+            library.insert_dialog(700, arcanum_formats::dialog::DialogFile::parse(b"{1}{Thanks.}{}{}{}{}{}"));
+        }
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0).unwrap().0
+        };
+        sim.take_deltas();
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        let mine = deltas.iter().rev().find_map(|(_, d)| match d { LedgerDelta::Inventory { inventory, .. } => Some(inventory.clone()), _ => None }).expect("the changed inventory is sent");
+        assert_eq!(mine.gold(), 490);
+        assert!(mine.items.iter().any(|i| i.prototype == 6049), "{mine:?}");
+        assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::FloatText { speaker, text, .. } if *speaker == npc && text == "Thanks.")), "{deltas:?}");
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(save.players[&PlayerId(7)].script_state.quest(1000), 2, "set up, not down");
+        assert!(save.scripts.flag(5), "the NPC's type is 16");
+        let world = sim.app.world_mut();
+        let carried = world.query::<(&PlayerControlled, &crate::Inventory)>().iter(world).next().unwrap().1.gold();
+        assert_eq!(carried, 490, "the PC's own inventory too");
+    }
+
+    #[test]
     fn an_npc_trains_a_skill_to_apprentice_for_gold() {
         use crate::script::tests::{always, block, n};
         let dir = tempfile::tempdir().unwrap();
