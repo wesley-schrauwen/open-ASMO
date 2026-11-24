@@ -1761,6 +1761,36 @@ mod tests {
     }
 
     #[test]
+    fn a_script_called_in_seconds_runs_once_the_game_clock_gets_there() {
+        use crate::script::tests::{always, block, n, op};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]));
+        let npc_object = crate::ScriptObject::Mobile { sector: SectorId::new(1, 1), index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 700));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            // In 1 second (8 game seconds): script 701 from line 0, which sets global flag 3.
+            library.insert(700, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(0x36, &[n(701), n(0), op(0, 0), op(1, 0), n(1)])), always(block(1, &[]))] });
+            library.insert(701, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(0x64, &[n(3)])), always(block(1, &[]))] });
+        }
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0).unwrap().0
+        };
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let flag = |sim: &SimApp| sim.app.world().resource::<WorldState>().0.as_ref().unwrap().scripts.flag(3);
+        assert!(!flag(&sim), "not yet");
+        assert_eq!(sim.app.world().resource::<crate::script_host::TimedScripts>().0.len(), 1);
+        sim.app.world_mut().resource_mut::<crate::GameClock>().jump(8_000);
+        sim.update();
+        assert!(flag(&sim), "8 game seconds on");
+        assert!(sim.app.world().resource::<crate::script_host::TimedScripts>().0.is_empty());
+    }
+
+    #[test]
     fn an_npc_trains_a_skill_to_apprentice_for_gold() {
         use crate::script::tests::{always, block, n};
         let dir = tempfile::tempdir().unwrap();
