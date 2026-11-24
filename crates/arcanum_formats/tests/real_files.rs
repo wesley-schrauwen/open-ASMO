@@ -261,3 +261,58 @@ fn every_script_parses_to_the_last_byte() {
     assert!(count >= 2399, "{count}");
     assert!(kinds.0 <= 52 && kinds.1 <= 141, "{kinds:?}");
 }
+
+#[test]
+fn every_dialogue_file_parses_and_its_opcodes_are_the_engines() {
+    use arcanum_formats::dialog::{DialogFile, effects, tests};
+    use std::collections::BTreeMap;
+    let (mut files, mut npc, mut pc) = (0, 0, 0);
+    let (mut test_ops, mut effect_ops) = (BTreeMap::<String, usize>::new(), BTreeMap::<String, usize>::new());
+    let (mut bad_tests, mut bad_effects) = (0, 0);
+    let mut seen = std::collections::BTreeSet::new();
+    // The Arcanum module only (Vormantown has its own).
+    // The Arcanum module first, as the game mounts it, then the game's archives (not Vormantown).
+    let module = ArcanumArchive::open(game_dir().join("modules/Arcanum.dat")).ok();
+    for a in module.into_iter().chain(archives()) {
+        let names: Vec<String> = a.list_dir("dlg").unwrap_or_default().into_iter().map(str::to_string).collect();
+        for path in names.iter().filter(|p| p.to_ascii_lowercase().ends_with(".dlg")) {
+            let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+            if !seen.insert(name) {
+                continue;
+            }
+            let file = DialogFile::parse(&a.read(path).unwrap());
+            files += 1;
+            for line in file.lines.values() {
+                if line.is_npc() {
+                    npc += 1;
+                } else {
+                    pc += 1;
+                    match tests(&line.test) {
+                        Ok(t) => t.iter().for_each(|t| *test_ops.entry(t.op().into()).or_default() += 1),
+                        Err(_) => bad_tests += 1,
+                    }
+                }
+                match effects(&line.result) {
+                    Ok(e) => e.iter().for_each(|t| *effect_ops.entry(t.op().into()).or_default() += 1),
+                    Err(e) => {
+                        bad_effects += 1;
+                        e.before.iter().for_each(|t| *effect_ops.entry(t.op().into()).or_default() += 1);
+                    }
+                }
+            }
+        }
+    }
+    if files == 0 {
+        eprintln!("skipping: no dialogue files found");
+        return;
+    }
+    eprintln!("{files} files, {npc} NPC lines, {pc} PC options; {bad_tests} tests and {bad_effects} results meet an unknown opcode");
+    eprintln!("tests: {test_ops:?}");
+    eprintln!("results: {effect_ops:?}");
+    assert!(files >= 709, "{files}");
+    assert_eq!((npc, pc), (15287, 39472));
+    // Tests that meet an unknown opcode fail whole, so their tokens are not counted.
+    assert_eq!((bad_tests, bad_effects), (12, 11));
+    assert_eq!((test_ops["lf"], test_ops["gf"], test_ops["$$"]), (7450, 3462, 1580));
+    assert_eq!((effect_ops["lf"], effect_ops["fl"]), (4759, 2510));
+}

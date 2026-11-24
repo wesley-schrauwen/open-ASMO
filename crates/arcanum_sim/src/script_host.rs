@@ -117,6 +117,7 @@ pub struct ScriptReports(pub Vec<(u32, crate::Unsupported)>);
 #[derive(SystemParam)]
 pub struct ScriptHost<'w> {
     scripts: ResMut<'w, Scripts>,
+    started: ResMut<'w, crate::StartedDialogues>,
     reports: ResMut<'w, ScriptReports>,
     rng: ResMut<'w, crate::HostRng>,
     clock: Res<'w, crate::GameClock>,
@@ -126,6 +127,7 @@ pub struct ScriptHost<'w> {
 /// The world as a running script sees it.
 struct HostWorld<'a> {
     library: &'a mut ScriptLibrary,
+    map: &'a LoadedMap,
     vfs: Option<&'a arcanum_vfs::Vfs>,
     globals: &'a mut ScriptGlobals,
     players: &'a mut BTreeMap<PlayerId, crate::PlayerSave>,
@@ -133,6 +135,8 @@ struct HostWorld<'a> {
     now: crate::GameTime,
     /// Lines for players' message boxes.
     messages: Vec<(PlayerId, String)>,
+    /// Conversations scripts started.
+    dialogs: Vec<crate::StartedDialogue>,
 }
 
 impl ScriptContext for HostWorld<'_> {
@@ -173,6 +177,29 @@ impl ScriptContext for HostWorld<'_> {
             self.messages.push((player, text));
         }
     }
+
+    fn object_int(&mut self, object: ScriptObject, field: &str) -> Option<i32> {
+        let data = match object {
+            ScriptObject::Pc(_) => None,
+            ScriptObject::Map(id) => self.map.map_object(id),
+            ScriptObject::Mobile { sector, index } => self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)),
+        }?;
+        self.map.prototypes.int(data, field)
+    }
+
+    fn is_npc(&mut self, object: ScriptObject) -> bool {
+        matches!(object, ScriptObject::Mobile { sector, index } if self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).is_some_and(|o| o.object_type == arcanum_formats::object::TYPE_NPC))
+    }
+
+    fn start_dialog(&mut self, attachee: ScriptObject, triggerer: ScriptObject, dialog: u32, line: i32) {
+        // A PC talks to the other party.
+        let (pc, npc) = match (attachee, triggerer) {
+            (_, ScriptObject::Pc(p)) => (p, attachee),
+            (ScriptObject::Pc(p), _) => (p, triggerer),
+            _ => return,
+        };
+        self.dialogs.push(crate::StartedDialogue { player: pc, npc, dialog, line });
+    }
 }
 
 impl ScriptHost<'_> {
@@ -190,12 +217,13 @@ impl ScriptHost<'_> {
         let library = self.scripts.0.get_or_insert_with(|| vfs.map(ScriptLibrary::new).unwrap_or_default());
         let before = attachment;
         let number = attachment.number;
-        let mut ctx = HostWorld { library, vfs, globals: &mut save.scripts, players: &mut save.players, rng: &mut self.rng, now: self.clock.now, messages: Vec::new() };
+        let mut ctx = HostWorld { library, map, vfs, globals: &mut save.scripts, players: &mut save.players, rng: &mut self.rng, now: self.clock.now, messages: Vec::new(), dialogs: Vec::new() };
         let invocation = Invocation { attachee: object, triggerer: ScriptObject::Pc(player), other: None, event, start_line: 0 };
         let run = crate::run_hook(&mut ctx, &mut attachment, invocation);
         for (to, text) in std::mem::take(&mut ctx.messages) {
             outbox.0.push((to, crate::LedgerDelta::ScriptMessage { text }));
         }
+        self.started.0.append(&mut ctx.dialogs);
         for unsupported in run.unsupported {
             self.reports.0.push((number, unsupported));
         }

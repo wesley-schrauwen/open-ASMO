@@ -124,6 +124,13 @@ pub enum LedgerDelta {
     SkillResult { message: u32 },
     /// Why the player's spell was not cast: a `mes/spell.mes` line for the message box.
     SpellResult { message: u32 },
+    /// A line floating over `speaker`'s head ([`crate::dialogue`]): an NPC's (white) or a PC's
+    /// chosen option (green), with the voice file to play, if any.
+    FloatText { speaker: NetId, text: String, colour: crate::FloatColour, voice: Option<String> },
+    /// The player's conversation with `npc` now offers these options.
+    DialogueOptions { npc: NetId, options: Vec<String> },
+    /// The player's conversation is over.
+    DialogueEnded,
     /// A line a script shows in the player's message box ([`crate::script`], action 0x18).
     ScriptMessage { text: String },
     /// The player may rest: the sleep window opens, sleeping or waiting ([`crate::rest`]).

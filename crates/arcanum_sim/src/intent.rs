@@ -49,6 +49,13 @@ pub enum PlayerIntent {
     Rest { option: crate::RestOption },
     /// Stop resting.
     StopRest,
+    /// Talk to NPC `npc` once the PC is within [`crate::USE_RANGE`] of it ([`crate::dialogue`]).
+    /// `seq` is the move sent with it (a newer move cancels it).
+    Talk { npc: crate::NetId, seq: u32 },
+    /// Choose option `option` (0-based) of the conversation's options.
+    Choose { option: usize },
+    /// Leave the conversation.
+    EndTalk,
     /// The number of the last state sync the client applied. Sent unreliably, about twice a
     /// second; a client far behind gets a [`Resync`](crate::LedgerDelta::Resync).
     SyncAck { number: u32 },
