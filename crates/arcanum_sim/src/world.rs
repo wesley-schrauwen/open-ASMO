@@ -785,6 +785,71 @@ mod tests {
     }
 
     #[test]
+    fn a_shopkeeper_restocks_a_day_after_the_window_opened() {
+        use arcanum_formats::object::{Array, Object, ObjectId, TYPE_GOLD, TYPE_WEAPON, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, object_id_bytes, prototype_id};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let guid = |n: u8| ObjectId { kind: ObjectId::KIND_GUID, payload: [n; 16] };
+        // A kept dagger (item_flags 0x2000) at 3 and a plain sword at 5.
+        for (n, proto, loc, flags) in [(9u8, 6049u32, 3, 0x2000), (10, 6051, 5, 0)] {
+            let mut item = ObjectBuilder::new(TYPE_WEAPON).field("flags", Value::Int32(crate::OF_INVENTORY)).field("item_inv_location", Value::Int32(loc)).field("item_flags", Value::Int32(flags));
+            item.prototype = prototype_id(proto);
+            item.id = guid(n);
+            std::fs::write(folder.join(format!("G_I{n}.mob")), item.build()).unwrap();
+        }
+        let data = [guid(9), guid(10)].iter().flat_map(object_id_bytes).collect();
+        let shop = ObjectBuilder::new(TYPE_NPC)
+            .field("current_aid", Value::Int32(0x2800_2000))
+            .field("location", at(72, 70))
+            .field("critter_inventory_source", Value::Int32(1))
+            .field("critter_inventory_list_idx", Value::Array(Some(Array { elem_size: 24, id: 0, data, bitset: vec![] })));
+        std::fs::write(folder.join("G_0S.mob"), shop.build()).unwrap();
+        std::fs::create_dir_all(dir.path().join("Rules")).unwrap();
+        std::fs::write(dir.path().join("Rules/InvenSource.mes"), format!("{{1}}{{Shop: 5,5 100,{}}}\n", 6050 - crate::BASIC_TO_PROTOTYPE)).unwrap();
+        let proto = |number: u32, kind: u32| {
+            let mut o = Object::parse_instance(&ObjectBuilder::new(kind).field("item_weight", Value::Int32(1)).field("item_worth", Value::Int32(10)).build()).unwrap();
+            o.id = prototype_id(number);
+            o
+        };
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        let mut prototypes = Prototypes::default();
+        for (n, k) in [(crate::GOLD, TYPE_GOLD), (6049, TYPE_WEAPON), (6050, TYPE_WEAPON), (6051, TYPE_WEAPON)] {
+            prototypes.insert(proto(n, k));
+        }
+        sim.app.world_mut().resource_mut::<LoadedMap>().prototypes = Arc::new(prototypes);
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        let (npc, object, index) = {
+            let world = sim.app.world_mut();
+            let map = world.resource::<LoadedMap>();
+            let index = map.mobiles[&SectorId::new(1, 1)].iter().position(|o| o.object_type == TYPE_NPC && crate::object_location(o) == Some(TileLoc { x: 72, y: 70 })).unwrap() as u32;
+            let npc = *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == index).unwrap().0;
+            (npc, crate::ScriptObject::Mobile { sector: SectorId::new(1, 1), index }, index)
+        };
+        let open_window = |sim: &mut SimApp| {
+            sim.app.world_mut().resource_mut::<crate::barter::BarterStarts>().0.push((PlayerId(1), npc, object));
+            sim.update();
+            sim.take_deltas().into_iter().find_map(|(_, d)| match d { LedgerDelta::Barter { view } => Some(view), _ => None }).unwrap()
+        };
+        let goods = |view: &crate::barter::BarterView| { let mut p: Vec<u32> = view.stock.items.iter().map(|i| i.prototype).collect(); p.sort(); p };
+        let first = open_window(&mut sim);
+        assert_eq!(goods(&first), [6049, 6051], "no restock on the first opening");
+        let due = sim.app.world().resource::<WorldState>().0.as_ref().unwrap().sector_changes[&SectorId::new(1, 1)].npc_restock[&index];
+        let now = sim.app.world().resource::<crate::GameClock>().now;
+        assert!(due > now.plus_ms(43_199_999) && due <= now.plus_ms(86_400_000), "12 to 24 hours on");
+        sim.app.world_mut().resource_mut::<crate::GameClock>().jump(25 * 3_600_000);
+        let second = open_window(&mut sim);
+        assert_eq!(goods(&second), [6049, 6050, crate::GOLD], "the kept dagger stays, the sword goes, the source rolls");
+        assert_eq!(second.npc_gold, 5);
+    }
+
+    #[test]
     fn barter_opens_from_the_dialogue_and_trades_for_gold() {
         use arcanum_formats::object::{Array, Object, ObjectId, TYPE_GOLD, TYPE_WEAPON, Value};
         use arcanum_formats::test_util::{ObjectBuilder, object_id_bytes, prototype_id};

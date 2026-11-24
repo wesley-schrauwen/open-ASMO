@@ -20,6 +20,15 @@
 //!   (`npc_flags` 0x4000), or, below Expert haggle, one outside the kinds it trades in. A refused
 //!   item's price is 0.
 //!
+//! **Restocking** (0x4640c0 → 0x463c60 → 0x463e20): opening the window sets the NPC's restock
+//! for 12 to 24 game hours on (`SectorDelta::npc_restock`; each opening moves it). When it has
+//! come by the next opening, the NPC's items go but for what it wears, its gold and the kinds
+//! its map list flags `item_flags` 0x2000 (the original keeps 0x2000-flagged items; the flag's
+//! setter was not found, and carried items keep no flags of their own here), and its inventory
+//! source rolls again (`critter_inventory_source`, `Rules/InvenSource.mes`); then it wields its
+//! best. NPCs following someone do not restock. A substitute container rolls its own source
+//! once, when it is still pending (`container_flags` 0x200), as the loot window's do.
+//!
 //! Not built: the kinds an NPC trades in (0x464200 with the shop lists of 0x4bf5d0: every item
 //! passes); the "proto type 6 with 0x400" refusal (0x5045a0, not decoded); item condition (items
 //! carry no damage: always whole).
@@ -179,6 +188,8 @@ pub struct BarterRequests(pub Vec<(PlayerId, u32, crate::InventoryRequest)>);
 pub struct BarterView {
     pub npc: NetId,
     pub npc_male: bool,
+    /// The NPC's name (`mes/description.mes`), shown at (215, 102).
+    pub npc_name: String,
     pub stock: Inventory,
     /// The NPC's goods' prices, by location.
     pub buy: BTreeMap<i32, Offer>,
@@ -252,6 +263,11 @@ impl Deal<'_> {
     }
 }
 
+/// Whether an item at `location` is in the grid (not worn, not on the hotkeys).
+fn goods_grid(location: i32) -> bool {
+    !(crate::FIRST_SLOT..=crate::LAST_SLOT).contains(&location)
+}
+
 /// Fills `%d`s in order.
 pub fn with_numbers(text: &str, numbers: &[i32]) -> String {
     let mut out = String::new();
@@ -278,9 +294,61 @@ pub struct BarterWorld<'w> {
     reputations: ResMut<'w, crate::ReputationTable>,
     generic: ResMut<'w, crate::GenericLines>,
     rng: ResMut<'w, crate::HostRng>,
+    clock: Res<'w, crate::GameClock>,
 }
 
+/// The restock delay's bounds, in game milliseconds (0x4640c0: 43,200,000 to 86,400,000).
+pub const RESTOCK_MS: (i32, i32) = (43_200_000, 86_400_000);
+
 impl BarterWorld<'_> {
+    /// Rolls the goods that are due (see the module docs) and sets the next restock.
+    fn restock(&mut self, sector: SectorId, index: u32, stock: Stock) {
+        let vfs = self.vfs.as_ref().map(|v| v.0.clone());
+        let vfs_guard = vfs.as_ref().and_then(|v| v.read().ok());
+        let vfs = vfs_guard.as_deref();
+        let (prototypes, art) = (self.map.prototypes.clone(), self.map.art.clone());
+        let info = crate::item_info(&prototypes, |id| crate::world::art_size(vfs, art.as_deref(), id));
+        let mut rng = crate::Rng(self.rng.next_u64() as u32);
+        let now = self.clock.now;
+        match stock {
+            Stock::Container(id) => {
+                let GroundItemId::Container { sector: cs, index: ci } = id else { return };
+                let rolled = self.map.changes.get(&cs).is_some_and(|c| c.containers.contains_key(&ci));
+                let Some(object) = self.map.container_object(id) else { return };
+                let pending = self.map.prototypes.int(object, "container_flags").unwrap_or(0) & crate::OCOF_INVEN_SPAWN_PENDING != 0;
+                let source = self.map.prototypes.int(object, "container_inventory_source").and_then(|s| u32::try_from(s).ok()).filter(|&s| s != 0);
+                if rolled || !pending {
+                    return;
+                }
+                let (Some(source), Some(mut pile)) = (source.and_then(|s| crate::inventory_source(vfs?, s)), self.map.pile(id)) else { return };
+                crate::roll_source(&mut pile.inventory, &source, &mut rng, &info);
+                self.map.set_pile(id, Some(pile));
+                crate::ground::save_change(&mut self.world, &self.map, cs);
+            }
+            Stock::Npc { .. } => {
+                let Some(npc) = self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)) else { return };
+                if matches!(npc.field("npc_leader"), Some(Value::ObjectRef(Some(_)))) {
+                    return;
+                }
+                let Some(source) = self.map.prototypes.int(npc, "critter_inventory_source").and_then(|s| u32::try_from(s).ok()).filter(|&s| s != 0) else { return };
+                let kept = self.map.kept_kinds(npc);
+                let due = self.map.changes.get(&sector).and_then(|c| c.npc_restock.get(&index)).copied();
+                if due.is_some_and(|d| d <= now)
+                    && let Some(source) = vfs.and_then(|v| crate::inventory_source(v, source))
+                    && let Some(mut goods) = self.map.npc_inventory(sector, index)
+                {
+                    goods.items.retain(|i| !goods_grid(i.location) || i.prototype == crate::GOLD || kept.contains(&i.prototype));
+                    crate::roll_source(&mut goods, &source, &mut rng, &info);
+                    goods.wield_best(&info);
+                    self.map.set_npc_inventory(sector, index, goods);
+                }
+                let delay = self.rng.range(RESTOCK_MS.0, RESTOCK_MS.1) as u64;
+                self.map.changes.entry(sector).or_default().npc_restock.insert(index, now.plus_ms(delay));
+                crate::ground::save_change(&mut self.world, &self.map, sector);
+            }
+        }
+    }
+
     /// The deal for `player`'s PC with NPC `index` of `sector`, and the NPC's details.
     fn deal_parts(&mut self, player: PlayerId, sheet: &arcanum_rules::CharacterSheet, sector: SectorId, index: u32) -> Option<(Trader, i32, u8, crate::NpcInfo)> {
         let vfs_guard = self.vfs.as_ref().and_then(|v| v.0.read().ok());
@@ -351,7 +419,7 @@ impl BarterWorld<'_> {
             };
             sell.insert(item.location, Offer { price, line: line.unwrap_or_default() });
         }
-        Some(BarterView { npc: open.npc, npc_male: npc.male, stock, buy, sell, npc_gold })
+        Some(BarterView { npc: open.npc, npc_male: npc.male, npc_name: npc.name.clone(), stock, buy, sell, npc_gold })
     }
 }
 
@@ -363,6 +431,7 @@ pub fn open_barters(mut commands: Commands, mut starts: ResMut<BarterStarts>, mu
         let Some((entity, _, _, sheet, inventory, _)) = pcs.iter().find(|pc| pc.2.0 == player) else { continue };
         let stock = match w.map.substitute(sector, index) {
             Some(container) => {
+                w.restock(sector, index, Stock::Container(container));
                 if let (Some(mut goods), Some(mut own)) = (w.map.stock(Stock::Container(container)), w.map.npc_inventory(sector, index)) {
                     let gold = goods.gold();
                     if gold > 0 {
@@ -378,6 +447,9 @@ pub fn open_barters(mut commands: Commands, mut starts: ResMut<BarterStarts>, mu
             }
             None => Stock::Npc { sector, index },
         };
+        if stock == (Stock::Npc { sector, index }) {
+            w.restock(sector, index, stock);
+        }
         let open = BarterOpen { npc, sector, index, stock };
         commands.entity(entity).insert(open);
         if let Some(view) = w.view(player, &sheet.0, inventory, &open) {

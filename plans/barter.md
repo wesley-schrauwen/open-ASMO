@@ -82,13 +82,20 @@ value and the line ranges were checked in the disassembly.
      saved); substitute containers and their gold.
    - `Buy` / `Sell` / `CloseBarter` inventory requests; each view (`LedgerDelta::Barter`) carries
      the goods, each item's price and line; refusals come as `BarterLine`.
-   - **Not built:** restocking; trade kinds (every item passes); the 0x5045a0 refusal; the
+   - **Not built:** trade kinds (every item passes); the 0x5045a0 refusal; the
      "normally will not" prefixes; the reaction change after a trade; item condition (items carry
      no damage) and per-item flags (identified, stolen: the prototype's are used); followers'
      free exchange.
 2. **The window** (`inventory_screen.rs`). Built; not checked by eye.
+   - Later (`feat/barter-restock`): the NPC's name at (215, 102); the window closes when the
+     party goes to another map (and the loot window too).
    - `Barter.ART`, the NPC's grid at (8, 168) with 7 rows (gold hidden), scrolled by the wheel;
      dragging or right-clicking across buys or sells; the text line shows the hovered (or held)
      item's line, else the last refusal. Closing sends `CloseBarter`.
    - **Not built:** the NPC's portrait and name; the paperdoll toggles and the NPC's paperdoll
      (its worn items are not shown); the follower variant; the gamble box.
+3. **Restocking** (built, `feat/barter-restock`): opening sets `SectorDelta::npc_restock` to
+   12-24 game hours on; an opening after it purges the grid but for gold and the kinds the map
+   list flags `item_flags` 0x2000 (104 placed items carry it; no prototype does; carried items
+   keep no flags here, so it goes by kind), rolls `critter_inventory_source`, and wields the
+   best. A substitute container rolls its own pending source once. Followers do not restock.
