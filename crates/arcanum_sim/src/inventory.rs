@@ -129,6 +129,8 @@ pub struct ItemInfo {
     pub armor_flags: i32,
     /// `item_flags` (0x20: cannot be dropped).
     pub item_flags: i32,
+    /// `item_worth` (barter, [`crate::barter`]).
+    pub worth: i32,
 }
 
 /// Cells for an art of `width` x `height` pixels: `((n - 1) >> 5) + 1` each way.
@@ -154,6 +156,7 @@ impl ItemInfo {
             weapon_flags: int("weapon_flags"),
             armor_flags: int("armor_flags"),
             item_flags: int("item_flags"),
+            worth: int("item_worth"),
         }
     }
 
@@ -282,12 +285,24 @@ pub enum InventoryRequest {
     HotkeySpell { spell: usize, to: i32 },
     /// The loot window closed: an empty pile goes, one with a single item leaves it bare.
     ClosePile,
+    /// Buy the item at the barter NPC's `from` into the PC's `to`, or where the insert puts it
+    /// ([`crate::barter`]).
+    Buy { from: i32, to: Option<i32> },
+    /// Sell the item at the PC's `from` into the NPC's `to`, or where the insert puts it.
+    Sell { from: i32, to: Option<i32> },
+    /// The barter window closed.
+    CloseBarter,
 }
 
 impl InventoryRequest {
     /// Whether it involves the open pile (the host's alone to apply: the client waits).
     pub fn is_loot(&self) -> bool {
         matches!(self, Self::Take { .. } | Self::Put { .. } | Self::TakeAll | Self::ClosePile)
+    }
+
+    /// Whether it is a trade with the barter NPC (the host's alone to apply).
+    pub fn is_barter(&self) -> bool {
+        matches!(self, Self::Buy { .. } | Self::Sell { .. } | Self::CloseBarter)
     }
 }
 
@@ -301,6 +316,26 @@ impl From<InsertRefusal> for ItemRefusal {
 }
 
 impl Inventory {
+    /// The gold carried.
+    pub fn gold(&self) -> i32 {
+        self.items.iter().filter(|i| i.prototype == crate::GOLD).map(|i| i.quantity).sum()
+    }
+
+    /// Gives (`n > 0`) or takes (`n < 0`) gold; one with no gold yet gets a stack next to its
+    /// first item (gold takes no grid room here; builder's call). Whether it changed.
+    pub fn change_gold(&mut self, n: i32) -> bool {
+        if n == 0 {
+            return false;
+        }
+        match self.items.iter_mut().find(|i| i.prototype == crate::GOLD) {
+            Some(stack) => stack.quantity = (stack.quantity + n).max(0),
+            None if n > 0 => self.items.insert(0, CarriedItem { prototype: crate::GOLD, location: 0, quantity: n, keys: Vec::new() }),
+            None => return false,
+        }
+        self.items.retain(|i| i.prototype != crate::GOLD || i.quantity > 0);
+        true
+    }
+
     /// Removes the item at `from` and returns it.
     pub fn take_out(&self, from: i32) -> Option<(Inventory, CarriedItem)> {
         let index = self.items.iter().position(|i| i.location == from)?;
@@ -356,6 +391,7 @@ impl Inventory {
             InventoryRequest::Move { from, to } => self.move_item(from, to, wearer, info),
             InventoryRequest::HotkeySpell { spell, to } => self.put_spell(spell, to, info),
             InventoryRequest::Take { .. } | InventoryRequest::Put { .. } | InventoryRequest::TakeAll | InventoryRequest::ClosePile => Err(ItemRefusal::Silent),
+            InventoryRequest::Buy { .. } | InventoryRequest::Sell { .. } | InventoryRequest::CloseBarter => Err(ItemRefusal::Silent),
             InventoryRequest::Drop { from } => {
                 let index = self.items.iter().position(|i| i.location == from).ok_or(ItemRefusal::Silent)?;
                 if info(self.items[index].prototype).is_some_and(|i| i.item_flags & ITEM_NO_DROP != 0) {
@@ -390,6 +426,7 @@ pub fn apply_inventory_requests(
     rules: Res<crate::SimRules>,
     mut commands: Commands,
     mut pcs: Query<OwnerQuery>,
+    mut barters: ResMut<crate::barter::BarterRequests>,
 ) {
     if requests.0.is_empty() {
         return;
@@ -400,6 +437,10 @@ pub fn apply_inventory_requests(
     let art = map.art.clone();
     let info = item_info(&prototypes, |id| crate::world::art_size(vfs, art.as_deref(), id));
     for (player, seq, request) in requests.0.drain(..) {
+        if request.is_barter() {
+            barters.0.push((player, seq, request));
+            continue;
+        }
         let open_elsewhere: Vec<(crate::PlayerId, crate::GroundItemId)> = pcs.iter().filter_map(|(_, _, p, .., l)| Some((p.0, l?.0))).collect();
         let Some((entity, &net_id, _, sheet, position, mut inventory, open)) = pcs.iter_mut().find(|(_, _, p, ..)| p.0 == player) else { continue };
         acks.0.insert(player, seq);
@@ -743,7 +784,7 @@ mod tests {
     use super::*;
 
     fn info(kind: u32, cells: (i32, i32), weight: i32) -> ItemInfo {
-        ItemInfo { kind, inventory_art: 0, cells, weight, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 7, item_flags: 0 }
+        ItemInfo { kind, inventory_art: 0, cells, weight, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 7, item_flags: 0, worth: 0 }
     }
 
     fn table(n: u32) -> Option<ItemInfo> {

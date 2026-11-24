@@ -53,7 +53,10 @@
 //! - **Barks** (0x5681c0 → 0x4132a0): when the NPC's dialogue script runs the default (or it has
 //!   none), the NPC says the greeting over its head, and there is no conversation.
 //!
-//! Not built: the other prefixes (`B: T: H: D: X: R: P: L: Q: U: Z:`; left out and reported); the
+//! - **`B:`** (barter, 300-399): the talk ends and barter opens ([`crate::barter`]); its result is
+//!   not run.
+//!
+//! Not built: the other prefixes (`T: H: D: X: R: P: L: Q: U: Z:`; left out and reported); the
 //! `G:` special cases and the reputation greetings (0x4c1f80, one in five); the NPC's can-talk
 //! checks (0x4ad800) and hostility at choice time (0x4ae120); alignment, aptitude, training and the
 //! rest of the tests and results; turning to face each other.
@@ -175,6 +178,14 @@ pub enum FloatColour {
     Green,
 }
 
+/// An NPC's reaction toward a PC (0x4c0d00): the PC's stored value for it (`npc_key`), else its
+/// base, plus the modifier for the PC's looks, race and reputations.
+pub fn reaction_to(pc: &PcScriptState, npc_key: &str, npc: &crate::NpcReaction, rules: &RulesData, sheet: &CharacterSheet, reputations: &crate::ReputationEffects) -> i32 {
+    let stored = pc.reactions.get(npc_key).copied().unwrap_or(npc.base);
+    let reputation = reputations.on(pc.reputations.iter().copied(), npc.origin, npc.faction);
+    stored + npc.modifier(rules.derived(sheet).reaction, sheet.race, reputation)
+}
+
 /// `n` as a threshold: `n >= 0` at least `n`, `n < 0` at most `-n`.
 pub fn passes(value: i32, n: i32) -> bool {
     if n < 0 { value <= -n } else { value >= n }
@@ -202,7 +213,7 @@ pub struct Talk<'a> {
 
 impl Talk<'_> {
     pub fn gold(&self) -> i32 {
-        self.inventory.items.iter().filter(|i| i.prototype == crate::GOLD).map(|i| i.quantity).sum()
+        self.inventory.gold()
     }
 
     fn has(&self, basic: i32) -> bool {
@@ -213,17 +224,9 @@ impl Talk<'_> {
     /// Gives (`n > 0`) or takes (`n < 0`) gold; a PC with no gold yet gets a stack next to
     /// its first item (gold takes no grid room here; builder's call).
     fn change_gold(&mut self, n: i32) {
-        if n == 0 {
-            return;
+        if self.inventory.change_gold(n) {
+            self.gold_changed = true;
         }
-        let stack = self.inventory.items.iter_mut().find(|i| i.prototype == crate::GOLD);
-        match stack {
-            Some(stack) => stack.quantity = (stack.quantity + n).max(0),
-            None if n > 0 => self.inventory.items.insert(0, crate::CarriedItem { prototype: crate::GOLD, location: 0, quantity: n, keys: Vec::new() }),
-            None => return,
-        }
-        self.inventory.items.retain(|i| i.prototype != crate::GOLD || i.quantity > 0);
-        self.gold_changed = true;
     }
 
     fn stat(&self, index: usize) -> i32 {
@@ -232,17 +235,13 @@ impl Talk<'_> {
 
     /// The NPC's reaction toward the PC (0x4c0d00): stored, else its base, plus the modifier.
     pub fn reaction(&self) -> i32 {
-        self.stored_reaction() + self.reaction_modifier()
+        reaction_to(self.pc, &self.npc_key, &self.npc_reaction, self.rules, self.sheet, self.reputations)
     }
 
     fn stored_reaction(&self) -> i32 {
         self.pc.reactions.get(&self.npc_key).copied().unwrap_or(self.npc_reaction.base)
     }
 
-    fn reaction_modifier(&self) -> i32 {
-        let reputations = self.reputations.on(self.pc.reputations.iter().copied(), self.npc_reaction.origin, self.npc_reaction.faction);
-        self.npc_reaction.modifier(self.rules.derived(self.sheet).reaction, self.sheet.race, reputations)
-    }
 
     /// Changes the reaction (dialogue `re`, 0x4c0de0): adds, or brings it to, at least or at most
     /// `n`; the change is stored for this PC.
@@ -567,7 +566,7 @@ pub fn run_conversations(
     mut reports: ResMut<DialogueReports>,
     (session, rules, vfs, acks): (Res<Session>, Res<SimRules>, Option<Res<crate::SimVfs>>, Res<crate::InventoryAcks>),
     (mut rng, mut reputations): (ResMut<crate::HostRng>, ResMut<ReputationTable>),
-    mut outbox: ResMut<Outbox>,
+    (mut outbox, mut barters): (ResMut<Outbox>, ResMut<crate::barter::BarterStarts>),
     mut pcs: Query<TalkerQuery>,
     npcs: Query<(&NetId, &NpcSource)>,
 ) {
@@ -664,6 +663,10 @@ pub fn run_conversations(
                 outbox.0.push((player, LedgerDelta::DialogueOptions { npc: npc_net, options: texts }));
             }
             Shown::End => ended = true,
+            Shown::Barter => {
+                ended = true;
+                barters.0.push((player, npc_net, npc_object));
+            }
             Shown::Stay => {}
         }
         if ended {
@@ -702,6 +705,8 @@ pub enum Shown {
     End,
     /// Nothing changes (a choice that is not there, a bark).
     Stay,
+    /// The talk ends and barter opens (state 3, `0x572240(pc, npc, 1)`).
+    Barter,
 }
 
 /// What the generic lines need of the NPC.
@@ -718,7 +723,8 @@ pub struct NpcInfo {
     pub overrides: Option<(u32, std::sync::Arc<DialogFile>)>,
 }
 
-fn met_key(npc: ScriptObject) -> String {
+/// The NPC's key in a PC's stored reactions and NPCs met.
+pub fn met_key(npc: ScriptObject) -> String {
     match npc {
         ScriptObject::Mobile { sector, index } => format!("{}:{}", sector.0, index),
         ScriptObject::Map(id) => format!("map {}:{}", id.sector.0, id.index),
@@ -727,7 +733,7 @@ fn met_key(npc: ScriptObject) -> String {
 }
 
 /// The NPC's name (`mes/description.mes` by its `description`) and gender (stat 26, 1 male).
-fn npc_details(map: &LoadedMap, npc: ScriptObject, generic: &mut GenericLines, vfs: Option<&arcanum_vfs::Vfs>) -> NpcInfo {
+pub fn npc_details(map: &LoadedMap, npc: ScriptObject, generic: &mut GenericLines, vfs: Option<&arcanum_vfs::Vfs>) -> NpcInfo {
     let object = match npc {
         ScriptObject::Mobile { sector, index } => map.mobiles.get(&sector).and_then(|m| m.get(index as usize)),
         ScriptObject::Map(id) => map.map_object(id),
@@ -761,11 +767,68 @@ pub struct Say<'a> {
 
 /// A generic NPC block's kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Block {
+pub enum Block {
     /// `gd_cls`, by the NPC's class (0x418480; override `base / 1000 + 9999`).
     Class,
     /// `gd_rce`, by the PC's race (0x4185f0; override `base / 1000 + 10999`).
     Race,
+    /// `gd_npc`, 100 lines (0x418780; override `base / 100 + 11999`).
+    Npc,
+}
+
+/// Who says a generic NPC line to whom.
+pub struct Speaker<'a> {
+    pub npc: &'a NpcInfo,
+    pub pc_name: &'a str,
+    pub pc_female: bool,
+    pub pc_race: u8,
+}
+
+/// A random line of `lo..=hi` of `path`, names put in (0x4d4550, 0x4cef00, 0x4d43a0). A pick
+/// that lands in a gap gives nothing; the original shows "Error! Missing line %d in %s".
+#[allow(clippy::too_many_arguments)]
+pub fn pick_line(generic: &mut GenericLines, vfs: Option<&arcanum_vfs::Vfs>, rng: &mut crate::HostRng, path: &str, lo: u32, hi: u32, pc_name: &str, npc_name: &str) -> Option<String> {
+    let count = generic.file(vfs, path)?.messages.keys().filter(|k| (lo..=hi).contains(k)).count();
+    if count == 0 {
+        return None;
+    }
+    let id = lo + rng.range(0, count as i32 - 1) as u32;
+    let text = generic.file(vfs, path)?.get(id)?.to_string();
+    Some(with_names(&text, pc_name, npc_name))
+}
+
+/// Line `number` of the NPC's override dialogue, with its voice (0x418870).
+fn override_line(who: &Speaker, number: i32) -> Option<(String, Option<String>)> {
+    let (dialog, file) = who.npc.overrides.as_ref()?;
+    let entry = file.lines.get(&number)?;
+    let text = if who.pc_female && !entry.female_text.is_empty() { &entry.female_text } else { &entry.text };
+    Some((with_names(text, who.pc_name, &who.npc.name), voice_path(*dialog, entry.voice(), who.pc_female)))
+}
+
+/// A generic NPC line of `block` at `base`: the override first, else a random one of the block.
+pub fn npc_line(generic: &mut GenericLines, vfs: Option<&arcanum_vfs::Vfs>, rng: &mut crate::HostRng, who: &Speaker, block: Block, base: u32) -> Option<(String, Option<String>)> {
+    let number = match block {
+        Block::Class => base as i32 / 1000 + 9999,
+        Block::Race => base as i32 / 1000 + 10999,
+        Block::Npc => base as i32 / 100 + 11999,
+    };
+    if let Some(said) = override_line(who, number) {
+        return Some(said);
+    }
+    let npc = who.npc;
+    let dumb = if npc.dumb { "dumb_" } else { "" };
+    let pair = genders(npc.male, !who.pc_female);
+    let (path, offset, len) = match block {
+        Block::Class => (format!("mes/gd_cls_{dumb}{pair}.mes"), if npc.dumb { 0 } else { npc.class.max(0) as u32 * 50 }, 50),
+        Block::Race => {
+            let pc = i32::from(who.pc_race);
+            let index = if pc == npc.reaction.race { 0 } else { pc as u32 + 1 };
+            (format!("mes/gd_rce_{dumb}{pair}.mes"), if npc.dumb { 0 } else { index * 50 }, 50)
+        }
+        Block::Npc => (format!("mes/gd_npc_{pair}.mes"), 0, 100),
+    };
+    let lo = base + offset;
+    Some((pick_line(generic, vfs, rng, &path, lo, lo + len - 1, who.pc_name, &npc.name)?, None))
 }
 
 impl Say<'_> {
@@ -777,57 +840,28 @@ impl Say<'_> {
         if talk.female() && !entry.female_text.is_empty() { &entry.female_text } else { &entry.text }
     }
 
-    /// A random line of `lo..=hi` of `path`, names put in (0x4d4550, 0x4cef00, 0x4d43a0). A pick
-    /// that lands in a gap gives nothing; the original shows "Error! Missing line %d in %s".
     fn pick(&mut self, path: &str, lo: u32, hi: u32) -> Option<String> {
-        let count = self.generic.file(self.vfs, path)?.messages.keys().filter(|k| (lo..=hi).contains(k)).count();
-        if count == 0 {
-            return None;
-        }
-        let id = lo + self.rng.range(0, count as i32 - 1) as u32;
-        let text = self.generic.file(self.vfs, path)?.get(id)?.to_string();
-        Some(with_names(&text, self.pc_name, &self.npc.name))
+        pick_line(self.generic, self.vfs, self.rng, path, lo, hi, self.pc_name, &self.npc.name)
     }
 
-    /// Line `number` of the NPC's override dialogue, with its voice (0x418870).
-    fn override_line(&self, number: i32, talk: &Talk) -> Option<(String, Option<String>)> {
-        let (dialog, file) = self.npc.overrides.as_ref()?;
-        let entry = file.lines.get(&number)?;
-        let text = with_names(Self::line_text(entry, talk), self.pc_name, &self.npc.name);
-        Some((text, voice_path(*dialog, entry.voice(), talk.female())))
+    fn speaker<'s>(&'s self, talk: &Talk) -> Speaker<'s> {
+        Speaker { npc: self.npc, pc_name: self.pc_name, pc_female: talk.female(), pc_race: talk.sheet.race }
     }
 
     /// The NPC says a generic line of `block` at `base` over its head.
     fn npc_says(&mut self, block: Block, base: u32, talk: &Talk) {
-        if let Some((text, voice)) = self.npc_line(block, base, talk) {
+        let (npc, pc_name) = (self.npc, self.pc_name);
+        let who = Speaker { npc, pc_name, pc_female: talk.female(), pc_race: talk.sheet.race };
+        if let Some((text, voice)) = npc_line(self.generic, self.vfs, self.rng, &who, block, base) {
             self.float(self.npc_net, text, FloatColour::White, voice);
         }
-    }
-
-    fn npc_line(&mut self, block: Block, base: u32, talk: &Talk) -> Option<(String, Option<String>)> {
-        let number = base as i32 / 1000 + if block == Block::Class { 9999 } else { 10999 };
-        if let Some(said) = self.override_line(number, talk) {
-            return Some(said);
-        }
-        let dumb = if self.npc.dumb { "dumb_" } else { "" };
-        let pair = genders(self.npc.male, !talk.female());
-        let (path, offset) = match block {
-            Block::Class => (format!("mes/gd_cls_{dumb}{pair}.mes"), self.npc.class.max(0) as u32 * 50),
-            Block::Race => {
-                let pc = i32::from(talk.sheet.race);
-                let index = if pc == self.npc.reaction.race { 0 } else { pc as u32 + 1 };
-                (format!("mes/gd_rce_{dumb}{pair}.mes"), index * 50)
-            }
-        };
-        let lo = base + if self.npc.dumb { 0 } else { offset };
-        Some((self.pick(&path, lo, lo + 49)?, None))
     }
 
     /// The NPC's answer to the story question (0x41a440): `gd_sto`, its race + 100 × story state;
     /// override `10000 + state`.
     fn story_line(&mut self, talk: &Talk) -> Option<(String, Option<String>)> {
         let state = talk.globals.story_state.max(0);
-        if let Some(said) = self.override_line(10000 + state, talk) {
+        if let Some(said) = override_line(&self.speaker(talk), 10000 + state) {
             return Some(said);
         }
         let id = (self.npc.reaction.race.max(0) + state * 100) as u32;
@@ -909,6 +943,8 @@ impl Say<'_> {
         let text = text.trim();
         match prefix(text) {
             None => Some(with_names(text, self.pc_name, &self.npc.name)),
+            // Barter: 1600-1699 with a follower (none yet).
+            Some('B') => self.pc_line(300, 399, talk),
             Some('A') => self.pc_class_line(1000, talk),
             Some('I') if text.len() == 2 => self.pc_class_line(3000, talk),
             Some('C') => {
@@ -926,6 +962,10 @@ impl Say<'_> {
     /// (0x413130, 0x414810).
     fn chosen(&mut self, file: &DialogFile, line: i32, talk: &mut Talk, depth: usize) -> Shown {
         let Some(entry) = file.lines.get(&line).filter(|e| !e.is_npc()) else { return Shown::End };
+        // Barter (action 3): the result is not run; the talk ends and the window opens.
+        if prefix(entry.text.trim()) == Some('B') {
+            return Shown::Barter;
+        }
         if let Some(closing) = talk.run_result(&entry.result) {
             return self.show_closing(file, closing, talk);
         }

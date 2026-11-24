@@ -101,11 +101,15 @@ pub struct SectorDelta {
     /// The same for the sector's mobile objects.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub mobile_scripts: BTreeMap<u32, BTreeMap<u32, crate::Attachment>>,
+    /// NPCs' inventories once bartered with, by index in the sector's mobile objects; the others
+    /// hold the map's stored list ([`crate::barter`]).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub npc_inventories: BTreeMap<u32, crate::Inventory>,
 }
 
 impl SectorDelta {
     pub fn is_empty(&self) -> bool {
-        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty()
+        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty() && self.npc_inventories.is_empty()
     }
 }
 

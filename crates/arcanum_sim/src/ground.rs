@@ -133,17 +133,43 @@ impl LoadedMap {
     /// `item_inv_location`.
     pub fn stored_contents(&self, container: &Object) -> Inventory {
         let mut contents = Inventory::container();
-        let ids = match container.field("container_inventory_list_idx") {
+        contents.items = self.listed_items(container, "container_inventory_list_idx");
+        contents
+    }
+
+    /// A critter's stored list (`critter_inventory_list_idx`), each item at its stored
+    /// `item_inv_location` (worn ones in their slots, 1000-1008).
+    pub fn critter_contents(&self, critter: &Object) -> Inventory {
+        Inventory { items: self.listed_items(critter, "critter_inventory_list_idx"), ..Inventory::default() }
+    }
+
+    fn listed_items(&self, owner: &Object, field: &str) -> Vec<crate::CarriedItem> {
+        let ids = match owner.field(field) {
             Some(Value::Array(Some(list))) => list.object_ids().unwrap_or_default(),
             _ => Vec::new(),
         };
+        let mut items = Vec::new();
         for id in ids {
             let Some(item) = self.stored_items.get(&id) else { continue };
             let Some(prototype) = item.prototype.prototype() else { continue };
             let location = self.prototypes.int(item, "item_inv_location").unwrap_or(0);
-            contents.items.push(crate::CarriedItem { prototype, location, quantity: self.quantity_of(item), keys: crate::object_keys(item, &self.prototypes) });
+            items.push(crate::CarriedItem { prototype, location, quantity: self.quantity_of(item), keys: crate::object_keys(item, &self.prototypes) });
         }
-        contents
+        items
+    }
+
+    /// NPC `index` of `sector`'s mobile objects' inventory: as changed (bartered), else as stored.
+    pub fn npc_inventory(&self, sector: SectorId, index: u32) -> Option<Inventory> {
+        if let Some(changed) = self.changes.get(&sector).and_then(|c| c.npc_inventories.get(&index)) {
+            return Some(changed.clone());
+        }
+        let npc = self.mobiles.get(&sector)?.get(index as usize)?;
+        Some(self.critter_contents(npc))
+    }
+
+    /// Keeps NPC `index`'s changed inventory (saved with the sector).
+    pub fn set_npc_inventory(&mut self, sector: SectorId, index: u32, inventory: Inventory) {
+        self.changes.entry(sector).or_default().npc_inventories.insert(index, inventory);
     }
 
     /// Sets pile `id`'s contents, or removes it; a container keeps its changed contents.
