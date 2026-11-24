@@ -56,7 +56,10 @@
 //! - **`B:`** (barter, 300-399): the talk ends and barter opens ([`crate::barter`]); its result is
 //!   not run.
 //!
-//! Not built: the other prefixes (`T: H: D: X: R: P: L: Q: U: Z:`; left out and reported); the
+//! - **Services** (`plans/dialogue.md`): `R:` rumours, `T:` training to Apprentice, `Q:` quest
+//!   lines, and the price dialogue they share.
+//!
+//! Not built: the other prefixes (`H: D: X: P: L: U: Z:`; left out and reported); the
 //! `G:` special cases and the reputation greetings (0x4c1f80, one in five); the NPC's can-talk
 //! checks (0x4ad800) and hostility at choice time (0x4ae120); alignment, aptitude, training and the
 //! rest of the tests and results; turning to face each other.
@@ -132,6 +135,71 @@ pub enum OptionAct {
     Line(i32),
     /// A generic option: this response only (0 ends).
     Respond(i32),
+    /// A skill of a `T:` list (action 6, 0x418de0); `ret` is the `T:` option's response.
+    Train { skill: usize, ret: i32 },
+    /// Accepting a price (action 4, 0x418b30): pay, then the service.
+    Pay { price: i32, service: Service, ret: i32 },
+}
+
+/// What an NPC is paid for (the price dialogue's stored action).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Service {
+    /// Telling rumour `n` (action 9, 0x4190e0).
+    Rumour(u32),
+    /// Training skill `k` to Apprentice (action 7, 0x418f30).
+    Train(usize),
+}
+
+/// The Apprentice rank: the only one an NPC trains (0x418f30 grants rank 1).
+pub const APPRENTICE: u8 = 1;
+/// The skill level each training rank needs (table 0x5b6f44).
+pub const RANK_LEVELS: [i32; 4] = [0, 1, 9, 18];
+/// What training costs before the reaction factor (0x418de0).
+pub const TRAINING_PRICE: i32 = 100;
+/// The quest line table (0x4c4860).
+pub const GAME_QUEST: &str = "Rules/gamequest.mes";
+
+/// A list of numbers and ranges, comma separated (0x417f90): `9, 11` or `1040-1049`; at most 100.
+pub fn number_list(text: &str) -> Vec<i32> {
+    use arcanum_formats::dialog::atoi;
+    let mut out = Vec::new();
+    for item in text.split(',') {
+        let item = item.trim();
+        if item.is_empty() {
+            continue;
+        }
+        match item[1..].find('-').map(|i| i + 1) {
+            Some(dash) => out.extend(atoi(item[..dash].trim().as_bytes())..=atoi(item[dash + 1..].trim().as_bytes())),
+            None => out.push(atoi(item.as_bytes())),
+        }
+        if out.len() >= 100 {
+            out.truncate(100);
+            break;
+        }
+    }
+    out
+}
+
+/// A service option's arguments (the text after the prefix, 0x416c10): `$price, list`, brackets
+/// allowed. The price is 0 without a `$`.
+pub fn priced_list(args: &str) -> (i32, Vec<i32>) {
+    let args = args.trim().trim_start_matches('(').trim_end_matches(')').trim();
+    match args.strip_prefix('$') {
+        Some(rest) => {
+            let (price, list) = rest.split_once(',').unwrap_or((rest, ""));
+            (arcanum_formats::dialog::atoi(price.trim().as_bytes()), number_list(list))
+        }
+        None => (0, number_list(args)),
+    }
+}
+
+/// The option line quest `n`'s row of [`GAME_QUEST`] gives for a quest `state` (0-6), PC
+/// Intelligence and NPC reaction (0x4c4c00): tokens 16-22 below Intelligence 5, 9-15 below
+/// reaction 20, else 2-8; -1 is none.
+pub fn quest_option(row: &str, state: i32, intelligence: i32, reaction: i32) -> Option<i32> {
+    let tokens: Vec<i32> = row.split_whitespace().map(|t| arcanum_formats::dialog::atoi(t.as_bytes())).collect();
+    let set = if intelligence < 5 { 16 } else if reaction < 20 { 9 } else { 2 };
+    tokens.get(set + state.clamp(0, 6) as usize).copied().filter(|&l| l != -1)
 }
 
 /// A walk to an NPC to talk to it; `seq` is the move it came with.
@@ -209,6 +277,8 @@ pub struct Talk<'a> {
     pub gold_changed: bool,
     /// Opcodes not built yet that were met.
     pub unbuilt: Vec<String>,
+    /// Skills trained to Apprentice this step.
+    pub trained: Vec<usize>,
 }
 
 impl Talk<'_> {
@@ -507,7 +577,7 @@ pub fn voice_path(dialog: u32, voice: i32, female: bool) -> Option<String> {
 }
 
 type WalkerQuery<'a> = (Entity, &'a PlayerControlled, &'a Position, Option<&'a PendingTalk>, Has<crate::Walking>, Has<Conversation>);
-type TalkerQuery<'a> = (Entity, &'a NetId, &'a PlayerControlled, &'a Position, &'a Sheet, &'a mut Inventory, Option<&'a mut Conversation>, Option<&'a PendingTalk>, Has<crate::Walking>);
+type TalkerQuery<'a> = (Entity, &'a NetId, &'a PlayerControlled, &'a Position, &'a mut Sheet, &'a mut Inventory, Option<&'a mut Conversation>, Option<&'a PendingTalk>, Has<crate::Walking>);
 
 /// Walks PCs to the NPCs they want to talk to and runs those NPCs' dialogue scripts.
 #[allow(clippy::too_many_arguments)]
@@ -584,7 +654,7 @@ pub fn run_conversations(
     steps.extend(requests.end.drain(..).map(|p| (p, Step::End)));
     steps.extend(requests.barks.drain(..).map(|(p, npc)| (p, Step::Bark(npc))));
     for (player, step) in steps {
-        let Some((entity, &pc_net, _, _, sheet, mut inventory, conversation, ..)) = pcs.iter_mut().find(|pc| pc.2.0 == player) else { continue };
+        let Some((entity, &pc_net, _, _, mut sheet, mut inventory, conversation, ..)) = pcs.iter_mut().find(|pc| pc.2.0 == player) else { continue };
         let Some(save) = world.0.as_mut() else { continue };
         let Some(saved) = save.players.get_mut(&player) else { continue };
         let (npc_object, dialog, current) = match (&step, conversation.as_deref()) {
@@ -628,6 +698,7 @@ pub fn run_conversations(
             reputations,
             gold_changed: false,
             unbuilt: Vec::new(),
+            trained: Vec::new(),
         };
         let mut say = Say { npc_net, dialog, pc_name: &sheet.0.name, npc: &npc_info, generic: &mut generic, vfs, rng: &mut rng, deltas: Vec::new(), jumps: 0 };
         let next = match step {
@@ -638,6 +709,8 @@ pub fn run_conversations(
                     match offered.act {
                         OptionAct::Line(line) => say.chosen(&file, line, &mut talk, 0),
                         OptionAct::Respond(n) => say.respond(&file, n, &mut talk, 0),
+                        OptionAct::Train { skill, ret } => say.train(&file, skill, ret, &mut talk),
+                        OptionAct::Pay { price, service, ret } => say.pay(&file, price, service, ret, &mut talk),
                     }
                 }
                 None => Shown::Stay,
@@ -649,6 +722,7 @@ pub fn run_conversations(
             }
         };
         let gold_changed = talk.gold_changed;
+        let trained = std::mem::take(&mut talk.trained);
         for op in talk.unbuilt.drain(..) {
             reports.0.push((dialog, op));
         }
@@ -673,6 +747,13 @@ pub fn run_conversations(
             commands.entity(entity).remove::<Conversation>();
             saved.script_state.met.insert(key);
             outbox.0.push((player, LedgerDelta::DialogueEnded));
+        }
+        if !trained.is_empty() {
+            for skill in trained {
+                sheet.0.training[skill] = sheet.0.training[skill].max(APPRENTICE);
+            }
+            saved.blueprint.sheet = sheet.0.clone();
+            outbox.0.push((player, LedgerDelta::SheetUpdate { ack: 0, sheet: sheet.0.clone() }));
         }
         if gold_changed {
             saved.inventory = Some(inventory.clone());
@@ -925,6 +1006,16 @@ impl Say<'_> {
         }
         let mut shown = Vec::new();
         for (n, option) in options(file, line, talk) {
+            // A quest line (0x4c4c00): the option is the table's line for the quest's state.
+            let (n, option) = if prefix(option.text.trim()) == Some('Q') {
+                let quest = arcanum_formats::dialog::atoi(option.text.trim()[2..].trim().as_bytes());
+                match self.quest_line(quest, talk).and_then(|l| Some((l, file.lines.get(&l)?.clone()))) {
+                    Some(found) => found,
+                    None => continue,
+                }
+            } else {
+                (n, option)
+            };
             match self.option_text(&option.text, talk) {
                 Some(text) => shown.push(Offered { text, act: OptionAct::Line(n) }),
                 None => talk.unbuilt.push(format!("option {}", option.text.trim().chars().take(2).collect::<String>())),
@@ -946,6 +1037,9 @@ impl Say<'_> {
             // Barter: 1600-1699 with a follower (none yet).
             Some('B') => self.pc_line(300, 399, talk),
             Some('A') => self.pc_class_line(1000, talk),
+            // Rumours (gd_cls_pc2 2000) and training (gd_pc2 500): the arguments stay hidden.
+            Some('R') => self.pc_class_line(2000, talk),
+            Some('T') => self.pc_line(500, 599, talk),
             Some('I') if text.len() == 2 => self.pc_class_line(3000, talk),
             Some('C') => {
                 let line = 1700 + talk.globals.story_state.max(0) as u32;
@@ -979,6 +1073,8 @@ impl Say<'_> {
                     return Shown::End;
                 }
             }
+            Some('R') => return self.rumours(file, &text[2..], entry.response(), talk),
+            Some('T') => return self.training_list(file, &text[2..], entry.response(), talk),
             // The story question (0x41a3e0): the answer, then one "thanks" to go on.
             Some('C') => {
                 if let Some((said, voice)) = self.story_line(talk) {
@@ -991,6 +1087,132 @@ impl Say<'_> {
             _ => {}
         }
         self.respond(file, entry.response(), talk, depth)
+    }
+
+    /// The NPC says a generic line with `%d`s filled.
+    fn npc_says_with(&mut self, block: Block, base: u32, numbers: &[i32], talk: &Talk) {
+        let who = Speaker { npc: self.npc, pc_name: self.pc_name, pc_female: talk.female(), pc_race: talk.sheet.race };
+        if let Some((text, voice)) = npc_line(self.generic, self.vfs, self.rng, &who, block, base) {
+            let text = crate::barter::with_numbers(&text, numbers);
+            self.float(self.npc_net, text, FloatColour::White, voice);
+        }
+    }
+
+    /// The NPC says a generic line and the PC gets one option back to `ret`.
+    #[allow(clippy::too_many_arguments)]
+    fn say_then_back(&mut self, file: &DialogFile, block: Block, base: u32, numbers: &[i32], option: Option<String>, ret: i32, talk: &mut Talk) -> Shown {
+        self.npc_says_with(block, base, numbers, talk);
+        match option {
+            Some(text) => Shown::Line(0, vec![Offered { text, act: OptionAct::Respond(ret) }]),
+            None => self.back(file, ret, talk),
+        }
+    }
+
+    /// Without a line for the option: straight on to `ret`.
+    fn back(&mut self, file: &DialogFile, ret: i32, talk: &mut Talk) -> Shown {
+        self.respond(file, ret, talk, 0)
+    }
+
+    /// Rumours (`R:$price, list`, 0x418fc0): one the PC does not know and nobody quelled, at
+    /// random; none, `gd_cls` 7000. A price asks first (0x418a40).
+    fn rumours(&mut self, file: &DialogFile, args: &str, ret: i32, talk: &mut Talk) -> Shown {
+        let (price, list) = priced_list(args);
+        let left: Vec<u32> = list.into_iter().filter_map(|n| u32::try_from(n).ok()).filter(|n| !talk.pc.rumours.contains(n) && !talk.globals.quelled.contains(n)).collect();
+        if left.is_empty() {
+            let more = self.pc_line(600, 699, talk);
+            return self.say_then_back(file, Block::Class, 7000, &[], more, ret, talk);
+        }
+        let rumour = left[self.rng.range(0, left.len() as i32 - 1) as usize];
+        if price < 1 { self.tell_rumour(file, rumour, ret, talk) } else { self.ask_price(file, price, Service::Rumour(rumour), ret, talk) }
+    }
+
+    /// Tells rumour `n` (0x4190e0, 0x4c5700): line `20 n + 1 +` the NPC's class of
+    /// `game_rd_npc_*` (else `20 n + 1`); the PC knows it now. Then one "thanks".
+    fn tell_rumour(&mut self, file: &DialogFile, n: u32, ret: i32, talk: &mut Talk) -> Shown {
+        let path = format!("mes/game_rd_npc_{}.mes", genders(self.npc.male, !talk.female()));
+        let class = self.npc.class.max(0) as u32;
+        let text = [n * 20 + 1 + class, n * 20 + 1].into_iter().find_map(|id| self.generic.file(self.vfs, &path)?.get(id).map(str::to_string));
+        if let Some(text) = text {
+            self.float(self.npc_net, with_names(&text, self.pc_name, &self.npc.name), FloatColour::White, None);
+        }
+        talk.pc.rumours.insert(n);
+        let thanks = self.pc_class_line(1000, talk);
+        self.say_then_back_quiet(file, thanks, ret, talk)
+    }
+
+    fn say_then_back_quiet(&mut self, file: &DialogFile, option: Option<String>, ret: i32, talk: &mut Talk) -> Shown {
+        match option {
+            Some(text) => Shown::Line(0, vec![Offered { text, act: OptionAct::Respond(ret) }]),
+            None => self.back(file, ret, talk),
+        }
+    }
+
+    /// A training list (`T:skills`, 0x418ca0): `gd_cls` 3000, a skill name per skill, then a
+    /// "forget it" back.
+    fn training_list(&mut self, file: &DialogFile, args: &str, ret: i32, talk: &mut Talk) -> Shown {
+        self.npc_says_with(Block::Class, 3000, &[], talk);
+        let mut options = Vec::new();
+        for skill in number_list(args).into_iter().filter_map(|k| usize::try_from(k).ok()).filter(|&k| k < arcanum_rules::SKILLS) {
+            if let Some(name) = self.generic.file(self.vfs, "mes/skill.mes").and_then(|m| m.get(skill as u32)).map(str::to_string) {
+                options.push(Offered { text: name, act: OptionAct::Train { skill, ret } });
+            }
+        }
+        if let Some(back) = self.pc_line(800, 899, talk) {
+            options.push(Offered { text: back, act: OptionAct::Respond(ret) });
+        }
+        if options.is_empty() { self.back(file, ret, talk) } else { Shown::Line(0, options) }
+    }
+
+    /// Training `skill` (0x418de0): trained already, `gd_cls` 4000; below the level for
+    /// Apprentice ([`RANK_LEVELS`]), 5000; else the price.
+    fn train(&mut self, file: &DialogFile, skill: usize, ret: i32, talk: &mut Talk) -> Shown {
+        let more = self.pc_line(600, 699, talk);
+        if talk.sheet.training[skill] != 0 {
+            return self.say_then_back(file, Block::Class, 4000, &[], more, ret, talk);
+        }
+        if talk.rules.skill_level(talk.sheet, skill) < RANK_LEVELS[APPRENTICE as usize] {
+            return self.say_then_back(file, Block::Class, 5000, &[], more, ret, talk);
+        }
+        self.ask_price(file, TRAINING_PRICE, Service::Train(skill), ret, talk)
+    }
+
+    /// The price dialogue (0x418a40): `base` × the reaction factor, at least 2; the NPC names it
+    /// (`gd_cls` 1000) and the PC says yes (`gd_pc2` 1-99) or no (100-199).
+    fn ask_price(&mut self, file: &DialogFile, base: i32, service: Service, ret: i32, talk: &mut Talk) -> Shown {
+        let price = (base * crate::barter::reaction_factor(talk.reaction()) / 100).max(2);
+        self.npc_says_with(Block::Class, 1000, &[price], talk);
+        let mut options = Vec::new();
+        if let Some(yes) = self.pc_line(1, 99, talk) {
+            options.push(Offered { text: yes, act: OptionAct::Pay { price, service, ret } });
+        }
+        if let Some(no) = self.pc_line(100, 199, talk) {
+            options.push(Offered { text: no, act: OptionAct::Respond(ret) });
+        }
+        if options.is_empty() { self.back(file, ret, talk) } else { Shown::Line(0, options) }
+    }
+
+    /// Paying (0x418b30): short of gold, `gd_cls` 2000; else the gold goes and the service is
+    /// done.
+    fn pay(&mut self, file: &DialogFile, price: i32, service: Service, ret: i32, talk: &mut Talk) -> Shown {
+        if talk.gold() < price {
+            let more = self.pc_line(600, 699, talk);
+            return self.say_then_back(file, Block::Class, 2000, &[price], more, ret, talk);
+        }
+        talk.change_gold(-price);
+        match service {
+            Service::Rumour(n) => self.tell_rumour(file, n, ret, talk),
+            Service::Train(skill) => {
+                talk.trained.push(skill);
+                let thanks = self.pc_line(1000, 1099, talk);
+                self.say_then_back(file, Block::Class, 6000, &[], thanks, ret, talk)
+            }
+        }
+    }
+
+    /// Quest `n`'s option line for this PC (0x4c4c00).
+    fn quest_line(&mut self, n: i32, talk: &Talk) -> Option<i32> {
+        let row = self.generic.file(self.vfs, GAME_QUEST)?.get(u32::try_from(n).ok()?)?.to_string();
+        quest_option(&row, talk.pc.quest(n), talk.intelligence(), talk.reaction())
     }
 
     /// Follows a response: a line, 0 the end, `-n` line `n` (a PC option taken as chosen).
@@ -1034,7 +1256,7 @@ mod tests {
 
     fn talk_with<'a>(rules: &'a RulesData, sheet: &'a CharacterSheet, inventory: &'a mut Inventory, pc: &'a mut PcScriptState, globals: &'a mut ScriptGlobals, npc: &'a mut Attachment) -> Talk<'a> {
         let npc_reaction = crate::NpcReaction { base: 50, race: 0, origin: 0, faction: 0, only_reputation: false };
-        Talk { rules, sheet, inventory, pc, globals, npc, met: false, npc_key: "npc".into(), npc_reaction, reputations: &NO_REPUTATIONS, gold_changed: false, unbuilt: Vec::new() }
+        Talk { rules, sheet, inventory, pc, globals, npc, met: false, npc_key: "npc".into(), npc_reaction, reputations: &NO_REPUTATIONS, gold_changed: false, unbuilt: Vec::new(), trained: Vec::new() }
     }
 
     #[test]
@@ -1238,5 +1460,92 @@ mod tests {
         say.deltas.clear();
         say.show(&file, 10, &mut talk);
         assert_eq!(floats(&say.deltas)[0].0, "Mind your tongue, Vel.");
+    }
+
+    #[test]
+    fn service_arguments_and_the_quest_table() {
+        assert_eq!(number_list("9, 11"), [9, 11]);
+        assert_eq!(number_list("1040-1043"), [1040, 1041, 1042, 1043]);
+        assert_eq!(priced_list("$0,1040-1041"), (0, vec![1040, 1041]));
+        assert_eq!(priced_list("($25, 1020-1021, 7)"), (25, vec![1020, 1021, 7]));
+        assert_eq!(priced_list(" 9"), (0, vec![9]));
+        let row = "1 50 301 302 303 304 305 307 308 314 315 316 317 318 319 319 401 -1 403 404 405 407 408";
+        assert_eq!(quest_option(row, 0, 8, 50), Some(301), "high set");
+        assert_eq!(quest_option(row, 2, 8, 10), Some(316), "low reaction: the middle set");
+        assert_eq!(quest_option(row, 1, 4, 90), None, "dumb: the last set, -1 none");
+        assert_eq!(quest_option(row, 9, 8, 50), Some(308), "states past 6 count as 6");
+    }
+
+    #[test]
+    fn rumours_and_training_through_the_price_dialogue() {
+        let file = DialogFile::parse(
+            b"{1}{Well?}{}{}{}{}{}\n\
+              {2}{R:$0, 1040-1041}{}{1}{}{1}{}\n\
+              {3}{R:($30, 1050)}{}{1}{}{1}{}\n\
+              {4}{T:9, 10}{}{1}{}{1}{}\n\
+              {5}{Q:1000}{}{1}{}{1}{}\n\
+              {6}{Another NPC line.}{}{}{}{}{}\n\
+              {7}{About the tome.}{}{1}{}{1}{}",
+        );
+        let rules = RulesData::default();
+        let mut sheet = CharacterSheet { gender: arcanum_rules::MALE, ..Default::default() };
+        sheet.skills[9] = 1;
+        let (mut inventory, mut pc, mut globals, mut attachment): (Inventory, PcScriptState, ScriptGlobals, Attachment) = Default::default();
+        let mut talk = talk_with(&rules, &sheet, &mut inventory, &mut pc, &mut globals, &mut attachment);
+        talk.globals.quelled.insert(1041);
+        let mut generic = generic_with(&[
+            ("mes/game_rd_npc_m2m.mes", "{20801}{Bates is a fraud.}{21001}{The mine is haunted.}"),
+            ("mes/gd_cls_m2m.mes", "{1000}{That will be %d coins.}{2000}{You do not have enough coins.}{3000}{What shall I teach?}{4000}{You know that already.}{5000}{You are not ready.}{6000}{There, done.}{7000}{I know nothing.}"),
+            ("mes/gd_cls_pc2m.mes", "{1000}{Thanks.}{2000}{Heard anything?}"),
+            ("mes/gd_pc2m.mes", "{1}{Yes.}{100}{No.}{500}{Train me.}{600}{Go on.}{800}{Forget it.}{1000}{Thank you.}"),
+            ("mes/skill.mes", "{9}{Haggle}{10}{Heal}"),
+            ("Rules/gamequest.mes", "{1000}{1 50 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7 7}"),
+        ]);
+        let info = npc(0);
+        let mut rng = crate::HostRng::default();
+        let mut say = Say { npc_net: NetId(7), dialog: 1, pc_name: "Vel", npc: &info, generic: &mut generic, vfs: None, rng: &mut rng, deltas: Vec::new(), jumps: 0 };
+        let Shown::Line(_, options) = say.show(&file, 1, &mut talk) else { panic!() };
+        let texts: Vec<&str> = options.iter().map(|o| o.text.as_str()).collect();
+        assert_eq!(texts, ["Heard anything?", "Heard anything?", "Train me.", "About the tome."], "Q:1000 shows line 7");
+        // A free rumour: 1041 is quelled, so 1040; the PC knows it now.
+        say.deltas.clear();
+        let Shown::Line(_, options) = say.chosen(&file, 2, &mut talk, 0) else { panic!() };
+        assert_eq!(floats(&say.deltas)[0].0, "Bates is a fraud.");
+        assert!(talk.pc.rumours.contains(&1040));
+        assert_eq!(options, [Offered { text: "Thanks.".into(), act: OptionAct::Respond(1) }]);
+        say.deltas.clear();
+        let Shown::Line(_, _) = say.chosen(&file, 2, &mut talk, 0) else { panic!() };
+        assert_eq!(floats(&say.deltas)[0].0, "I know nothing.", "none left");
+        // A paid one: the price, scaled by reaction; too poor; then paid.
+        say.deltas.clear();
+        let Shown::Line(_, options) = say.chosen(&file, 3, &mut talk, 0) else { panic!() };
+        let price = 30 * crate::barter::reaction_factor(talk.reaction()) / 100;
+        assert_eq!(floats(&say.deltas)[0].0, format!("That will be {price} coins."));
+        let OptionAct::Pay { price: asked, service, ret } = options[0].act else { panic!("{options:?}") };
+        assert_eq!((asked, service, ret), (price, Service::Rumour(1050), 1));
+        assert_eq!(options[1].act, OptionAct::Respond(1), "no");
+        say.deltas.clear();
+        say.pay(&file, asked, service, ret, &mut talk);
+        assert_eq!(floats(&say.deltas)[0].0, "You do not have enough coins.");
+        talk.change_gold(200);
+        say.deltas.clear();
+        say.pay(&file, asked, service, ret, &mut talk);
+        assert_eq!(floats(&say.deltas)[0].0, "The mine is haunted.");
+        assert_eq!(talk.gold(), 200 - price);
+        // Training: Heal is below level 1, Haggle is ready.
+        say.deltas.clear();
+        let Shown::Line(_, options) = say.chosen(&file, 4, &mut talk, 0) else { panic!() };
+        let names: Vec<&str> = options.iter().map(|o| o.text.as_str()).collect();
+        assert_eq!(names, ["Haggle", "Heal", "Forget it."]);
+        say.deltas.clear();
+        say.train(&file, 10, 1, &mut talk);
+        assert_eq!(floats(&say.deltas)[0].0, "You are not ready.");
+        say.deltas.clear();
+        let Shown::Line(_, options) = say.train(&file, 9, 1, &mut talk) else { panic!() };
+        let OptionAct::Pay { price, service, ret } = options[0].act else { panic!() };
+        assert_eq!(service, Service::Train(9));
+        say.pay(&file, price, service, ret, &mut talk);
+        assert_eq!(talk.trained, [9]);
+        assert_eq!(floats(&say.deltas).last().unwrap().0, "There, done.");
     }
 }

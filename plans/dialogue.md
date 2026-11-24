@@ -167,6 +167,33 @@ format and language are checked against all 709 `.dlg` files.
 - **Not determined:** what class 2 stands for in the close check; 0x4c2690's 0x37/0x4a/0x4b;
   actions 4, 6, 7, 9 and 0x1a-0x1d.
 
+## Services (0x414810 actions; checked 2026-11-24)
+
+- **Hidden arguments:** an option's text after its prefix is kept after the shown line's NUL
+  (0x416c10); lists are numbers or `lo-hi` ranges, comma separated, at most 100 (0x417f90).
+- **The price dialogue** (0x418a40): `base` × the reaction factor (0x4c1150), at least 2. The NPC
+  names it (`gd_cls` 1000, `%d`); yes (`gd_pc2` 1-99, action 4) pays, no (100-199) goes to the
+  return. Too little gold: `gd_cls` 2000 and a "go on" (600-699) (0x418b30).
+- **`R:$price, rumours`** (action 8, 0x418fc0; text `gd_cls_pc2` 2000 by class): the rumours
+  the PC does not know (PC field 0x109) and nobody quelled (bits 0x6876c8); one at random. None:
+  `gd_cls` 7000 and a "go on". Told (0x4190e0): `game_rd_npc_<npc>2<pc>` line
+  `20 n + 1 + class`, else `20 n + 1` (line `20 n` is the logbook's); the PC knows it; one
+  "thanks" (`gd_cls_pc2` 1000) to the return. Data: 239 `R:` options name 149 rumours; 28 have no
+  text in any of the four files (the NPC says nothing; the PC still learns it).
+- **`T:skills`** (action 5, 0x418ca0; text `gd_pc2` 500): `gd_cls` 3000, a skill name per skill
+  (`mes/skill.mes`, 12-15 the tech skills), a "forget it" (800-899). Choosing one (0x418de0):
+  trained already, `gd_cls` 4000; below the level for Apprentice (table 0x5b6f44:
+  0 / 1 / 9 / 18), 5000; else the price, base 100. Paid (0x418f30): Apprentice (rank 1, the only
+  rank given), `gd_cls` 6000 and `gd_pc2` 1000 to the return.
+- **`Q:N`** (0x4c4c00, `Rules/gamequest.mes` row N, 23 numbers): the PC's quest state picks
+  token 2-8 (reaction 20 or more), 9-15 (below 20) or 16-22 (Intelligence below 5); -1 leaves the
+  option out, else that line of the file is the option.
+- **`U:N`** (0x419a00 / 0x419b50): the NPC uses skill N (Heal 10, 14) on the PC for
+  `(level + 2) × (rank + 1)`, reaction-scaled. **`H:`** (0x419830): healing spells 60-64 by the
+  NPC's college-12 mastery, base price 100 (0x4b1740). **`D:` / `X:`** (0x419e70): directions to,
+  and map marks of, unknown areas (`$price, areas`), `gd_npc` 100-799 by direction and distance.
+  **`P:`** newspapers (0x41a520, 2 gold). **`L:`** state 6, the world map.
+
 ## The window (0x4c9280, "TC")
 
 - **Options panel:** no art. A black panel, 400x100, centred at `y = height - 181` (on
@@ -272,4 +299,8 @@ format and language are checked against all 709 `.dlg` files.
      - Virgil still opens with his own line and offers both options.
    - The client needed no change: generic lines arrive as floats and options.
 5. **Barter** (`B:`): see `plans/barter.md`.
-6. Training, healing, directions, rumours, newspapers and the other windows.
+6. **Services** (`arcanum_sim::dialogue`). Built: `R:` rumours, `T:` training, `Q:` quest
+   lines, the price dialogue. Training sends the new sheet (`SheetUpdate`, ack 0) and saves it.
+   - **Not built:** `U:`, `H:` (skill use and spells on the PC), `D:` / `X:` (areas), `P:`
+     (newspapers), `L:` (no world map); what quells rumours; the rumour's timestamp and logbook.
+   - **Real data:** every `Q:` names a row of `gamequest.mes`; `T:` lists name skills 0-15.
