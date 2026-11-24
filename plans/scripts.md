@@ -278,6 +278,24 @@ Decoded so far, with confidence; the rest are named by the helper they call.
    - **Real data:** from their first line, 1731 of 2399 scripts now run to an end (1085
      before). Next most common stops: action 0x5b (119, magic/tech adjust), 0x7 (35), 0x1d (24,
      reaction), 0x21 (21), 0x36 (20).
+4d. **Calls, timers, stats, rumours, the rest of the vicinity** (built, `feat/script-gaps-2`).
+   - **Actions:** 0x7 call script N from line L for each triggerer × attachee (0x44b030: a
+     record of its own, not kept; the caller's point); 0x36 the same once N × 8 game seconds
+     have passed (a time event of type 4 on the game clock; here `TimedScripts`, not in the save
+     yet; one triggerer and attachee); 0x1d store the reaction (0x4c0cc0); 0x21 store an
+     effective stat (0x4b0490; NPCs: their base stats); 0x32 a PC knows rumour N (0x4c57e0);
+     0x33 rumour N quelled for everyone (0x4c5690, bits 0x6876c8); 0x5b magic/tech adjust
+     (0x461540: `(F × N + 50) / 100`, F = 100 × effective / complexity, effective = half of
+     aptitude plus complexity, kept between 0 and the complexity).
+   - **Conditions:** 0xa met before (0x4c0c40); 0x21 has reputation; 0x28 heard rumour; 0x29
+     rumour quelled; 0x30 knows spell (college level above the spell's place).
+   - **Sets:** 0xf/0x10 scenery, 0x11/0x12 containers, 0x13/0x14 portals, 0x16/0x17 items in the
+     vicinity (masks 8, 4, 2, 0x7fe0), all within 10 tiles here.
+   - **Not built:** 0x31 / 0x54 areas (next PR); 0x38 toggle off (`flags` 2, no object flag
+     changes are kept yet); 0x3a kill (nothing takes damage); 0x52 play sound (the id-to-file
+     mapping 0x41a940 not decoded); the temporary record's header defaults (0x44c710).
+   - **Real data:** 1875 of 2399 scripts run to an end (1731 before). Next: action 0x4d (82),
+     0x50 (47), 0x31 (18), condition 0xb (18), action 0x38 (17), 0x52 (17).
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,

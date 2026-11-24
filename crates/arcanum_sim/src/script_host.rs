@@ -119,6 +119,9 @@ pub struct ScriptHost<'w, 's> {
     scripts: ResMut<'w, Scripts>,
     started: ResMut<'w, crate::StartedDialogues>,
     critters: Query<'w, 's, CritterQuery<'static>>,
+    rules: Res<'w, crate::SimRules>,
+    reputations: ResMut<'w, crate::ReputationTable>,
+    timed: ResMut<'w, TimedScripts>,
     changed_inventories: ResMut<'w, ScriptInventories>,
     teleports: ResMut<'w, crate::big_move::ScriptTeleports>,
     reports: ResMut<'w, ScriptReports>,
@@ -148,6 +151,10 @@ struct HostWorld<'a> {
     inventories: std::collections::BTreeSet<PlayerId>,
     /// Sectors whose changes a script touched.
     sectors: std::collections::BTreeSet<arcanum_formats::map::SectorId>,
+    rules: &'a arcanum_rules::RulesData,
+    reputations: &'a crate::ReputationEffects,
+    /// Scripts to run later (action 0x36).
+    scheduled: Vec<TimedScript>,
     vfs: Option<&'a arcanum_vfs::Vfs>,
     globals: &'a mut ScriptGlobals,
     players: &'a mut BTreeMap<PlayerId, crate::PlayerSave>,
@@ -301,11 +308,79 @@ impl ScriptContext for HostWorld<'_> {
         }
     }
 
-    fn critters_near(&mut self, centre: ScriptObject) -> Vec<ScriptObject> {
-        let Some(&(_, at, _)) = self.critters.iter().find(|c| c.0 == centre) else {
-            return Vec::new();
-        };
-        self.critters.iter().filter(|c| crate::within_radius(at, c.1, VICINITY)).map(|c| c.0).collect()
+    fn near(&mut self, centre: ScriptObject, kind: crate::NearKind) -> Vec<ScriptObject> {
+        use arcanum_formats::object::{TYPE_CONTAINER, TYPE_PORTAL, TYPE_SCENERY};
+        let Some(at) = self.location(centre) else { return Vec::new() };
+        let close = |there: Option<arcanum_formats::map::TileLoc>| there.is_some_and(|t| crate::within_radius(at, t, VICINITY));
+        match kind {
+            crate::NearKind::Critters => self.critters.iter().filter(|c| close(Some(c.1))).map(|c| c.0).collect(),
+            crate::NearKind::Containers | crate::NearKind::Items => {
+                let item = |t: u32| (5..=14).contains(&t);
+                let mut out = Vec::new();
+                for (&sector, objects) in &self.map.mobiles {
+                    for (index, o) in objects.iter().enumerate() {
+                        let wanted = if kind == crate::NearKind::Containers { o.object_type == TYPE_CONTAINER } else { item(o.object_type) };
+                        if wanted && close(crate::object_location(o)) {
+                            out.push(ScriptObject::Mobile { sector, index: index as u32 });
+                        }
+                    }
+                }
+                out
+            }
+            crate::NearKind::Scenery | crate::NearKind::Portals => {
+                let wanted = if kind == crate::NearKind::Scenery { TYPE_SCENERY } else { TYPE_PORTAL };
+                let mut out = Vec::new();
+                for (&sector, loaded) in &self.map.sectors {
+                    for (index, o) in loaded.objects.iter().enumerate() {
+                        if o.object_type == wanted && close(crate::object_location(o)) {
+                            out.push(ScriptObject::Map(MapObjectId { sector, index: index as u32 }));
+                        }
+                    }
+                }
+                out
+            }
+        }
+    }
+
+    fn stat(&mut self, object: ScriptObject, stat: i32) -> i32 {
+        match object {
+            ScriptObject::Pc(p) => {
+                let Some(sheet) = self.players.get(&p).map(|s| s.blueprint.sheet.clone()) else { return 0 };
+                pc_stat(self.rules, &sheet, stat)
+            }
+            ScriptObject::Mobile { sector, index } => {
+                let Some(o) = self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)) else { return 0 };
+                let stats = o.ints("critter_stat_base_idx").or_else(|| self.map.prototypes.of(o)?.ints("critter_stat_base_idx"));
+                usize::try_from(stat).ok().and_then(|i| stats?.get(i).copied()).unwrap_or(0)
+            }
+            ScriptObject::Map(_) => 0,
+        }
+    }
+
+    fn reaction(&mut self, npc: ScriptObject, pc: ScriptObject) -> i32 {
+        let (ScriptObject::Mobile { sector, index }, ScriptObject::Pc(p)) = (npc, pc) else { return 50 };
+        let Some(o) = self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).filter(|o| o.object_type == arcanum_formats::object::TYPE_NPC) else { return 50 };
+        let Some(saved) = self.players.get(&p) else { return 50 };
+        crate::reaction_to(&saved.script_state, &crate::met_key(npc), &crate::NpcReaction::of(o, &self.map.prototypes), self.rules, &saved.blueprint.sheet, self.reputations)
+    }
+
+    fn has_met(&mut self, npc: ScriptObject, pc: ScriptObject) -> bool {
+        if npc == pc {
+            return true;
+        }
+        let ScriptObject::Pc(p) = pc else { return false };
+        let key = crate::met_key(npc);
+        self.players.get(&p).is_some_and(|s| s.script_state.met.contains(&key) || s.script_state.reactions.contains_key(&key))
+    }
+
+    fn knows_spell(&mut self, object: ScriptObject, spell: i32) -> bool {
+        let ScriptObject::Pc(p) = object else { return false };
+        let Some(sheet) = self.players.get(&p).map(|s| &s.blueprint.sheet) else { return false };
+        (0..80).contains(&spell) && sheet.spells.get(spell as usize / 5).is_some_and(|&level| level > spell % 5)
+    }
+
+    fn schedule(&mut self, script: u32, line: i32, triggerer: ScriptObject, attachee: ScriptObject, delay_ms: u64) {
+        self.scheduled.push(TimedScript { at: self.now.plus_ms(delay_ms), script, line, triggerer, attachee });
     }
 
     fn player(&mut self) -> Option<ScriptObject> {
@@ -314,6 +389,18 @@ impl ScriptContext for HostWorld<'_> {
 }
 
 impl HostWorld<'_> {
+    /// Where an object stands.
+    fn location(&self, object: ScriptObject) -> Option<arcanum_formats::map::TileLoc> {
+        if let Some(c) = self.critters.iter().find(|c| c.0 == object) {
+            return Some(c.1);
+        }
+        match object {
+            ScriptObject::Map(id) => crate::object_location(self.map.map_object(id)?),
+            ScriptObject::Mobile { sector, index } => crate::object_location(self.map.mobiles.get(&sector)?.get(index as usize)?),
+            ScriptObject::Pc(_) => None,
+        }
+    }
+
     /// An object's inventory: a PC's (its save's), an NPC's, or a container's.
     fn inventory(&self, object: ScriptObject) -> Option<crate::Inventory> {
         match object {
@@ -365,6 +452,45 @@ impl HostWorld<'_> {
     }
 }
 
+/// A PC's effective stat (0x4b0490 order): 0-7 primary, 8-15 derived, 0x10 the aptitude, 0x11
+/// the level, 0x15 unspent points, 0x19 age, 0x1a gender, 0x1b race; experience, alignment,
+/// fate points, magick and tech points and poison are not kept yet (0).
+pub fn pc_stat(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::CharacterSheet, stat: i32) -> i32 {
+    match stat {
+        0..=7 => rules.stats(sheet)[stat as usize],
+        8..=15 => rules.derived(sheet).by_stat_id()[stat as usize - 8],
+        0x10 => rules.aptitude(sheet),
+        0x11 => sheet.level,
+        0x15 => sheet.unspent,
+        0x19 => sheet.age,
+        0x1a => i32::from(sheet.gender),
+        0x1b => i32::from(sheet.race),
+        _ => 0,
+    }
+}
+
+/// A script run waiting for its time (action 0x36).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TimedScript {
+    pub at: crate::GameTime,
+    pub script: u32,
+    pub line: i32,
+    pub triggerer: ScriptObject,
+    pub attachee: ScriptObject,
+}
+
+/// Script runs waiting for their time (not in the save yet).
+#[derive(Resource, Debug, Default)]
+pub struct TimedScripts(pub Vec<TimedScript>);
+
+/// Runs the scripts whose time has come ([`ScriptHost::run_due`]).
+pub fn run_timed_scripts(mut scripts: ScriptHost, mut world: ResMut<WorldState>, mut map: ResMut<LoadedMap>, mut outbox: ResMut<crate::Outbox>) {
+    if scripts.timed.0.is_empty() {
+        return;
+    }
+    scripts.run_due(&mut world, &mut map, &mut outbox);
+}
+
 /// PCs whose inventory a script changed: [`sync_script_inventories`] sends them.
 #[derive(Resource, Debug, Default)]
 pub struct ScriptInventories(pub std::collections::BTreeSet<PlayerId>);
@@ -392,11 +518,45 @@ impl ScriptHost<'_, '_> {
         if attachment.number == 0 {
             return HookResult::RunDefault;
         }
-        let Some(save) = world.0.as_mut() else { return HookResult::RunDefault };
+        let before = attachment;
+        let invocation = Invocation { attachee: object, triggerer: ScriptObject::Pc(player), other: None, event, start_line: 0 };
+        let Some(result) = self.execute(world, map, outbox, &mut attachment, invocation, player) else { return HookResult::RunDefault };
+        if attachment != before {
+            map.set_attachment(object, event, attachment);
+            let sector = match object {
+                ScriptObject::Map(id) => id.sector,
+                ScriptObject::Mobile { sector, .. } => sector,
+                ScriptObject::Pc(_) => return result,
+            };
+            crate::ground::save_change(world, map, sector);
+        }
+        result
+    }
+
+    /// Runs the scripts whose time has come (action 0x36): each with a record of its own, for
+    /// its triggerer's player (or the first player when the triggerer is no PC).
+    pub fn run_due(&mut self, world: &mut WorldState, map: &mut LoadedMap, outbox: &mut crate::Outbox) {
+        let now = self.clock.now;
+        let (due, waiting): (Vec<TimedScript>, Vec<TimedScript>) = std::mem::take(&mut self.timed.0).into_iter().partition(|t| t.at <= now);
+        self.timed.0 = waiting;
+        for timed in due {
+            let player = match timed.triggerer {
+                ScriptObject::Pc(p) => Some(p),
+                _ => world.0.as_ref().and_then(|w| w.players.keys().next().copied()),
+            };
+            let Some(player) = player else { continue };
+            let invocation = Invocation { attachee: timed.attachee, triggerer: timed.triggerer, other: None, event: 0, start_line: timed.line.max(0) as usize };
+            self.execute(world, map, outbox, &mut crate::Attachment::new(0, 0, timed.script), invocation, player);
+        }
+    }
+
+    /// Runs `attachment`'s script for `invocation` with `player` acting, and delivers what it
+    /// did. `None` without a world.
+    fn execute(&mut self, world: &mut WorldState, map: &mut LoadedMap, outbox: &mut crate::Outbox, attachment: &mut crate::Attachment, invocation: Invocation<ScriptObject>, player: PlayerId) -> Option<HookResult> {
+        let save = world.0.as_mut()?;
         let vfs_guard = self.vfs.as_ref().and_then(|v| v.0.read().ok());
         let vfs = vfs_guard.as_deref();
         let library = self.scripts.0.get_or_insert_with(|| vfs.map(ScriptLibrary::new).unwrap_or_default());
-        let before = attachment;
         let number = attachment.number;
         let critters = self
             .critters
@@ -410,7 +570,13 @@ impl ScriptHost<'_, '_> {
                 Some((object, position.0, net_id))
             })
             .collect();
+        let reputations = &*self.reputations.0.get_or_insert_with(|| {
+            vfs.and_then(|v| v.read(crate::GAME_REP).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).map(|m| crate::ReputationEffects::parse(&m)).unwrap_or_default()
+        });
         let mut ctx = HostWorld {
+            rules: &self.rules.0,
+            reputations,
+            scheduled: Vec::new(),
             library,
             map,
             player,
@@ -427,8 +593,7 @@ impl ScriptHost<'_, '_> {
             dialogs: Vec::new(),
             teleports: Vec::new(),
         };
-        let invocation = Invocation { attachee: object, triggerer: ScriptObject::Pc(player), other: None, event, start_line: 0 };
-        let run = crate::run_hook(&mut ctx, &mut attachment, invocation);
+        let run = crate::run_hook(&mut ctx, attachment, invocation);
         for (to, text) in std::mem::take(&mut ctx.messages) {
             outbox.0.push((to, crate::LedgerDelta::ScriptMessage { text }));
         }
@@ -441,6 +606,7 @@ impl ScriptHost<'_, '_> {
             }
         }
         self.changed_inventories.0.append(&mut ctx.inventories);
+        self.timed.0.append(&mut ctx.scheduled);
         let touched = std::mem::take(&mut ctx.sectors);
         for (object, map, to) in std::mem::take(&mut ctx.teleports) {
             self.teleports.0.push(crate::big_move::ScriptTeleport { causer: player, object, map, to });
@@ -453,16 +619,7 @@ impl ScriptHost<'_, '_> {
         for sector in touched {
             crate::ground::save_change(world, map, sector);
         }
-        if attachment != before {
-            map.set_attachment(object, event, attachment);
-            let sector = match object {
-                ScriptObject::Map(id) => id.sector,
-                ScriptObject::Mobile { sector, .. } => sector,
-                ScriptObject::Pc(_) => return run.result,
-            };
-            crate::ground::save_change(world, map, sector);
-        }
-        run.result
+        Some(run.result)
     }
 
     /// Puts a script in the library by hand (tests).

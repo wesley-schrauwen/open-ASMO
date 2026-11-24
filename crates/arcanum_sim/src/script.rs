@@ -246,10 +246,32 @@ pub trait ScriptContext {
     }
     /// Keeps `object`'s changed attachment at `event` (0x4f01d0).
     fn set_attachment(&mut self, _object: Self::Object, _event: u32, _attachment: Attachment) {}
-    /// The critters (PCs and NPCs) around `centre` (0x440fc0 with mask 0x18000).
-    fn critters_near(&mut self, _centre: Self::Object) -> Vec<Self::Object> {
+    /// The objects of `kind` around `centre` (0x440fc0).
+    fn near(&mut self, _centre: Self::Object, _kind: NearKind) -> Vec<Self::Object> {
         Vec::new()
     }
+    /// `object`'s effective stat `stat` (0x4b0490: 0-7 the primary stats, 8-15 derived, 0x10
+    /// the aptitude, 0x11 on level, experience, alignment, fate points, unspent points, magick
+    /// and tech points, poison, age, gender, race); 0 for objects that are not critters.
+    fn stat(&mut self, _object: Self::Object, _stat: i32) -> i32 {
+        0
+    }
+    /// `npc`'s reaction to `pc` (0x4c0cc0); 50 when they are not an NPC and a PC.
+    fn reaction(&mut self, _npc: Self::Object, _pc: Self::Object) -> i32 {
+        50
+    }
+    /// Whether `npc` has met `pc` (0x4c0c40); the same object has.
+    fn has_met(&mut self, npc: Self::Object, pc: Self::Object) -> bool {
+        npc == pc
+    }
+    /// Whether `object` knows spell `spell` (0x4b1950: its college's level at least the spell's
+    /// place in it plus one).
+    fn knows_spell(&mut self, _object: Self::Object, _spell: i32) -> bool {
+        false
+    }
+    /// Runs script `script` from `line` for `triggerer` and `attachee` in `delay_ms` game
+    /// milliseconds (action 0x36, time event type 4).
+    fn schedule(&mut self, _script: u32, _line: i32, _triggerer: Self::Object, _attachee: Self::Object, _delay_ms: u64) {}
     /// "The player" (set 0x15, 0x40da50): the acting player's PC.
     fn player(&mut self) -> Option<Self::Object> {
         None
@@ -257,6 +279,35 @@ pub trait ScriptContext {
     /// `object`'s leader, if it follows someone (0x45de00); nobody follows anyone yet.
     fn leader(&mut self, _object: Self::Object) -> Option<Self::Object> {
         None
+    }
+}
+
+/// What a vicinity set lists (0x44b4e0's type masks for 0x440fc0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum NearKind {
+    /// PCs and NPCs (sets 8/9, mask 0x18000).
+    Critters,
+    /// Scenery (0xf/0x10, mask 8).
+    Scenery,
+    /// Containers (0x11/0x12, mask 4).
+    Containers,
+    /// Portals (0x13/0x14, mask 2).
+    Portals,
+    /// Items (0x16/0x17, mask 0x7fe0).
+    Items,
+}
+
+impl NearKind {
+    /// The vicinity set an object set id names.
+    pub fn of_set(set: i8) -> Option<Self> {
+        Some(match set {
+            8 | 9 => Self::Critters,
+            0xf | 0x10 => Self::Scenery,
+            0x11 | 0x12 => Self::Containers,
+            0x13 | 0x14 => Self::Portals,
+            0x16 | 0x17 => Self::Items,
+            _ => return None,
+        })
     }
 }
 
@@ -349,9 +400,9 @@ struct Run<O> {
     replace: Option<u32>,
     /// How deep in called scripts (action 0x51).
     depth: usize,
-    /// The critters around the attachee (sets 8 and 9) and the player (set 0x15), read at the
-    /// start for scripts that name them.
-    near: Vec<O>,
+    /// The vicinity sets around the attachee and the player (set 0x15), read at the start for
+    /// scripts that name them.
+    near: BTreeMap<NearKind, Vec<O>>,
     player: Option<O>,
 }
 
@@ -365,7 +416,13 @@ fn run<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, invocation: I
     }
     let Some(script) = ctx.script(attachment.number) else { return HookResult::RunDefault };
     let names = |tags: &[i8]| script.lines.iter().flat_map(|l| [&l.condition, &l.then, &l.otherwise]).any(|b| b.operands.iter().any(|o| tags.contains(&o.tag)));
-    let near = if names(&[8, 9]) { ctx.critters_near(invocation.attachee) } else { Vec::new() };
+    let mut near = BTreeMap::new();
+    for set in [8, 0xf, 0x11, 0x13, 0x16] {
+        let kind = NearKind::of_set(set).expect("a vicinity set");
+        if names(&[set, set + 1]) {
+            near.insert(kind, ctx.near(invocation.attachee, kind));
+        }
+    }
     let player = if names(&[0x15]) { ctx.player() } else { None };
     let mut run = Run { invocation, locals: [0; LOCAL_VARS], objects: [None; LOCAL_VARS], looping: None, replace: None, depth, near, player };
     let mut line = invocation.start_line;
@@ -466,6 +523,30 @@ fn condition<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &m
         }
         // Items being rewielded (0x4655c0): never, here.
         0x32 => return Some(false),
+        // NPC (operand 0) has met PC (operand 1) (0x4c0c40).
+        0xa => {
+            let npc = objects(run, block.operands[0], line, unsupported)?.first().copied();
+            let pc = objects(run, block.operands[1], line, unsupported)?.first().copied();
+            return Some(matches!((npc, pc), (Some(n), Some(p)) if ctx.has_met(n, p)));
+        }
+        // Has reputation N (0x4c1cb0: a PC's list).
+        0x21 => {
+            let rep = number(ctx, run, 1);
+            return over_set(ctx, run, unsupported, &mut |ctx, o| u32::try_from(rep).is_ok_and(|r| ctx.pc_state(o).is_some_and(|s| s.reputations.contains(&r))));
+        }
+        // Has heard rumour N (0x4c58d0) / rumour N is quelled (0x4c5650).
+        0x28 => {
+            let rumour = number(ctx, run, 1);
+            return over_set(ctx, run, unsupported, &mut |ctx, o| u32::try_from(rumour).is_ok_and(|r| ctx.pc_state(o).is_some_and(|s| s.rumours.contains(&r))));
+        }
+        0x29 => {
+            let rumour = number(ctx, run, 0);
+            return Some(u32::try_from(rumour).is_ok_and(|r| ctx.globals().quelled.contains(&r)));
+        }
+        0x30 => {
+            let spell = number(ctx, run, 1);
+            return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.knows_spell(o, spell));
+        }
         _ => {}
     }
     let mut value = |i: usize| get(ctx, attachment, run, block.operands[i]);
@@ -591,6 +672,79 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
             if let Some(text) = ctx.dialog_text(attachment.number, number, triggerer) {
                 ctx.show_message(triggerer, text);
             }
+            Step::Next
+        }
+        // Call script N from line L for each triggerer and attachee (0x44b030): a record of its
+        // own (not kept), the caller's point, no "other".
+        0x7 => {
+            let (number, start) = (value(ctx, attachment, run, 0), value(ctx, attachment, run, 1));
+            let triggerers = objects(run, ops[2], line, unsupported)?;
+            let attachees = objects(run, ops[3], line, unsupported)?;
+            if number > 0 && depth < MAX_DEPTH {
+                for &t in &triggerers {
+                    for &a in &attachees {
+                        let invocation = Invocation { attachee: a, triggerer: t, other: None, event: run.invocation.event, start_line: start.max(0) as usize };
+                        self::run(ctx, &mut Attachment::new(0, 0, number as u32), invocation, depth + 1, unsupported);
+                    }
+                }
+            }
+            Step::Next
+        }
+        // The same in N seconds: a time event on the game clock, 8 game seconds a second.
+        0x36 => {
+            let (number, start, seconds) = (value(ctx, attachment, run, 0), value(ctx, attachment, run, 1), value(ctx, attachment, run, 4));
+            let t = objects(run, ops[2], line, unsupported)?.first().copied();
+            let a = objects(run, ops[3], line, unsupported)?.first().copied();
+            if let (Some(t), Some(a), Ok(number)) = (t, a, u32::try_from(number)) {
+                ctx.schedule(number, start, t, a, u64::try_from(seconds).unwrap_or(0) * 8000);
+            }
+            Step::Next
+        }
+        0x1d => {
+            let npc = objects(run, ops[0], line, unsupported)?.first().copied();
+            let pc = objects(run, ops[1], line, unsupported)?.first().copied();
+            let v = match (npc, pc) {
+                (Some(n), Some(p)) => ctx.reaction(n, p),
+                _ => 50,
+            };
+            set(ctx, attachment, run, ops[2], v);
+            Step::Next
+        }
+        // A stat (0x4b0490); Intelligence reads 1 for a dumb critter (0x45fc00).
+        0x21 => {
+            let stat = value(ctx, attachment, run, 0);
+            let o = objects(run, ops[1], line, unsupported)?.first().copied();
+            let v = o.map_or(0, |o| ctx.stat(o, stat));
+            set(ctx, attachment, run, ops[2], v);
+            Step::Next
+        }
+        // Rumours: known by a PC (0x4c57e0) / quelled for everyone (0x4c5690).
+        0x32 => {
+            let rumour = value(ctx, attachment, run, 0);
+            for o in objects(run, ops[1], line, unsupported)? {
+                if let (Some(pc), Ok(r)) = (ctx.pc_state(o), u32::try_from(rumour)) {
+                    pc.rumours.insert(r);
+                }
+            }
+            Step::Next
+        }
+        0x33 => {
+            if let Ok(r) = u32::try_from(value(ctx, attachment, run, 0)) {
+                ctx.globals().quelled.insert(r);
+            }
+            Step::Next
+        }
+        // Magic/tech adjust (0x461540): N scaled by how well the user's aptitude meets the
+        // item's complexity, rounded: `(F × N + 50) / 100`.
+        0x5b => {
+            let n = value(ctx, attachment, run, 0);
+            let item = objects(run, ops[1], line, unsupported)?.first().copied();
+            let user = objects(run, ops[2], line, unsupported)?.first().copied();
+            let complexity = item.and_then(|i| ctx.object_int(i, "item_magic_tech_complexity")).unwrap_or(0);
+            let aptitude = user.map_or(0, |u| ctx.stat(u, 0x10));
+            let critter = user.is_some_and(|u| matches!(ctx.object_type(u), 15 | 16));
+            let v = (magic_tech_factor(complexity, aptitude, critter) * n + 50) / 100;
+            set(ctx, attachment, run, ops[3], v);
             Step::Next
         }
         // Set a PC's quest (0x4c4d20): only upwards, and never from completed (4), other (5) or
@@ -741,7 +895,7 @@ fn objects<O: Copy>(run: &Run<O>, operand: Operand, line: usize, unsupported: &m
         0xb => usize::try_from(operand.value).ok().and_then(|i| run.objects.get(i).copied().flatten()).into_iter().collect(),
         0xc => inv.other.into_iter().collect(),
         // Everyone / anyone in the vicinity (0x44b4e0 cases 8/9): critters around the attachee.
-        8 | 9 => run.near.clone(),
+        kind if NearKind::of_set(kind).is_some() => run.near.get(&NearKind::of_set(kind)?).cloned().unwrap_or_default(),
         0x15 => run.player.into_iter().collect(),
         kind => {
             unsupported.push(Unsupported::ObjectSet { line, kind });
@@ -754,6 +908,23 @@ fn objects<O: Copy>(run: &Run<O>, operand: Operand, line: usize, unsupported: &m
 fn pc_object<O: Copy>(run: &Run<O>, value: i32) -> Option<O> {
     let set = Operand { tag: (value >> 16) as i8, value: 0 };
     objects(run, set, 0, &mut Vec::new())?.first().copied()
+}
+
+/// How well an item of `complexity` works for a user of `aptitude`, in percent (0x461540 /
+/// 0x4614a0): 100 for no complexity; else `100 × effective / complexity`, the effective part
+/// being half of aptitude plus complexity, kept between 0 and the complexity. A user that is no
+/// critter gets the whole complexity.
+pub fn magic_tech_factor(complexity: i32, aptitude: i32, critter: bool) -> i32 {
+    if complexity == 0 {
+        return 100;
+    }
+    let effective = if !critter {
+        complexity
+    } else {
+        let m = (aptitude + complexity) / 2;
+        if complexity >= 0 { m.clamp(0, complexity) } else { m.clamp(complexity, 0) }
+    };
+    100 * effective / complexity
 }
 
 /// A scalar operand's value (0x44ba70).
@@ -859,7 +1030,7 @@ pub(crate) mod tests {
         fn set_attachment(&mut self, object: u32, event: u32, attachment: Attachment) {
             self.attachments.insert((object, event), attachment);
         }
-        fn critters_near(&mut self, centre: u32) -> Vec<u32> {
+        fn near(&mut self, centre: u32, _kind: NearKind) -> Vec<u32> {
             self.near.get(&centre).cloned().unwrap_or_default()
         }
         fn player(&mut self) -> Option<u32> {
@@ -1036,5 +1207,38 @@ pub(crate) mod tests {
         assert_eq!(w.attachments[&(50, 3)].number, 0, "the called script removed itself (action 5)");
         assert_eq!(w.attachments[&(50, 4)].number, 300);
         assert_eq!(w.globals.var(6), 3, "three in the vicinity");
+    }
+
+    #[test]
+    fn magic_tech_and_calls_by_number_and_rumours() {
+        assert_eq!(magic_tech_factor(0, -50, true), 100, "no complexity");
+        assert_eq!(magic_tech_factor(40, 40, true), 100, "aptitude at the complexity");
+        assert_eq!(magic_tech_factor(40, 0, true), 50, "half without aptitude");
+        assert_eq!(magic_tech_factor(40, -60, true), 0, "tech against magic");
+        assert_eq!(magic_tech_factor(-40, -40, true), 100, "tech with tech");
+        assert_eq!(magic_tech_factor(40, -60, false), 100, "not a critter: all of it");
+        // Script 100: calls 200 from line 1 for triggerer 1 on attachee 50, adjusts 10 by item
+        // 60 (no complexity here) into global 3, sets rumour 1040 for PC 1, quells 1041, tests
+        // both and reputation 9 into flags 11-13.
+        let lines = vec![
+            always(block(7, &[n(200), n(1), op(0, 0), op(0xc, 0)])),
+            always(block(0x5b, &[n(10), op(0xc, 0), op(0, 0), op(1, 3)])),
+            always(block(0x32, &[n(1040), op(0, 0)])),
+            always(block(0x33, &[n(1041)])),
+            line(block(0x28, &[op(0, 0), n(1040)]), block(0x64, &[n(11)]), block(0, &[])),
+            line(block(0x29, &[n(1041)]), block(0x64, &[n(12)]), block(0, &[])),
+            line(block(0x21, &[op(0, 0), n(9)]), block(0x64, &[n(13)]), block(0, &[])),
+            always(block(1, &[])),
+        ];
+        let mut w = world(lines, 0);
+        w.scripts.insert(200, Arc::new(Script { description: String::new(), flags: 0, lines: vec![always(block(0x64, &[n(1)])), always(block(0x64, &[n(2)]))] }));
+        let mut attachment = Attachment::new(0, 0, 100);
+        let invocation = Invocation { attachee: 40, triggerer: 1, other: Some(50), event: 1, start_line: 0 };
+        let run = run_hook(&mut w, &mut attachment, invocation);
+        assert!(run.unsupported.is_empty(), "{run:?}");
+        assert!(!w.globals.flag(1) && w.globals.flag(2), "script 200 from line 1");
+        assert_eq!(w.globals.var(3), 10);
+        assert!(w.pcs[&1].rumours.contains(&1040));
+        assert!(w.globals.flag(11) && w.globals.flag(12) && !w.globals.flag(13));
     }
 }
