@@ -849,7 +849,7 @@ mod tests {
         assert!(deltas.contains(&(PlayerId(1), LedgerDelta::DialogueEnded)));
         let view = deltas.iter().find_map(|(_, d)| match d { LedgerDelta::Barter { view } => Some(view.clone()), _ => None }).expect("the window opens");
         assert_eq!(view.stock.items.iter().map(|i| i.location).collect::<Vec<_>>(), [3]);
-        let price = view.buy[&3];
+        let price = view.buy[&3].price;
         assert!(price > 100, "more than its worth: {price}");
         assert!(!sim.app.world().resource::<WorldState>().0.as_ref().unwrap().scripts.flag(1), "B: runs no result");
         // Buy the dagger.
@@ -862,7 +862,7 @@ mod tests {
         let view = deltas.iter().rev().find_map(|(_, d)| match d { LedgerDelta::Barter { view } => Some(view.clone()), _ => None }).unwrap();
         assert_eq!(view.npc_gold, price);
         assert!(view.stock.items.iter().all(|i| i.prototype != 6049));
-        let pays = view.sell[&dagger_at];
+        let pays = view.sell[&dagger_at].price;
         assert_eq!(pays, crate::barter::sell_price(100, crate::barter::haggle(0, 8), 100, 1, 1));
         // Sell it back.
         sim.receive([(PlayerId(1), crate::PlayerIntent::Inventory { seq: 2, request: InventoryRequest::Sell { from: dagger_at, to: Some(5) } })]);

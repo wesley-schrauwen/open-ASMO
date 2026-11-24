@@ -181,12 +181,17 @@ pub struct BarterView {
     pub npc_male: bool,
     pub stock: Inventory,
     /// The NPC's goods' prices, by location.
-    pub buy: BTreeMap<i32, i32>,
+    pub buy: BTreeMap<i32, Offer>,
     /// What the NPC pays for the PC's items, by location.
-    pub sell: BTreeMap<i32, i32>,
+    pub sell: BTreeMap<i32, Offer>,
     pub npc_gold: i32,
-    /// The PC has some haggle training: the window adds the percentage over worth (0x578330).
-    pub haggler: bool,
+}
+
+/// An item's price and the line the window shows for it under the cursor (0x578330).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Offer {
+    pub price: i32,
+    pub line: String,
 }
 
 impl LoadedMap {
@@ -242,9 +247,8 @@ impl Deal<'_> {
         (info.kind != TYPE_GOLD).then(|| price(&info, 0, item.quantity, worn, seller, self.trader, self.haggle, self.training))
     }
 
-    fn view(&self, npc: NetId, npc_male: bool, stock: &Inventory, pc: &Inventory, npc_gold: i32) -> BarterView {
-        let prices = |inventory: &Inventory, seller| inventory.items.iter().filter_map(|i| Some((i.location, self.price(i, seller)?))).collect();
-        BarterView { npc, npc_male, stock: stock.clone(), buy: prices(stock, Seller::Npc), sell: prices(pc, Seller::Pc), npc_gold, haggler: self.training > 0 }
+    fn worth(&self, item: &CarriedItem) -> i32 {
+        (self.info)(item.prototype).map_or(0, |info| worth(&info, 0, item.quantity))
     }
 }
 
@@ -307,16 +311,47 @@ impl BarterWorld<'_> {
         Some(with_numbers(&text, numbers))
     }
 
-    /// `player`'s window, as it now stands.
+    /// `player`'s window, as it now stands, with each item's line (0x578330):
+    /// - the NPC's goods: `gd_npc` 800 with the price, and with haggle training the percentage
+    ///   over worth (`(%d%%)`, at least 1); 900 when it will not sell;
+    /// - the PC's: 1100 with the price, 1400 with the price and the NPC's gold when it has less;
+    ///   1200 when it will not buy, 4600 for stolen goods.
     fn view(&mut self, player: PlayerId, sheet: &arcanum_rules::CharacterSheet, pc: &Inventory, open: &BarterOpen) -> Option<BarterView> {
         let (trader, haggle, training, npc) = self.deal_parts(player, sheet, open.sector, open.index)?;
         let stock = self.map.stock(open.stock)?;
         let npc_gold = self.map.npc_inventory(open.sector, open.index).map_or(0, |i| i.gold());
-        let vfs_guard = self.vfs.as_ref().and_then(|v| v.0.read().ok());
+        let vfs = self.vfs.as_ref().map(|v| v.0.clone());
+        let vfs_guard = vfs.as_ref().and_then(|v| v.read().ok());
         let (prototypes, art) = (self.map.prototypes.clone(), self.map.art.clone());
         let info = crate::item_info(&prototypes, |id| crate::world::art_size(vfs_guard.as_deref(), art.as_deref(), id));
         let deal = Deal { info: &info, trader, haggle, training };
-        Some(deal.view(open.npc, npc.male, &stock, pc, npc_gold))
+        let mut buy = BTreeMap::new();
+        for item in &stock.items {
+            let Some(price) = deal.price(item, Seller::Npc) else { continue };
+            let line = if price == 0 {
+                self.line(&npc, sheet, crate::Block::Npc, 900, &[])
+            } else {
+                let mut line = self.line(&npc, sheet, crate::Block::Npc, 800, &[price]).unwrap_or_default();
+                if training > 0 {
+                    let base = deal.worth(item).max(1);
+                    line.push_str(&format!(" ({}%)", ((price - base) * 100 / base).max(1)));
+                }
+                Some(line)
+            };
+            buy.insert(item.location, Offer { price, line: line.unwrap_or_default() });
+        }
+        let mut sell = BTreeMap::new();
+        for item in &pc.items {
+            let Some(price) = deal.price(item, Seller::Pc) else { continue };
+            let line = match price {
+                0 if info(item.prototype).is_some_and(|i| i.item_flags & ITEM_STOLEN != 0) => self.line(&npc, sheet, crate::Block::Npc, 4600, &[]),
+                0 => self.line(&npc, sheet, crate::Block::Npc, 1200, &[]),
+                p if p > npc_gold => self.line(&npc, sheet, crate::Block::Npc, 1400, &[p, npc_gold]),
+                p => self.line(&npc, sheet, crate::Block::Npc, 1100, &[p]),
+            };
+            sell.insert(item.location, Offer { price, line: line.unwrap_or_default() });
+        }
+        Some(BarterView { npc: open.npc, npc_male: npc.male, stock, buy, sell, npc_gold })
     }
 }
 

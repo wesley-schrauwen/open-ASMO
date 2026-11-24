@@ -39,8 +39,13 @@
 //!   original's default view (toggle 0x68150c off). Closing tells the host, which collapses a pile
 //!   left empty or with one item.
 //!
+//! - **Barter window** (mode 1, `plans/barter.md`): `Barter` (art 235) in place of `PDoll`, the
+//!   NPC's goods from (8, 168), 7 rows shown (its gold hidden); moves across are buys and sells
+//!   through the host; the text line (89, 128, 253, 30) shows the hovered or held item's line
+//!   with its price, else the NPC's last refusal.
+//!
 //! Not built: using, the use box, dropping by releasing over the world, splitting stacks, the arrange button, total attack and
-//! defence, item hover help, barter, the loot window's paperdoll toggle (art 338/339) and its
+//! defence, item hover help, barter's portrait, name, paperdolls and gamble box, the loot window's paperdoll toggle (art 338/339) and its
 //! scrollbar art (not found), moving items within a pile. The original's fonts for the text and
 //! numbers were not identified (Flare12Font stands in). The original's encumbrance line also
 //! prints a stray number from its stack (`%s: %s (%d)` given two values); it is left out.
@@ -87,7 +92,40 @@ pub struct InventoryPanel {
     pub open: bool,
     /// The pile it shows beside the PC's grid (the loot window), if any.
     pub pile: Option<GroundItemId>,
+    /// It shows the barter NPC's goods beside the PC's grid (mode 1).
+    pub barter: bool,
 }
+
+impl InventoryPanel {
+    /// Another inventory is shown beside the PC's grid (loot or barter): the PC's slots and
+    /// lines are hidden.
+    pub fn two_sided(&self) -> bool {
+        self.pile.is_some() || self.barter
+    }
+
+    /// The other side's grid.
+    pub fn side(&self) -> Option<SideGrid> {
+        if self.barter {
+            Some(BARTER_SIDE)
+        } else {
+            self.pile.map(|_| LOOT_SIDE)
+        }
+    }
+}
+
+/// The other side's grid: its top-left cell and the rows shown.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SideGrid {
+    pub origin: Vec2,
+    pub rows: i32,
+}
+
+/// The loot window's pile grid.
+pub const LOOT_SIDE: SideGrid = SideGrid { origin: PILE_GRID, rows: PILE_ROWS_SHOWN };
+/// The barter NPC's grid (0x575cb0: from (8, 168), 7 rows, clipped to 224).
+pub const BARTER_SIDE: SideGrid = SideGrid { origin: Vec2::new(8.0, 168.0), rows: 7 };
+/// The barter window's text line: the item under the cursor, or the NPC's refusal (0x576520).
+pub const BARTER_LINE: Rect = Rect { min: Vec2::new(89.0, 128.0), max: Vec2::new(342.0, 158.0) };
 
 /// The loot window's first pile row shown.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -103,6 +141,10 @@ pub const PILE_SCROLL_MAX: i32 = 88;
 /// The drop box's art: lit while a held item is over it.
 #[derive(Component)]
 pub struct DropBoxArt;
+
+/// The barter window's text line.
+#[derive(Component)]
+pub struct BarterText;
 
 /// The loot window's Take All button.
 #[derive(Component)]
@@ -129,6 +171,12 @@ pub struct PcInventory {
     refused_open: Vec<u32>,
     /// A pile the host opened for the loot window.
     opened: Option<GroundItemId>,
+    /// The barter window's goods and prices, from the host.
+    barter: Option<arcanum_sim::barter::BarterView>,
+    /// The host opened a barter window.
+    barter_opened: bool,
+    /// The barter NPC's last refusal.
+    barter_line: Option<String>,
 }
 
 impl PcInventory {
@@ -157,6 +205,31 @@ impl PcInventory {
     /// The host opened `pile` for the loot window.
     pub fn open_pile(&mut self, pile: GroundItemId) {
         self.opened = Some(pile);
+    }
+
+    /// The host's barter window: the first view opens it.
+    pub fn barter_view(&mut self, view: arcanum_sim::barter::BarterView) {
+        if self.barter.is_none() {
+            self.barter_opened = true;
+            self.barter_line = None;
+        }
+        self.barter = Some(view);
+    }
+
+    /// The barter NPC refused a trade.
+    pub fn barter_refused(&mut self, text: String) {
+        self.barter_line = Some(text);
+    }
+
+    /// The barter window's view, while open.
+    pub fn barter(&self) -> Option<&arcanum_sim::barter::BarterView> {
+        self.barter.as_ref()
+    }
+
+    /// The NPC's goods as the grid shows them: its gold is not shown.
+    pub fn barter_goods(&self) -> Option<Inventory> {
+        let view = self.barter.as_ref()?;
+        Some(Inventory { items: view.stock.items.iter().filter(|i| i.prototype != GOLD).cloned().collect(), ..view.stock.clone() })
     }
 
     /// Requests for the host, oldest first.
@@ -270,7 +343,7 @@ impl Plugin for InventoryScreenPlugin {
                 *held = HeldItem::default();
             })
             .add_systems(PreUpdate, toggle_on_keys.run_if(in_state(AppState::InGame)).after(bevy::input::InputSystems))
-            .add_systems(Update, (settle_inventory, show_refusals, open_loot, one_panel_at_a_time, show_panel, scroll_pile, drag_items, show_items, follow_cursor, light_drop_box).chain().run_if(in_state(AppState::InGame)))
+            .add_systems(Update, (settle_inventory, show_refusals, open_loot, one_panel_at_a_time, show_panel, scroll_pile, drag_items, show_items, follow_cursor, light_drop_box, show_barter_line).chain().run_if(in_state(AppState::InGame)))
             .add_observer(on_hud_button)
             .add_observer(on_take_all);
     }
@@ -302,9 +375,21 @@ fn on_hud_button(activate: On<Activate>, buttons: Query<&crate::hud::HudAction>,
 /// The host opened a pile: the loot window shows it.
 fn open_loot(mut inventory: ResMut<PcInventory>, mut panel: ResMut<InventoryPanel>, mut scroll: ResMut<LootScroll>) {
     if let Some(pile) = inventory.opened.take() {
-        *panel = InventoryPanel { open: true, pile: Some(pile) };
+        *panel = InventoryPanel { open: true, pile: Some(pile), barter: false };
         scroll.0 = 0;
     }
+    if std::mem::take(&mut inventory.barter_opened) {
+        *panel = InventoryPanel { open: true, pile: None, barter: true };
+        scroll.0 = 0;
+    }
+}
+
+/// The other side's items: the pile, or the barter NPC's goods.
+fn other_side(panel: &InventoryPanel, client: Option<&crate::world_render::ClientMap>, inventory: &PcInventory) -> Option<Inventory> {
+    if panel.barter {
+        return inventory.barter_goods();
+    }
+    panel.pile.and_then(|p| client?.map.pile(p)).map(|p| p.inventory)
 }
 
 fn on_take_all(activate: On<Activate>, buttons: Query<(), With<TakeAllButton>>, mut inventory: ResMut<PcInventory>) {
@@ -314,15 +399,15 @@ fn on_take_all(activate: On<Activate>, buttons: Query<(), With<TakeAllButton>>, 
 }
 
 /// The mouse wheel over the pile's grid scrolls it a row a step.
-fn scroll_pile(panel: Res<InventoryPanel>, mut wheel: MessageReader<bevy::input::mouse::MouseWheel>, windows: Query<&Window>, mut scroll: ResMut<LootScroll>) {
+fn scroll_pile(panel: Res<InventoryPanel>, inventory: Res<PcInventory>, mut wheel: MessageReader<bevy::input::mouse::MouseWheel>, windows: Query<&Window>, mut scroll: ResMut<LootScroll>) {
     let steps: f32 = wheel.read().map(|w| w.y.signum()).sum();
-    if panel.pile.is_none() || !panel.open || steps == 0.0 {
-        return;
-    }
+    let Some(side) = panel.side().filter(|_| panel.open && steps != 0.0) else { return };
     let Some(point) = windows.iter().find_map(|w| w.cursor_position().map(|c| screen_point(w.size(), c) - Vec2::new(0.0, TOP_BAR_HEIGHT))) else { return };
-    // The wheel region (0x5cafa0): the grid and its track, (8, 136, 337, 256).
-    if Rect::from_corners(PILE_GRID, PILE_GRID + Vec2::new(337.0, 256.0)).contains(point) {
-        let to = (scroll.0 - steps as i32).clamp(0, PILE_SCROLL_MAX);
+    // The wheel region (0x5cafa0): the grid and its track, (8, 136, 337, 256) for a pile.
+    // Barter: a critter's 12 rows, or a substitute container's 96 (builder's call).
+    let max = if panel.barter { inventory.barter().map_or(0, |v| v.stock.rows - side.rows).max(0) } else { PILE_SCROLL_MAX };
+    if Rect::from_corners(side.origin, side.origin + Vec2::new(337.0, side.rows as f32 * 32.0)).contains(point) {
+        let to = (scroll.0 - steps as i32).clamp(0, max);
         if to != scroll.0 {
             scroll.0 = to;
         }
@@ -339,12 +424,12 @@ fn one_panel_at_a_time(mut inventory: ResMut<InventoryPanel>, mut character: Res
 }
 
 #[allow(clippy::too_many_arguments)]
-fn show_panel(mut commands: Commands, mut panel: ResMut<InventoryPanel>, roots: Query<Entity, With<InventoryScreen>>, assets: Res<AssetServer>, mut inventory: ResMut<PcInventory>, client: Option<Res<crate::world_render::ClientMap>>, mut shown: Local<Option<GroundItemId>>) {
+fn show_panel(mut commands: Commands, mut panel: ResMut<InventoryPanel>, roots: Query<Entity, With<InventoryScreen>>, assets: Res<AssetServer>, mut inventory: ResMut<PcInventory>, client: Option<Res<crate::world_render::ClientMap>>, mut shown: Local<(Option<GroundItemId>, bool)>) {
     if !panel.is_changed() {
         return;
     }
     let built = !roots.is_empty();
-    if built && panel.open && *shown == panel.pile {
+    if built && panel.open && *shown == (panel.pile, panel.barter) {
         return;
     }
     if built {
@@ -353,18 +438,23 @@ fn show_panel(mut commands: Commands, mut panel: ResMut<InventoryPanel>, roots: 
         }
         commands.insert_resource(HeldItem::default());
         // The loot window closed, or shows another pile now: the host may collapse the old one.
-        if shown.is_some() {
+        if shown.0.is_some() {
             inventory.send(InventoryRequest::ClosePile);
+        }
+        if shown.1 {
+            inventory.send(InventoryRequest::CloseBarter);
+            inventory.barter = None;
         }
     }
     if !panel.open {
-        if panel.pile.is_some() {
+        if panel.pile.is_some() || panel.barter {
             panel.pile = None;
+            panel.barter = false;
         }
-        *shown = None;
+        *shown = (None, false);
         return;
     }
-    *shown = panel.pile;
+    *shown = (panel.pile, panel.barter);
     let loot = panel.pile.is_some();
     // The other side's portrait by its prototype: a pile's, or the container's.
     let portrait = match panel.pile {
@@ -382,7 +472,11 @@ fn show_panel(mut commands: Commands, mut panel: ResMut<InventoryPanel>, roots: 
         .with_children(|screen| {
             // The window starts black (the loot art's lens is see-through).
             screen.spawn((BackgroundColor(Color::BLACK), at(band(0.0, 0.0, 800.0, 400.0))));
-            if loot {
+            if panel.barter {
+                // Barter (art 235); the NPC's portrait and name are not drawn yet.
+                screen.spawn(image("Barter.ART", 0.0, 0.0, 358.0, 400.0));
+                screen.spawn((BarterText, bevy::picking::Pickable::IGNORE, Node { overflow: Overflow::clip(), ..at(band(BARTER_LINE.min.x, BARTER_LINE.min.y, BARTER_LINE.width(), BARTER_LINE.height())) }));
+            } else if loot {
                 screen.spawn(image("Loot.ART", 0.0, 0.0, 358.0, 400.0));
                 screen.spawn((ImageNode::new(assets.load(art(portrait))), Node { width: Val::Auto, height: Val::Auto, ..at(band(183.0, 33.0, 64.0, 64.0)) }));
                 screen.spawn((TakeAllButton, Button, ActivateOnPress, Hovered::default(), FrameButton::arrow(assets.load(art("TakeAllButt.ART"))), ImageNode::default(), at(band(301.0, 47.0, 51.0, 50.0))));
@@ -390,7 +484,7 @@ fn show_panel(mut commands: Commands, mut panel: ResMut<InventoryPanel>, roots: 
                 screen.spawn(image("PDoll.ART", 0.0, 0.0, 358.0, 400.0));
             }
             screen.spawn(image("Inventor.ART", 358.0, 0.0, 442.0, 400.0));
-            if !loot {
+            if !panel.two_sided() {
                 screen.spawn(image("TotalAttack.ART", 29.0, 318.0, 54.0, 71.0));
                 screen.spawn(image("TotalDefens.ART", 254.0, 319.0, 54.0, 71.0));
             }
@@ -507,12 +601,12 @@ pub enum Spot {
     Pile(i32),
 }
 
-/// What is at `point` in the band (0x575cb0): with a pile open, its grid scrolled by `scroll`
-/// rows and the PC's grid (its slots are hidden); otherwise the PC's grid and slots.
-pub fn spot_at(point: Vec2, loot: bool, scroll: i32) -> Option<Spot> {
-    if loot {
-        let (col, row) = (((point.x - PILE_GRID.x) / 32.0).floor(), ((point.y - PILE_GRID.y) / 32.0).floor());
-        if (0.0..10.0).contains(&col) && (0.0..PILE_ROWS_SHOWN as f32).contains(&row) {
+/// What is at `point` in the band (0x575cb0): with another side open, its grid scrolled by
+/// `scroll` rows and the PC's grid (its slots are hidden); otherwise the PC's grid and slots.
+pub fn spot_at(point: Vec2, side: Option<SideGrid>, scroll: i32) -> Option<Spot> {
+    if let Some(side) = side {
+        let (col, row) = (((point.x - side.origin.x) / 32.0).floor(), ((point.y - side.origin.y) / 32.0).floor());
+        if (0.0..10.0).contains(&col) && (0.0..side.rows as f32).contains(&row) {
             return Some(Spot::Pile((row as i32 + scroll) * 10 + col as i32));
         }
         return location_at(point).filter(|l| in_grid(*l)).map(Spot::Pc);
@@ -592,14 +686,18 @@ fn drag_items(
     let empty = Prototypes::default();
     let prototypes = client.as_ref().map_or(&empty, |c| &c.map.prototypes);
     let index = client.as_ref().and_then(|c| c.art_index());
-    let pile = panel.pile.and_then(|p| client.as_ref()?.map.pile(p)).map(|p| p.inventory.clone());
+    let pile = other_side(&panel, client.as_deref(), &inventory);
     let mut sizes = inventory_sizes(&inv, prototypes, index, &mut cache, &assets, &frames);
     if let Some(pile) = &pile {
         sizes.extend(inventory_sizes(pile, prototypes, index, &mut cache, &assets, &frames));
     }
     let info = client_info(prototypes, &sizes);
-    let loot = panel.pile.is_some();
-    let spot = spot_at(point, loot, scroll.0);
+    let loot = panel.two_sided();
+    let barter = panel.barter;
+    let spot = spot_at(point, panel.side(), scroll.0);
+    // Barter trades as the loot window moves: taking is buying, putting is selling.
+    let take = |from: i32, to: Option<i32>| if barter { InventoryRequest::Buy { from, to } } else { InventoryRequest::Take { from, to } };
+    let put = |from: i32, to: Option<i32>| if barter { InventoryRequest::Sell { from, to } } else { InventoryRequest::Put { from, to } };
     if (buttons.just_pressed(MouseButton::Left) || right) && held.0.is_none() {
         let hotkey = crate::hotkey_bar::slot_at(point + Vec2::new(0.0, TOP_BAR_HEIGHT)).map(crate::hotkey_bar::location);
         let picked = match spot {
@@ -621,7 +719,7 @@ fn drag_items(
         if right {
             // A right click sends it to the other side where the insert puts it (0x574248).
             if loot {
-                inventory.send(if from_pile { InventoryRequest::Take { from: item.location, to: None } } else { InventoryRequest::Put { from: item.location, to: None } });
+                inventory.send(if from_pile { take(item.location, None) } else { put(item.location, None) });
             }
             return;
         }
@@ -651,17 +749,17 @@ fn drag_items(
             Some(InventoryRequest::Drop { from: h.from })
         } else {
             match (spot, h.from_pile) {
-                (Some(Spot::Pile(at)), false) => (at - h.grab >= 0).then(|| InventoryRequest::Put { from: h.from, to: Some(at - h.grab) }),
+                (Some(Spot::Pile(at)), false) => (at - h.grab >= 0).then(|| put(h.from, Some(at - h.grab))),
                 (Some(Spot::Pc(at)), true) => {
                     let to = if in_grid(at) { at - h.grab } else { at };
-                    (to >= 0).then_some(InventoryRequest::Take { from: h.from, to: Some(to) })
+                    (to >= 0).then(|| take(h.from, Some(to)))
                 }
                 (Some(Spot::Pc(_)), false) => drop_target(point, h).filter(|to| *to != h.from).map(|to| InventoryRequest::Move { from: h.from, to }),
                 _ => None,
             }
         };
         let Some(request) = request else { return };
-        if request.is_loot() {
+        if request.is_loot() || request.is_barter() {
             inventory.send(request);
             return;
         }
@@ -672,9 +770,57 @@ fn drag_items(
     }
 }
 
+/// The barter window's text line (0x578330): the line for the item under the cursor (the held
+/// one while dragging), else the NPC's last refusal. The host made each line with its price.
+#[allow(clippy::too_many_arguments)]
+fn show_barter_line(
+    mut commands: Commands,
+    inventory: Res<PcInventory>,
+    panel: Res<InventoryPanel>,
+    held: Res<HeldItem>,
+    scroll: Res<LootScroll>,
+    windows: Query<&Window>,
+    client: Option<Res<crate::world_render::ClientMap>>,
+    fonts: Option<Res<ArcanumFonts>>,
+    boxes: Query<Entity, With<BarterText>>,
+    (mut cache, assets, frames): (ResMut<ItemArtCache>, Res<AssetServer>, Res<Assets<ArtFrames>>),
+    mut shown: Local<Option<String>>,
+) {
+    let (Ok(text_box), Some(view), Some(inv)) = (boxes.single(), inventory.barter(), inventory.shown()) else {
+        *shown = None;
+        return;
+    };
+    let point = windows.iter().find_map(|w| w.cursor_position().map(|c| screen_point(w.size(), c) - Vec2::new(0.0, TOP_BAR_HEIGHT)));
+    let empty = Prototypes::default();
+    let prototypes = client.as_ref().map_or(&empty, |c| &c.map.prototypes);
+    let index = client.as_ref().and_then(|c| c.art_index());
+    let goods = inventory.barter_goods().unwrap_or_default();
+    let mut sizes = inventory_sizes(inv, prototypes, index, &mut cache, &assets, &frames);
+    sizes.extend(inventory_sizes(&goods, prototypes, index, &mut cache, &assets, &frames));
+    let info = client_info(prototypes, &sizes);
+    let line = match (held.0, point.and_then(|p| spot_at(p, panel.side(), scroll.0).map(|s| (s, p)))) {
+        (Some(h), _) if !h.from_pile => view.sell.get(&h.from).map(|o| o.line.clone()),
+        (Some(h), _) => view.buy.get(&h.from).map(|o| o.line.clone()),
+        (None, Some((Spot::Pile(at), _))) => pile_item_at(&goods, at, &info).and_then(|i| view.buy.get(&i.location)).map(|o| o.line.clone()),
+        (None, Some((Spot::Pc(_), p))) => item_at(inv, p, &info).and_then(|i| view.sell.get(&i.location)).map(|o| o.line.clone()),
+        (None, None) => None,
+    };
+    let line = line.or_else(|| inventory.barter_line.clone()).unwrap_or_default();
+    if shown.as_deref() == Some(line.as_str()) {
+        return;
+    }
+    *shown = Some(line.clone());
+    commands.entity(text_box).despawn_children();
+    let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
+    commands.entity(text_box).with_children(|cell| {
+        let mut t = cell.spawn((TextColor(SCREEN_WHITE), bevy::picking::Pickable::IGNORE));
+        fonts.insert_text(&mut t, &line, UiFont::Body);
+    });
+}
+
 /// A pile item's footprint box in the band, with the grid scrolled by `scroll` rows.
-fn pile_box(location: i32, cells: (i32, i32), scroll: i32) -> Rect {
-    let at = PILE_GRID + Vec2::new((location % 10) as f32, (location / 10 - scroll) as f32) * 32.0;
+fn pile_box(location: i32, cells: (i32, i32), scroll: i32, origin: Vec2) -> Rect {
+    let at = origin + Vec2::new((location % 10) as f32, (location / 10 - scroll) as f32) * 32.0;
     Rect::from_corners(at, at + Vec2::new(cells.0 as f32, cells.1 as f32) * 32.0)
 }
 
@@ -725,7 +871,7 @@ fn follow_cursor(
     (mut cache, assets, frames, panel): (ResMut<ItemArtCache>, Res<AssetServer>, Res<Assets<ArtFrames>>, Res<InventoryPanel>),
 ) {
     let item = held.0.and_then(|h| {
-        let source = if h.from_pile { &panel.pile.and_then(|p| client.as_ref()?.map.pile(p))?.inventory } else { inventory.shown()? };
+        let source = if h.from_pile { other_side(&panel, client.as_deref(), &inventory)? } else { inventory.shown()?.clone() };
         Some((h, source.items.iter().find(|i| i.location == h.from)?.clone()))
     });
     let (Some((h, item)), Ok(root)) = (item, roots.single()) else {
@@ -764,17 +910,18 @@ fn show_items(
     contents: Query<Entity, With<InventoryContent>>,
     added: Query<(), Added<InventoryScreen>>,
     (assets, frames, mut pending, mut cache): (Res<AssetServer>, Res<Assets<ArtFrames>>, Local<bool>, ResMut<ItemArtCache>),
-    (panel, scroll, mut drawn_pile): (Res<InventoryPanel>, Res<LootScroll>, Local<Option<arcanum_sim::Pile>>),
+    (panel, scroll, mut drawn_pile): (Res<InventoryPanel>, Res<LootScroll>, Local<Option<Inventory>>),
 ) {
     let Ok(root) = roots.single() else { return };
-    let pile = panel.pile.and_then(|p| client.as_ref()?.map.pile(p));
+    let pile = other_side(&panel, client.as_deref(), &inventory);
     let pile_changed = pile != *drawn_pile;
     if !inventory.is_changed() && !held.is_changed() && !scroll.is_changed() && !pile_changed && added.is_empty() && !*pending {
         return;
     }
     *pending = false;
     *drawn_pile = pile.clone();
-    let loot = panel.pile.is_some();
+    let loot = panel.two_sided();
+    let side = panel.side().unwrap_or(LOOT_SIDE);
     for old in &contents {
         commands.entity(old).despawn();
     }
@@ -792,18 +939,18 @@ fn show_items(
     // The held item is not drawn where it was (item flag 0x10, 0x4a50d0).
     let held_pc = held.0.filter(|h| !h.from_pile).map(|h| h.from);
     let held_pile = held.0.filter(|h| h.from_pile).map(|h| h.from);
-    // The pile's items, clipped to its 8 rows shown.
+    // The other side's items, clipped to its rows shown (8 for a pile, 7 for barter).
     if let Some(pile) = &pile {
-        let clip = commands.spawn((InventoryContent, bevy::picking::Pickable::IGNORE, Node { overflow: Overflow::clip(), ..at(band(PILE_GRID.x, PILE_GRID.y, 320.0, 256.0)) })).id();
+        let clip = commands.spawn((InventoryContent, bevy::picking::Pickable::IGNORE, Node { overflow: Overflow::clip(), ..at(band(side.origin.x, side.origin.y, 320.0, side.rows as f32 * 32.0)) })).id();
         let mut inside = Vec::new();
-        for item in pile.inventory.items.iter().filter(|i| Some(i.location) != held_pile) {
+        for item in pile.items.iter().filter(|i| Some(i.location) != held_pile && pile.in_grid(i.location)) {
             let Some(id) = item_art(prototypes, &CarriedItem { location: 0, ..item.clone() }) else { continue };
             let Some((image, size)) = art_frame(index, &mut cache, &assets, &frames, id) else {
                 *pending = true;
                 continue;
             };
-            let boxed = pile_box(item.location, arcanum_sim::cells_for(size.x, size.y), scroll.0);
-            let corner = centred(boxed, size, true) - PILE_GRID;
+            let boxed = pile_box(item.location, arcanum_sim::cells_for(size.x, size.y), scroll.0, side.origin);
+            let corner = centred(boxed, size, true) - side.origin;
             inside.push(commands.spawn((DrawnItem(item.clone()), bevy::picking::Pickable::IGNORE, ImageNode::new(image), at(rect(corner, Vec2::new(size.x as f32, size.y as f32))))).id());
         }
         commands.entity(clip).add_children(&inside);
@@ -891,12 +1038,16 @@ mod tests {
     #[test]
     fn the_loot_window_finds_the_piles_cells_scrolled() {
         let cell = |x: i32, y: i32| Vec2::new(8.0 + 32.0 * x as f32 + 3.0, 136.0 + 32.0 * y as f32 + 3.0);
-        assert_eq!(spot_at(cell(0, 0), true, 0), Some(Spot::Pile(0)));
-        assert_eq!(spot_at(cell(9, 7), true, 2), Some(Spot::Pile(99)), "row 7 shown is row 9 two rows down");
-        assert_eq!(spot_at(cell(0, 8), true, 0), None, "eight rows shown");
-        assert_eq!(spot_at(Vec2::new(30.0, 200.0), false, 0), Some(Spot::Pc(Slot::Weapon as i32)), "the paperdoll without a pile");
-        assert_eq!(spot_at(Vec2::new(370.0, 10.0), true, 0), Some(Spot::Pc(0)));
-        assert_eq!(pile_box(23, (1, 2), 1).min, Vec2::new(8.0 + 96.0, 136.0 + 32.0));
+        assert_eq!(spot_at(cell(0, 0), Some(LOOT_SIDE), 0), Some(Spot::Pile(0)));
+        assert_eq!(spot_at(cell(9, 7), Some(LOOT_SIDE), 2), Some(Spot::Pile(99)), "row 7 shown is row 9 two rows down");
+        assert_eq!(spot_at(cell(0, 8), Some(LOOT_SIDE), 0), None, "eight rows shown");
+        assert_eq!(spot_at(Vec2::new(30.0, 200.0), None, 0), Some(Spot::Pc(Slot::Weapon as i32)), "the paperdoll without a pile");
+        assert_eq!(spot_at(Vec2::new(370.0, 10.0), Some(LOOT_SIDE), 0), Some(Spot::Pc(0)));
+        // Barter: the NPC's grid from (8, 168), seven rows.
+        assert_eq!(spot_at(Vec2::new(10.0, 170.0), Some(BARTER_SIDE), 0), Some(Spot::Pile(0)));
+        assert_eq!(spot_at(Vec2::new(10.0, 170.0 + 7.0 * 32.0), Some(BARTER_SIDE), 0), None, "seven rows shown");
+        assert_eq!(spot_at(Vec2::new(10.0, 140.0), Some(BARTER_SIDE), 0), None, "the text line, not the grid");
+        assert_eq!(pile_box(23, (1, 2), 1, PILE_GRID).min, Vec2::new(8.0 + 96.0, 136.0 + 32.0));
         let pile = Inventory { items: vec![CarriedItem { prototype: 1, location: 12, quantity: 0, keys: vec![] }], ..Inventory::container() };
         assert!(pile_item_at(&pile, 32, sword).is_some(), "a 1x3 sword from row 1 to 3");
     }
@@ -932,6 +1083,26 @@ mod tests {
         let sword = CarriedItem { prototype: 1, location: Slot::Weapon as i32, quantity: 0, keys: vec![] };
         assert_eq!(placement(&sword, (1, 1)).unwrap().min, Vec2::new(23.0, 170.0));
         assert_eq!(centred(placement(&sword, (1, 1)).unwrap(), UVec2::new(101, 128), false), Vec2::new(20.0, 170.0), "an arithmetic shift rounds down");
+    }
+
+    #[test]
+    fn the_first_barter_view_opens_the_window_and_gold_is_not_shown() {
+        use arcanum_sim::barter::{BarterView, Offer};
+        let mut stock = Inventory::default();
+        stock.change_gold(40);
+        stock.items.push(CarriedItem { prototype: 6049, location: 3, quantity: 0, keys: vec![] });
+        let view = BarterView { npc: arcanum_sim::NetId(4), npc_male: true, stock, buy: [(3, Offer { price: 12, line: "I will sell that for 12 coins.".into() })].into(), sell: Default::default(), npc_gold: 40 };
+        let mut inventory = PcInventory::default();
+        inventory.barter_view(view.clone());
+        assert!(inventory.barter_opened);
+        assert_eq!(inventory.barter_goods().unwrap().items.iter().map(|i| i.location).collect::<Vec<_>>(), [3], "the NPC's gold is not in its grid");
+        inventory.barter_opened = false;
+        inventory.barter_refused("No.".into());
+        inventory.barter_view(view);
+        assert!(!inventory.barter_opened, "a later view only updates it");
+        assert_eq!(inventory.barter_line.as_deref(), Some("No."));
+        let panel = InventoryPanel { open: true, pile: None, barter: true };
+        assert!(panel.two_sided() && panel.side() == Some(BARTER_SIDE));
     }
 }
 
