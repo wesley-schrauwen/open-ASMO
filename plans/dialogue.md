@@ -177,9 +177,18 @@ format and language are checked against all 709 `.dlg` files.
      - the original's ten-PC limit per NPC.
    - **Real data:** Virgil now offers his first two options. Choosing one shows his next line
      ("[The man's jaw drops open.]…") and its options.
-3. **The client:**
-   - floating lines over heads;
-   - the options panel, with hover and click;
-   - the voice;
-   - clicking an NPC to talk.
+3. **The client** (`dialogue_ui.rs`). Built; not yet checked by eye.
+   - A click on an NPC walks to it and talks (`Talk` after the walk, as doors).
+   - Lines float over the speaker's head: Flare12, centred, wrapped to 200 px; white for
+     NPCs, green for the PC's choice. A new line from a speaker replaces the old.
+     - The line of the NPC being talked to stays until the conversation moves on or ends.
+     - Other lines last 3 s plus 1 s per 15 characters (builder's call).
+   - The voice plays at the Voice volume (`_f`, falling back to `_m`); a new line stops the
+     old one.
+   - **Options panel:** black, (200, 419) 400x100, rows 19 px apart. White, cyan under the
+     cursor, blue pressed; a click chooses.
+   - Escape leaves the conversation. While talking, world clicks are blocked (builder's
+     call).
+   - `DEBUG_ARCANUM_TALK=1` talks to the nearest NPC once in the world.
+   - **Not checked by eye:** the display was asleep and screenshots came out black.
 4. **Generic lines** (`gd_*.mes`, the prefixes), barter (`B:`), and the other windows.

@@ -91,6 +91,7 @@ fn main() {
             arcanum_client::hotkey_bar::HotkeyBarPlugin,
             arcanum_client::spell_bar::SpellBarPlugin,
             arcanum_client::rest_window::RestWindowPlugin,
+            arcanum_client::dialogue_ui::DialogueUiPlugin,
             arcanum_client::cursor::CursorPlugin,
         ));
 
@@ -152,7 +153,27 @@ fn main() {
         );
     }
 
-    // Debugging aid: `DEBUG_ARCANUM_PANEL=sleep` asks for the sleep window once the PC is in.
+    // Debugging aid: `DEBUG_ARCANUM_TALK=1` walks to the nearest NPC and talks once the world is in.
+    if std::env::var("DEBUG_ARCANUM_TALK").is_ok() {
+        app.add_systems(
+            Update,
+            (|pc: Res<arcanum_client::sim_bridge::LocalPc>, actors: Query<&arcanum_client::actors::Actor>, mut walk: ResMut<arcanum_client::actors::WalkLocalPc>, mut frames: Local<u32>| {
+                let Some((_, at)) = pc.0 else { return };
+                *frames += 1;
+                if *frames != 120 {
+                    return;
+                }
+                let nearest = actors.iter().filter(|a| !a.pc).min_by_key(|a| a.at.x.abs_diff(at.x).max(a.at.y.abs_diff(at.y)));
+                if let Some(npc) = nearest {
+                    info!("talking to {:?} at {:?}", npc.net_id, npc.at);
+                    walk.click_talk(npc.net_id, npc.at);
+                }
+            })
+            .run_if(in_state(AppState::InGame)),
+        );
+    }
+
+        // Debugging aid: `DEBUG_ARCANUM_PANEL=sleep` asks for the sleep window once the PC is in.
     if std::env::var("DEBUG_ARCANUM_PANEL").is_ok_and(|v| v == "sleep") {
         app.add_systems(
             Update,
