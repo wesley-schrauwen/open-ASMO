@@ -161,7 +161,22 @@ format and language are checked against all 709 `.dlg` files.
      - Virgil (script 1324) at the crash site speaks his first line with its voice.
      - All his options test his reaction (`re62` / `re-61`). Reaction is not built, so they
        fail and the conversation ends there.
-     - **Reaction is next.**
+2b. **Reaction** (`arcanum_sim::reaction`). Done.
+   - The reaction is the PC's stored value, else the NPC's `npc_reaction_base` (50), plus:
+     - the PC's reaction modifier (from Beauty), unless the NPC ignores looks (`npc_flags`
+       0x20000, `critter_flags` 0x2000800c);
+     - the race table 0x5b684c (NPC race row, PC race column);
+     - the PC's reputations' effects from `rules/gamerep.mes` by the NPC's origin and
+       faction.
+   - Changes (`re`: add, set, at least, at most) store the unmodified part, per PC and NPC,
+     saved with the PC. Having a stored value is "met" (0x4c0c40). Levels follow 0x4c0fc0.
+   - **Not built:**
+     - the PC's effects on reaction;
+     - charm;
+     - the NPC's grudge list;
+     - the original's ten-PC limit per NPC.
+   - **Real data:** Virgil now offers his first two options. Choosing one shows his next line
+     ("[The man's jaw drops open.]…") and its options.
 3. **The client:**
    - floating lines over heads;
    - the options panel, with hover and click;

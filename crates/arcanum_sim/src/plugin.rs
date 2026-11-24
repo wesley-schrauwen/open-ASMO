@@ -61,6 +61,7 @@ impl Plugin for SimPlugin {
             .init_resource::<crate::TalkRequests>()
             .init_resource::<crate::DialogueReports>()
             .init_resource::<crate::GenericLines>()
+            .init_resource::<crate::ReputationTable>()
             .init_resource::<crate::Scripts>()
             .init_resource::<crate::ScriptReports>()
             .init_resource::<InventoryAcks>()

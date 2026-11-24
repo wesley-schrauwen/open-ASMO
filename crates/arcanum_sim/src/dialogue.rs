@@ -104,6 +104,10 @@ pub struct TalkRequests {
     pub end: Vec<PlayerId>,
 }
 
+/// The reputation effects on reaction, read on first use.
+#[derive(Resource, Debug, Default)]
+pub struct ReputationTable(pub Option<crate::ReputationEffects>);
+
 /// Tests and results the host met but cannot do yet: the dialogue file and the opcode.
 #[derive(Resource, Debug, Default)]
 pub struct DialogueReports(pub Vec<(u32, String)>);
@@ -142,6 +146,10 @@ pub struct Talk<'a> {
     /// The NPC's dialogue attachment (flags and counters).
     pub npc: &'a mut Attachment,
     pub met: bool,
+    /// The NPC's key in the PC's stored reactions, and what its reaction is made of.
+    pub npc_key: String,
+    pub npc_reaction: crate::NpcReaction,
+    pub reputations: &'a crate::ReputationEffects,
     /// Gold changed: the inventory must be sent.
     pub gold_changed: bool,
     /// Opcodes not built yet that were met.
@@ -178,6 +186,37 @@ impl Talk<'_> {
         self.rules.stats(self.sheet).get(index).copied().unwrap_or(0)
     }
 
+    /// The NPC's reaction toward the PC (0x4c0d00): stored, else its base, plus the modifier.
+    pub fn reaction(&self) -> i32 {
+        self.stored_reaction() + self.reaction_modifier()
+    }
+
+    fn stored_reaction(&self) -> i32 {
+        self.pc.reactions.get(&self.npc_key).copied().unwrap_or(self.npc_reaction.base)
+    }
+
+    fn reaction_modifier(&self) -> i32 {
+        let reputations = self.reputations.on(self.pc.reputations.iter().copied(), self.npc_reaction.origin, self.npc_reaction.faction);
+        self.npc_reaction.modifier(self.rules.derived(self.sheet).reaction, self.sheet.race, reputations)
+    }
+
+    /// Changes the reaction (dialogue `re`, 0x4c0de0): adds, or brings it to, at least or at most
+    /// `n`; the change is stored for this PC.
+    fn change_reaction(&mut self, n: i32, change: arcanum_formats::dialog::Change) {
+        use arcanum_formats::dialog::Change;
+        let now = self.reaction();
+        let delta = match change {
+            Change::Add => n,
+            Change::Set => n - now,
+            Change::AtLeast => (n - now).max(0),
+            Change::AtMost => (n - now).min(0),
+        };
+        if delta != 0 {
+            let stored = self.stored_reaction() + delta;
+            self.pc.reactions.insert(self.npc_key.clone(), stored);
+        }
+    }
+
     pub fn female(&self) -> bool {
         self.sheet.gender == FEMALE
     }
@@ -203,7 +242,8 @@ impl Talk<'_> {
             "ru" => self.pc.rumours.contains(&a.unsigned_abs()) == (a >= 0),
             "rq" => self.globals.quelled.contains(&a.unsigned_abs()) == (a >= 0),
             "rp" => self.pc.reputations.contains(&a.unsigned_abs()) == (a > 0),
-            "me" => self.met == (a != 0),
+            "me" => (self.met || self.pc.reactions.contains_key(&self.npc_key)) == (a != 0),
+            "re" => passes(self.reaction(), a),
             "$$" => passes(self.gold(), a),
             "in" if a > 0 => self.has(a),
             "ni" if a > 0 => !self.has(a),
@@ -259,6 +299,7 @@ impl Talk<'_> {
                 "rq" => set_in(&mut self.globals.quelled, a.unsigned_abs(), true),
                 "rp" => set_in(&mut self.pc.reputations, a.unsigned_abs(), a > 0),
                 "fl" => return Some(a),
+                "re" => self.change_reaction(a, t.change),
                 op => self.unbuilt.push(format!("result {op}")),
             }
         }
@@ -410,7 +451,7 @@ pub fn run_conversations(
     mut generic: ResMut<GenericLines>,
     mut reports: ResMut<DialogueReports>,
     (session, rules, vfs, acks): (Res<Session>, Res<SimRules>, Option<Res<crate::SimVfs>>, Res<crate::InventoryAcks>),
-    mut rng: ResMut<crate::HostRng>,
+    (mut rng, mut reputations): (ResMut<crate::HostRng>, ResMut<ReputationTable>),
     mut outbox: ResMut<Outbox>,
     mut pcs: Query<TalkerQuery>,
     npcs: Query<(&NetId, &NpcSource)>,
@@ -421,6 +462,9 @@ pub fn run_conversations(
     let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
     let vfs = vfs_guard.as_deref();
     let library = scripts.0.get_or_insert_with(|| vfs.map(crate::ScriptLibrary::new).unwrap_or_default());
+    let reputations = &*reputations.0.get_or_insert_with(|| {
+        vfs.and_then(|v| v.read(crate::GAME_REP).ok()).and_then(|d| MesFile::parse(&d).ok()).map(|m| crate::ReputationEffects::parse(&m)).unwrap_or_default()
+    });
     let mut steps: Vec<(PlayerId, Step)> = started.0.drain(..).map(|s| (s.player, Step::Start(s))).collect();
     steps.extend(requests.choose.drain(..).map(|(p, i)| (p, Step::Choose(i))));
     steps.extend(requests.end.drain(..).map(|p| (p, Step::End)));
@@ -444,7 +488,20 @@ pub fn run_conversations(
         let before = npc_attachment;
         let npc_info = npc_details(&map, npc_object, &mut generic, vfs);
         let met = saved.script_state.met.contains(&key);
-        let mut talk = Talk { rules: &rules.0, sheet: &sheet.0, inventory: &mut inventory, pc: &mut saved.script_state, globals: &mut save.scripts, npc: &mut npc_attachment, met, gold_changed: false, unbuilt: Vec::new() };
+        let mut talk = Talk {
+            rules: &rules.0,
+            sheet: &sheet.0,
+            inventory: &mut inventory,
+            pc: &mut saved.script_state,
+            globals: &mut save.scripts,
+            npc: &mut npc_attachment,
+            met,
+            npc_key: key.clone(),
+            npc_reaction: npc_info.reaction,
+            reputations,
+            gold_changed: false,
+            unbuilt: Vec::new(),
+        };
         let mut say = Say { npc_net, dialog, pc_name: &sheet.0.name, npc: &npc_info, generic: &mut generic, vfs, rng: &mut rng, deltas: Vec::new() };
         let next = match step {
             Step::Start(s) => say.show(&file, s.line, &mut talk),
@@ -515,6 +572,7 @@ enum Shown {
 struct NpcInfo {
     name: String,
     male: bool,
+    reaction: crate::NpcReaction,
 }
 
 fn met_key(npc: ScriptObject) -> String {
@@ -532,12 +590,13 @@ fn npc_details(map: &LoadedMap, npc: ScriptObject, generic: &mut GenericLines, v
         ScriptObject::Map(id) => map.map_object(id),
         ScriptObject::Pc(_) => None,
     };
-    let Some(object) = object else { return NpcInfo { name: String::new(), male: true } };
+    let none = crate::NpcReaction { base: crate::BASE_REACTION, race: 0, origin: 0, faction: 0, only_reputation: false };
+    let Some(object) = object else { return NpcInfo { name: String::new(), male: true, reaction: none } };
     let description = map.prototypes.int(object, "description");
     let name = description.and_then(|d| generic.file(vfs, "mes/description.mes")?.get(d as u32).map(str::to_string)).unwrap_or_default();
     let stats = object.ints("critter_stat_base_idx").or_else(|| map.prototypes.of(object)?.ints("critter_stat_base_idx"));
     let male = stats.and_then(|s| s.get(26).copied()).is_none_or(|g| g == 1);
-    NpcInfo { name, male }
+    NpcInfo { name, male, reaction: crate::NpcReaction::of(object, &map.prototypes) }
 }
 
 /// What one step says, to whom.
@@ -649,8 +708,11 @@ impl Say<'_> {
 mod tests {
     use super::*;
 
+    static NO_REPUTATIONS: std::sync::LazyLock<crate::ReputationEffects> = std::sync::LazyLock::new(Default::default);
+
     fn talk_with<'a>(rules: &'a RulesData, sheet: &'a CharacterSheet, inventory: &'a mut Inventory, pc: &'a mut PcScriptState, globals: &'a mut ScriptGlobals, npc: &'a mut Attachment) -> Talk<'a> {
-        Talk { rules, sheet, inventory, pc, globals, npc, met: false, gold_changed: false, unbuilt: Vec::new() }
+        let npc_reaction = crate::NpcReaction { base: 50, race: 0, origin: 0, faction: 0, only_reputation: false };
+        Talk { rules, sheet, inventory, pc, globals, npc, met: false, npc_key: "npc".into(), npc_reaction, reputations: &NO_REPUTATIONS, gold_changed: false, unbuilt: Vec::new() }
     }
 
     #[test]
@@ -689,14 +751,37 @@ mod tests {
         talk.change_gold(100);
         assert_eq!(talk.run_result("$$ -30, re +5, lf 2 1, lc 1 4, qu 12 2, gf 40 1, ru 7"), None);
         assert_eq!(talk.gold(), 70);
-        assert_eq!(talk.unbuilt, ["result re"]);
+        assert!(talk.unbuilt.is_empty(), "{:?}", talk.unbuilt);
         assert_eq!(talk.npc.flags, 1 << 2);
         assert_eq!(talk.npc.counters[1], 4);
         assert!(talk.passes_test("qu 12 2, qa 12 1, qb 12 2, lf 2 1, lc 1 4, gf 40 1, ru 7"));
         assert!(!talk.passes_test("ru -7"));
         assert_eq!(talk.run_result("gv 3 9, fl 120, gv 4 1"), Some(120), "fl ends the result");
         assert_eq!((talk.globals.var(3), talk.globals.var(4)), (9, 0));
-        assert!(!talk.passes_test("re 50"), "not built: fails");
+        assert!(!talk.passes_test("tr 1 1"), "not built: fails");
+        assert_eq!(talk.unbuilt.last().map(String::as_str), Some("test tr"));
+    }
+
+    #[test]
+    fn reaction_starts_at_the_base_plus_looks_and_changes_are_stored() {
+        let rules = RulesData::default();
+        let sheet = CharacterSheet::default();
+        let (mut inventory, mut pc, mut globals, mut npc): (Inventory, PcScriptState, ScriptGlobals, Attachment) = Default::default();
+        let mut talk = talk_with(&rules, &sheet, &mut inventory, &mut pc, &mut globals, &mut npc);
+        let looks = rules.derived(&sheet).reaction;
+        assert_eq!(talk.reaction(), 50 + looks, "human to human: no racial term");
+        assert!(!talk.passes_test("me 1"), "not met");
+        talk.run_result("re +5");
+        assert_eq!(talk.reaction(), 55 + looks);
+        assert!(talk.passes_test("me 1"), "a stored reaction: met");
+        talk.run_result("re 61");
+        assert_eq!(talk.reaction(), 61, "set");
+        assert!(talk.passes_test("re 61") && !talk.passes_test("re 62") && talk.passes_test("re -61"));
+        talk.run_result("re >70");
+        assert_eq!(talk.reaction(), 70);
+        talk.run_result("re >60, re <65");
+        assert_eq!(talk.reaction(), 65);
+        assert_eq!(talk.pc.reactions["npc"], 65 - looks, "the unmodified part is stored");
     }
 
     #[test]
