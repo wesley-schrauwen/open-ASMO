@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-17 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`, `feat/combat-events`, `feat/ammunition`, `feat/combat-stun`, `feat/sight`, `feat/combat-cursor`, `feat/knock-out`).
+Status: steps 1-18 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`, `feat/combat-events`, `feat/ammunition`, `feat/combat-stun`, `feat/sight`, `feat/combat-cursor`, `feat/knock-out`, `feat/npc-health`).
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -382,3 +382,9 @@ of `combat_design.md` come after the original's rules work.
      `(CO + 1) / 3` every 80 000 game ms (as PCs', 0x45e610); above 0 it gets up.
    - Not built: the get-up animation for NPCs (they are spawned again standing), the turn
      ending for a PC knocked out on its turn (0x4b7c90).
+18. **NPCs' health in the hover** (built, `feat/npc-health`).
+   - Every 5 ticks the host compares each NPC's hit points and fatigue with what it last told,
+     and sends `LedgerDelta::NpcHealth` on a change (at first sight only when not whole); the
+     client keeps them (`combat_ui::NpcHealth`) and the hover's gauges show them as
+     percentages (0x553f70).
+   - Not built: players who join later learn an NPC's health only at its next change.

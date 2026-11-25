@@ -21,13 +21,14 @@
 //!     keys, a tool's bonus; charges ("Uses"); its weight in stone (stacks: × quantity / 4) and,
 //!     for weapons, armour and breakable tools, its hit points;
 //!   - a critter: its level; hit points and fatigue as gauges (art 463/464, poisoned 665/666;
-//!     465/466) with `cur/max` for the player's own PC and a percentage for the others; an NPC's
+//!     465/466) with `cur/max` for the player's own PC and a percentage for the others (NPCs'
+//!     from the host, [`crate::combat_ui::NpcHealth`]); an NPC's
 //!     icon by race (table 0x5c6fa0).
 //!
 //! Not built: an NPC's reaction or alignment and the prowling state; the to-hit panel in combat;
 //! a weapon's speed, magick power and tech aptitude rows (they need the viewer's stats); the
 //! description override (`item_description_effects`); special icons (item flag 0x40); PCs'
-//! portraits as icons; NPCs' damage (no combat: their gauges are full); the examine script
+//! portraits as icons; the examine script
 //! (event 0, run by the original before the text: it runs on the host here, which hover does
 //! not reach).
 
@@ -282,13 +283,14 @@ pub fn pc_details(status: &arcanum_sim::PcStatus, own: bool, intgame: &dyn Fn(u3
 }
 
 /// An NPC's icon (by race), level and gauges (full: NPCs take no damage yet).
-pub fn npc_details(o: &Object, prototypes: &Prototypes, intgame: &dyn Fn(u32) -> String) -> (Option<u32>, BoxDetails) {
+pub fn npc_details(o: &Object, prototypes: &Prototypes, intgame: &dyn Fn(u32) -> String, health: Option<(arcanum_sim::Pool, arcanum_sim::Pool)>) -> (Option<u32>, BoxDetails) {
     let stats = o.ints("critter_stat_base_idx").or_else(|| prototypes.of(o)?.ints("critter_stat_base_idx")).unwrap_or_default();
     let stat = |i: usize| stats.get(i).copied().unwrap_or(0);
     let icon = RACE_ICONS.get(stat(27).max(0) as usize).copied();
     let level = BoxRow { row: 1, left: None, right: cell(format!("{}: {}", intgame(0), stat(17)), WHITE) };
     let full = arcanum_sim::Pool::full(1);
-    (icon, BoxDetails { title_colour: None, rows: vec![level], gauges: vec![], to_hit: None }.with_gauges(full, full, false, false))
+    let (hp, fatigue) = health.unwrap_or((full, full));
+    (icon, BoxDetails { title_colour: None, rows: vec![level], gauges: vec![], to_hit: None }.with_gauges(hp, fatigue, false, false))
 }
 
 trait Gauges {
@@ -344,6 +346,7 @@ fn hover_world(
     mut messages: ResMut<MessageBox>,
     time: Option<Res<Time<Real>>>,
     (combat, sheet_host, data, pc_inventory): Fighting,
+    health: Option<Res<crate::combat_ui::NpcHealth>>,
     mut texts: Local<Descriptions>,
     mut shown: Local<Option<Entity>>,
 ) {
@@ -383,7 +386,7 @@ fn hover_world(
             Some(EntityKind::Pc { .. }) => party.status.get(&actor.net_id).map(|s| (s.name.clone(), None, pc_details(s, local.0.is_some_and(|(id, _)| id == actor.net_id), &intgame))),
             Some(&EntityKind::Npc { prototype }) => map.prototypes.get(prototype).and_then(|p| {
                 let name = critter_name(p, &map.prototypes, known.0.contains(&actor.net_id)).and_then(|n| texts.text(n))?;
-                let (icon, mut details) = npc_details(p, &map.prototypes, &intgame);
+                let (icon, mut details) = npc_details(p, &map.prototypes, &intgame, health.as_ref().and_then(|h| h.0.get(&actor.net_id).copied()));
                 let me = local.0.map(|(id, _)| id);
                 if combat.as_ref().is_some_and(|c| c.attacks(me))
                     && let (Some(sheet), Some(rules)) = (sheet_host.sheet(), data.as_ref().map(|d| &d.rules))
@@ -490,11 +493,14 @@ mod tests {
         assert_eq!(d.rows.last().unwrap().left, Some(BoxCell::new("Weight: 40 stone", BLUE)));
         assert_eq!(d.rows.last().unwrap().right, Some(BoxCell::new("100/100", BLUE)));
         let npc = Object::parse_instance(&ObjectBuilder::new(TYPE_NPC).field("critter_stat_base_idx", ints(&(0..28).map(|i| if i == 17 { 7 } else if i == 27 { 2 } else { 0 }).collect::<Vec<i32>>())).build()).unwrap();
-        let (icon, d) = npc_details(&npc, &prototypes, &intgame);
+        let (icon, d) = npc_details(&npc, &prototypes, &intgame, None);
         assert_eq!(icon, Some(376), "an elf");
         assert_eq!(d.rows[0].right, Some(BoxCell::new("Level: 7", WHITE)));
         assert_eq!(d.gauges.iter().map(|g| (g.row, g.fill, g.percent)).collect::<Vec<_>>(), [(2, 463, 100), (3, 465, 100)]);
         assert_eq!(d.rows[1].right, Some(BoxCell::new("100%", BLUE)));
+        let hurt = (arcanum_sim::Pool { current: 10, max: 40 }, arcanum_sim::Pool { current: 0, max: 20 });
+        let (_, d) = npc_details(&npc, &prototypes, &intgame, Some(hurt));
+        assert_eq!(d.gauges.iter().map(|g| g.percent).collect::<Vec<_>>(), [25, 0], "the host's numbers");
     }
 
     #[test]

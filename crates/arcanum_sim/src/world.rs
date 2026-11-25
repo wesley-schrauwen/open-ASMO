@@ -1203,15 +1203,23 @@ mod tests {
         let sector = SectorId::new(1, 1);
         let npc = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::NpcSource)>().iter(world).next().unwrap().0 };
         let mut ended = false;
+        let mut told = None;
         for seq in 0..200 {
             sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: npc, seq })]);
             sim.update();
-            if sim.take_deltas().iter().any(|(_, d)| matches!(d, LedgerDelta::Combat { order, .. } if order.is_empty())) {
+            let deltas = sim.take_deltas();
+            told = deltas.iter().rev().find_map(|(_, d)| match d { LedgerDelta::NpcHealth { net_id, fatigue, .. } if *net_id == npc => Some(*fatigue), _ => None }).or(told);
+            if deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::Combat { order, .. } if order.is_empty())) {
                 ended = true;
                 break;
             }
         }
         assert!(ended, "the fight ends with the NPC down");
+        for _ in 0..crate::combat::HEALTH_TICKS {
+            sim.update();
+            told = sim.take_deltas().iter().rev().find_map(|(_, d)| match d { LedgerDelta::NpcHealth { net_id, fatigue, .. } if *net_id == npc => Some(*fatigue), _ => None }).or(told);
+        }
+        assert!(told.is_some_and(|f| f.current < f.max), "players hear of its fatigue: {told:?}");
         let map = sim.app.world().resource::<LoadedMap>();
         assert!(map.npc_down(sector, 0) && !map.is_dead(sector, 0), "knocked out, not dead");
         assert_eq!(map.npc_fatigue(sector, 0).map(|(left, _)| left < 1), Some(true));

@@ -122,6 +122,11 @@ pub fn attack_floats(attacker: NetId, target: NetId, outcome: &arcanum_sim::comb
     out
 }
 
+/// NPCs' hit points and fatigue as the host last told them ([`LedgerDelta::NpcHealth`]); the
+/// others are whole.
+#[derive(Resource, Debug, Default)]
+pub struct NpcHealth(pub std::collections::HashMap<NetId, (arcanum_sim::Pool, arcanum_sim::Pool)>);
+
 /// NPCs an attack killed: when the host spawns them again dead, they play their death
 /// ([`crate::actors::Actor::action`]) instead of appearing on its last frame.
 #[derive(Resource, Debug, Default)]
@@ -185,6 +190,7 @@ fn apply_combat_deltas(
     mut mes: Local<Option<arcanum_formats::mes::MesFile>>,
     mut actors: Query<&mut crate::actors::Actor>,
     mut dying: ResMut<Dying>,
+    mut health: ResMut<NpcHealth>,
 ) {
     if deltas.0.is_empty() {
         return;
@@ -196,6 +202,10 @@ fn apply_combat_deltas(
     let text = |k: u32| mes.as_ref().and_then(|m| m.get(k)).map(|t| t.trim().to_string()).unwrap_or_default();
     let is_pc = |id: NetId| party.status.contains_key(&id);
     for delta in std::mem::take(&mut deltas.0) {
+        if let LedgerDelta::NpcHealth { net_id, hit_points, fatigue } = delta {
+            health.0.insert(net_id, (hit_points, fatigue));
+            continue;
+        }
         apply(&delta, &mut view, floats.as_deref_mut(), &is_pc, &text);
         // The attacker swings, facing its target; a killed NPC's death plays when it comes back.
         if let LedgerDelta::Attacked { attacker, target, outcome } = &delta {
@@ -238,6 +248,7 @@ impl Plugin for CombatUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CombatView>()
             .init_resource::<Dying>()
+            .init_resource::<NpcHealth>()
             .init_resource::<CombatDeltas>()
             .add_systems(OnExit(AppState::InGame), |mut v: ResMut<CombatView>| *v = CombatView::default())
             .add_observer(on_combat_button)
