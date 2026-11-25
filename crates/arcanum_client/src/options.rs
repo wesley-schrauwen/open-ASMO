@@ -58,7 +58,14 @@ impl OptionsTab {
         use OptionId::*;
         match self {
             Self::Game => &[AutoAttack, CombatTaunts],
-            Self::Video => &[Brightness, TextDuration, Floats, FloatSpeed, Fullscreen, Resolution],
+            Self::Video => &[
+                Brightness,
+                TextDuration,
+                Floats,
+                FloatSpeed,
+                Fullscreen,
+                Resolution,
+            ],
             Self::Sound => &[Effects, Voice, Music],
         }
     }
@@ -166,7 +173,9 @@ impl OptionId {
             }
             return;
         }
-        let wrap = |index: usize, len: usize| (index as i64 + delta as i64).rem_euclid(len as i64) as usize;
+        let wrap = |index: usize, len: usize| {
+            (index as i64 + delta as i64).rem_euclid(len as i64) as usize
+        };
         match self {
             OptionId::Floats => {
                 let i = Floats::ALL.iter().position(|f| *f == s.floats).unwrap_or(0);
@@ -190,7 +199,10 @@ pub fn step_resolution(current: DisplayResolution, delta: i32) -> DisplayResolut
             if delta > 0 {
                 presets.iter().position(|p| area(p) > size).unwrap_or(0)
             } else {
-                presets.iter().rposition(|p| area(p) < size).unwrap_or(presets.len() - 1)
+                presets
+                    .iter()
+                    .rposition(|p| area(p) < size)
+                    .unwrap_or(presets.len() - 1)
             }
         }
     };
@@ -217,7 +229,11 @@ impl OptionsLabels {
     }
 
     pub fn name(&self, option: OptionId) -> &str {
-        self.names.iter().find(|(o, _)| *o == option).map(|(_, n)| n.as_str()).unwrap_or("")
+        self.names
+            .iter()
+            .find(|(o, _)| *o == option)
+            .map(|(_, n)| n.as_str())
+            .unwrap_or("")
     }
 
     /// The displayed value of a choice setting; empty for sliders.
@@ -227,7 +243,9 @@ impl OptionsLabels {
             OptionId::AutoAttack => on_off(s.auto_attack),
             OptionId::CombatTaunts => on_off(s.combat_taunts),
             OptionId::Fullscreen => on_off(s.fullscreen),
-            OptionId::Floats => self.floats[Floats::ALL.iter().position(|f| *f == s.floats).unwrap()].clone(),
+            OptionId::Floats => {
+                self.floats[Floats::ALL.iter().position(|f| *f == s.floats).unwrap()].clone()
+            }
             OptionId::Resolution => {
                 let (w, h) = s.resolution.dimensions();
                 format!("{w} x {h}")
@@ -245,18 +263,27 @@ impl OptionsLabels {
         let get = |mes: Option<&MesAsset>, id: u32, fallback: &str| {
             mes.and_then(|m| m.get(id)).unwrap_or(fallback).to_string()
         };
-        let all_options = OptionsTab::ALL.iter().flat_map(|t| t.options().iter().copied());
+        let all_options = OptionsTab::ALL
+            .iter()
+            .flat_map(|t| t.options().iter().copied());
         Self {
             tabs: OptionsTab::ALL.map(|t| get(main_menu, t.label().0, t.label().1)),
             done: get(main_menu, DONE_LABEL.0, DONE_LABEL.1),
             names: all_options
                 .map(|o| {
                     let (id, fallback) = o.name();
-                    (o, id.map_or(fallback.to_string(), |id| get(ui, id, fallback)))
+                    (
+                        o,
+                        id.map_or(fallback.to_string(), |id| get(ui, id, fallback)),
+                    )
                 })
                 .collect(),
             off_on: [get(off_on, 0, "Off"), get(off_on, 1, "On")],
-            floats: [get(floats, 0, "Never"), get(floats, 1, "Minimal"), get(floats, 2, "Verbose")],
+            floats: [
+                get(floats, 0, "Never"),
+                get(floats, 1, "Minimal"),
+                get(floats, 2, "Verbose"),
+            ],
         }
     }
 }
@@ -297,7 +324,10 @@ pub enum OptionsAction {
     Tab(OptionsTab),
     /// Leaves for the main menu, applying a pending resolution and confirming it first.
     Done,
-    Step { option: OptionId, delta: i32 },
+    Step {
+        option: OptionId,
+        delta: i32,
+    },
     KeepResolution,
     RevertResolution,
 }
@@ -341,7 +371,9 @@ impl Plugin for OptionsPlugin {
                 Update,
                 (
                     resolve_labels.run_if(not(resource_exists::<OptionsLabels>)),
-                    build_screen.run_if(resource_exists::<RebuildOptions>).run_if(resource_exists::<OptionsLabels>),
+                    build_screen
+                        .run_if(resource_exists::<RebuildOptions>)
+                        .run_if(resource_exists::<OptionsLabels>),
                     show_values.run_if(resource_exists::<OptionsLabels>),
                     tick_resolution_confirm.run_if(resource_exists::<ResolutionConfirm>),
                     options_escape,
@@ -391,7 +423,11 @@ fn resolve_labels(
     mes: Res<Assets<MesAsset>>,
 ) {
     let settled = |h: &Handle<MesAsset>| {
-        mes.get(h).is_some() || matches!(assets.get_load_state(h), Some(bevy::asset::LoadState::Failed(_)))
+        mes.get(h).is_some()
+            || matches!(
+                assets.get_load_state(h),
+                Some(bevy::asset::LoadState::Failed(_))
+            )
     };
     let menu = menu_text.as_ref().map(|t| &t.0);
     if !options.texts.iter().all(settled) || !menu.is_none_or(settled) {
@@ -409,19 +445,34 @@ fn resolve_labels(
 // Layout in original 800x600 pixels; everything is multiplied by ORIGINAL_SCALE.
 const S: f32 = ORIGINAL_SCALE;
 /// Tab box (inside the framed panel on the left).
-const TAB_BOX: Rect = Rect { min: Vec2::new(48.0, 205.0), max: Vec2::new(214.0, 392.0) };
+const TAB_BOX: Rect = Rect {
+    min: Vec2::new(48.0, 205.0),
+    max: Vec2::new(214.0, 392.0),
+};
 /// Title plate.
-const TITLE: Rect = Rect { min: Vec2::new(360.0, 58.0), max: Vec2::new(622.0, 104.0) };
+const TITLE: Rect = Rect {
+    min: Vec2::new(360.0, 58.0),
+    max: Vec2::new(622.0, 104.0),
+};
 const SLOT_COLUMNS: [f32; 2] = [261.0, 531.0];
 const SLOT_ROWS: [f32; 4] = [122.0, 196.0, 271.0, 346.0];
 const SLOT_SIZE: Vec2 = Vec2::new(213.0, 56.0);
 /// Inside a slot: the name strip, the arrow sockets and the tube/value window.
-const SLOT_NAME: Rect = Rect { min: Vec2::new(0.0, 1.0), max: Vec2::new(213.0, 21.0) };
+const SLOT_NAME: Rect = Rect {
+    min: Vec2::new(0.0, 1.0),
+    max: Vec2::new(213.0, 21.0),
+};
 const ARROW_LEFT_AT: Vec2 = Vec2::new(6.0, 20.0);
 const ARROW_RIGHT_AT: Vec2 = Vec2::new(178.0, 20.0);
 const ARROW_SIZE: Vec2 = Vec2::new(29.0, 30.0);
-const WINDOW: Rect = Rect { min: Vec2::new(45.0, 25.0), max: Vec2::new(171.0, 49.0) };
-const TUBE: Rect = Rect { min: Vec2::new(46.0, 28.0), max: Vec2::new(170.0, 46.0) };
+const WINDOW: Rect = Rect {
+    min: Vec2::new(45.0, 25.0),
+    max: Vec2::new(171.0, 49.0),
+};
+const TUBE: Rect = Rect {
+    min: Vec2::new(46.0, 28.0),
+    max: Vec2::new(170.0, 46.0),
+};
 
 fn px(v: f32) -> Val {
     Val::Px(v * S)
@@ -442,7 +493,14 @@ fn at(rect: Rect) -> Node {
 }
 
 fn text_button(colours: HoverText, action: OptionsAction) -> impl Bundle {
-    (action, Button, ActivateOnPress, Hovered::default(), colours, TextColor(colours.normal))
+    (
+        action,
+        Button,
+        ActivateOnPress,
+        Hovered::default(),
+        colours,
+        TextColor(colours.normal),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -459,7 +517,10 @@ fn build_screen(
     }
     commands.remove_resource::<RebuildOptions>();
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-    let red = HoverText { normal: TEXT_COLOR, hover: HOVER_COLOR };
+    let red = HoverText {
+        normal: TEXT_COLOR,
+        hover: HOVER_COLOR,
+    };
 
     commands
         .spawn((
@@ -513,7 +574,15 @@ fn build_screen(
                     OptionKind::Choice => art.choice.clone(),
                 };
                 screen
-                    .spawn((OptionSlot(option), ImageNode::new(slot_art), Node { justify_content: JustifyContent::Default, align_items: AlignItems::Default, ..at(slot) }))
+                    .spawn((
+                        OptionSlot(option),
+                        ImageNode::new(slot_art),
+                        Node {
+                            justify_content: JustifyContent::Default,
+                            align_items: AlignItems::Default,
+                            ..at(slot)
+                        },
+                    ))
                     .with_children(|slot| {
                         slot.spawn(at(SLOT_NAME)).with_children(|strip| {
                             let mut name = strip.spawn(TextColor(NAME_COLOR));
@@ -525,20 +594,29 @@ fn build_screen(
                                 slot.spawn((
                                     SliderFill(option),
                                     BackgroundColor(SLIDER_FILL),
-                                    Node { width: Val::Px(0.0), ..at(TUBE) },
+                                    Node {
+                                        width: Val::Px(0.0),
+                                        ..at(TUBE)
+                                    },
                                 ));
                             }
                             OptionKind::Choice => {
                                 slot.spawn(at(WINDOW)).with_children(|window| {
-                                    let mut value = window.spawn((OptionValue(option), TextColor(VALUE_COLOR)));
-                                    fonts.insert_text(&mut value, &labels.value(option, &GameSettings::default()), UiFont::Small);
+                                    let mut value =
+                                        window.spawn((OptionValue(option), TextColor(VALUE_COLOR)));
+                                    fonts.insert_text(
+                                        &mut value,
+                                        &labels.value(option, &GameSettings::default()),
+                                        UiFont::Small,
+                                    );
                                 });
                             }
                         }
 
-                        for (frames, position, delta) in
-                            [(&art.arrow_left, ARROW_LEFT_AT, -1), (&art.arrow_right, ARROW_RIGHT_AT, 1)]
-                        {
+                        for (frames, position, delta) in [
+                            (&art.arrow_left, ARROW_LEFT_AT, -1),
+                            (&art.arrow_right, ARROW_RIGHT_AT, 1),
+                        ] {
                             slot.spawn((
                                 OptionsAction::Step { option, delta },
                                 Button,
@@ -602,9 +680,16 @@ fn on_options_activate(
     sounds: Option<Res<MenuSounds>>,
     fonts: Option<Res<ArcanumFonts>>,
 ) {
-    let Ok(&action) = actions.get(activate.entity) else { return };
+    let Ok(&action) = actions.get(activate.entity) else {
+        return;
+    };
     // While the confirmation is up, only its own buttons respond.
-    if confirm.is_some() && !matches!(action, OptionsAction::KeepResolution | OptionsAction::RevertResolution) {
+    if confirm.is_some()
+        && !matches!(
+            action,
+            OptionsAction::KeepResolution | OptionsAction::RevertResolution
+        )
+    {
         return;
     }
     if let Some(sounds) = &sounds {
@@ -624,10 +709,19 @@ fn on_options_activate(
         }
         OptionsAction::Done => {
             let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-            leave(&mut commands, &mut settings, pending.as_deref(), &mut next_state, &fonts);
+            leave(
+                &mut commands,
+                &mut settings,
+                pending.as_deref(),
+                &mut next_state,
+                &fonts,
+            );
         }
         // The resolution arrows only change the pending choice; Done applies it.
-        OptionsAction::Step { option: OptionId::Resolution, delta } => {
+        OptionsAction::Step {
+            option: OptionId::Resolution,
+            delta,
+        } => {
             if let Some(pending) = &mut pending {
                 pending.0 = step_resolution(pending.0, delta);
             }
@@ -686,7 +780,11 @@ fn on_arrow_release(
 }
 
 /// Puts the resolution back, and the pending choice with it so the slot shows what is applied.
-fn revert_resolution(settings: &mut GameSettings, pending: Option<&mut PendingResolution>, previous: DisplayResolution) {
+fn revert_resolution(
+    settings: &mut GameSettings,
+    pending: Option<&mut PendingResolution>,
+    previous: DisplayResolution,
+) {
     settings.resolution = previous;
     if let Some(pending) = pending {
         pending.0 = previous;
@@ -710,7 +808,10 @@ fn countdown_text(seconds: f32) -> String {
 }
 
 fn spawn_resolution_dialog(commands: &mut Commands, fonts: &ArcanumFonts) {
-    let red = HoverText { normal: TEXT_COLOR, hover: HOVER_COLOR };
+    let red = HoverText {
+        normal: TEXT_COLOR,
+        hover: HOVER_COLOR,
+    };
     commands
         .spawn((
             ResolutionDialog,
@@ -745,13 +846,24 @@ fn spawn_resolution_dialog(commands: &mut Commands, fonts: &ArcanumFonts) {
                     let mut title = panel.spawn(TextColor(HOVER_COLOR));
                     fonts.insert_text(&mut title, KEEP_RESOLUTION_TITLE, UiFont::Large);
                     let mut countdown = panel.spawn((ResolutionCountdown, TextColor(VALUE_COLOR)));
-                    fonts.insert_text(&mut countdown, &countdown_text(RESOLUTION_CONFIRM_SECS), UiFont::Small);
-                    panel.spawn(Node { column_gap: px(40.0), ..default() }).with_children(|row| {
-                        let mut keep = row.spawn(text_button(red, OptionsAction::KeepResolution));
-                        fonts.insert_text(&mut keep, KEEP_LABEL, UiFont::Large);
-                        let mut revert = row.spawn(text_button(red, OptionsAction::RevertResolution));
-                        fonts.insert_text(&mut revert, REVERT_LABEL, UiFont::Large);
-                    });
+                    fonts.insert_text(
+                        &mut countdown,
+                        &countdown_text(RESOLUTION_CONFIRM_SECS),
+                        UiFont::Small,
+                    );
+                    panel
+                        .spawn(Node {
+                            column_gap: px(40.0),
+                            ..default()
+                        })
+                        .with_children(|row| {
+                            let mut keep =
+                                row.spawn(text_button(red, OptionsAction::KeepResolution));
+                            fonts.insert_text(&mut keep, KEEP_LABEL, UiFont::Large);
+                            let mut revert =
+                                row.spawn(text_button(red, OptionsAction::RevertResolution));
+                            fonts.insert_text(&mut revert, REVERT_LABEL, UiFont::Large);
+                        });
                 });
         });
 }
@@ -812,7 +924,13 @@ fn options_escape(
         next_state.set(AppState::MainMenu);
     } else {
         let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-        leave(&mut commands, &mut settings, pending.as_deref(), &mut next_state, &fonts);
+        leave(
+            &mut commands,
+            &mut settings,
+            pending.as_deref(),
+            &mut next_state,
+            &fonts,
+        );
     }
 }
 
@@ -829,7 +947,17 @@ mod tests {
     fn tabs_hold_the_agreed_settings() {
         use OptionId::*;
         assert_eq!(OptionsTab::Game.options(), [AutoAttack, CombatTaunts]);
-        assert_eq!(OptionsTab::Video.options(), [Brightness, TextDuration, Floats, FloatSpeed, Fullscreen, Resolution]);
+        assert_eq!(
+            OptionsTab::Video.options(),
+            [
+                Brightness,
+                TextDuration,
+                Floats,
+                FloatSpeed,
+                Fullscreen,
+                Resolution
+            ]
+        );
         assert_eq!(OptionsTab::Sound.options(), [Effects, Voice, Music]);
         // Every tab fits the 2x4 grid.
         assert!(OptionsTab::ALL.iter().all(|t| t.options().len() <= 8));
@@ -837,7 +965,10 @@ mod tests {
 
     #[test]
     fn sliders_step_by_a_tenth_and_clamp() {
-        let mut s = GameSettings { music_volume: 0.95, ..default() };
+        let mut s = GameSettings {
+            music_volume: 0.95,
+            ..default()
+        };
         OptionId::Music.step(&mut s, 1);
         assert_eq!(s.music_volume, 1.0);
         OptionId::Music.step(&mut s, 1);
@@ -864,7 +995,10 @@ mod tests {
 
     #[test]
     fn choices_wrap() {
-        let mut s = GameSettings { floats: Floats::Never, ..default() };
+        let mut s = GameSettings {
+            floats: Floats::Never,
+            ..default()
+        };
         OptionId::Floats.step(&mut s, -1);
         assert_eq!(s.floats, Floats::Verbose);
         OptionId::Floats.step(&mut s, 1);
@@ -873,7 +1007,10 @@ mod tests {
 
     #[test]
     fn resolution_cycles_presets_and_custom_sizes_join_in_order() {
-        let mut s = GameSettings { resolution: DisplayResolution::Fhd, ..default() };
+        let mut s = GameSettings {
+            resolution: DisplayResolution::Fhd,
+            ..default()
+        };
         OptionId::Resolution.step(&mut s, 1);
         assert_eq!(s.resolution, DisplayResolution::Qhd);
         OptionId::Resolution.step(&mut s, -2);
@@ -883,8 +1020,14 @@ mod tests {
         assert_eq!(step_resolution(custom, 1), DisplayResolution::HdPlus);
         assert_eq!(step_resolution(custom, -1), DisplayResolution::Hd);
         // Wraps at both ends.
-        assert_eq!(step_resolution(DisplayResolution::Uhd4k, 1), DisplayResolution::Hd);
-        assert_eq!(step_resolution(DisplayResolution::Hd, -1), DisplayResolution::Uhd4k);
+        assert_eq!(
+            step_resolution(DisplayResolution::Uhd4k, 1),
+            DisplayResolution::Hd
+        );
+        assert_eq!(
+            step_resolution(DisplayResolution::Hd, -1),
+            DisplayResolution::Uhd4k
+        );
     }
 
     #[test]
@@ -893,7 +1036,11 @@ mod tests {
         assert_eq!(labels.tab(OptionsTab::Video), "Video");
         assert_eq!(labels.done(), "Done");
         assert_eq!(labels.name(OptionId::CombatTaunts), "Combat Taunts");
-        let s = GameSettings { combat_taunts: true, floats: Floats::Verbose, ..default() };
+        let s = GameSettings {
+            combat_taunts: true,
+            floats: Floats::Verbose,
+            ..default()
+        };
         assert_eq!(labels.value(OptionId::CombatTaunts, &s), "On");
         assert_eq!(labels.value(OptionId::Floats, &s), "Verbose");
         assert_eq!(labels.value(OptionId::Resolution, &s), "1920 x 1080");

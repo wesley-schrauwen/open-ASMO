@@ -1,17 +1,19 @@
 use std::sync::{Arc, RwLock};
 
-use arcanum_client::main_menu::{MenuLabel, FitToBaseline};
-use arcanum_client::options::OptionSlot;
-use arcanum_client::{
-    ArcanumAssetsPlugin, BitmapTextPlugin, BrightnessPlugin, CharacterEditorPlugin, ConfigPlugin, CreateCharacterPlugin, DisplayPlugin, FontsPlugin, LoadGamePlugin, LoadingPlugin, NewGamePlugin, MainMenuPlugin, MenuAudioPlugin, ResourcePack,
-    OptionsPlugin, ScreensPlugin, VfsAssetPlugin,
-};
 use arcanum_client::AppState;
 use arcanum_client::config;
 use arcanum_client::load_game::{LoadGameScreen, sample_saves};
-use arcanum_client::new_game::NewGameScreen;
 use arcanum_client::loading::{LoadRequest, LoadingPicture};
+use arcanum_client::main_menu::{FitToBaseline, MenuLabel};
+use arcanum_client::new_game::NewGameScreen;
+use arcanum_client::options::OptionSlot;
 use arcanum_client::settings::EnvOverrides;
+use arcanum_client::{
+    ArcanumAssetsPlugin, BitmapTextPlugin, BrightnessPlugin, CharacterEditorPlugin, ConfigPlugin,
+    CreateCharacterPlugin, DisplayPlugin, FontsPlugin, LoadGamePlugin, LoadingPlugin,
+    MainMenuPlugin, MenuAudioPlugin, NewGamePlugin, OptionsPlugin, ResourcePack, ScreensPlugin,
+    VfsAssetPlugin,
+};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
@@ -66,14 +68,19 @@ fn main() {
             ScreensPlugin,
         ))
         // The host, in this process unless joining one. Saves go next to the config file.
-        .insert_resource(arcanum_client::sim_bridge::LocalPlayer(arcanum_sim::PlayerId(settings.player_id)))
+        .insert_resource(arcanum_client::sim_bridge::LocalPlayer(
+            arcanum_sim::PlayerId(settings.player_id),
+        ))
         .insert_resource(arcanum_client::sim_bridge::HostSettings {
             save_dir: config::path_from_env().and_then(|p| p.parent().map(|d| d.join("saves"))),
             manual_clock: false,
             // Debugging aid: `DEBUG_ARCANUM_START=x,y` starts new games on that tile.
             start_at: std::env::var("DEBUG_ARCANUM_START").ok().and_then(|v| {
                 let (x, y) = v.split_once(',')?;
-                Some(arcanum_formats::map::TileLoc { x: x.trim().parse().ok()?, y: y.trim().parse().ok()? })
+                Some(arcanum_formats::map::TileLoc {
+                    x: x.trim().parse().ok()?,
+                    y: y.trim().parse().ok()?,
+                })
             }),
             // LAN play until the host/join menus exist: `DEBUG_ARCANUM_LISTEN=0.0.0.0:7777` lets
             // others join this game; `DEBUG_ARCANUM_JOIN=<host ip>:7777` joins one.
@@ -101,9 +108,15 @@ fn main() {
     // tile once it is in the world.
     if let Some(goal) = std::env::var("DEBUG_ARCANUM_WALK").ok().and_then(|v| {
         let (x, y) = v.split_once(',')?;
-        Some(arcanum_formats::map::TileLoc { x: x.trim().parse().ok()?, y: y.trim().parse().ok()? })
+        Some(arcanum_formats::map::TileLoc {
+            x: x.trim().parse().ok()?,
+            y: y.trim().parse().ok()?,
+        })
     }) {
-        app.add_systems(OnEnter(AppState::InGame), move |mut walk: ResMut<arcanum_client::actors::WalkLocalPc>| walk.goal = Some(goal));
+        app.add_systems(
+            OnEnter(AppState::InGame),
+            move |mut walk: ResMut<arcanum_client::actors::WalkLocalPc>| walk.goal = Some(goal),
+        );
     }
 
     // Debugging aid: `DEBUG_ARCANUM_CLICK=x,y` left-clicks that window position (logical pixels
@@ -112,7 +125,9 @@ fn main() {
         let (x, y) = v.split_once(',')?;
         Some(Vec2::new(x.trim().parse().ok()?, y.trim().parse().ok()?))
     }) {
-        app.add_systems(OnEnter(AppState::InGame), move |mut commands: Commands| commands.insert_resource(arcanum_client::actors::DebugClick { at, frames: 90 }));
+        app.add_systems(OnEnter(AppState::InGame), move |mut commands: Commands| {
+            commands.insert_resource(arcanum_client::actors::DebugClick { at, frames: 90 })
+        });
     }
 
     // Debugging aid: `DEBUG_ARCANUM_PANEL=character` (or `tech`, `spells` for those tabs) opens
@@ -145,7 +160,9 @@ fn main() {
     if std::env::var("DEBUG_ARCANUM_PANEL").is_ok_and(|v| v == "inventory") {
         app.add_systems(
             Update,
-            (|inventory: Res<arcanum_client::inventory_screen::PcInventory>, mut panel: ResMut<arcanum_client::inventory_screen::InventoryPanel>, mut done: Local<bool>| {
+            (|inventory: Res<arcanum_client::inventory_screen::PcInventory>,
+              mut panel: ResMut<arcanum_client::inventory_screen::InventoryPanel>,
+              mut done: Local<bool>| {
                 if !*done && inventory.shown().is_some() {
                     *done = true;
                     panel.open = true;
@@ -159,13 +176,19 @@ fn main() {
     if std::env::var("DEBUG_ARCANUM_TALK").is_ok() {
         app.add_systems(
             Update,
-            (|pc: Res<arcanum_client::sim_bridge::LocalPc>, actors: Query<&arcanum_client::actors::Actor>, mut walk: ResMut<arcanum_client::actors::WalkLocalPc>, mut frames: Local<u32>| {
+            (|pc: Res<arcanum_client::sim_bridge::LocalPc>,
+              actors: Query<&arcanum_client::actors::Actor>,
+              mut walk: ResMut<arcanum_client::actors::WalkLocalPc>,
+              mut frames: Local<u32>| {
                 let Some((_, at)) = pc.0 else { return };
                 *frames += 1;
                 if *frames != 120 {
                     return;
                 }
-                let nearest = actors.iter().filter(|a| !a.pc).min_by_key(|a| a.at.x.abs_diff(at.x).max(a.at.y.abs_diff(at.y)));
+                let nearest = actors
+                    .iter()
+                    .filter(|a| !a.pc)
+                    .min_by_key(|a| a.at.x.abs_diff(at.x).max(a.at.y.abs_diff(at.y)));
                 if let Some(npc) = nearest {
                     info!("talking to {:?} at {:?}", npc.net_id, npc.at);
                     walk.click_talk(npc.net_id, npc.at);
@@ -175,11 +198,13 @@ fn main() {
         );
     }
 
-        // Debugging aid: `DEBUG_ARCANUM_PANEL=sleep` asks for the sleep window once the PC is in.
+    // Debugging aid: `DEBUG_ARCANUM_PANEL=sleep` asks for the sleep window once the PC is in.
     if std::env::var("DEBUG_ARCANUM_PANEL").is_ok_and(|v| v == "sleep") {
         app.add_systems(
             Update,
-            (|pc: Res<arcanum_client::sim_bridge::LocalPc>, link: Option<Res<arcanum_client::sim_bridge::HostLink>>, mut done: Local<bool>| {
+            (|pc: Res<arcanum_client::sim_bridge::LocalPc>,
+              link: Option<Res<arcanum_client::sim_bridge::HostLink>>,
+              mut done: Local<bool>| {
                 if let (false, Some(_), Some(link)) = (*done, pc.0, link) {
                     *done = true;
                     let _ = link.0.send_intent(arcanum_sim::PlayerIntent::RestWindow);
@@ -193,17 +218,26 @@ fn main() {
     if std::env::var("DEBUG_ARCANUM_LOAD").is_ok_and(|v| v == "newest") {
         app.add_systems(
             Update,
-            (|mut commands: Commands, settings: Res<arcanum_client::sim_bridge::HostSettings>, mut next: ResMut<NextState<AppState>>, mut done: Local<bool>| {
+            (|mut commands: Commands,
+              settings: Res<arcanum_client::sim_bridge::HostSettings>,
+              mut next: ResMut<NextState<AppState>>,
+              mut done: Local<bool>| {
                 if std::mem::replace(&mut *done, true) {
                     return;
                 }
-                let newest = settings.save_dir.as_deref().map(arcanum_sim::list_saves).and_then(|(saves, _)| saves.into_iter().next());
+                let newest = settings
+                    .save_dir
+                    .as_deref()
+                    .map(arcanum_sim::list_saves)
+                    .and_then(|(saves, _)| saves.into_iter().next());
                 let Some(newest) = newest else {
                     warn!("DEBUG_ARCANUM_LOAD: no save to load");
                     return;
                 };
                 info!("loading {}", newest.path.display());
-                commands.queue(move |world: &mut World| arcanum_client::sim_bridge::boot_save(world, &newest.path));
+                commands.queue(move |world: &mut World| {
+                    arcanum_client::sim_bridge::boot_save(world, &newest.path)
+                });
                 commands.insert_resource(LoadRequest::new(AppState::InGame).after_save_boots());
                 next.set(AppState::Loading);
             })
@@ -211,7 +245,11 @@ fn main() {
         );
     }
 
-    let start = match std::env::var(SCREEN_VAR).unwrap_or_default().to_ascii_lowercase().as_str() {
+    let start = match std::env::var(SCREEN_VAR)
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "options" => Some(AppState::Options),
         "singleplayer" => Some(AppState::SinglePlayer),
         "newgamechoice" => Some(AppState::NewGameChoice),
@@ -220,12 +258,16 @@ fn main() {
         "charactereditor" => Some(AppState::CharacterEditor),
         // With example saves, so the list and info display have something to show.
         "loadgame" => {
-            app.insert_resource(sample_saves()).insert_resource(arcanum_client::load_game::ExampleSaves);
+            app.insert_resource(sample_saves())
+                .insert_resource(arcanum_client::load_game::ExampleSaves);
             Some(AppState::LoadGame)
         }
         // A new game with a default character, straight into the world.
         "ingame" => {
-            app.insert_resource(ScreenshotTheWorld).add_systems(Update, start_debug_game.run_if(in_state(AppState::CreateCharacter)));
+            app.insert_resource(ScreenshotTheWorld).add_systems(
+                Update,
+                start_debug_game.run_if(in_state(AppState::CreateCharacter)),
+            );
             Some(AppState::CreateCharacter)
         }
         // Stays up for a minute so it can be captured.
@@ -236,7 +278,9 @@ fn main() {
         _ => None,
     };
     if let Some(start) = start {
-        app.add_systems(Startup, move |mut next: ResMut<NextState<AppState>>| next.set(start));
+        app.add_systems(Startup, move |mut next: ResMut<NextState<AppState>>| {
+            next.set(start)
+        });
     }
 
     if let Ok(path) = std::env::var(SCREENSHOT_VAR) {
@@ -270,7 +314,10 @@ fn start_debug_game(
 ) {
     let Some(data) = data else { return };
     host.reset(&data.rules);
-    let action = match std::env::var("DEBUG_ARCANUM_PREMADE").ok().and_then(|v| v.parse().ok()) {
+    let action = match std::env::var("DEBUG_ARCANUM_PREMADE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+    {
         Some(prototype) => arcanum_rules::CharacterAction::PickPremade(prototype),
         None => arcanum_rules::CharacterAction::SetName("Debug".into()),
     };
@@ -289,7 +336,10 @@ fn start_debug_game(
 struct ScreenshotPath(String);
 
 /// Ground tiles and map objects.
-type WorldSprite = Or<(With<arcanum_client::world_render::GroundTile>, With<arcanum_client::world_render::MapObject>)>;
+type WorldSprite = Or<(
+    With<arcanum_client::world_render::GroundTile>,
+    With<arcanum_client::world_render::MapObject>,
+)>;
 
 /// The screenshot waits for the world, not the first screen on the way.
 #[derive(Resource)]
@@ -308,7 +358,9 @@ fn screenshot_and_exit(
     // Grace frames so the layout has been applied and the renderer has finished preparing its
     // pipelines (a screen that is ready very early would otherwise be captured black).
     if *frames == 60 {
-        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path.0.clone()));
+        commands
+            .spawn(Screenshot::primary_window())
+            .observe(save_to_disk(path.0.clone()));
     } else if *frames == 150 {
         exit.write(AppExit::Success);
     }
@@ -338,8 +390,17 @@ fn screen_ready(
         if *state.get() != AppState::InGame {
             return false;
         }
-        return world.is_some_and(|w| !w.drawn.is_empty()) && !tiles.is_empty() && waiting.iter().all(|v| *v != Visibility::Hidden);
+        return world.is_some_and(|w| !w.drawn.is_empty())
+            && !tiles.is_empty()
+            && waiting.iter().all(|v| *v != Visibility::Hidden);
     }
     let loading_up = loading.iter().any(|p| images.get(&p.image).is_some());
-    (!labels.is_empty() || !slots.is_empty() || loading_up || !load_game.is_empty() || !new_game.is_empty() || !create.is_empty() || !editor.is_empty()) && pending.is_empty()
+    (!labels.is_empty()
+        || !slots.is_empty()
+        || loading_up
+        || !load_game.is_empty()
+        || !new_game.is_empty()
+        || !create.is_empty()
+        || !editor.is_empty())
+        && pending.is_empty()
 }

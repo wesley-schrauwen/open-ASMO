@@ -28,7 +28,10 @@ use crate::sim_bridge::HostLink;
 use crate::widgets::FrameButton;
 
 /// The window, in screen pixels.
-pub const WINDOW: Rect = Rect { min: Vec2::new(573.0, 42.0), max: Vec2::new(800.0, 194.0) };
+pub const WINDOW: Rect = Rect {
+    min: Vec2::new(573.0, 42.0),
+    max: Vec2::new(800.0, 194.0),
+};
 /// Rows are this far apart.
 pub const ROW_HEIGHT: f32 = 18.0;
 /// Seconds the screen takes to go black.
@@ -45,7 +48,12 @@ impl RestPanel {
     /// Takes the host's answers.
     pub fn receive(&mut self, delta: &LedgerDelta) {
         match delta {
-            LedgerDelta::RestWindow { mode } => *self = Self { mode: Some(*mode), resting: false },
+            LedgerDelta::RestWindow { mode } => {
+                *self = Self {
+                    mode: Some(*mode),
+                    resting: false,
+                }
+            }
             LedgerDelta::RestEnded => *self = Self::default(),
             _ => {}
         }
@@ -74,9 +82,19 @@ pub struct RestWindowPlugin;
 impl Plugin for RestWindowPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<RestPanel>()
-            .add_systems(OnExit(AppState::InGame), |mut panel: ResMut<RestPanel>| *panel = RestPanel::default())
-            .add_systems(PreUpdate, toggle_on_keys.run_if(in_state(AppState::InGame)).after(bevy::input::InputSystems))
-            .add_systems(Update, (show_window, fade).run_if(in_state(AppState::InGame)))
+            .add_systems(OnExit(AppState::InGame), |mut panel: ResMut<RestPanel>| {
+                *panel = RestPanel::default()
+            })
+            .add_systems(
+                PreUpdate,
+                toggle_on_keys
+                    .run_if(in_state(AppState::InGame))
+                    .after(bevy::input::InputSystems),
+            )
+            .add_systems(
+                Update,
+                (show_window, fade).run_if(in_state(AppState::InGame)),
+            )
             .add_observer(on_hud_button)
             .add_observer(on_row);
     }
@@ -96,7 +114,11 @@ fn toggle(panel: &mut RestPanel, link: Option<&HostLink>) {
 }
 
 /// S toggles the window; Escape closes it when no rest is under way.
-fn toggle_on_keys(mut keys: ResMut<ButtonInput<KeyCode>>, mut panel: ResMut<RestPanel>, link: Option<Res<HostLink>>) {
+fn toggle_on_keys(
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut panel: ResMut<RestPanel>,
+    link: Option<Res<HostLink>>,
+) {
     if keys.just_pressed(KeyCode::KeyS) {
         toggle(&mut panel, link.as_deref());
     } else if panel.mode.is_some() && !panel.resting && keys.clear_just_pressed(KeyCode::Escape) {
@@ -104,19 +126,34 @@ fn toggle_on_keys(mut keys: ResMut<ButtonInput<KeyCode>>, mut panel: ResMut<Rest
     }
 }
 
-fn on_hud_button(activate: On<Activate>, buttons: Query<&crate::hud::HudAction>, mut panel: ResMut<RestPanel>, link: Option<Res<HostLink>>) {
+fn on_hud_button(
+    activate: On<Activate>,
+    buttons: Query<&crate::hud::HudAction>,
+    mut panel: ResMut<RestPanel>,
+    link: Option<Res<HostLink>>,
+) {
     if buttons.get(activate.entity) == Ok(&crate::hud::HudAction::Sleep) {
         toggle(&mut panel, link.as_deref());
     }
 }
 
 /// A row's button rests for its option (0x57b710).
-fn on_row(activate: On<Activate>, rows: Query<&RestRow>, mut panel: ResMut<RestPanel>, link: Option<Res<HostLink>>) {
-    let (Ok(&RestRow(row)), Some(mode), Some(link)) = (rows.get(activate.entity), panel.mode, link) else { return };
+fn on_row(
+    activate: On<Activate>,
+    rows: Query<&RestRow>,
+    mut panel: ResMut<RestPanel>,
+    link: Option<Res<HostLink>>,
+) {
+    let (Ok(&RestRow(row)), Some(mode), Some(link)) = (rows.get(activate.entity), panel.mode, link)
+    else {
+        return;
+    };
     if panel.resting {
         return;
     }
-    let Some(&option) = mode.options().get(row) else { return };
+    let Some(&option) = mode.options().get(row) else {
+        return;
+    };
     if link.0.send_intent(PlayerIntent::Rest { option }).is_ok() {
         panel.resting = true;
     }
@@ -145,16 +182,30 @@ fn show_window(
     }
     let Some(mode) = panel.mode else { return };
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-    let local = |r: Rect| Rect { min: r.min + WINDOW.min, max: r.max + WINDOW.min };
+    let local = |r: Rect| Rect {
+        min: r.min + WINDOW.min,
+        max: r.max + WINDOW.min,
+    };
     commands
         .spawn((
             RestWindowRoot,
             DespawnOnExit(AppState::InGame),
             bevy::picking::Pickable::IGNORE,
-            Node { position_type: PositionType::Absolute, top: Val::Px(0.0), left: Val::Percent(50.0), margin: UiRect::left(px(-400.0)), width: px(800.0), height: px(600.0), ..default() },
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(0.0),
+                left: Val::Percent(50.0),
+                margin: UiRect::left(px(-400.0)),
+                width: px(800.0),
+                height: px(600.0),
+                ..default()
+            },
         ))
         .with_children(|screen| {
-            screen.spawn((ImageNode::new(assets.load(art("Sleep_Base.ART"))), at(WINDOW)));
+            screen.spawn((
+                ImageNode::new(assets.load(art("Sleep_Base.ART"))),
+                at(WINDOW),
+            ));
             let frames = assets.load(art("FateBut.ART"));
             for (row, _) in mode.options().iter().enumerate() {
                 let y = row as f32 * ROW_HEIGHT;
@@ -163,21 +214,47 @@ fn show_window(
                     Button,
                     ActivateOnPress,
                     Hovered::default(),
-                    FrameButton { frames: frames.clone(), normal: 0, pressed: 1, hover: 0 },
+                    FrameButton {
+                        frames: frames.clone(),
+                        normal: 0,
+                        pressed: 1,
+                        hover: 0,
+                    },
                     ImageNode::default(),
                     at(local(rect(Vec2::new(8.0, 3.0 + y), Vec2::new(18.0, 13.0)))),
                 ));
-                let text = data.as_ref().and_then(|d| d.sleep_ui.get(mode.label(row))).unwrap_or("").to_string();
-                screen.spawn((bevy::picking::Pickable::IGNORE, Node { align_items: AlignItems::Center, overflow: Overflow::clip(), ..at(local(rect(Vec2::new(36.0, 2.0 + y), Vec2::new(191.0, ROW_HEIGHT)))) })).with_children(|cell| {
-                    let mut t = cell.spawn(TextColor(SCREEN_WHITE));
-                    fonts.insert_text(&mut t, &text, UiFont::Body);
-                });
+                let text = data
+                    .as_ref()
+                    .and_then(|d| d.sleep_ui.get(mode.label(row)))
+                    .unwrap_or("")
+                    .to_string();
+                screen
+                    .spawn((
+                        bevy::picking::Pickable::IGNORE,
+                        Node {
+                            align_items: AlignItems::Center,
+                            overflow: Overflow::clip(),
+                            ..at(local(rect(
+                                Vec2::new(36.0, 2.0 + y),
+                                Vec2::new(191.0, ROW_HEIGHT),
+                            )))
+                        },
+                    ))
+                    .with_children(|cell| {
+                        let mut t = cell.spawn(TextColor(SCREEN_WHITE));
+                        fonts.insert_text(&mut t, &text, UiFont::Body);
+                    });
             }
         });
 }
 
 /// Fades the screen to black while resting.
-fn fade(mut commands: Commands, panel: Res<RestPanel>, time: Res<Time<Real>>, mut fades: Query<(Entity, &RestFade, &mut BackgroundColor)>) {
+fn fade(
+    mut commands: Commands,
+    panel: Res<RestPanel>,
+    time: Res<Time<Real>>,
+    mut fades: Query<(Entity, &RestFade, &mut BackgroundColor)>,
+) {
     let now = time.elapsed_secs();
     if !panel.resting {
         for (entity, ..) in &fades {
@@ -191,7 +268,12 @@ fn fade(mut commands: Commands, panel: Res<RestPanel>, time: Res<Time<Real>>, mu
             DespawnOnExit(AppState::InGame),
             GlobalZIndex(20),
             BackgroundColor(Color::NONE),
-            Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
         ));
         return;
     }
@@ -209,8 +291,16 @@ mod tests {
     fn the_window_follows_the_host() {
         let mut panel = RestPanel::default();
         assert!(!panel.covers(Vec2::new(600.0, 100.0)), "closed");
-        panel.receive(&LedgerDelta::RestWindow { mode: RestMode::Wait });
-        assert_eq!(panel, RestPanel { mode: Some(RestMode::Wait), resting: false });
+        panel.receive(&LedgerDelta::RestWindow {
+            mode: RestMode::Wait,
+        });
+        assert_eq!(
+            panel,
+            RestPanel {
+                mode: Some(RestMode::Wait),
+                resting: false
+            }
+        );
         assert!(panel.covers(Vec2::new(600.0, 100.0)));
         assert!(!panel.covers(Vec2::new(560.0, 100.0)) && !panel.covers(Vec2::new(600.0, 200.0)));
         panel.resting = true;

@@ -41,8 +41,14 @@ pub enum ArtError {
     BadRotationCount(u32),
     NoPalette,
     NoFrames,
-    FrameOutOfRange { rotation: usize, frame: usize },
-    FrameTooLarge { width: u32, height: u32 },
+    FrameOutOfRange {
+        rotation: usize,
+        frame: usize,
+    },
+    FrameTooLarge {
+        width: u32,
+        height: u32,
+    },
     BadPaletteIndex(usize),
     /// RLE data decoded to the wrong number of pixels or ran off the end.
     CorruptPixelData,
@@ -58,7 +64,9 @@ impl fmt::Display for ArtError {
             Self::FrameOutOfRange { rotation, frame } => {
                 write!(f, "no frame {frame} in rotation {rotation}")
             }
-            Self::FrameTooLarge { width, height } => write!(f, "frame {width}x{height} is too large"),
+            Self::FrameTooLarge { width, height } => {
+                write!(f, "frame {width}x{height} is too large")
+            }
             Self::BadPaletteIndex(i) => write!(f, "palette {i} is not present"),
             Self::CorruptPixelData => write!(f, "corrupt pixel data"),
         }
@@ -128,8 +136,14 @@ impl ArtFile {
         let mut palettes: [Option<Vec<[u8; 4]>>; 4] = Default::default();
         for (i, slot) in palettes.iter_mut().enumerate() {
             if u32_at(data, 0x0c + i * 4)? != 0 {
-                let raw = data.get(pos..pos + PALETTE_BYTES).ok_or(ArtError::Truncated)?;
-                *slot = Some(raw.chunks_exact(4).map(|c| [c[0], c[1], c[2], c[3]]).collect());
+                let raw = data
+                    .get(pos..pos + PALETTE_BYTES)
+                    .ok_or(ArtError::Truncated)?;
+                *slot = Some(
+                    raw.chunks_exact(4)
+                        .map(|c| [c[0], c[1], c[2], c[3]])
+                        .collect(),
+                );
                 pos += PALETTE_BYTES;
             }
         }
@@ -139,12 +153,15 @@ impl ArtFile {
             .ok_or(ArtError::Truncated)?;
         let mut frames = Vec::with_capacity(rotation_count);
         for _ in 0..rotation_count {
-            let table = data.get(pos..pos + table_bytes).ok_or(ArtError::Truncated)?;
+            let table = data
+                .get(pos..pos + table_bytes)
+                .ok_or(ArtError::Truncated)?;
             frames.push(
                 table
                     .chunks_exact(FRAME_INFO_SIZE)
                     .map(|c| {
-                        let w = |i: usize| u32::from_le_bytes(c[i * 4..i * 4 + 4].try_into().unwrap());
+                        let w =
+                            |i: usize| u32::from_le_bytes(c[i * 4..i * 4 + 4].try_into().unwrap());
                         FrameInfo {
                             width: w(0),
                             height: w(1),
@@ -165,7 +182,9 @@ impl ArtFile {
             let mut row = Vec::with_capacity(rot.len());
             for f in rot {
                 row.push(pos);
-                pos = pos.checked_add(f.data_size as usize).ok_or(ArtError::Truncated)?;
+                pos = pos
+                    .checked_add(f.data_size as usize)
+                    .ok_or(ArtError::Truncated)?;
             }
             offsets.push(row);
         }
@@ -197,10 +216,18 @@ impl ArtFile {
 
     /// Index of the first palette present in the file.
     pub fn default_palette(&self) -> Result<usize, ArtError> {
-        self.palettes.iter().position(Option::is_some).ok_or(ArtError::NoPalette)
+        self.palettes
+            .iter()
+            .position(Option::is_some)
+            .ok_or(ArtError::NoPalette)
     }
 
-    pub fn decode_frame(&self, rotation: usize, frame: usize, palette: usize) -> Result<ArtFrame, ArtError> {
+    pub fn decode_frame(
+        &self,
+        rotation: usize,
+        frame: usize,
+        palette: usize,
+    ) -> Result<ArtFrame, ArtError> {
         let info = *self
             .frames
             .get(rotation)
@@ -213,13 +240,20 @@ impl ArtFile {
             .ok_or(ArtError::BadPaletteIndex(palette))?;
 
         if info.width > MAX_DIMENSION || info.height > MAX_DIMENSION {
-            return Err(ArtError::FrameTooLarge { width: info.width, height: info.height });
+            return Err(ArtError::FrameTooLarge {
+                width: info.width,
+                height: info.height,
+            });
         }
         let pixels = info.width as usize * info.height as usize;
         let start = self.offsets[rotation][frame];
         let stored = &self.data[start..start + info.data_size as usize];
 
-        let indices = if stored.len() == pixels { stored.to_vec() } else { rle_decode(stored, pixels)? };
+        let indices = if stored.len() == pixels {
+            stored.to_vec()
+        } else {
+            rle_decode(stored, pixels)?
+        };
 
         let mut rgba = Vec::with_capacity(pixels * 4);
         for &i in &indices {
@@ -237,7 +271,10 @@ fn rle_decode(src: &[u8], expected: usize) -> Result<Vec<u8>, ArtError> {
         let ctrl = src[i];
         if ctrl & 0x80 != 0 {
             let n = (ctrl & 0x7f) as usize;
-            out.extend_from_slice(src.get(i + 1..i + 1 + n).ok_or(ArtError::CorruptPixelData)?);
+            out.extend_from_slice(
+                src.get(i + 1..i + 1 + n)
+                    .ok_or(ArtError::CorruptPixelData)?,
+            );
             i += 1 + n;
         } else {
             let v = *src.get(i + 1).ok_or(ArtError::CorruptPixelData)?;
@@ -277,8 +314,15 @@ mod tests {
             x ^= x << 13;
             x ^= x >> 17;
             x ^= x << 5;
-            let run = if x % 4 == 0 { (x >> 8) as usize % 300 + 1 } else { 1 };
-            out.extend(std::iter::repeat_n((x >> 16) as u8, run.min(len - out.len())));
+            let run = if x % 4 == 0 {
+                (x >> 8) as usize % 300 + 1
+            } else {
+                1
+            };
+            out.extend(std::iter::repeat_n(
+                (x >> 16) as u8,
+                run.min(len - out.len()),
+            ));
         }
         out
     }
@@ -286,7 +330,8 @@ mod tests {
     #[test]
     fn raw_frame_decodes_to_rgba() {
         let indices = [0, 1, 2, 255, 128, 7];
-        let art = ArtFile::parse(&ArtBuilder::single(TestFrame::raw(3, 2, &indices)).build()).unwrap();
+        let art =
+            ArtFile::parse(&ArtBuilder::single(TestFrame::raw(3, 2, &indices)).build()).unwrap();
         let (rgba, dims) = art.decode_frame0().unwrap();
         assert_eq!(dims, (3, 2));
         assert_eq!(rgba, expected_rgba(&indices));
@@ -294,7 +339,8 @@ mod tests {
 
     #[test]
     fn index_zero_is_transparent() {
-        let art = ArtFile::parse(&ArtBuilder::single(TestFrame::raw(2, 1, &[0, 1])).build()).unwrap();
+        let art =
+            ArtFile::parse(&ArtBuilder::single(TestFrame::raw(2, 1, &[0, 1])).build()).unwrap();
         let (rgba, _) = art.decode_frame0().unwrap();
         assert_eq!(rgba[3], 0);
         assert_eq!(rgba[7], 255);
@@ -303,7 +349,8 @@ mod tests {
     #[test]
     fn rle_frame_decodes_to_rgba() {
         let indices: Vec<u8> = [vec![5; 40], vec![1, 2, 3], vec![9; 17]].concat();
-        let art = ArtFile::parse(&ArtBuilder::single(TestFrame::rle(10, 6, &indices)).build()).unwrap();
+        let art =
+            ArtFile::parse(&ArtBuilder::single(TestFrame::rle(10, 6, &indices)).build()).unwrap();
         let (rgba, dims) = art.decode_frame0().unwrap();
         assert_eq!(dims, (10, 6));
         assert_eq!(rgba, expected_rgba(&indices));
@@ -311,11 +358,26 @@ mod tests {
 
     #[test]
     fn rle_round_trips() {
-        for (len, seed) in [(1, 1), (2, 2), (127, 3), (128, 4), (129, 5), (1000, 6), (20_000, 7)] {
+        for (len, seed) in [
+            (1, 1),
+            (2, 2),
+            (127, 3),
+            (128, 4),
+            (129, 5),
+            (1000, 6),
+            (20_000, 7),
+        ] {
             let indices = noisy_indices(len, seed);
-            assert_eq!(rle_decode(&rle_encode(&indices), len).unwrap(), indices, "len {len}");
+            assert_eq!(
+                rle_decode(&rle_encode(&indices), len).unwrap(),
+                indices,
+                "len {len}"
+            );
         }
-        assert_eq!(rle_decode(&rle_encode(&[3; 1000]), 1000).unwrap(), vec![3; 1000]);
+        assert_eq!(
+            rle_decode(&rle_encode(&[3; 1000]), 1000).unwrap(),
+            vec![3; 1000]
+        );
     }
 
     #[test]
@@ -326,10 +388,16 @@ mod tests {
 
     #[test]
     fn rle_errors() {
-        assert_eq!(rle_decode(&[0x83, 1, 2], 3), Err(ArtError::CorruptPixelData)); // literal overruns
+        assert_eq!(
+            rle_decode(&[0x83, 1, 2], 3),
+            Err(ArtError::CorruptPixelData)
+        ); // literal overruns
         assert_eq!(rle_decode(&[3], 3), Err(ArtError::CorruptPixelData)); // run missing its value
         assert_eq!(rle_decode(&[3, 1], 4), Err(ArtError::CorruptPixelData)); // too short
-        assert_eq!(rle_decode(&[3, 1, 3, 1], 4), Err(ArtError::CorruptPixelData)); // too long
+        assert_eq!(
+            rle_decode(&[3, 1, 3, 1], 4),
+            Err(ArtError::CorruptPixelData)
+        ); // too long
     }
 
     #[test]
@@ -337,7 +405,11 @@ mod tests {
         // Each frame is filled with a distinct index and has distinct offsets.
         let builder = ArtBuilder::animated(3, |r, f| {
             let v = (r * 10 + f + 1) as u8;
-            let frame = if f % 2 == 0 { TestFrame::raw(4, 2, &[v; 8]) } else { TestFrame::rle(4, 2, &[v; 8]) };
+            let frame = if f % 2 == 0 {
+                TestFrame::raw(4, 2, &[v; 8])
+            } else {
+                TestFrame::rle(4, 2, &[v; 8])
+            };
             frame.with_offsets((r as i32, -(f as i32)), (-1, 2))
         });
         let art = ArtFile::parse(&builder.build()).unwrap();
@@ -348,19 +420,40 @@ mod tests {
                 let frame = art.decode_frame(r, f, 0).unwrap();
                 let v = (r * 10 + f + 1) as u8;
                 assert_eq!(frame.rgba, expected_rgba(&[v; 8]), "rotation {r} frame {f}");
-                assert_eq!((frame.info.center_x, frame.info.center_y), (r as i32, -(f as i32)));
+                assert_eq!(
+                    (frame.info.center_x, frame.info.center_y),
+                    (r as i32, -(f as i32))
+                );
                 assert_eq!((frame.info.delta_x, frame.info.delta_y), (-1, 2));
             }
         }
-        assert_eq!(art.decode_frame(8, 0, 0).unwrap_err(), ArtError::FrameOutOfRange { rotation: 8, frame: 0 });
-        assert_eq!(art.decode_frame(0, 3, 0).unwrap_err(), ArtError::FrameOutOfRange { rotation: 0, frame: 3 });
+        assert_eq!(
+            art.decode_frame(8, 0, 0).unwrap_err(),
+            ArtError::FrameOutOfRange {
+                rotation: 8,
+                frame: 0
+            }
+        );
+        assert_eq!(
+            art.decode_frame(0, 3, 0).unwrap_err(),
+            ArtError::FrameOutOfRange {
+                rotation: 0,
+                frame: 3
+            }
+        );
     }
 
     #[test]
     fn static_flag_stores_one_rotation() {
         let art = ArtFile::parse(&ArtBuilder::single(TestFrame::raw(1, 1, &[1])).build()).unwrap();
         assert_eq!(art.rotation_count, 1);
-        assert_eq!(art.decode_frame(1, 0, 0).unwrap_err(), ArtError::FrameOutOfRange { rotation: 1, frame: 0 });
+        assert_eq!(
+            art.decode_frame(1, 0, 0).unwrap_err(),
+            ArtError::FrameOutOfRange {
+                rotation: 1,
+                frame: 0
+            }
+        );
     }
 
     #[test]
@@ -371,9 +464,18 @@ mod tests {
         let art = ArtFile::parse(&b.build()).unwrap();
         assert_eq!(art.default_palette(), Ok(2));
         assert_eq!(art.decode_frame0().unwrap().0, ramp_rgba(1));
-        assert_eq!(art.decode_frame(0, 0, 3).unwrap().rgba, vec![255, 0, 0, 255]);
-        assert_eq!(art.decode_frame(0, 0, 0).unwrap_err(), ArtError::BadPaletteIndex(0));
-        assert_eq!(art.decode_frame(0, 0, 9).unwrap_err(), ArtError::BadPaletteIndex(9));
+        assert_eq!(
+            art.decode_frame(0, 0, 3).unwrap().rgba,
+            vec![255, 0, 0, 255]
+        );
+        assert_eq!(
+            art.decode_frame(0, 0, 0).unwrap_err(),
+            ArtError::BadPaletteIndex(0)
+        );
+        assert_eq!(
+            art.decode_frame(0, 0, 9).unwrap_err(),
+            ArtError::BadPaletteIndex(9)
+        );
 
         b.palettes = [None, None, None, None];
         let art = ArtFile::parse(&b.build()).unwrap();
@@ -394,14 +496,29 @@ mod tests {
     #[test]
     fn rejects_malformed_headers() {
         let good = ArtBuilder::single(TestFrame::raw(2, 2, &[1, 2, 3, 4])).build();
-        assert_eq!(ArtFile::parse(&good[..10]).unwrap_err(), ArtError::Truncated);
-        assert_eq!(ArtFile::parse(&good[..HEADER_SIZE + 100]).unwrap_err(), ArtError::Truncated); // in palette
-        assert_eq!(ArtFile::parse(&good[..HEADER_SIZE + PALETTE_BYTES + 10]).unwrap_err(), ArtError::Truncated); // in table
-        assert_eq!(ArtFile::parse(&good[..good.len() - 1]).unwrap_err(), ArtError::Truncated); // in pixels
+        assert_eq!(
+            ArtFile::parse(&good[..10]).unwrap_err(),
+            ArtError::Truncated
+        );
+        assert_eq!(
+            ArtFile::parse(&good[..HEADER_SIZE + 100]).unwrap_err(),
+            ArtError::Truncated
+        ); // in palette
+        assert_eq!(
+            ArtFile::parse(&good[..HEADER_SIZE + PALETTE_BYTES + 10]).unwrap_err(),
+            ArtError::Truncated
+        ); // in table
+        assert_eq!(
+            ArtFile::parse(&good[..good.len() - 1]).unwrap_err(),
+            ArtError::Truncated
+        ); // in pixels
 
         let mut bad = good.clone();
         bad[8] = 4;
-        assert_eq!(ArtFile::parse(&bad).unwrap_err(), ArtError::BadRotationCount(4));
+        assert_eq!(
+            ArtFile::parse(&bad).unwrap_err(),
+            ArtError::BadRotationCount(4)
+        );
 
         let mut huge = good.clone();
         huge[0x20..0x24].copy_from_slice(&u32::MAX.to_le_bytes()); // frame count
@@ -410,13 +527,23 @@ mod tests {
 
     #[test]
     fn rejects_oversized_frames() {
-        let art = ArtFile::parse(&ArtBuilder::single(TestFrame::stored(9000, 1, vec![2, 1])).build()).unwrap();
-        assert_eq!(art.decode_frame0().unwrap_err(), ArtError::FrameTooLarge { width: 9000, height: 1 });
+        let art =
+            ArtFile::parse(&ArtBuilder::single(TestFrame::stored(9000, 1, vec![2, 1])).build())
+                .unwrap();
+        assert_eq!(
+            art.decode_frame0().unwrap_err(),
+            ArtError::FrameTooLarge {
+                width: 9000,
+                height: 1
+            }
+        );
     }
 
     #[test]
     fn corrupt_pixels_are_errors_not_panics() {
-        let art = ArtFile::parse(&ArtBuilder::single(TestFrame::stored(3, 3, vec![0x85, 1, 2])).build()).unwrap();
+        let art =
+            ArtFile::parse(&ArtBuilder::single(TestFrame::stored(3, 3, vec![0x85, 1, 2])).build())
+                .unwrap();
         assert_eq!(art.decode_frame0().unwrap_err(), ArtError::CorruptPixelData);
     }
 }

@@ -26,7 +26,9 @@
 //! encumbrance penalty (effect 0x9e, 0x45f820), the weapon scoring auto-equip uses (0x465170).
 
 use arcanum_formats::art_id::ArtId;
-use arcanum_formats::object::{Object, Prototypes, TYPE_AMMO, TYPE_ARMOR, TYPE_GENERIC, TYPE_GOLD, TYPE_WEAPON};
+use arcanum_formats::object::{
+    Object, Prototypes, TYPE_AMMO, TYPE_ARMOR, TYPE_GENERIC, TYPE_GOLD, TYPE_WEAPON,
+};
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -106,7 +108,11 @@ fn is_pc_rows(rows: &i32) -> bool {
 
 impl Default for Inventory {
     fn default() -> Self {
-        Self { items: Vec::new(), rows: PC_ROWS, spells: Default::default() }
+        Self {
+            items: Vec::new(),
+            rows: PC_ROWS,
+            spells: Default::default(),
+        }
     }
 }
 
@@ -220,7 +226,11 @@ impl ItemInfo {
         if self.magic_weight_adj != 0 {
             w += self.scaled_adjustment(aptitude);
         }
-        if self.kind == TYPE_AMMO { w * quantity / 4 } else { w }
+        if self.kind == TYPE_AMMO {
+            w * quantity / 4
+        } else {
+            w
+        }
     }
 }
 
@@ -297,12 +307,18 @@ pub enum InventoryRequest {
 impl InventoryRequest {
     /// Whether it involves the open pile (the host's alone to apply: the client waits).
     pub fn is_loot(&self) -> bool {
-        matches!(self, Self::Take { .. } | Self::Put { .. } | Self::TakeAll | Self::ClosePile)
+        matches!(
+            self,
+            Self::Take { .. } | Self::Put { .. } | Self::TakeAll | Self::ClosePile
+        )
     }
 
     /// Whether it is a trade with the barter NPC (the host's alone to apply).
     pub fn is_barter(&self) -> bool {
-        matches!(self, Self::Buy { .. } | Self::Sell { .. } | Self::CloseBarter)
+        matches!(
+            self,
+            Self::Buy { .. } | Self::Sell { .. } | Self::CloseBarter
+        )
     }
 }
 
@@ -318,7 +334,11 @@ impl From<InsertRefusal> for ItemRefusal {
 impl Inventory {
     /// The gold carried.
     pub fn gold(&self) -> i32 {
-        self.items.iter().filter(|i| i.prototype == crate::GOLD).map(|i| i.quantity).sum()
+        self.items
+            .iter()
+            .filter(|i| i.prototype == crate::GOLD)
+            .map(|i| i.quantity)
+            .sum()
     }
 
     /// Gives (`n > 0`) or takes (`n < 0`) gold; one with no gold yet gets a stack next to its
@@ -329,10 +349,19 @@ impl Inventory {
         }
         match self.items.iter_mut().find(|i| i.prototype == crate::GOLD) {
             Some(stack) => stack.quantity = (stack.quantity + n).max(0),
-            None if n > 0 => self.items.insert(0, CarriedItem { prototype: crate::GOLD, location: 0, quantity: n, keys: Vec::new() }),
+            None if n > 0 => self.items.insert(
+                0,
+                CarriedItem {
+                    prototype: crate::GOLD,
+                    location: 0,
+                    quantity: n,
+                    keys: Vec::new(),
+                },
+            ),
             None => return false,
         }
-        self.items.retain(|i| i.prototype != crate::GOLD || i.quantity > 0);
+        self.items
+            .retain(|i| i.prototype != crate::GOLD || i.quantity > 0);
         true
     }
 
@@ -348,7 +377,15 @@ impl Inventory {
     /// with `None`, where the insert puts it; gold and ammo join their stack either way (0x466510).
     /// `carry` limits the weight (critters; `i32::MAX` for containers).
     #[allow(clippy::too_many_arguments)]
-    pub fn put_in(&self, item: &CarriedItem, to: Option<i32>, wearer: Wearer, info: impl Fn(u32) -> Option<ItemInfo>, carry: i32, aptitude: i32) -> Result<Inventory, ItemRefusal> {
+    pub fn put_in(
+        &self,
+        item: &CarriedItem,
+        to: Option<i32>,
+        wearer: Wearer,
+        info: impl Fn(u32) -> Option<ItemInfo>,
+        carry: i32,
+        aptitude: i32,
+    ) -> Result<Inventory, ItemRefusal> {
         let facts = info(item.prototype).ok_or(ItemRefusal::Silent)?;
         let mut changed = self.clone();
         let stacked = facts.stacks() && self.items.iter().any(|i| i.prototype == item.prototype);
@@ -360,7 +397,9 @@ impl Inventory {
                 changed.insert_item(item.clone(), &info, carry, aptitude)?;
             }
             Some(to) => {
-                if self.total_weight(&info, aptitude) + facts.weight(item.quantity, aptitude) > carry {
+                if self.total_weight(&info, aptitude) + facts.weight(item.quantity, aptitude)
+                    > carry
+                {
                     return Err(ItemRefusal::TooHeavy);
                 }
                 if self.in_grid(to) {
@@ -375,7 +414,10 @@ impl Inventory {
                 } else {
                     return Err(ItemRefusal::Silent);
                 }
-                changed.items.push(CarriedItem { location: to, ..item.clone() });
+                changed.items.push(CarriedItem {
+                    location: to,
+                    ..item.clone()
+                });
                 changed.fold_keys(&info);
             }
         }
@@ -385,16 +427,34 @@ impl Inventory {
 
 impl Inventory {
     /// Applies `request` for `wearer`.
-    pub fn apply(&self, request: &InventoryRequest, wearer: Wearer, info: impl Fn(u32) -> Option<ItemInfo>) -> Result<Inventory, ItemRefusal> {
+    pub fn apply(
+        &self,
+        request: &InventoryRequest,
+        wearer: Wearer,
+        info: impl Fn(u32) -> Option<ItemInfo>,
+    ) -> Result<Inventory, ItemRefusal> {
         match *request {
-            InventoryRequest::Move { from, to } if self.spells.contains_key(&from) => self.move_spell(from, to),
+            InventoryRequest::Move { from, to } if self.spells.contains_key(&from) => {
+                self.move_spell(from, to)
+            }
             InventoryRequest::Move { from, to } => self.move_item(from, to, wearer, info),
             InventoryRequest::HotkeySpell { spell, to } => self.put_spell(spell, to, info),
-            InventoryRequest::Take { .. } | InventoryRequest::Put { .. } | InventoryRequest::TakeAll | InventoryRequest::ClosePile => Err(ItemRefusal::Silent),
-            InventoryRequest::Buy { .. } | InventoryRequest::Sell { .. } | InventoryRequest::CloseBarter => Err(ItemRefusal::Silent),
+            InventoryRequest::Take { .. }
+            | InventoryRequest::Put { .. }
+            | InventoryRequest::TakeAll
+            | InventoryRequest::ClosePile => Err(ItemRefusal::Silent),
+            InventoryRequest::Buy { .. }
+            | InventoryRequest::Sell { .. }
+            | InventoryRequest::CloseBarter => Err(ItemRefusal::Silent),
             InventoryRequest::Drop { from } => {
-                let index = self.items.iter().position(|i| i.location == from).ok_or(ItemRefusal::Silent)?;
-                if info(self.items[index].prototype).is_some_and(|i| i.item_flags & ITEM_NO_DROP != 0) {
+                let index = self
+                    .items
+                    .iter()
+                    .position(|i| i.location == from)
+                    .ok_or(ItemRefusal::Silent)?;
+                if info(self.items[index].prototype)
+                    .is_some_and(|i| i.item_flags & ITEM_NO_DROP != 0)
+                {
                     return Err(ItemRefusal::NoDrop);
                 }
                 let mut changed = self.clone();
@@ -410,7 +470,15 @@ impl Inventory {
 pub struct InventoryRequests(pub Vec<(crate::PlayerId, u32, InventoryRequest)>);
 
 /// A PC with what the inventory requests need of it.
-type OwnerQuery<'a> = (Entity, &'a crate::NetId, &'a crate::PlayerControlled, &'a crate::Sheet, &'a crate::Position, &'a mut Inventory, Option<&'a crate::LootOpen>);
+type OwnerQuery<'a> = (
+    Entity,
+    &'a crate::NetId,
+    &'a crate::PlayerControlled,
+    &'a crate::Sheet,
+    &'a crate::Position,
+    &'a mut Inventory,
+    Option<&'a crate::LootOpen>,
+);
 
 /// Applies the [`InventoryRequests`] to the players' PCs, keeps the result in the save, and
 /// answers each with the PC's inventory.
@@ -435,26 +503,65 @@ pub fn apply_inventory_requests(
     let vfs = vfs_guard.as_deref();
     let prototypes = map.prototypes.clone();
     let art = map.art.clone();
-    let info = item_info(&prototypes, |id| crate::world::art_size(vfs, art.as_deref(), id));
+    let info = item_info(&prototypes, |id| {
+        crate::world::art_size(vfs, art.as_deref(), id)
+    });
     for (player, seq, request) in requests.0.drain(..) {
         if request.is_barter() {
             barters.0.push((player, seq, request));
             continue;
         }
-        let open_elsewhere: Vec<(crate::PlayerId, crate::GroundItemId)> = pcs.iter().filter_map(|(_, _, p, .., l)| Some((p.0, l?.0))).collect();
-        let Some((entity, &net_id, _, sheet, position, mut inventory, open)) = pcs.iter_mut().find(|(_, _, p, ..)| p.0 == player) else { continue };
+        let open_elsewhere: Vec<(crate::PlayerId, crate::GroundItemId)> = pcs
+            .iter()
+            .filter_map(|(_, _, p, .., l)| Some((p.0, l?.0)))
+            .collect();
+        let Some((entity, &net_id, _, sheet, position, mut inventory, open)) =
+            pcs.iter_mut().find(|(_, _, p, ..)| p.0 == player)
+        else {
+            continue;
+        };
         acks.0.insert(player, seq);
-        let wearer = Wearer { race: sheet.0.race, gender: sheet.0.gender };
+        let wearer = Wearer {
+            race: sheet.0.race,
+            gender: sheet.0.gender,
+        };
         let open = open.map(|l| l.0);
         let result = match request {
-            InventoryRequest::Drop { from } => crate::drop_item(&inventory, from, position.0, &info, &mut map, &mut world, &session, &mut outbox),
+            InventoryRequest::Drop { from } => crate::drop_item(
+                &inventory,
+                from,
+                position.0,
+                &info,
+                &mut map,
+                &mut world,
+                &session,
+                &mut outbox,
+            ),
             ref loot if loot.is_loot() => {
-                let others = open_elsewhere.iter().any(|(p, pile)| *p != player && Some(*pile) == open);
-                let (carry, aptitude) = (rules.0.derived(&sheet.0).carry_weight, rules.0.aptitude(&sheet.0));
+                let others = open_elsewhere
+                    .iter()
+                    .any(|(p, pile)| *p != player && Some(*pile) == open);
+                let (carry, aptitude) = (
+                    rules.0.derived(&sheet.0).carry_weight,
+                    rules.0.aptitude(&sheet.0),
+                );
                 if matches!(loot, InventoryRequest::ClosePile) {
                     commands.entity(entity).remove::<crate::LootOpen>();
                 }
-                crate::apply_loot(loot, open, &inventory, wearer, carry, aptitude, others, &info, &mut map, &mut world, &session, &mut outbox)
+                crate::apply_loot(
+                    loot,
+                    open,
+                    &inventory,
+                    wearer,
+                    carry,
+                    aptitude,
+                    others,
+                    &info,
+                    &mut map,
+                    &mut world,
+                    &session,
+                    &mut outbox,
+                )
             }
             _ => inventory.apply(&request, wearer, &info),
         };
@@ -463,7 +570,9 @@ pub fn apply_inventory_requests(
             && request.is_loot()
             && let Some(message) = refusal.message()
         {
-            outbox.0.push((player, crate::LedgerDelta::ItemRefused { message }));
+            outbox
+                .0
+                .push((player, crate::LedgerDelta::ItemRefused { message }));
         }
         if let Ok(changed) = result {
             *inventory = changed;
@@ -471,7 +580,14 @@ pub fn apply_inventory_requests(
                 saved.inventory = Some(inventory.clone());
             }
         }
-        outbox.0.push((player, crate::LedgerDelta::Inventory { net_id, ack: seq, inventory: inventory.clone() }));
+        outbox.0.push((
+            player,
+            crate::LedgerDelta::Inventory {
+                net_id,
+                ack: seq,
+                inventory: inventory.clone(),
+            },
+        ));
     }
 }
 
@@ -505,7 +621,8 @@ impl Inventory {
         let rows = occupied.len() as i32 / COLUMNS;
         for row in 0..=rows - h {
             for col in 0..=COLUMNS - w {
-                let free = (row..row + h).all(|y| (col..col + w).all(|x| !occupied[(y * COLUMNS + x) as usize]));
+                let free = (row..row + h)
+                    .all(|y| (col..col + w).all(|x| !occupied[(y * COLUMNS + x) as usize]));
                 if free {
                     return Some(row * COLUMNS + col);
                 }
@@ -516,23 +633,54 @@ impl Inventory {
 
     /// The total weight (0x461410), every item counted, worn ones too.
     pub fn total_weight(&self, info: impl Fn(u32) -> Option<ItemInfo>, aptitude: i32) -> i32 {
-        self.items.iter().filter_map(|i| Some(info(i.prototype)?.weight(i.quantity, aptitude))).sum()
+        self.items
+            .iter()
+            .filter_map(|i| Some(info(i.prototype)?.weight(i.quantity, aptitude)))
+            .sum()
     }
 
     /// Adds `quantity` of `prototype` where the original would (0x461810 with no location):
     /// onto a stack of the same gold or ammo, else the first free spot. `carry` is the carry
     /// weight. Returns the location.
-    pub fn insert(&mut self, prototype: u32, quantity: i32, info: impl Fn(u32) -> Option<ItemInfo>, carry: i32, aptitude: i32) -> Result<i32, InsertRefusal> {
-        self.insert_item(CarriedItem { prototype, location: 0, quantity, keys: Vec::new() }, info, carry, aptitude)
+    pub fn insert(
+        &mut self,
+        prototype: u32,
+        quantity: i32,
+        info: impl Fn(u32) -> Option<ItemInfo>,
+        carry: i32,
+        aptitude: i32,
+    ) -> Result<i32, InsertRefusal> {
+        self.insert_item(
+            CarriedItem {
+                prototype,
+                location: 0,
+                quantity,
+                keys: Vec::new(),
+            },
+            info,
+            carry,
+            aptitude,
+        )
     }
 
     /// [`Self::insert`] for a carried item, keeping its key numbers; a key goes onto a critter's
     /// ring, needing no room and adding no weight (0x466510). Returns the location.
-    pub fn insert_item(&mut self, carried: CarriedItem, info: impl Fn(u32) -> Option<ItemInfo>, carry: i32, aptitude: i32) -> Result<i32, InsertRefusal> {
+    pub fn insert_item(
+        &mut self,
+        carried: CarriedItem,
+        info: impl Fn(u32) -> Option<ItemInfo>,
+        carry: i32,
+        aptitude: i32,
+    ) -> Result<i32, InsertRefusal> {
         let (prototype, quantity) = (carried.prototype, carried.quantity.max(1));
-        let Some(item) = info(prototype) else { return Err(InsertRefusal::NoRoom) };
+        let Some(item) = info(prototype) else {
+            return Err(InsertRefusal::NoRoom);
+        };
         if self.takes_onto_ring(prototype, &info) {
-            self.items.push(CarriedItem { location: -1, ..carried });
+            self.items.push(CarriedItem {
+                location: -1,
+                ..carried
+            });
             self.fold_keys(&info);
             return Ok(self.ring(&info).map_or(0, |r| self.items[r].location));
         }
@@ -545,15 +693,25 @@ impl Inventory {
             stack.quantity += quantity;
             return Ok(stack.location);
         }
-        let location = Self::free_spot(&self.occupied(&info), item.cells).ok_or(InsertRefusal::NoRoom)?;
-        self.items.push(CarriedItem { prototype, location, quantity: if item.stacks() { quantity } else { 0 }, keys: carried.keys });
+        let location =
+            Self::free_spot(&self.occupied(&info), item.cells).ok_or(InsertRefusal::NoRoom)?;
+        self.items.push(CarriedItem {
+            prototype,
+            location,
+            quantity: if item.stacks() { quantity } else { 0 },
+            keys: carried.keys,
+        });
         self.fold_keys(&info);
         Ok(location)
     }
 
     /// An empty container's inventory.
     pub fn container() -> Self {
-        Self { items: Vec::new(), rows: CONTAINER_ROWS, spells: Default::default() }
+        Self {
+            items: Vec::new(),
+            rows: CONTAINER_ROWS,
+            spells: Default::default(),
+        }
     }
 
     /// Whether `location` is one of this grid's cells.
@@ -563,7 +721,16 @@ impl Inventory {
 
     /// The taken cells, leaving out the items at `skip`.
     fn occupied_without(&self, info: &impl Fn(u32) -> Option<ItemInfo>, skip: &[i32]) -> Vec<bool> {
-        let rest = Inventory { items: self.items.iter().filter(|i| !skip.contains(&i.location)).cloned().collect(), rows: self.rows, spells: Default::default() };
+        let rest = Inventory {
+            items: self
+                .items
+                .iter()
+                .filter(|i| !skip.contains(&i.location))
+                .cloned()
+                .collect(),
+            rows: self.rows,
+            spells: Default::default(),
+        };
         rest.occupied(info)
     }
 
@@ -571,14 +738,27 @@ impl Inventory {
     fn fits(occupied: &[bool], location: i32, (w, h): (i32, i32)) -> bool {
         let (col, row) = (location % COLUMNS, location / COLUMNS);
         let rows = occupied.len() as i32 / COLUMNS;
-        (0..rows * COLUMNS).contains(&location) && col + w <= COLUMNS && row + h <= rows && (row..row + h).all(|y| (col..col + w).all(|x| !occupied[(y * COLUMNS + x) as usize]))
+        (0..rows * COLUMNS).contains(&location)
+            && col + w <= COLUMNS
+            && row + h <= rows
+            && (row..row + h).all(|y| (col..col + w).all(|x| !occupied[(y * COLUMNS + x) as usize]))
     }
 
     /// Whether `item` may be worn in `slot` by `wearer` with this inventory (0x464d20; the
     /// magick/tech, broken, crippled-arm and animation checks are not built).
-    pub fn fit_test(&self, item: &ItemInfo, slot: i32, wearer: Wearer, info: &impl Fn(u32) -> Option<ItemInfo>) -> Result<(), ItemRefusal> {
+    pub fn fit_test(
+        &self,
+        item: &ItemInfo,
+        slot: i32,
+        wearer: Wearer,
+        info: &impl Fn(u32) -> Option<ItemInfo>,
+    ) -> Result<(), ItemRefusal> {
         // Both ring slots take rings.
-        let wanted = if slot == Slot::Ring2 as i32 { Slot::Ring1 as i32 } else { slot };
+        let wanted = if slot == Slot::Ring2 as i32 {
+            Slot::Ring1 as i32
+        } else {
+            slot
+        };
         if item.slot().map(|s| s as i32) != Some(wanted) {
             return Err(ItemRefusal::WrongSlot);
         }
@@ -595,7 +775,9 @@ impl Inventory {
                 return Err(ItemRefusal::WrongSize);
             }
             let male = wearer.gender == arcanum_rules::MALE;
-            if (item.armor_flags & 8 != 0 && !male) || (item.armor_flags & 8 == 0 && item.armor_flags & 0x10 != 0 && male) {
+            if (item.armor_flags & 8 != 0 && !male)
+                || (item.armor_flags & 8 == 0 && item.armor_flags & 0x10 != 0 && male)
+            {
                 return Err(ItemRefusal::WrongGender);
             }
         }
@@ -606,8 +788,18 @@ impl Inventory {
     /// grid only where its footprint is free (no swaps); onto a slot if the fit test passes,
     /// swapping with what is worn there, which goes back to where the moved item was or to the
     /// first free spot; onto a hotkey slot (2000-2009) always, swapping the same way.
-    pub fn move_item(&self, from: i32, to: i32, wearer: Wearer, info: impl Fn(u32) -> Option<ItemInfo>) -> Result<Inventory, ItemRefusal> {
-        let index = self.items.iter().position(|i| i.location == from).ok_or(ItemRefusal::Silent)?;
+    pub fn move_item(
+        &self,
+        from: i32,
+        to: i32,
+        wearer: Wearer,
+        info: impl Fn(u32) -> Option<ItemInfo>,
+    ) -> Result<Inventory, ItemRefusal> {
+        let index = self
+            .items
+            .iter()
+            .position(|i| i.location == from)
+            .ok_or(ItemRefusal::Silent)?;
         let item = info(self.items[index].prototype).ok_or(ItemRefusal::Silent)?;
         let mut moved = self.clone();
         if self.in_grid(to) {
@@ -637,7 +829,11 @@ impl Inventory {
                 } else {
                     let cells = info(self.items[other].prototype).map_or((1, 1), |i| i.cells);
                     let occupied = self.occupied_without(&info, &[from]);
-                    if Self::fits(&occupied, from, cells) { from } else { Self::free_spot(&occupied, cells).ok_or(ItemRefusal::NoRoom)? }
+                    if Self::fits(&occupied, from, cells) {
+                        from
+                    } else {
+                        Self::free_spot(&occupied, cells).ok_or(ItemRefusal::NoRoom)?
+                    }
                 };
             }
             return Ok(moved);
@@ -647,14 +843,27 @@ impl Inventory {
         }
         // The fit test sees the inventory without what the swap takes off.
         let other = self.items.iter().position(|i| i.location == to);
-        let without = Inventory { items: self.items.iter().filter(|i| i.location != to).cloned().collect(), rows: self.rows, spells: Default::default() };
+        let without = Inventory {
+            items: self
+                .items
+                .iter()
+                .filter(|i| i.location != to)
+                .cloned()
+                .collect(),
+            rows: self.rows,
+            spells: Default::default(),
+        };
         without.fit_test(&item, to, wearer, &info)?;
         moved.items[index].location = to;
         if let Some(other) = other {
             let cells = info(self.items[other].prototype).map_or((1, 1), |i| i.cells);
             let occupied = self.occupied_without(&info, &[from, to]);
             // Where the moved item was, if it fits there (a grid spot), else the first free spot.
-            let spot = if Self::fits(&occupied, from, cells) { from } else { Self::free_spot(&occupied, cells).ok_or(ItemRefusal::NoRoom)? };
+            let spot = if Self::fits(&occupied, from, cells) {
+                from
+            } else {
+                Self::free_spot(&occupied, cells).ok_or(ItemRefusal::NoRoom)?
+            };
             moved.items[other].location = spot;
         }
         Ok(moved)
@@ -682,14 +891,20 @@ impl Inventory {
     }
 
     /// Puts `spell` on hotkey slot `to`; an item there goes to the first free spot.
-    pub fn put_spell(&self, spell: usize, to: i32, info: impl Fn(u32) -> Option<ItemInfo>) -> Result<Inventory, ItemRefusal> {
+    pub fn put_spell(
+        &self,
+        spell: usize,
+        to: i32,
+        info: impl Fn(u32) -> Option<ItemInfo>,
+    ) -> Result<Inventory, ItemRefusal> {
         if !HOTKEYS.contains(&to) {
             return Err(ItemRefusal::Silent);
         }
         let mut moved = self.clone();
         if let Some(index) = self.items.iter().position(|i| i.location == to) {
             let cells = info(self.items[index].prototype).map_or((1, 1), |i| i.cells);
-            moved.items[index].location = Self::free_spot(&self.occupied(&info), cells).ok_or(ItemRefusal::NoRoom)?;
+            moved.items[index].location =
+                Self::free_spot(&self.occupied(&info), cells).ok_or(ItemRefusal::NoRoom)?;
         }
         moved.spells.insert(to, spell);
         Ok(moved)
@@ -707,7 +922,12 @@ impl Inventory {
             if self.items.iter().any(|i| i.location == location) {
                 continue;
             }
-            if let Some(item) = self.items.iter_mut().find(|i| in_grid(i.location) && info(i.prototype).and_then(|x| x.slot()).is_some_and(|s| s as i32 == location)) {
+            if let Some(item) = self.items.iter_mut().find(|i| {
+                in_grid(i.location)
+                    && info(i.prototype)
+                        .and_then(|x| x.slot())
+                        .is_some_and(|s| s as i32 == location)
+            }) {
                 item.location = location;
             }
         }
@@ -744,7 +964,12 @@ pub fn default_clothes(gender: u8, race: u8) -> u32 {
 /// 0x4654f0 after `critter_inventory_source`, 0x463e20). A created one gets default clothes if
 /// none of its items is body armour, then [`CREATED_EXTRAS`] (0x460ff0). Items that do not fit
 /// are left out, as the original destroys them.
-pub fn starting_kit(blueprint: &arcanum_rules::CharacterBlueprint, info: impl Fn(u32) -> Option<ItemInfo>, carry: i32, aptitude: i32) -> Inventory {
+pub fn starting_kit(
+    blueprint: &arcanum_rules::CharacterBlueprint,
+    info: impl Fn(u32) -> Option<ItemInfo>,
+    carry: i32,
+    aptitude: i32,
+) -> Inventory {
     let mut inventory = Inventory::default();
     let add = |inventory: &mut Inventory, basic: u32, quantity: i32| {
         let _ = inventory.insert(basic + BASIC_TO_PROTOTYPE, quantity, &info, carry, aptitude);
@@ -759,9 +984,16 @@ pub fn starting_kit(blueprint: &arcanum_rules::CharacterBlueprint, info: impl Fn
         inventory.wield_best(&info);
         return inventory;
     }
-    let dressed = inventory.items.iter().any(|i| info(i.prototype).and_then(|x| x.slot()) == Some(Slot::Armor));
+    let dressed = inventory
+        .items
+        .iter()
+        .any(|i| info(i.prototype).and_then(|x| x.slot()) == Some(Slot::Armor));
     if !dressed {
-        add(&mut inventory, default_clothes(blueprint.sheet.gender, blueprint.sheet.race), 1);
+        add(
+            &mut inventory,
+            default_clothes(blueprint.sheet.gender, blueprint.sheet.race),
+            1,
+        );
     }
     for extra in CREATED_EXTRAS {
         add(&mut inventory, extra, 1);
@@ -771,11 +1003,18 @@ pub fn starting_kit(blueprint: &arcanum_rules::CharacterBlueprint, info: impl Fn
 
 /// The encumbrance level, 0-6, of `total` weight against `carry` (0x45f790).
 pub fn encumbrance(total: i32, carry: i32) -> usize {
-    ENCUMBRANCE_PERCENT.iter().position(|&p| total < p * carry / 100).unwrap_or(6).min(6)
+    ENCUMBRANCE_PERCENT
+        .iter()
+        .position(|&p| total < p * carry / 100)
+        .unwrap_or(6)
+        .min(6)
 }
 
 /// Item facts by prototype, from the prototypes and an art size reader.
-pub fn item_info(prototypes: &Prototypes, art_size: impl Fn(ArtId) -> Option<(u32, u32)>) -> impl Fn(u32) -> Option<ItemInfo> {
+pub fn item_info(
+    prototypes: &Prototypes,
+    art_size: impl Fn(ArtId) -> Option<(u32, u32)>,
+) -> impl Fn(u32) -> Option<ItemInfo> {
     move |number| prototypes.get(number).map(|p| ItemInfo::of(p, &art_size))
 }
 
@@ -784,7 +1023,19 @@ mod tests {
     use super::*;
 
     fn info(kind: u32, cells: (i32, i32), weight: i32) -> ItemInfo {
-        ItemInfo { kind, inventory_art: 0, cells, weight, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 7, item_flags: 0, worth: 0 }
+        ItemInfo {
+            kind,
+            inventory_art: 0,
+            cells,
+            weight,
+            magic_weight_adj: 0,
+            complexity: 0,
+            generic_flags: 0,
+            weapon_flags: 0,
+            armor_flags: 7,
+            item_flags: 0,
+            worth: 0,
+        }
     }
 
     fn table(n: u32) -> Option<ItemInfo> {
@@ -809,29 +1060,68 @@ mod tests {
 
     #[test]
     fn a_premade_starts_with_its_gold_first_and_wields_its_kit() {
-        let blueprint = arcanum_rules::CharacterBlueprint { sheet: Default::default(), gold: 385, items: vec![1, 2, 4, 99], prototype: Some(16094) };
+        let blueprint = arcanum_rules::CharacterBlueprint {
+            sheet: Default::default(),
+            gold: 385,
+            items: vec![1, 2, 4, 99],
+            prototype: Some(16094),
+        };
         let kit = starting_kit(&blueprint, objects, 10_000, 0);
-        assert_eq!(kit.items[0], CarriedItem { prototype: GOLD, location: 0, quantity: 385, keys: vec![] });
-        assert_eq!(kit.worn(Slot::Weapon).map(|i| i.prototype), Some(21), "basic 1 is object 21");
+        assert_eq!(
+            kit.items[0],
+            CarriedItem {
+                prototype: GOLD,
+                location: 0,
+                quantity: 385,
+                keys: vec![]
+            }
+        );
+        assert_eq!(
+            kit.worn(Slot::Weapon).map(|i| i.prototype),
+            Some(21),
+            "basic 1 is object 21"
+        );
         assert_eq!(kit.items.len(), 4, "an unknown prototype is left out");
     }
 
     #[test]
     fn a_created_pc_gets_clothes_lockpicks_and_bandages() {
-        let mut blueprint = arcanum_rules::CharacterBlueprint { sheet: Default::default(), gold: 0, items: vec![1], prototype: None };
+        let mut blueprint = arcanum_rules::CharacterBlueprint {
+            sheet: Default::default(),
+            gold: 0,
+            items: vec![1],
+            prototype: None,
+        };
         blueprint.sheet.gender = 1;
         let kit = starting_kit(&blueprint, objects, 10_000, 0);
-        let numbers: Vec<u32> = kit.items.iter().map(|i| i.prototype - BASIC_TO_PROTOTYPE).collect();
+        let numbers: Vec<u32> = kit
+            .items
+            .iter()
+            .map(|i| i.prototype - BASIC_TO_PROTOTYPE)
+            .collect();
         assert_eq!(numbers, [1, 8049, 15178, 15179], "a medium man's nice suit");
-        assert!(kit.items.iter().all(|i| in_grid(i.location)), "nothing worn");
+        assert!(
+            kit.items.iter().all(|i| in_grid(i.location)),
+            "nothing worn"
+        );
         blueprint.items.push(2);
         let dressed = starting_kit(&blueprint, objects, 10_000, 0);
         assert_eq!(dressed.items.len(), 4, "already has body armour: no suit");
-        assert_eq!((default_clothes(0, 0), default_clothes(1, 1), default_clothes(1, 7)), (8133, 8065, 8069));
+        assert_eq!(
+            (
+                default_clothes(0, 0),
+                default_clothes(1, 1),
+                default_clothes(1, 7)
+            ),
+            (8133, 8065, 8069)
+        );
     }
 
     fn armour(flags: i32) -> ItemInfo {
-        ItemInfo { armor_flags: flags, ..info(TYPE_ARMOR, (2, 3), 10) }
+        ItemInfo {
+            armor_flags: flags,
+            ..info(TYPE_ARMOR, (2, 3), 10)
+        }
     }
 
     #[test]
@@ -842,10 +1132,26 @@ mod tests {
         let man = Wearer { race: 0, gender: 1 };
         let moved = inv.move_item(0, 10, man, table).unwrap();
         assert_eq!(moved.items[0].location, 10, "over its own old cells");
-        assert_eq!(inv.move_item(0, 1, man, table), Err(ItemRefusal::Silent), "onto the generic at 2: no swap");
-        assert_eq!(inv.move_item(0, 9, man, table), Err(ItemRefusal::Silent), "off the right edge");
-        assert_eq!(inv.move_item(0, 110, man, table), Err(ItemRefusal::Silent), "off the bottom");
-        assert_eq!(inv.move_item(5, 6, man, table), Err(ItemRefusal::Silent), "nothing there");
+        assert_eq!(
+            inv.move_item(0, 1, man, table),
+            Err(ItemRefusal::Silent),
+            "onto the generic at 2: no swap"
+        );
+        assert_eq!(
+            inv.move_item(0, 9, man, table),
+            Err(ItemRefusal::Silent),
+            "off the right edge"
+        );
+        assert_eq!(
+            inv.move_item(0, 110, man, table),
+            Err(ItemRefusal::Silent),
+            "off the bottom"
+        );
+        assert_eq!(
+            inv.move_item(5, 6, man, table),
+            Err(ItemRefusal::Silent),
+            "nothing there"
+        );
     }
 
     #[test]
@@ -854,12 +1160,22 @@ mod tests {
         inv.insert(1, 0, table, 10_000, 0).unwrap();
         inv.insert(4, 0, table, 10_000, 0).unwrap();
         let man = Wearer { race: 0, gender: 1 };
-        let at = |inv: &Inventory, p: u32| inv.items.iter().find(|i| i.prototype == p).unwrap().location;
+        let at = |inv: &Inventory, p: u32| {
+            inv.items
+                .iter()
+                .find(|i| i.prototype == p)
+                .unwrap()
+                .location
+        };
         let barred = inv.move_item(at(&inv, 1), 2000, man, table).unwrap();
         assert_eq!(at(&barred, 1), 2000);
         let taken = |inv: &Inventory| inv.occupied(table).iter().filter(|c| **c).count();
         assert!(taken(&barred) < taken(&inv), "its cells are free");
-        assert_eq!(barred.total_weight(table, 0), inv.total_weight(table, 0), "still carried");
+        assert_eq!(
+            barred.total_weight(table, 0),
+            inv.total_weight(table, 0),
+            "still carried"
+        );
         // Onto a taken slot from the grid: the one there goes back to the item's cells.
         let from = at(&barred, 4);
         let swapped = barred.move_item(from, 2000, man, table).unwrap();
@@ -879,17 +1195,48 @@ mod tests {
         let man = Wearer { race: 0, gender: 1 };
         let barred = inv.move_item(0, 2000, man, table).unwrap();
         // A spell onto the item's slot sends the item back into the grid.
-        let spelled = barred.apply(&InventoryRequest::HotkeySpell { spell: 1, to: 2000 }, man, table).unwrap();
-        assert_eq!((spelled.spells.get(&2000), spelled.items[0].location), (Some(&1), 0));
+        let spelled = barred
+            .apply(
+                &InventoryRequest::HotkeySpell { spell: 1, to: 2000 },
+                man,
+                table,
+            )
+            .unwrap();
+        assert_eq!(
+            (spelled.spells.get(&2000), spelled.items[0].location),
+            (Some(&1), 0)
+        );
         // Slot to slot it swaps with an item there; off the bar it stays.
         let item_back = spelled.move_item(0, 2003, man, table).unwrap();
-        let swapped = item_back.apply(&InventoryRequest::Move { from: 2000, to: 2003 }, man, table).unwrap();
-        assert_eq!((swapped.spells.get(&2003), swapped.items[0].location), (Some(&1), 2000));
-        assert_eq!(swapped.apply(&InventoryRequest::Move { from: 2003, to: 40 }, man, table), Err(ItemRefusal::Silent));
+        let swapped = item_back
+            .apply(
+                &InventoryRequest::Move {
+                    from: 2000,
+                    to: 2003,
+                },
+                man,
+                table,
+            )
+            .unwrap();
+        assert_eq!(
+            (swapped.spells.get(&2003), swapped.items[0].location),
+            (Some(&1), 2000)
+        );
+        assert_eq!(
+            swapped.apply(&InventoryRequest::Move { from: 2003, to: 40 }, man, table),
+            Err(ItemRefusal::Silent)
+        );
         // An item dragged from a slot onto the spell's swaps it; from the grid it replaces it.
         let crossed = swapped.move_item(2000, 2003, man, table).unwrap();
-        assert_eq!((crossed.spells.get(&2000), crossed.items[0].location), (Some(&1), 2003));
-        let replaced = crossed.move_item(2003, 30, man, table).unwrap().move_item(30, 2000, man, table).unwrap();
+        assert_eq!(
+            (crossed.spells.get(&2000), crossed.items[0].location),
+            (Some(&1), 2003)
+        );
+        let replaced = crossed
+            .move_item(2003, 30, man, table)
+            .unwrap()
+            .move_item(30, 2000, man, table)
+            .unwrap();
         assert!(replaced.spells.is_empty(), "the spell is gone");
     }
 
@@ -899,8 +1246,14 @@ mod tests {
             10 => Some(armour(2)),
             11 => Some(armour(2 | 0x10)),
             12 => Some(armour(1)),
-            13 => Some(ItemInfo { weapon_flags: 0xc, ..info(TYPE_WEAPON, (2, 4), 10) }),
-            14 => Some(ItemInfo { inventory_art: 1 << 14, ..armour(7) }),
+            13 => Some(ItemInfo {
+                weapon_flags: 0xc,
+                ..info(TYPE_WEAPON, (2, 4), 10)
+            }),
+            14 => Some(ItemInfo {
+                inventory_art: 1 << 14,
+                ..armour(7)
+            }),
             n => table(n),
         };
         let man = Wearer { race: 0, gender: 1 };
@@ -908,11 +1261,27 @@ mod tests {
         for p in [10, 11, 12, 1, 13, 14] {
             inv.insert(p, 0, objects, 10_000, 0).unwrap();
         }
-        let at = |inv: &Inventory, p: u32| inv.items.iter().find(|i| i.prototype == p).unwrap().location;
+        let at = |inv: &Inventory, p: u32| {
+            inv.items
+                .iter()
+                .find(|i| i.prototype == p)
+                .unwrap()
+                .location
+        };
         let armor = Slot::Armor as i32;
-        assert_eq!(inv.move_item(at(&inv, 1), armor, man, objects), Err(ItemRefusal::WrongSlot));
-        assert_eq!(inv.move_item(at(&inv, 11), armor, man, objects), Err(ItemRefusal::WrongGender));
-        assert_eq!(inv.move_item(at(&inv, 12), armor, man, objects), Err(ItemRefusal::WrongSize), "small only");
+        assert_eq!(
+            inv.move_item(at(&inv, 1), armor, man, objects),
+            Err(ItemRefusal::WrongSlot)
+        );
+        assert_eq!(
+            inv.move_item(at(&inv, 11), armor, man, objects),
+            Err(ItemRefusal::WrongGender)
+        );
+        assert_eq!(
+            inv.move_item(at(&inv, 12), armor, man, objects),
+            Err(ItemRefusal::WrongSize),
+            "small only"
+        );
         let worn = inv.move_item(at(&inv, 10), armor, man, objects).unwrap();
         // A woman's suit for a woman swaps with the worn one, which goes back to its cells.
         let woman = Wearer { race: 0, gender: 0 };
@@ -920,13 +1289,26 @@ mod tests {
         let swapped = worn.move_item(from, armor, woman, objects).unwrap();
         assert_eq!((at(&swapped, 11), at(&swapped, 10)), (armor, from));
         // A two-handed weapon and a shield exclude each other.
-        let shield = worn.move_item(at(&worn, 14), Slot::Shield as i32, man, objects).unwrap();
-        assert_eq!(shield.move_item(at(&shield, 13), Slot::Weapon as i32, man, objects), Err(ItemRefusal::NoFreeHand));
-        let sword = shield.move_item(at(&shield, 1), Slot::Weapon as i32, man, objects).unwrap();
+        let shield = worn
+            .move_item(at(&worn, 14), Slot::Shield as i32, man, objects)
+            .unwrap();
+        assert_eq!(
+            shield.move_item(at(&shield, 13), Slot::Weapon as i32, man, objects),
+            Err(ItemRefusal::NoFreeHand)
+        );
+        let sword = shield
+            .move_item(at(&shield, 1), Slot::Weapon as i32, man, objects)
+            .unwrap();
         assert_eq!(at(&sword, 1), Slot::Weapon as i32);
         // Off a slot back into the grid.
-        assert_eq!(sword.move_item(Slot::Weapon as i32, 110, man, objects), Err(ItemRefusal::Silent), "four rows from the last");
-        let off = sword.move_item(Slot::Weapon as i32, 70, man, objects).unwrap();
+        assert_eq!(
+            sword.move_item(Slot::Weapon as i32, 110, man, objects),
+            Err(ItemRefusal::Silent),
+            "four rows from the last"
+        );
+        let off = sword
+            .move_item(Slot::Weapon as i32, 70, man, objects)
+            .unwrap();
         assert_eq!(at(&off, 1), 70);
     }
 
@@ -941,22 +1323,48 @@ mod tests {
     fn items_go_to_the_first_free_rectangle_rows_first() {
         let mut inv = Inventory::default();
         assert_eq!(inv.insert(1, 0, table, 10_000, 0), Ok(0));
-        assert_eq!(inv.insert(2, 0, table, 10_000, 0), Ok(2), "beside the sword");
+        assert_eq!(
+            inv.insert(2, 0, table, 10_000, 0),
+            Ok(2),
+            "beside the sword"
+        );
         assert_eq!(inv.insert(4, 0, table, 10_000, 0), Ok(6));
         assert_eq!(inv.insert(3, 100, table, 10_000, 0), Ok(7));
-        assert_eq!(inv.insert(3, 25, table, 10_000, 0), Ok(7), "gold joins its stack");
-        assert_eq!(inv.items.iter().find(|i| i.prototype == 3).unwrap().quantity, 125);
+        assert_eq!(
+            inv.insert(3, 25, table, 10_000, 0),
+            Ok(7),
+            "gold joins its stack"
+        );
+        assert_eq!(
+            inv.items
+                .iter()
+                .find(|i| i.prototype == 3)
+                .unwrap()
+                .quantity,
+            125
+        );
     }
 
     #[test]
     fn a_full_grid_or_a_heavy_load_refuses() {
         let mut inv = Inventory::default();
-        assert_eq!(inv.insert(2, 0, table, 150, 0), Err(InsertRefusal::TooHeavy));
+        assert_eq!(
+            inv.insert(2, 0, table, 150, 0),
+            Err(InsertRefusal::TooHeavy)
+        );
         for _ in 0..4 {
             inv.insert(2, 0, table, 10_000, 0).unwrap();
         }
-        assert_eq!(inv.insert(2, 0, table, 10_000, 0), Err(InsertRefusal::NoRoom), "four 4x5 leave two columns and two rows");
-        assert_eq!(inv.insert(1, 0, table, 10_000, 0), Ok(8), "a 2x4 still fits the last columns");
+        assert_eq!(
+            inv.insert(2, 0, table, 10_000, 0),
+            Err(InsertRefusal::NoRoom),
+            "four 4x5 leave two columns and two rows"
+        );
+        assert_eq!(
+            inv.insert(1, 0, table, 10_000, 0),
+            Ok(8),
+            "a 2x4 still fits the last columns"
+        );
     }
 
     #[test]
@@ -967,8 +1375,15 @@ mod tests {
         inv.insert(4, 0, table, 10_000, 0).unwrap();
         inv.wield_best(table);
         assert_eq!(inv.worn(Slot::Weapon).map(|i| i.prototype), Some(1));
-        assert_eq!(inv.worn(Slot::Armor).map(|i| i.prototype), Some(2), "coverage 0 is body armour");
-        assert_eq!(inv.items[2].location, 6, "a plain generic stays in the grid");
+        assert_eq!(
+            inv.worn(Slot::Armor).map(|i| i.prototype),
+            Some(2),
+            "coverage 0 is body armour"
+        );
+        assert_eq!(
+            inv.items[2].location, 6,
+            "a plain generic stays in the grid"
+        );
     }
 
     #[test]
@@ -979,8 +1394,20 @@ mod tests {
         assert_eq!(ammo.weight(50, 0), 0);
         let mut magic = info(TYPE_WEAPON, (1, 1), 10);
         (magic.magic_weight_adj, magic.complexity) = (-8, 40);
-        assert_eq!(magic.weight(0, 40), 2, "a full magick match takes the whole adjustment");
+        assert_eq!(
+            magic.weight(0, 40),
+            2,
+            "a full magick match takes the whole adjustment"
+        );
         assert_eq!(magic.weight(0, -40), 10, "a technologist gets none of it");
-        assert_eq!((encumbrance(0, 4000), encumbrance(599, 4000), encumbrance(600, 4000), encumbrance(3600, 4000)), (0, 0, 1, 6));
+        assert_eq!(
+            (
+                encumbrance(0, 4000),
+                encumbrance(599, 4000),
+                encumbrance(600, 4000),
+                encumbrance(3600, 4000)
+            ),
+            (0, 0, 1, 6)
+        );
     }
 }

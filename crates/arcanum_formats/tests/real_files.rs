@@ -14,14 +14,19 @@ fn game_dir() -> PathBuf {
 }
 
 fn archives() -> Vec<ArcanumArchive> {
-    let Ok(rd) = std::fs::read_dir(game_dir()) else { return vec![] };
+    let Ok(rd) = std::fs::read_dir(game_dir()) else {
+        return vec![];
+    };
     let mut paths: Vec<_> = rd
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("dat")))
         .collect();
     paths.sort();
-    paths.iter().filter_map(|p| ArcanumArchive::open(p).ok()).collect()
+    paths
+        .iter()
+        .filter_map(|p| ArcanumArchive::open(p).ok())
+        .collect()
 }
 
 #[test]
@@ -101,7 +106,8 @@ fn every_bitmap_font_parses() {
             .map(|e| e.path.clone())
             .collect();
         for path in fonts {
-            let font = BitmapFont::parse(&a.read(&path).unwrap()).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let font = BitmapFont::parse(&a.read(&path).unwrap())
+                .unwrap_or_else(|e| panic!("{path}: {e}"));
             assert!(font.line_height > 0, "{path}");
             assert!(font.glyph('?').is_some_and(|g| g.width > 0), "{path}");
             checked += 1;
@@ -111,8 +117,14 @@ fn every_bitmap_font_parses() {
             let font = BitmapFont::parse(&data).unwrap();
             assert_eq!(font.line_height, 33);
             let text = font.render("Single Player");
-            assert_eq!((text.width, text.height), (font.measure("Single Player"), 33));
-            assert!(text.alpha.iter().any(|&a| a > 200), "glyphs have solid pixels");
+            assert_eq!(
+                (text.width, text.height),
+                (font.measure("Single Player"), 33)
+            );
+            assert!(
+                text.alpha.iter().any(|&a| a > 200),
+                "glyphs have solid pixels"
+            );
         }
     }
     eprintln!("parsed {checked} bitmap fonts");
@@ -120,12 +132,22 @@ fn every_bitmap_font_parses() {
 
 /// The PC prototypes from the loose `data/proto` folder, sorted by number.
 fn pc_prototypes() -> Vec<(String, Vec<u8>)> {
-    let Ok(rd) = std::fs::read_dir(game_dir().join("data/proto")) else { return vec![] };
+    let Ok(rd) = std::fs::read_dir(game_dir().join("data/proto")) else {
+        return vec![];
+    };
     let mut out: Vec<(String, Vec<u8>)> = rd
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().ends_with(" - PC.pro")))
-        .map(|p| (p.file_name().unwrap().to_string_lossy().into_owned(), std::fs::read(&p).unwrap()))
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().ends_with(" - PC.pro"))
+        })
+        .map(|p| {
+            (
+                p.file_name().unwrap().to_string_lossy().into_owned(),
+                std::fs::read(&p).unwrap(),
+            )
+        })
         .collect();
     out.sort();
     out
@@ -154,8 +176,14 @@ fn every_pc_prototype_parses_to_the_last_byte() {
         let number: u32 = file[..6].parse().unwrap();
         assert_eq!(obj.id.prototype(), Some(number), "{file}");
         // The picker's description id: 16066 + the character's index (0 = create your own).
-        assert_eq!(obj.int("description"), Some(16066 + (number as i32 - 16086)), "{file}");
-        if let Some(&(_, name, bg, story, portrait, race, gender)) = expected.iter().find(|e| file.starts_with(e.0)) {
+        assert_eq!(
+            obj.int("description"),
+            Some(16066 + (number as i32 - 16086)),
+            "{file}"
+        );
+        if let Some(&(_, name, bg, story, portrait, race, gender)) =
+            expected.iter().find(|e| file.starts_with(e.0))
+        {
             let stats = obj.ints("critter_stat_base_idx").unwrap();
             assert_eq!(obj.string("pc_player_name"), name, "{file}");
             assert_eq!(obj.int("pc_background"), Some(bg), "{file}");
@@ -177,11 +205,15 @@ fn every_pre_made_character_file_parses_to_the_last_byte() {
             .map(|e| e.path.clone())
             .collect();
         for p in paths {
-            let file = PlayerFile::parse(&a.read(&p).unwrap()).unwrap_or_else(|e| panic!("{p}: {e}"));
+            let file =
+                PlayerFile::parse(&a.read(&p).unwrap()).unwrap_or_else(|e| panic!("{p}: {e}"));
             // The object's GUID is the file name.
             let guid = file.object.id.guid().unwrap();
             assert!(p.to_ascii_uppercase().contains(&guid), "{p} vs {guid}");
-            assert!(!file.name.is_empty() && !file.level_scheme.is_empty(), "{p}");
+            assert!(
+                !file.name.is_empty() && !file.level_scheme.is_empty(),
+                "{p}"
+            );
             let proto = file.object.prototype.prototype().unwrap();
             assert!((16087..=16098).contains(&proto), "{p}: {proto}");
             count += 1;
@@ -202,7 +234,11 @@ fn every_prototype_parses_to_the_last_byte() {
     };
     let mut by_type = std::collections::BTreeMap::<u32, usize>::new();
     let mut failed = Vec::new();
-    for path in rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pro"))) {
+    for path in rd
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("pro")))
+    {
         let name = path.file_name().unwrap().to_string_lossy().into_owned();
         match Object::parse_prototype(&std::fs::read(&path).unwrap()) {
             Ok(obj) => {
@@ -214,14 +250,23 @@ fn every_prototype_parses_to_the_last_byte() {
         }
     }
     eprintln!("prototypes by type: {by_type:?}");
-    assert!(failed.is_empty(), "{} failed, e.g. {:?}", failed.len(), &failed[..failed.len().min(5)]);
+    assert!(
+        failed.is_empty(),
+        "{} failed, e.g. {:?}",
+        failed.len(),
+        &failed[..failed.len().min(5)]
+    );
 }
 
 /// The game's archives and the Arcanum module's (`modules/*.dat`), where the scripts are.
 fn archives_with_module() -> Vec<ArcanumArchive> {
     let mut all = archives();
     if let Ok(rd) = std::fs::read_dir(game_dir().join("modules")) {
-        let mut paths: Vec<_> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("dat"))).collect();
+        let mut paths: Vec<_> = rd
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("dat")))
+            .collect();
         paths.sort();
         all.extend(paths.iter().filter_map(|p| ArcanumArchive::open(p).ok()));
     }
@@ -234,13 +279,22 @@ fn every_script_parses_to_the_last_byte() {
     let mut count = 0;
     let mut kinds = (0, 0);
     for a in archives_with_module() {
-        let names: Vec<String> = a.list_dir("scr").unwrap_or_default().into_iter().map(|p| p.rsplit(['/', '\\']).next().unwrap_or(p).to_string()).collect();
+        let names: Vec<String> = a
+            .list_dir("scr")
+            .unwrap_or_default()
+            .into_iter()
+            .map(|p| p.rsplit(['/', '\\']).next().unwrap_or(p).to_string())
+            .collect();
         let index = ScriptIndex::new(names.iter().map(String::as_str));
         for (&number, name) in &index.files {
             let path = index.path(number).unwrap();
             let data = a.read(&path).unwrap_or_else(|e| panic!("{path}: {e}"));
             let script = Script::parse(&data).unwrap_or_else(|e| panic!("{path}: {e}"));
-            assert_eq!(data.len(), HEADER_SIZE + script.lines.len() * LINE_SIZE, "{name}");
+            assert_eq!(
+                data.len(),
+                HEADER_SIZE + script.lines.len() * LINE_SIZE,
+                "{name}"
+            );
             for line in &script.lines {
                 kinds.0 = kinds.0.max(line.condition.kind);
                 kinds.1 = kinds.1.max(line.then.kind.max(line.otherwise.kind));
@@ -250,14 +304,20 @@ fn every_script_parses_to_the_last_byte() {
         if let Some(bed) = index.path(1729) {
             let script = Script::parse(&a.read(&bed).unwrap()).unwrap();
             assert_eq!(script.lines.len(), 6, "01729Bed_Use.scr");
-            assert_eq!(script.lines[5].then.kind, 1, "its last line runs the default");
+            assert_eq!(
+                script.lines[5].then.kind, 1,
+                "its last line runs the default"
+            );
         }
     }
     if count == 0 {
         eprintln!("skipping: no scripts found");
         return;
     }
-    eprintln!("parsed {count} scripts; condition types up to {}, action types up to {}", kinds.0, kinds.1);
+    eprintln!(
+        "parsed {count} scripts; condition types up to {}, action types up to {}",
+        kinds.0, kinds.1
+    );
     assert!(count >= 2399, "{count}");
     assert!(kinds.0 <= 52 && kinds.1 <= 141, "{kinds:?}");
 }
@@ -267,15 +327,26 @@ fn every_dialogue_file_parses_and_its_opcodes_are_the_engines() {
     use arcanum_formats::dialog::{DialogFile, effects, tests};
     use std::collections::BTreeMap;
     let (mut files, mut npc, mut pc) = (0, 0, 0);
-    let (mut test_ops, mut effect_ops) = (BTreeMap::<String, usize>::new(), BTreeMap::<String, usize>::new());
+    let (mut test_ops, mut effect_ops) = (
+        BTreeMap::<String, usize>::new(),
+        BTreeMap::<String, usize>::new(),
+    );
     let (mut bad_tests, mut bad_effects) = (0, 0);
     let mut seen = std::collections::BTreeSet::new();
     // The Arcanum module only (Vormantown has its own).
     // The Arcanum module first, as the game mounts it, then the game's archives (not Vormantown).
     let module = ArcanumArchive::open(game_dir().join("modules/Arcanum.dat")).ok();
     for a in module.into_iter().chain(archives()) {
-        let names: Vec<String> = a.list_dir("dlg").unwrap_or_default().into_iter().map(str::to_string).collect();
-        for path in names.iter().filter(|p| p.to_ascii_lowercase().ends_with(".dlg")) {
+        let names: Vec<String> = a
+            .list_dir("dlg")
+            .unwrap_or_default()
+            .into_iter()
+            .map(str::to_string)
+            .collect();
+        for path in names
+            .iter()
+            .filter(|p| p.to_ascii_lowercase().ends_with(".dlg"))
+        {
             let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
             if !seen.insert(name) {
                 continue;
@@ -288,15 +359,21 @@ fn every_dialogue_file_parses_and_its_opcodes_are_the_engines() {
                 } else {
                     pc += 1;
                     match tests(&line.test) {
-                        Ok(t) => t.iter().for_each(|t| *test_ops.entry(t.op().into()).or_default() += 1),
+                        Ok(t) => t
+                            .iter()
+                            .for_each(|t| *test_ops.entry(t.op().into()).or_default() += 1),
                         Err(_) => bad_tests += 1,
                     }
                 }
                 match effects(&line.result) {
-                    Ok(e) => e.iter().for_each(|t| *effect_ops.entry(t.op().into()).or_default() += 1),
+                    Ok(e) => e
+                        .iter()
+                        .for_each(|t| *effect_ops.entry(t.op().into()).or_default() += 1),
                     Err(e) => {
                         bad_effects += 1;
-                        e.before.iter().for_each(|t| *effect_ops.entry(t.op().into()).or_default() += 1);
+                        e.before
+                            .iter()
+                            .for_each(|t| *effect_ops.entry(t.op().into()).or_default() += 1);
                     }
                 }
             }
@@ -306,13 +383,18 @@ fn every_dialogue_file_parses_and_its_opcodes_are_the_engines() {
         eprintln!("skipping: no dialogue files found");
         return;
     }
-    eprintln!("{files} files, {npc} NPC lines, {pc} PC options; {bad_tests} tests and {bad_effects} results meet an unknown opcode");
+    eprintln!(
+        "{files} files, {npc} NPC lines, {pc} PC options; {bad_tests} tests and {bad_effects} results meet an unknown opcode"
+    );
     eprintln!("tests: {test_ops:?}");
     eprintln!("results: {effect_ops:?}");
     assert!(files >= 709, "{files}");
     assert_eq!((npc, pc), (15287, 39472));
     // Tests that meet an unknown opcode fail whole, so their tokens are not counted.
     assert_eq!((bad_tests, bad_effects), (12, 11));
-    assert_eq!((test_ops["lf"], test_ops["gf"], test_ops["$$"]), (7450, 3462, 1580));
+    assert_eq!(
+        (test_ops["lf"], test_ops["gf"], test_ops["$$"]),
+        (7450, 3462, 1580)
+    );
     assert_eq!((effect_ops["lf"], effect_ops["fl"]), (4759, 2510));
 }

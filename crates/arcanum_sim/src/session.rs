@@ -9,7 +9,9 @@ use std::collections::HashMap;
 use arcanum_rules::{CharacterBlueprint, RulesData};
 use bevy_ecs::prelude::*;
 
-use crate::{Creation, LedgerDelta, MoveRequests, NetId, PlayerId, PlayerIntent, StartMap, WorldState};
+use crate::{
+    Creation, LedgerDelta, MoveRequests, NetId, PlayerId, PlayerIntent, StartMap, WorldState,
+};
 
 /// The rules the host applies.
 #[derive(Resource, Debug, Clone, Default)]
@@ -64,26 +66,44 @@ pub fn handle_intents(
     mut pickups: ResMut<crate::PickUpRequests>,
     mut picks: ResMut<crate::PickLockRequests>,
     mut casts: ResMut<crate::CastRequests>,
-    (mut rests, mut stops, mut talks): (ResMut<crate::RestRequests>, ResMut<crate::StopRestRequests>, ResMut<crate::TalkRequests>),
-    (mut votes, mut fates): (ResMut<crate::big_move::VoteRequests>, ResMut<crate::FateRequests>),
+    (mut rests, mut stops, mut talks): (
+        ResMut<crate::RestRequests>,
+        ResMut<crate::StopRestRequests>,
+        ResMut<crate::TalkRequests>,
+    ),
+    (mut votes, mut fates): (
+        ResMut<crate::big_move::VoteRequests>,
+        ResMut<crate::FateRequests>,
+    ),
 ) {
     for (player, intent) in inbox.0.drain(..) {
         match intent {
             PlayerIntent::Character { seq, request } => {
-                let entry = session.players.entry(player).or_insert_with(|| SessionPlayer::Creating(Creation::new(&rules.0)));
+                let entry = session
+                    .players
+                    .entry(player)
+                    .or_insert_with(|| SessionPlayer::Creating(Creation::new(&rules.0)));
                 if matches!(entry, SessionPlayer::InWorld(_)) {
                     continue;
                 }
                 if matches!(request, crate::CharacterRequest::New) {
                     *entry = SessionPlayer::Creating(Creation::new(&rules.0));
                 }
-                let SessionPlayer::Creating(creation) = entry else { continue };
+                let SessionPlayer::Creating(creation) = entry else {
+                    continue;
+                };
                 let result = creation.request(&rules.0, &request);
-                let update = LedgerDelta::CharacterUpdate { player, ack: seq, creation: creation.clone() };
+                let update = LedgerDelta::CharacterUpdate {
+                    player,
+                    ack: seq,
+                    creation: creation.clone(),
+                };
                 if let Ok(Some(blueprint)) = result {
                     world.add_player(start.as_deref(), player, blueprint.clone());
                     *entry = SessionPlayer::Ready(blueprint);
-                    outbox.0.push((player, LedgerDelta::CharacterAccepted { player }));
+                    outbox
+                        .0
+                        .push((player, LedgerDelta::CharacterAccepted { player }));
                 }
                 outbox.0.push((player, update));
             }
@@ -93,7 +113,9 @@ pub fn handle_intents(
             PlayerIntent::Sheet { seq, request } => sheets.0.push((player, seq, request)),
             PlayerIntent::Inventory { seq, request } => items.0.push((player, seq, request)),
             PlayerIntent::PickUp { item, seq } => pickups.0.push((player, item, seq)),
-            PlayerIntent::PickLock { target, tool, seq } => picks.0.push((player, target, tool, seq)),
+            PlayerIntent::PickLock { target, tool, seq } => {
+                picks.0.push((player, target, tool, seq))
+            }
             PlayerIntent::Cast { spell, target } => casts.0.push((player, spell, target)),
             PlayerIntent::RestWindow => rests.0.push((player, None)),
             PlayerIntent::Rest { option } => rests.0.push((player, Some(option))),
@@ -119,10 +141,13 @@ mod tests {
     fn ticked(sim: &mut SimApp, intents: Vec<PlayerIntent>) -> Vec<LedgerDelta> {
         sim.receive(intents.into_iter().map(|i| (P, i)));
         sim.update();
-        sim.take_deltas().into_iter().map(|(to, d)| {
-            assert_eq!(to, P);
-            d
-        }).collect()
+        sim.take_deltas()
+            .into_iter()
+            .map(|(to, d)| {
+                assert_eq!(to, P);
+                d
+            })
+            .collect()
     }
 
     fn character(seq: u32, request: CharacterRequest) -> PlayerIntent {
@@ -139,36 +164,74 @@ mod tests {
     #[test]
     fn named_character_is_accepted() {
         let mut sim = started();
-        let deltas = ticked(&mut sim, vec![
-            character(1, CharacterRequest::Action(CharacterAction::SetName("Virgil".into()))),
-            character(2, CharacterRequest::Accept),
-        ]);
+        let deltas = ticked(
+            &mut sim,
+            vec![
+                character(
+                    1,
+                    CharacterRequest::Action(CharacterAction::SetName("Virgil".into())),
+                ),
+                character(2, CharacterRequest::Accept),
+            ],
+        );
         assert_eq!(deltas.len(), 3, "{deltas:?}");
-        assert!(matches!(&deltas[0], LedgerDelta::CharacterUpdate { ack: 1, creation, .. } if creation.sheet.name == "Virgil"));
-        assert_eq!(deltas[1], LedgerDelta::CharacterAccepted { player: P }, "before the update it answers");
-        assert!(matches!(&deltas[2], LedgerDelta::CharacterUpdate { ack: 2, .. }));
+        assert!(
+            matches!(&deltas[0], LedgerDelta::CharacterUpdate { ack: 1, creation, .. } if creation.sheet.name == "Virgil")
+        );
+        assert_eq!(
+            deltas[1],
+            LedgerDelta::CharacterAccepted { player: P },
+            "before the update it answers"
+        );
+        assert!(matches!(
+            &deltas[2],
+            LedgerDelta::CharacterUpdate { ack: 2, .. }
+        ));
         let session = sim.app.world().resource::<Session>();
-        assert!(matches!(&session.players[&P], SessionPlayer::Ready(b) if b.sheet.name == "Virgil"));
+        assert!(
+            matches!(&session.players[&P], SessionPlayer::Ready(b) if b.sheet.name == "Virgil")
+        );
     }
 
     #[test]
     fn refusals_are_answered_with_the_unchanged_character() {
         let mut sim = started();
         let deltas = ticked(&mut sim, vec![character(1, CharacterRequest::Accept)]);
-        assert_eq!(deltas, vec![LedgerDelta::CharacterUpdate { player: P, ack: 1, creation: Creation::new(&RulesData::default()) }]);
+        assert_eq!(
+            deltas,
+            vec![LedgerDelta::CharacterUpdate {
+                player: P,
+                ack: 1,
+                creation: Creation::new(&RulesData::default())
+            }]
+        );
     }
 
     #[test]
     fn a_ready_player_can_only_start_again() {
         let mut sim = started();
-        ticked(&mut sim, vec![
-            character(1, CharacterRequest::Action(CharacterAction::SetName("Virgil".into()))),
-            character(2, CharacterRequest::Accept),
-        ]);
-        let ignored = ticked(&mut sim, vec![character(3, CharacterRequest::Action(CharacterAction::SetName("Other".into())))]);
+        ticked(
+            &mut sim,
+            vec![
+                character(
+                    1,
+                    CharacterRequest::Action(CharacterAction::SetName("Virgil".into())),
+                ),
+                character(2, CharacterRequest::Accept),
+            ],
+        );
+        let ignored = ticked(
+            &mut sim,
+            vec![character(
+                3,
+                CharacterRequest::Action(CharacterAction::SetName("Other".into())),
+            )],
+        );
         assert!(ignored.is_empty());
         let restarted = ticked(&mut sim, vec![character(4, CharacterRequest::New)]);
-        assert!(matches!(&restarted[..], [LedgerDelta::CharacterUpdate { ack: 4, creation, .. }] if creation.sheet.name.is_empty()));
+        assert!(
+            matches!(&restarted[..], [LedgerDelta::CharacterUpdate { ack: 4, creation, .. }] if creation.sheet.name.is_empty())
+        );
     }
 
     #[test]
@@ -176,13 +239,25 @@ mod tests {
         use arcanum_formats::map::TileLoc;
         let dir = tempfile::tempdir().unwrap();
         let file = crate::SaveFile::in_dir(dir.path(), 5);
-        let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 }, clock: Default::default() };
+        let start = StartMap {
+            map: "Arcanum1-024-fixed".into(),
+            position: TileLoc { x: 92958, y: 82592 },
+            clock: Default::default(),
+        };
         let mut sim = started();
-        sim.app.insert_resource(start.clone()).insert_resource(file.clone());
-        ticked(&mut sim, vec![
-            character(1, CharacterRequest::Action(CharacterAction::SetName("Virgil".into()))),
-            character(2, CharacterRequest::Accept),
-        ]);
+        sim.app
+            .insert_resource(start.clone())
+            .insert_resource(file.clone());
+        ticked(
+            &mut sim,
+            vec![
+                character(
+                    1,
+                    CharacterRequest::Action(CharacterAction::SetName("Virgil".into())),
+                ),
+                character(2, CharacterRequest::Accept),
+            ],
+        );
         let saved = crate::WorldSave::read(&file.0).unwrap();
         assert_eq!(saved.map, start.map);
         assert_eq!(saved.players[&P].position, start.position);

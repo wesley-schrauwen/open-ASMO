@@ -107,12 +107,19 @@ pub fn field_blocks(object_type: u32) -> Option<&'static [&'static [FieldDef]]> 
 /// Each field of `blocks` with its bitmap bit: a block starts at the next 32-bit boundary after
 /// the previous block's last field.
 fn with_bits(blocks: Blocks) -> impl Iterator<Item = (u32, &'static FieldDef)> {
-    blocks.iter().scan(0u32, |next, block| {
-        let first = *next;
-        *next = (first + block.len() as u32).div_ceil(32) * 32;
-        Some(block.iter().enumerate().map(move |(i, d)| (first + i as u32, d)))
-    })
-    .flatten()
+    blocks
+        .iter()
+        .scan(0u32, |next, block| {
+            let first = *next;
+            *next = (first + block.len() as u32).div_ceil(32) * 32;
+            Some(
+                block
+                    .iter()
+                    .enumerate()
+                    .map(move |(i, d)| (first + i as u32, d)),
+            )
+        })
+        .flatten()
 }
 
 /// Every field of `object_type` with its bitmap bit, in bit order.
@@ -122,35 +129,73 @@ pub fn field_bits(object_type: u32) -> Option<Vec<(u32, FieldDef)>> {
 
 /// Bitmap words an instance of `object_type` stores: the word of its last field + 1.
 pub fn bitmap_words(object_type: u32) -> Option<usize> {
-    field_blocks(object_type).and_then(|b| with_bits(b).last()).map(|(bit, _)| bit as usize / 32 + 1)
+    field_blocks(object_type)
+        .and_then(|b| with_bits(b).last())
+        .map(|(bit, _)| bit as usize / 32 + 1)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ObjectError {
     /// Ran out of data reading `what` at `offset`.
-    Truncated { offset: usize, what: &'static str },
+    Truncated {
+        offset: usize,
+        what: &'static str,
+    },
     BadVersion(u32),
     UnsupportedType(u32),
     /// A presence byte that is neither 0 nor 1.
-    BadFlag { offset: usize, field: &'static str, value: u8 },
+    BadFlag {
+        offset: usize,
+        field: &'static str,
+        value: u8,
+    },
     /// Bytes left over after the last field; `total` is the whole data's length.
-    TrailingBytes { offset: usize, total: usize },
-    BadBitmap { declared: u16, set: u32 },
+    TrailingBytes {
+        offset: usize,
+        total: usize,
+    },
+    BadBitmap {
+        declared: u16,
+        set: u32,
+    },
     /// `set` bitmap bits are set but only `known` belong to fields of the type.
-    UnknownBits { set: u32, known: u32 },
-    BadString { offset: usize },
+    UnknownBits {
+        set: u32,
+        known: u32,
+    },
+    BadString {
+        offset: usize,
+    },
 }
 
 impl fmt::Display for ObjectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Truncated { offset, what } => write!(f, "truncated reading {what} at offset {offset}"),
-            Self::BadVersion(v) => write!(f, "unsupported object version {v:#x} (expected {VERSION:#x})"),
+            Self::Truncated { offset, what } => {
+                write!(f, "truncated reading {what} at offset {offset}")
+            }
+            Self::BadVersion(v) => write!(
+                f,
+                "unsupported object version {v:#x} (expected {VERSION:#x})"
+            ),
             Self::UnsupportedType(t) => write!(f, "object type {t} is not supported"),
-            Self::BadFlag { offset, field, value } => write!(f, "{field}: presence byte {value} at offset {offset}"),
-            Self::TrailingBytes { offset, total } => write!(f, "{} bytes left over after the last field (offset {offset}, {total} bytes in all)", total - offset),
-            Self::BadBitmap { declared, set } => write!(f, "field count {declared} does not match {set} bits set"),
-            Self::UnknownBits { set, known } => write!(f, "{set} bitmap bits set but only {known} named fields of the type"),
+            Self::BadFlag {
+                offset,
+                field,
+                value,
+            } => write!(f, "{field}: presence byte {value} at offset {offset}"),
+            Self::TrailingBytes { offset, total } => write!(
+                f,
+                "{} bytes left over after the last field (offset {offset}, {total} bytes in all)",
+                total - offset
+            ),
+            Self::BadBitmap { declared, set } => {
+                write!(f, "field count {declared} does not match {set} bits set")
+            }
+            Self::UnknownBits { set, known } => write!(
+                f,
+                "{set} bitmap bits set but only {known} named fields of the type"
+            ),
             Self::BadString { offset } => write!(f, "string at offset {offset} is not terminated"),
         }
     }
@@ -201,12 +246,16 @@ impl ObjectId {
     /// arrays hold them.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         let b = bytes.get(..24)?;
-        Some(Self { kind: i16::from_le_bytes([b[0], b[1]]), payload: b[8..24].try_into().ok()? })
+        Some(Self {
+            kind: i16::from_le_bytes([b[0], b[1]]),
+            payload: b[8..24].try_into().ok()?,
+        })
     }
 
     /// The prototype number, for prototype ids.
     pub fn prototype(&self) -> Option<u32> {
-        (self.kind == Self::KIND_PROTOTYPE).then(|| u32::from_le_bytes(self.payload[..4].try_into().unwrap()))
+        (self.kind == Self::KIND_PROTOTYPE)
+            .then(|| u32::from_le_bytes(self.payload[..4].try_into().unwrap()))
     }
 
     /// The GUID as `XXXXXXXX_XXXX_XXXX_XXXX_XXXXXXXXXXXX`, the form used in file names.
@@ -219,7 +268,11 @@ impl ObjectId {
         let d2 = u16::from_le_bytes(p[4..6].try_into().unwrap());
         let d3 = u16::from_le_bytes(p[6..8].try_into().unwrap());
         let hex = |b: &[u8]| b.iter().map(|x| format!("{x:02X}")).collect::<String>();
-        Some(format!("{d1:08X}_{d2:04X}_{d3:04X}_{}_{}", hex(&p[8..10]), hex(&p[10..16])))
+        Some(format!(
+            "{d1:08X}_{d2:04X}_{d3:04X}_{}_{}",
+            hex(&p[8..10]),
+            hex(&p[10..16])
+        ))
     }
 }
 
@@ -235,7 +288,11 @@ pub struct Array {
 
 impl Array {
     pub fn len(&self) -> usize {
-        if self.elem_size == 0 { 0 } else { self.data.len() / self.elem_size as usize }
+        if self.elem_size == 0 {
+            0
+        } else {
+            self.data.len() / self.elem_size as usize
+        }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -244,12 +301,24 @@ impl Array {
 
     /// The elements as object ids, for arrays of 24-byte elements.
     pub fn object_ids(&self) -> Option<Vec<ObjectId>> {
-        (self.elem_size == 24).then(|| self.data.as_chunks::<24>().0.iter().filter_map(|c| ObjectId::from_bytes(c)).collect())
+        (self.elem_size == 24).then(|| {
+            self.data
+                .as_chunks::<24>()
+                .0
+                .iter()
+                .filter_map(|c| ObjectId::from_bytes(c))
+                .collect()
+        })
     }
 
     /// The elements as i32s, for arrays of 4-byte elements.
     pub fn ints(&self) -> Option<Vec<i32>> {
-        (self.elem_size == 4).then(|| self.data.chunks_exact(4).map(|c| i32::from_le_bytes(c.try_into().unwrap())).collect())
+        (self.elem_size == 4).then(|| {
+            self.data
+                .chunks_exact(4)
+                .map(|c| i32::from_le_bytes(c.try_into().unwrap()))
+                .collect()
+        })
     }
 }
 
@@ -283,13 +352,22 @@ impl Object {
         let (version, prototype, id, object_type) = read_header(&mut r)?;
         let blocks = field_blocks(object_type).ok_or(ObjectError::UnsupportedType(object_type))?;
         let words = bitmap_words(object_type).unwrap();
-        let bitmap = (0..words).map(|_| r.u32("bitmap")).collect::<Result<_, _>>()?;
+        let bitmap = (0..words)
+            .map(|_| r.u32("bitmap"))
+            .collect::<Result<_, _>>()?;
         let mut fields = Vec::new();
         for (_, def) in with_bits(blocks) {
             fields.push((*def, read_value(&mut r, *def)?));
         }
         r.finish()?;
-        Ok(Self { version, prototype, id, object_type, bitmap, fields })
+        Ok(Self {
+            version,
+            prototype,
+            id,
+            object_type,
+            bitmap,
+            fields,
+        })
     }
 
     /// Parses an instance object (a `.mob`, the body of a `.mpc`). `data` must be exactly the
@@ -297,7 +375,10 @@ impl Object {
     pub fn parse_instance(data: &[u8]) -> Result<Self, ObjectError> {
         let (object, used) = Self::parse_instance_prefix(data)?;
         if used != data.len() {
-            return Err(ObjectError::TrailingBytes { offset: used, total: data.len() });
+            return Err(ObjectError::TrailingBytes {
+                offset: used,
+                total: data.len(),
+            });
         }
         Ok(object)
     }
@@ -310,7 +391,9 @@ impl Object {
         let blocks = field_blocks(object_type).ok_or(ObjectError::UnsupportedType(object_type))?;
         let words = bitmap_words(object_type).unwrap();
         let declared = r.u16("field count")?;
-        let bitmap: Vec<u32> = (0..words).map(|_| r.u32("bitmap")).collect::<Result<_, _>>()?;
+        let bitmap: Vec<u32> = (0..words)
+            .map(|_| r.u32("bitmap"))
+            .collect::<Result<_, _>>()?;
         let set: u32 = bitmap.iter().map(|w| w.count_ones()).sum();
         if set != u32::from(declared) {
             return Err(ObjectError::BadBitmap { declared, set });
@@ -322,9 +405,22 @@ impl Object {
             }
         }
         if fields.len() as u32 != set {
-            return Err(ObjectError::UnknownBits { set, known: fields.len() as u32 });
+            return Err(ObjectError::UnknownBits {
+                set,
+                known: fields.len() as u32,
+            });
         }
-        Ok((Self { version, prototype, id, object_type, bitmap, fields }, r.pos))
+        Ok((
+            Self {
+                version,
+                prototype,
+                id,
+                object_type,
+                bitmap,
+                fields,
+            },
+            r.pos,
+        ))
     }
 
     /// The current art id (`current_aid`), if stored.
@@ -333,7 +429,10 @@ impl Object {
     }
 
     pub fn field(&self, name: &str) -> Option<&Value> {
-        self.fields.iter().find(|(d, _)| d.name == name).map(|(_, v)| v)
+        self.fields
+            .iter()
+            .find(|(d, _)| d.name == name)
+            .map(|(_, v)| v)
     }
 
     pub fn int(&self, name: &str) -> Option<i32> {
@@ -366,7 +465,11 @@ impl Object {
             *v = value;
             return true;
         }
-        let Some((bit, def)) = field_bits(self.object_type).and_then(|b| b.into_iter().find(|(_, d)| d.name == name)) else { return false };
+        let Some((bit, def)) =
+            field_bits(self.object_type).and_then(|b| b.into_iter().find(|(_, d)| d.name == name))
+        else {
+            return false;
+        };
         if def.storage != storage {
             return false;
         }
@@ -374,7 +477,11 @@ impl Object {
             *word |= 1 << (bit % 32);
         }
         // Keep the fields in enum order, as parsed.
-        let at = self.fields.iter().position(|(d, _)| d.id > def.id).unwrap_or(self.fields.len());
+        let at = self
+            .fields
+            .iter()
+            .position(|(d, _)| d.id > def.id)
+            .unwrap_or(self.fields.len());
         self.fields.insert(at, (def, value));
         true
     }
@@ -383,7 +490,14 @@ impl Object {
     /// location: every other field is the prototype's (as 0x4ed8b0 makes one).
     pub fn instance_of(prototype: &Object, id: ObjectId, location: i64) -> Option<Self> {
         let words = bitmap_words(prototype.object_type)?;
-        let mut object = Self { version: prototype.version, prototype: prototype.id, id, object_type: prototype.object_type, bitmap: vec![0; words], fields: Vec::new() };
+        let mut object = Self {
+            version: prototype.version,
+            prototype: prototype.id,
+            id,
+            object_type: prototype.object_type,
+            bitmap: vec![0; words],
+            fields: Vec::new(),
+        };
         object.set_value("location", Value::Int64(Some(location)));
         Some(object)
     }
@@ -413,7 +527,9 @@ impl Prototypes {
     /// Adds a parsed prototype, keyed by its number. Returns false (adding nothing) if it has
     /// no number.
     pub fn insert(&mut self, prototype: Object) -> bool {
-        let Some(number) = prototype.id.prototype() else { return false };
+        let Some(number) = prototype.id.prototype() else {
+            return false;
+        };
         self.0.insert(number, prototype);
         true
     }
@@ -466,7 +582,11 @@ impl PlayerFile {
         let level_scheme = r.counted_string("level scheme")?;
         let name = r.counted_string("name")?;
         r.finish()?;
-        Ok(Self { object, level_scheme, name })
+        Ok(Self {
+            object,
+            level_scheme,
+            name,
+        })
     }
 }
 
@@ -485,8 +605,16 @@ fn read_value(r: &mut Reader, def: FieldDef) -> Result<Value, ObjectError> {
     let name = def.name;
     Ok(match def.storage {
         Storage::Int32 => Value::Int32(r.u32(name)? as i32),
-        Storage::Int64 => Value::Int64(if r.present(name)? { Some(r.u64(name)? as i64) } else { None }),
-        Storage::ObjectRef => Value::ObjectRef(if r.present(name)? { Some(r.object_id(name)?) } else { None }),
+        Storage::Int64 => Value::Int64(if r.present(name)? {
+            Some(r.u64(name)? as i64)
+        } else {
+            None
+        }),
+        Storage::ObjectRef => Value::ObjectRef(if r.present(name)? {
+            Some(r.object_id(name)?)
+        } else {
+            None
+        }),
         Storage::String => Value::String(if r.present(name)? {
             let len = r.u32(name)? as usize;
             let start = r.pos;
@@ -503,11 +631,21 @@ fn read_value(r: &mut Reader, def: FieldDef) -> Result<Value, ObjectError> {
             let elem_size = r.u32(name)?;
             let count = r.u32(name)? as usize;
             let id = r.u32(name)?;
-            let size = count.checked_mul(elem_size as usize).ok_or(ObjectError::Truncated { offset: r.pos, what: name })?;
+            let size = count
+                .checked_mul(elem_size as usize)
+                .ok_or(ObjectError::Truncated {
+                    offset: r.pos,
+                    what: name,
+                })?;
             let data = r.bytes(size, name)?.to_vec();
             let words = r.u32(name)? as usize;
             let bitset = (0..words).map(|_| r.u32(name)).collect::<Result<_, _>>()?;
-            Some(Array { elem_size, id, data, bitset })
+            Some(Array {
+                elem_size,
+                id,
+                data,
+                bitset,
+            })
         } else {
             None
         }),
@@ -526,7 +664,14 @@ impl<'a> Reader<'a> {
     }
 
     fn bytes(&mut self, n: usize, what: &'static str) -> Result<&'a [u8], ObjectError> {
-        let end = self.pos.checked_add(n).filter(|&e| e <= self.data.len()).ok_or(ObjectError::Truncated { offset: self.pos, what })?;
+        let end = self
+            .pos
+            .checked_add(n)
+            .filter(|&e| e <= self.data.len())
+            .ok_or(ObjectError::Truncated {
+                offset: self.pos,
+                what,
+            })?;
         let out = &self.data[self.pos..end];
         self.pos = end;
         Ok(out)
@@ -553,13 +698,20 @@ impl<'a> Reader<'a> {
         match self.u8(field)? {
             0 => Ok(false),
             1 => Ok(true),
-            value => Err(ObjectError::BadFlag { offset, field, value }),
+            value => Err(ObjectError::BadFlag {
+                offset,
+                field,
+                value,
+            }),
         }
     }
 
     fn object_id(&mut self, what: &'static str) -> Result<ObjectId, ObjectError> {
         let b = self.bytes(24, what)?;
-        Ok(ObjectId { kind: i16::from_le_bytes([b[0], b[1]]), payload: b[8..24].try_into().unwrap() })
+        Ok(ObjectId {
+            kind: i16::from_le_bytes([b[0], b[1]]),
+            payload: b[8..24].try_into().unwrap(),
+        })
     }
 
     /// `u32 len` (including the NUL) then the text.
@@ -575,7 +727,14 @@ impl<'a> Reader<'a> {
     }
 
     fn finish(&self) -> Result<(), ObjectError> {
-        if self.pos == self.data.len() { Ok(()) } else { Err(ObjectError::TrailingBytes { offset: self.pos, total: self.data.len() }) }
+        if self.pos == self.data.len() {
+            Ok(())
+        } else {
+            Err(ObjectError::TrailingBytes {
+                offset: self.pos,
+                total: self.data.len(),
+            })
+        }
     }
 }
 
@@ -598,7 +757,10 @@ mod tests {
         // Own id: a GUID.
         out.extend(ObjectId::KIND_GUID.to_le_bytes());
         out.extend([0u8; 6]);
-        out.extend([0xE3, 0xD5, 0x39, 0x2B, 0x96, 0x1C, 0x8F, 0x41, 0xA6, 0x34, 0x9E, 0xE5, 0x80, 0x53, 0xE3, 0xBF]);
+        out.extend([
+            0xE3, 0xD5, 0x39, 0x2B, 0x96, 0x1C, 0x8F, 0x41, 0xA6, 0x34, 0x9E, 0xE5, 0x80, 0x53,
+            0xE3, 0xBF,
+        ]);
         out.extend(TYPE_PC.to_le_bytes());
     }
 
@@ -664,8 +826,14 @@ mod tests {
 
     #[test]
     fn field_tables_follow_the_engine_enum() {
-        assert_eq!((COMMON_FIELDS.len(), CRITTER_FIELDS.len(), PC_FIELDS.len()), (36, 33, 25));
-        let bg = PC_FIELDS.iter().find(|d| d.name == "pc_background").unwrap();
+        assert_eq!(
+            (COMMON_FIELDS.len(), CRITTER_FIELDS.len(), PC_FIELDS.len()),
+            (36, 33, 25)
+        );
+        let bg = PC_FIELDS
+            .iter()
+            .find(|d| d.name == "pc_background")
+            .unwrap();
         assert_eq!(bg.id, 0x101, "the id the picker code in Arcanum.exe reads");
         // Ids run consecutively within each block.
         for block in [&COMMON_FIELDS[..], &CRITTER_FIELDS[..], &PC_FIELDS[..]] {
@@ -680,14 +848,24 @@ mod tests {
         let obj = Object::parse_prototype(&prototype_bytes()).unwrap();
         assert_eq!(obj.fields.len(), 36 + 33 + 25);
         assert_eq!(obj.prototype.kind, ObjectId::KIND_NONE);
-        assert_eq!(obj.id.guid().as_deref(), Some("2B39D5E3_1C96_418F_A634_9EE58053E3BF"));
+        assert_eq!(
+            obj.id.guid().as_deref(),
+            Some("2B39D5E3_1C96_418F_A634_9EE58053E3BF")
+        );
         assert_eq!(obj.int("pc_background"), Some(46));
         assert_eq!(obj.int("critter_portrait"), Some(1020));
         assert_eq!(obj.string("pc_player_name"), Some("Lugard"));
         assert_eq!(obj.ints("critter_stat_base_idx"), Some(vec![8, 1, 1]));
-        assert_eq!(obj.field("location"), Some(&Value::Int64(Some(0x0086_0000_077c))));
+        assert_eq!(
+            obj.field("location"),
+            Some(&Value::Int64(Some(0x0086_0000_077c)))
+        );
         assert_eq!(obj.field("critter_gold"), Some(&Value::ObjectRef(None)));
-        assert_eq!(obj.ints("pc_quest_idx"), Some(vec![]), "absent arrays read as empty");
+        assert_eq!(
+            obj.ints("pc_quest_idx"),
+            Some(vec![]),
+            "absent arrays read as empty"
+        );
     }
 
     #[test]
@@ -713,7 +891,10 @@ mod tests {
             file.push(0);
         }
         let p = PlayerFile::parse(&file).unwrap();
-        assert_eq!((p.level_scheme.as_str(), p.name.as_str()), ("Firearms 4", "Lugard Bloodstone"));
+        assert_eq!(
+            (p.level_scheme.as_str(), p.name.as_str()),
+            ("Firearms 4", "Lugard Bloodstone")
+        );
         assert_eq!(p.object.ints("critter_stat_base_idx"), Some(vec![8, 1, 1]));
     }
 
@@ -722,8 +903,24 @@ mod tests {
     #[test]
     fn type_numbers_follow_the_engine_enum() {
         let types = [
-            TYPE_WALL, TYPE_PORTAL, TYPE_CONTAINER, TYPE_SCENERY, TYPE_PROJECTILE, TYPE_WEAPON, TYPE_AMMO, TYPE_ARMOR, TYPE_GOLD,
-            TYPE_FOOD, TYPE_SCROLL, TYPE_KEY, TYPE_KEY_RING, TYPE_WRITTEN, TYPE_GENERIC, TYPE_PC, TYPE_NPC, TYPE_TRAP,
+            TYPE_WALL,
+            TYPE_PORTAL,
+            TYPE_CONTAINER,
+            TYPE_SCENERY,
+            TYPE_PROJECTILE,
+            TYPE_WEAPON,
+            TYPE_AMMO,
+            TYPE_ARMOR,
+            TYPE_GOLD,
+            TYPE_FOOD,
+            TYPE_SCROLL,
+            TYPE_KEY,
+            TYPE_KEY_RING,
+            TYPE_WRITTEN,
+            TYPE_GENERIC,
+            TYPE_PC,
+            TYPE_NPC,
+            TYPE_TRAP,
         ];
         assert_eq!(types.to_vec(), (0..18).collect::<Vec<u32>>());
     }
@@ -731,33 +928,90 @@ mod tests {
     #[test]
     fn bitmap_words_per_type() {
         let words: Vec<_> = (0..18).map(|t| bitmap_words(t).unwrap()).collect();
-        assert_eq!(words, [3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 3]);
+        assert_eq!(
+            words,
+            [3, 3, 3, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 5, 5, 3]
+        );
         assert_eq!(bitmap_words(18), None);
     }
 
     /// Spot checks against research-object-fields.tsv (the engine's table walked per type).
     #[test]
     fn field_bits_match_the_engine_tables() {
-        let bit = |t: u32, name: &str| field_bits(t).unwrap().into_iter().find(|(_, d)| d.name == name).map(|(b, d)| (b, d.id, d.storage));
+        let bit = |t: u32, name: &str| {
+            field_bits(t)
+                .unwrap()
+                .into_iter()
+                .find(|(_, d)| d.name == name)
+                .map(|(b, d)| (b, d.id, d.storage))
+        };
         assert_eq!(bit(TYPE_WALL, "current_aid"), Some((0, 1, Storage::Int32)));
         assert_eq!(bit(TYPE_WALL, "wall_flags"), Some((64, 39, Storage::Int32)));
-        assert_eq!(bit(TYPE_WALL, "wall_pad_i64as_1"), Some((68, 43, Storage::Array)));
-        assert_eq!(bit(TYPE_PORTAL, "portal_flags"), Some((64, 46, Storage::Int32)));
-        assert_eq!(bit(TYPE_CONTAINER, "container_flags"), Some((64, 56, Storage::Int32)));
-        assert_eq!(bit(TYPE_SCENERY, "scenery_whos_in_me"), Some((65, 70, Storage::ObjectRef)));
-        assert_eq!(bit(TYPE_PROJECTILE, "projectile_parent_weapon"), Some((67, 80, Storage::ObjectRef)));
-        assert_eq!(bit(TYPE_WEAPON, "item_parent"), Some((65, 88, Storage::ObjectRef)));
-        assert_eq!(bit(TYPE_WEAPON, "weapon_flags"), Some((96, 112, Storage::Int32)));
-        assert_eq!(bit(TYPE_WEAPON, "weapon_pad_i64as_1"), Some((122, 138, Storage::Array)));
-        assert_eq!(bit(TYPE_AMMO, "ammo_flags"), Some((96, 141, Storage::Int32)));
-        assert_eq!(bit(TYPE_KEY_RING, "key_ring_flags"), Some((96, 193, Storage::Int32)));
-        assert_eq!(bit(TYPE_GENERIC, "generic_flags"), Some((96, 211, Storage::Int32)));
-        assert_eq!(bit(TYPE_NPC, "critter_flags"), Some((64, 218, Storage::Int32)));
+        assert_eq!(
+            bit(TYPE_WALL, "wall_pad_i64as_1"),
+            Some((68, 43, Storage::Array))
+        );
+        assert_eq!(
+            bit(TYPE_PORTAL, "portal_flags"),
+            Some((64, 46, Storage::Int32))
+        );
+        assert_eq!(
+            bit(TYPE_CONTAINER, "container_flags"),
+            Some((64, 56, Storage::Int32))
+        );
+        assert_eq!(
+            bit(TYPE_SCENERY, "scenery_whos_in_me"),
+            Some((65, 70, Storage::ObjectRef))
+        );
+        assert_eq!(
+            bit(TYPE_PROJECTILE, "projectile_parent_weapon"),
+            Some((67, 80, Storage::ObjectRef))
+        );
+        assert_eq!(
+            bit(TYPE_WEAPON, "item_parent"),
+            Some((65, 88, Storage::ObjectRef))
+        );
+        assert_eq!(
+            bit(TYPE_WEAPON, "weapon_flags"),
+            Some((96, 112, Storage::Int32))
+        );
+        assert_eq!(
+            bit(TYPE_WEAPON, "weapon_pad_i64as_1"),
+            Some((122, 138, Storage::Array))
+        );
+        assert_eq!(
+            bit(TYPE_AMMO, "ammo_flags"),
+            Some((96, 141, Storage::Int32))
+        );
+        assert_eq!(
+            bit(TYPE_KEY_RING, "key_ring_flags"),
+            Some((96, 193, Storage::Int32))
+        );
+        assert_eq!(
+            bit(TYPE_GENERIC, "generic_flags"),
+            Some((96, 211, Storage::Int32))
+        );
+        assert_eq!(
+            bit(TYPE_NPC, "critter_flags"),
+            Some((64, 218, Storage::Int32))
+        );
         assert_eq!(bit(TYPE_NPC, "npc_flags"), Some((128, 280, Storage::Int32)));
-        assert_eq!(bit(TYPE_NPC, "npc_standpoint_day"), Some((137, 289, Storage::Int64)));
-        assert_eq!(bit(TYPE_PC, "pc_player_name"), Some((145, 270, Storage::String)));
-        assert_eq!(bit(TYPE_TRAP, "trap_flags"), Some((64, 307, Storage::Int32)));
-        assert_eq!(bit(TYPE_TRAP, "trap_pad_i64as_1"), Some((68, 311, Storage::Array)));
+        assert_eq!(
+            bit(TYPE_NPC, "npc_standpoint_day"),
+            Some((137, 289, Storage::Int64))
+        );
+        assert_eq!(
+            bit(TYPE_PC, "pc_player_name"),
+            Some((145, 270, Storage::String))
+        );
+        assert_eq!(
+            bit(TYPE_TRAP, "trap_flags"),
+            Some((64, 307, Storage::Int32))
+        );
+        assert_eq!(
+            bit(TYPE_TRAP, "trap_pad_i64as_1"),
+            Some((68, 311, Storage::Array))
+        );
         // Blocks of other types are not part of a type.
         assert_eq!(bit(TYPE_WALL, "npc_flags"), None);
         // Per type: common + its blocks; 1123 stored fields over the 18 types.
@@ -785,15 +1039,21 @@ mod tests {
         assert_eq!(obj.prototype.prototype(), Some(1012));
         assert_eq!(obj.bitmap, vec![3, 0, 1]);
         assert_eq!(obj.art_id(), Some(ArtId(0x2000_1234)));
-        assert_eq!(obj.field("location"), Some(&Value::Int64(Some((5 << 32) | 7))));
+        assert_eq!(
+            obj.field("location"),
+            Some(&Value::Int64(Some((5 << 32) | 7)))
+        );
         assert_eq!(obj.int("wall_flags"), Some(0x40));
         assert_eq!(obj.fields.len(), 3);
         // The builder writes the same bytes.
-        let built = ObjectBuilder { prototype: prototype_id(1012), ..ObjectBuilder::new(TYPE_WALL) }
-            .field("wall_flags", Value::Int32(0x40))
-            .field("current_aid", Value::Int32(0x2000_1234))
-            .field("location", Value::Int64(Some((5 << 32) | 7)))
-            .build();
+        let built = ObjectBuilder {
+            prototype: prototype_id(1012),
+            ..ObjectBuilder::new(TYPE_WALL)
+        }
+        .field("wall_flags", Value::Int32(0x40))
+        .field("current_aid", Value::Int32(0x2000_1234))
+        .field("location", Value::Int64(Some((5 << 32) | 7)))
+        .build();
         assert_eq!(built, b);
     }
 
@@ -804,7 +1064,12 @@ mod tests {
             Storage::Int64 => Value::Int64(Some(i64::from(seed) << 33)),
             Storage::ObjectRef => Value::ObjectRef(Some(prototype_id(seed as u32))),
             Storage::String => Value::String(Some(format!("s{seed}"))),
-            Storage::Array => Value::Array(Some(Array { elem_size: 24, id: seed as u32, data: vec![seed as u8; 48], bitset: vec![3] })),
+            Storage::Array => Value::Array(Some(Array {
+                elem_size: 24,
+                id: seed as u32,
+                data: vec![seed as u8; 48],
+                bitset: vec![3],
+            })),
         }
     }
 
@@ -818,7 +1083,13 @@ mod tests {
                 chosen.push(*bits.iter().find(|(_, d)| d.id == def.id).unwrap());
             }
         }
-        for kind in [Storage::Int32, Storage::Int64, Storage::ObjectRef, Storage::String, Storage::Array] {
+        for kind in [
+            Storage::Int32,
+            Storage::Int64,
+            Storage::ObjectRef,
+            Storage::String,
+            Storage::Array,
+        ] {
             if let Some(f) = bits.iter().find(|(_, d)| d.storage == kind) {
                 chosen.push(*f);
             }
@@ -829,10 +1100,18 @@ mod tests {
         for (bit, def) in &chosen {
             builder = builder.field(def.name, sample(def.storage, *bit as i32 + 1));
         }
-        let obj = Object::parse_instance(&builder.build()).unwrap_or_else(|e| panic!("type {object_type}: {e}"));
+        let obj = Object::parse_instance(&builder.build())
+            .unwrap_or_else(|e| panic!("type {object_type}: {e}"));
         assert_eq!(obj.bitmap.len(), bitmap_words(object_type).unwrap());
-        let got: Vec<_> = obj.fields.iter().map(|(d, v)| (d.name, v.clone())).collect();
-        let want: Vec<_> = chosen.iter().map(|(bit, d)| (d.name, sample(d.storage, *bit as i32 + 1))).collect();
+        let got: Vec<_> = obj
+            .fields
+            .iter()
+            .map(|(d, v)| (d.name, v.clone()))
+            .collect();
+        let want: Vec<_> = chosen
+            .iter()
+            .map(|(bit, d)| (d.name, sample(d.storage, *bit as i32 + 1)))
+            .collect();
         assert_eq!(got, want, "type {object_type}");
     }
 
@@ -849,19 +1128,30 @@ mod tests {
         round_trip(TYPE_PROJECTILE);
         let obj = Object::parse_instance(
             &ObjectBuilder::new(TYPE_PROJECTILE)
-                .field("projectile_parent_weapon", Value::ObjectRef(Some(prototype_id(4000))))
+                .field(
+                    "projectile_parent_weapon",
+                    Value::ObjectRef(Some(prototype_id(4000))),
+                )
                 .field("projectile_flags_combat", Value::Int32(9))
                 .build(),
         )
         .unwrap();
-        assert_eq!(obj.field("projectile_parent_weapon"), Some(&Value::ObjectRef(Some(prototype_id(4000)))));
+        assert_eq!(
+            obj.field("projectile_parent_weapon"),
+            Some(&Value::ObjectRef(Some(prototype_id(4000))))
+        );
         assert_eq!(obj.int("projectile_flags_combat"), Some(9));
     }
 
     #[test]
     fn parse_prefix_reports_consumed_bytes() {
-        let first = ObjectBuilder::new(TYPE_SCENERY).field("current_aid", Value::Int32(77)).field("scenery_flags", Value::Int32(1)).build();
-        let second = ObjectBuilder::new(TYPE_TRAP).field("trap_flags", Value::Int32(2)).build();
+        let first = ObjectBuilder::new(TYPE_SCENERY)
+            .field("current_aid", Value::Int32(77))
+            .field("scenery_flags", Value::Int32(1))
+            .build();
+        let second = ObjectBuilder::new(TYPE_TRAP)
+            .field("trap_flags", Value::Int32(2))
+            .build();
         let both = [first.clone(), second.clone()].concat();
         let (a, used) = Object::parse_instance_prefix(&both).unwrap();
         assert_eq!(used, first.len());
@@ -870,22 +1160,42 @@ mod tests {
         assert_eq!((b.object_type, used2), (TYPE_TRAP, second.len()));
         assert_eq!(b.art_id(), None);
         // parse_instance insists on the exact length.
-        assert_eq!(Object::parse_instance(&both), Err(ObjectError::TrailingBytes { offset: first.len(), total: both.len() }));
+        assert_eq!(
+            Object::parse_instance(&both),
+            Err(ObjectError::TrailingBytes {
+                offset: first.len(),
+                total: both.len()
+            })
+        );
     }
 
     #[test]
     fn unknown_type_is_rejected() {
         let mut b = ObjectBuilder::new(TYPE_WALL).build();
         b[52..56].copy_from_slice(&99u32.to_le_bytes());
-        assert_eq!(Object::parse_instance(&b), Err(ObjectError::UnsupportedType(99)));
-        assert_eq!(Object::parse_instance_prefix(&b).map(|(_, n)| n), Err(ObjectError::UnsupportedType(99)));
+        assert_eq!(
+            Object::parse_instance(&b),
+            Err(ObjectError::UnsupportedType(99))
+        );
+        assert_eq!(
+            Object::parse_instance_prefix(&b).map(|(_, n)| n),
+            Err(ObjectError::UnsupportedType(99))
+        );
     }
 
     #[test]
     fn bits_past_the_last_field_are_rejected() {
         // Wall fields end at bit 68; bit 69 has no field.
-        let b = ObjectBuilder { extra_bits: vec![69], ..ObjectBuilder::new(TYPE_WALL) }.field("wall_flags", Value::Int32(1)).build();
-        assert_eq!(Object::parse_instance(&b), Err(ObjectError::UnknownBits { set: 2, known: 1 }));
+        let b = ObjectBuilder {
+            extra_bits: vec![69],
+            ..ObjectBuilder::new(TYPE_WALL)
+        }
+        .field("wall_flags", Value::Int32(1))
+        .build();
+        assert_eq!(
+            Object::parse_instance(&b),
+            Err(ObjectError::UnknownBits { set: 2, known: 1 })
+        );
     }
 
     #[test]
@@ -897,24 +1207,48 @@ mod tests {
         }
         let mut extra = good.clone();
         extra.push(0);
-        assert!(matches!(Object::parse_prototype(&extra), Err(ObjectError::TrailingBytes { .. })));
+        assert!(matches!(
+            Object::parse_prototype(&extra),
+            Err(ObjectError::TrailingBytes { .. })
+        ));
         let mut bad_version = good.clone();
         bad_version[0] = 0x76;
-        assert_eq!(Object::parse_prototype(&bad_version), Err(ObjectError::BadVersion(0x76)));
+        assert_eq!(
+            Object::parse_prototype(&bad_version),
+            Err(ObjectError::BadVersion(0x76))
+        );
         let mut unknown = good.clone();
         unknown[52] = 99;
-        assert_eq!(Object::parse_prototype(&unknown), Err(ObjectError::UnsupportedType(99)));
+        assert_eq!(
+            Object::parse_prototype(&unknown),
+            Err(ObjectError::UnsupportedType(99))
+        );
         let mut npc = good.clone();
         npc[52] = 16;
-        assert!(Object::parse_prototype(&npc).is_err(), "a PC's fields are not an NPC's");
+        assert!(
+            Object::parse_prototype(&npc).is_err(),
+            "a PC's fields are not an NPC's"
+        );
         // A presence byte that is not 0 or 1.
         let mut bad_flag = good.clone();
         let location = 76 + 4;
         bad_flag[location] = 7;
-        assert!(matches!(Object::parse_prototype(&bad_flag), Err(ObjectError::BadFlag { field: "location", .. })));
+        assert!(matches!(
+            Object::parse_prototype(&bad_flag),
+            Err(ObjectError::BadFlag {
+                field: "location",
+                ..
+            })
+        ));
         // A field count that disagrees with the bitmap.
         let mut inst = instance_bytes(&[0, 66]);
         inst[56] = 3;
-        assert_eq!(Object::parse_instance(&inst), Err(ObjectError::BadBitmap { declared: 3, set: 2 }));
+        assert_eq!(
+            Object::parse_instance(&inst),
+            Err(ObjectError::BadBitmap {
+                declared: 3,
+                set: 2
+            })
+        );
     }
 }

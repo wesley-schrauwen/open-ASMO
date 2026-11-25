@@ -27,12 +27,24 @@ pub const ART_BODY: [u32; 8] = [0, 1, 4, 0, 2, 2, 0, 3];
 pub fn pc_art(race: u8, male: bool) -> ArtId {
     let race = usize::from(race).min(ART_BODY.len() - 1);
     let male = male || !FEMALE_ALLOWED[race];
-    CritterArt { male, body: ART_BODY[race], rotation: 4, anim: ANIM_STAND, ..Default::default() }.id()
+    CritterArt {
+        male,
+        body: ART_BODY[race],
+        rotation: 4,
+        anim: ANIM_STAND,
+        ..Default::default()
+    }
+    .id()
 }
 
 /// `art` with another animation, frame 0.
 pub fn with_anim(art: ArtId, anim: u32) -> ArtId {
-    CritterArt { anim, frame: 0, ..CritterArt::from_id(art) }.id()
+    CritterArt {
+        anim,
+        frame: 0,
+        ..CritterArt::from_id(art)
+    }
+    .id()
 }
 
 /// The walk animation of `art`.
@@ -50,8 +62,16 @@ const SHORT_BODY_FPS: i32 = 4;
 pub fn walk_fps(speed: i32, body: u32) -> i32 {
     let [slow, normal, fast] = WALK_FPS;
     let s = speed.clamp(0, 30);
-    let fps = if s <= 8 { slow + (normal - slow) * s / 8 } else { normal + (fast - normal) * (s - 8) / 22 };
-    fps + if matches!(body, 1 | 2) { SHORT_BODY_FPS } else { 0 }
+    let fps = if s <= 8 {
+        slow + (normal - slow) * s / 8
+    } else {
+        normal + (fast - normal) * (s - 8) / 22
+    };
+    fps + if matches!(body, 1 | 2) {
+        SHORT_BODY_FPS
+    } else {
+        0
+    }
 }
 
 /// Milliseconds per frame (0x42ee90).
@@ -118,18 +138,26 @@ impl Gait {
             if frames.is_empty() {
                 continue;
             }
-            let (dx, dy) = frames.iter().fold((0i64, 0i64), |(x, y), f| (x + i64::from(f.delta_x), y + i64::from(f.delta_y)));
+            let (dx, dy) = frames.iter().fold((0i64, 0i64), |(x, y), f| {
+                (x + i64::from(f.delta_x), y + i64::from(f.delta_y))
+            });
             let per_frame = ((dx * dx + dy * dy) as f64).sqrt() / frames.len() as f64;
             if per_frame > 0.0 {
                 pixels_per_frame[rotation] = per_frame;
             }
         }
-        Self { frame_millis: frame_millis(fps), pixels_per_frame }
+        Self {
+            frame_millis: frame_millis(fps),
+            pixels_per_frame,
+        }
     }
 
     /// A human's gait at `fps`.
     pub fn human(fps: i32) -> Self {
-        Self { frame_millis: frame_millis(fps), pixels_per_frame: Self::HUMAN_PIXELS }
+        Self {
+            frame_millis: frame_millis(fps),
+            pixels_per_frame: Self::HUMAN_PIXELS,
+        }
     }
 
     /// The gait for a critter with art `art` and speed `speed`, reading its walk art through
@@ -152,7 +180,8 @@ impl Gait {
         // Frame time per rotation cannot differ; scale by the mean stride.
         let own: f64 = self.pixels_per_frame.iter().sum::<f64>() / 8.0;
         let theirs: f64 = pace.pixels_per_frame.iter().sum::<f64>() / 8.0;
-        out.frame_millis = ((f64::from(pace.frame_millis) * own / theirs).round() as u32).clamp(1, 800);
+        out.frame_millis =
+            ((f64::from(pace.frame_millis) * own / theirs).round() as u32).clamp(1, 800);
         out.pixels_per_frame = self.pixels_per_frame;
         // Keep the step time the pace's in every direction: ppf * 1000 / ms equal to the pace's.
         for r in 0..8 {
@@ -164,7 +193,9 @@ impl Gait {
 
     /// Seconds a step from `from` to its neighbour `to` takes (0 if they are not neighbours).
     pub fn step_seconds(&self, from: TileLoc, to: TileLoc) -> f64 {
-        let Some(rotation) = rotation_of_step(from, to) else { return 0.0 };
+        let Some(rotation) = rotation_of_step(from, to) else {
+            return 0.0;
+        };
         let frames = step_pixels(rotation) / self.pixels_per_frame[rotation];
         frames * f64::from(self.frame_millis) / 1000.0
     }
@@ -190,7 +221,10 @@ mod tests {
         assert_eq!(pc_art(0, false), ArtId(0x2000_2000), "human woman");
         assert_eq!(pc_art(2, false), ArtId(0x2400_2000), "elf woman");
         assert_eq!(pc_art(1, false), ArtId(0x2900_2000), "no dwarf women");
-        assert_eq!(CritterArt::from_id(walk_art(pc_art(0, true))).path(), "art/critter/hmm/hmmuwxab.art");
+        assert_eq!(
+            CritterArt::from_id(walk_art(pc_art(0, true))).path(),
+            "art/critter/hmm/hmmuwxab.art"
+        );
     }
 
     #[test]
@@ -210,9 +244,22 @@ mod tests {
     fn steps_face_their_screen_direction() {
         let at = t(100, 100);
         let to = |dx: i32, dy: i32| t((100 + dx) as u32, (100 + dy) as u32);
-        let order = [(-1, -1), (-1, 0), (-1, 1), (0, 1), (1, 1), (1, 0), (1, -1), (0, -1)];
+        let order = [
+            (-1, -1),
+            (-1, 0),
+            (-1, 1),
+            (0, 1),
+            (1, 1),
+            (1, 0),
+            (1, -1),
+            (0, -1),
+        ];
         for (rotation, (dx, dy)) in order.into_iter().enumerate() {
-            assert_eq!(rotation_of_step(at, to(dx, dy)), Some(rotation), "step ({dx}, {dy})");
+            assert_eq!(
+                rotation_of_step(at, to(dx, dy)),
+                Some(rotation),
+                "step ({dx}, {dy})"
+            );
         }
         assert_eq!(rotation_of_step(at, at), None);
         assert_eq!(rotation_of_step(at, to(2, 0)), None);
@@ -232,7 +279,9 @@ mod tests {
     fn the_gait_comes_from_the_walk_art() {
         use arcanum_formats::test_util::{ArtBuilder, TestFrame};
         // Every rotation moves (4, -4) in 2 frames.
-        let b = ArtBuilder::animated(2, |_, f| TestFrame::raw(1, 1, &[1]).with_offsets((0, 0), if f == 0 { (4, 0) } else { (0, -4) }));
+        let b = ArtBuilder::animated(2, |_, f| {
+            TestFrame::raw(1, 1, &[1]).with_offsets((0, 0), if f == 0 { (4, 0) } else { (0, -4) })
+        });
         let art = ArtFile::parse(&b.build()).unwrap();
         let g = Gait::from_art(&art, 10);
         assert_eq!(g.frame_millis, 100);
@@ -242,12 +291,26 @@ mod tests {
     #[test]
     fn a_paced_walk_takes_the_paces_time_with_its_own_frames() {
         let elf = Gait::human(25);
-        let dwarf = Gait { frame_millis: frame_millis(21), pixels_per_frame: Gait::HUMAN_PIXELS.map(|p| p * 0.6) };
+        let dwarf = Gait {
+            frame_millis: frame_millis(21),
+            pixels_per_frame: Gait::HUMAN_PIXELS.map(|p| p * 0.6),
+        };
         let paced = dwarf.paced(&elf);
-        for (from, to) in [(t(10, 10), t(9, 10)), (t(10, 10), t(9, 11)), (t(10, 10), t(11, 11))] {
-            assert!((paced.step_seconds(from, to) - elf.step_seconds(from, to)).abs() < 1e-9, "same time");
+        for (from, to) in [
+            (t(10, 10), t(9, 10)),
+            (t(10, 10), t(9, 11)),
+            (t(10, 10), t(11, 11)),
+        ] {
+            assert!(
+                (paced.step_seconds(from, to) - elf.step_seconds(from, to)).abs() < 1e-9,
+                "same time"
+            );
         }
-        assert!(paced.frame_millis < elf.frame_millis, "short strides play faster: {}", paced.frame_millis);
+        assert!(
+            paced.frame_millis < elf.frame_millis,
+            "short strides play faster: {}",
+            paced.frame_millis
+        );
         assert_eq!(party_speed(30), PARTY_MAX_SPEED);
         assert_eq!(party_speed(8), 8);
     }

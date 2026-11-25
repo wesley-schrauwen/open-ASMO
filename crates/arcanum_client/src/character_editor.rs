@@ -31,18 +31,21 @@ use bevy::ui_widgets::{Activate, ActivateOnPress, Button};
 use crate::art_loader::ArtFrames;
 use crate::audio::MenuSounds;
 use crate::character_host::CharacterHost;
-use crate::pc_sheet::SheetHost;
-use arcanum_sim::SheetRequest;
 use crate::create_character::CreationData;
-use arcanum_rules::{CharacterAction, Message, PRIMARY_STATS, Pool, RESISTANCES};
 use crate::editor_tabs::{EditorView, TabArt};
-use crate::message_box::{BoxHelp, BoxMessage, MessageBox};
 use crate::fonts::{ArcanumFonts, UiFont};
 use crate::loading::LoadRequest;
 use crate::main_menu::AppState;
-use crate::menu_window::{HelpMessage, HoverHelp, MenuWindowPlugin, SCREEN_WHITE, TOP_BAR_HEIGHT, WindowArt, at, rect, screen_root, spawn_frame};
+use crate::menu_window::{
+    HelpMessage, HoverHelp, MenuWindowPlugin, SCREEN_WHITE, TOP_BAR_HEIGHT, WindowArt, at, rect,
+    screen_root, spawn_frame,
+};
+use crate::message_box::{BoxHelp, BoxMessage, MessageBox};
+use crate::pc_sheet::SheetHost;
 use crate::resource_pack::paths::interface;
 use crate::widgets::FrameButton;
+use arcanum_rules::{CharacterAction, Message, PRIMARY_STATS, Pool, RESISTANCES};
+use arcanum_sim::SheetRequest;
 
 /// What a character editor button does.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,7 +195,6 @@ const STAT_HELP: [u32; PRIMARY_STATS] = [109, 111, 110, 112, 113, 115, 114, 116]
 const DERIVED_ROWS: [f32; 4] = [308.0, 326.0, 344.0, 362.0];
 const RESIST_ROWS: [f32; RESISTANCES] = [301.0, 317.0, 333.0, 349.0, 365.0];
 
-
 pub struct CharacterEditorPlugin;
 
 impl Plugin for CharacterEditorPlugin {
@@ -200,25 +202,50 @@ impl Plugin for CharacterEditorPlugin {
         if !app.is_plugin_added::<MenuWindowPlugin>() {
             app.add_plugins(MenuWindowPlugin);
         }
-        app.add_systems(Startup, |mut commands: Commands, assets: Res<AssetServer>| {
-            commands.insert_resource(EditorArt {
-                background: assets.load(interface::CHAR_MAINT),
-                plus: assets.load(interface::CHAR_PLUS),
-                minus: assets.load(interface::CHAR_MINUS),
-                tabs: TabArt::load(&assets),
-                needle: assets.load(interface::ALIGN_NEEDLE),
-                aptitude: assets.load(interface::APTITUDE_MARK),
-            });
-        })
-        .add_systems(OnEnter(AppState::CharacterEditor), (crate::create_character::load_creation_data, build_screen).chain())
-        .add_systems(Update, show_values.run_if(in_state(AppState::CharacterEditor)))
+        app.add_systems(
+            Startup,
+            |mut commands: Commands, assets: Res<AssetServer>| {
+                commands.insert_resource(EditorArt {
+                    background: assets.load(interface::CHAR_MAINT),
+                    plus: assets.load(interface::CHAR_PLUS),
+                    minus: assets.load(interface::CHAR_MINUS),
+                    tabs: TabArt::load(&assets),
+                    needle: assets.load(interface::ALIGN_NEEDLE),
+                    aptitude: assets.load(interface::APTITUDE_MARK),
+                });
+            },
+        )
+        .add_systems(
+            OnEnter(AppState::CharacterEditor),
+            (crate::create_character::load_creation_data, build_screen).chain(),
+        )
+        .add_systems(
+            Update,
+            show_values.run_if(in_state(AppState::CharacterEditor)),
+        )
         .init_resource::<CharacterPanel>()
         .init_resource::<EditorView>()
         .add_systems(Update, crate::editor_tabs::show_view)
-        .add_systems(OnEnter(AppState::InGame), crate::create_character::load_creation_data)
-        .add_systems(OnExit(AppState::InGame), |mut panel: ResMut<CharacterPanel>| *panel = CharacterPanel::default())
-        .add_systems(Update, (show_panel, show_panel_values).chain().run_if(in_state(AppState::InGame)))
-        .add_systems(PreUpdate, close_panel_on_escape.run_if(in_state(AppState::InGame)).after(bevy::input::InputSystems))
+        .add_systems(
+            OnEnter(AppState::InGame),
+            crate::create_character::load_creation_data,
+        )
+        .add_systems(
+            OnExit(AppState::InGame),
+            |mut panel: ResMut<CharacterPanel>| *panel = CharacterPanel::default(),
+        )
+        .add_systems(
+            Update,
+            (show_panel, show_panel_values)
+                .chain()
+                .run_if(in_state(AppState::InGame)),
+        )
+        .add_systems(
+            PreUpdate,
+            close_panel_on_escape
+                .run_if(in_state(AppState::InGame))
+                .after(bevy::input::InputSystems),
+        )
         .add_systems(Update, place_needles)
         .add_observer(on_activate)
         .add_observer(on_hud_button);
@@ -226,13 +253,30 @@ impl Plugin for CharacterEditorPlugin {
 }
 
 fn button(action: EditorAction, frames: &Handle<ArtFrames>, x: f32, y: f32) -> impl Bundle {
-    (action, Button, ActivateOnPress, Hovered::default(), FrameButton::arrow(frames.clone()), ImageNode::default(), at(win(x, y, BUTTON, BUTTON)))
+    (
+        action,
+        Button,
+        ActivateOnPress,
+        Hovered::default(),
+        FrameButton::arrow(frames.clone()),
+        ImageNode::default(),
+        at(win(x, y, BUTTON, BUTTON)),
+    )
 }
 
-fn build_screen(mut commands: Commands, art: Res<EditorArt>, frame: Res<WindowArt>, fonts: Option<Res<ArcanumFonts>>) {
+fn build_screen(
+    mut commands: Commands,
+    art: Res<EditorArt>,
+    frame: Res<WindowArt>,
+    fonts: Option<Res<ArcanumFonts>>,
+) {
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
     commands
-        .spawn((CharacterEditorScreen, DespawnOnExit(AppState::CharacterEditor), screen_root()))
+        .spawn((
+            CharacterEditorScreen,
+            DespawnOnExit(AppState::CharacterEditor),
+            screen_root(),
+        ))
         .with_children(|screen| {
             spawn_frame(
                 screen,
@@ -249,36 +293,78 @@ fn build_screen(mut commands: Commands, art: Res<EditorArt>, frame: Res<WindowAr
 /// The hover areas, then the +/- buttons of the stats and pools.
 fn spawn_buttons(screen: &mut ChildSpawnerCommands, art: &EditorArt) {
     for (id, [x, y, w, h]) in HELP_RECTS {
-        screen.spawn(crate::message_box::help_area(BoxHelp::Editor(id), win(x, y, w, h)));
+        screen.spawn(crate::message_box::help_area(
+            BoxHelp::Editor(id),
+            win(x, y, w, h),
+        ));
     }
     let stat_help = |stat: usize| BoxHelp::Editor(STAT_HELP[stat]);
     for (i, &y) in STAT_ROWS.iter().enumerate() {
         let by = y + 2.0;
         let (left, right) = (LEFT_STATS[i], RIGHT_STATS[i]);
-        screen.spawn((stat_help(left), button(EditorAction::Stat(left, -1), &art.minus, 170.0, by)));
-        screen.spawn((stat_help(left), button(EditorAction::Stat(left, 1), &art.plus, 224.0, by)));
-        screen.spawn((stat_help(right), button(EditorAction::Stat(right, -1), &art.minus, 313.0, by)));
-        screen.spawn((stat_help(right), button(EditorAction::Stat(right, 1), &art.plus, 367.0, by)));
+        screen.spawn((
+            stat_help(left),
+            button(EditorAction::Stat(left, -1), &art.minus, 170.0, by),
+        ));
+        screen.spawn((
+            stat_help(left),
+            button(EditorAction::Stat(left, 1), &art.plus, 224.0, by),
+        ));
+        screen.spawn((
+            stat_help(right),
+            button(EditorAction::Stat(right, -1), &art.minus, 313.0, by),
+        ));
+        screen.spawn((
+            stat_help(right),
+            button(EditorAction::Stat(right, 1), &art.plus, 367.0, by),
+        ));
     }
-    screen.spawn((BoxHelp::Editor(106), button(EditorAction::HitPoints(-1), &art.minus, 409.0, 144.0)));
-    screen.spawn((BoxHelp::Editor(106), button(EditorAction::HitPoints(1), &art.plus, 465.0, 144.0)));
-    screen.spawn((BoxHelp::Editor(107), button(EditorAction::Fatigue(-1), &art.minus, 409.0, 214.0)));
-    screen.spawn((BoxHelp::Editor(107), button(EditorAction::Fatigue(1), &art.plus, 465.0, 214.0)));
+    screen.spawn((
+        BoxHelp::Editor(106),
+        button(EditorAction::HitPoints(-1), &art.minus, 409.0, 144.0),
+    ));
+    screen.spawn((
+        BoxHelp::Editor(106),
+        button(EditorAction::HitPoints(1), &art.plus, 465.0, 144.0),
+    ));
+    screen.spawn((
+        BoxHelp::Editor(107),
+        button(EditorAction::Fatigue(-1), &art.minus, 409.0, 214.0),
+    ));
+    screen.spawn((
+        BoxHelp::Editor(107),
+        button(EditorAction::Fatigue(1), &art.plus, 465.0, 214.0),
+    ));
     crate::editor_tabs::spawn_tabs(screen, &art.tabs);
 }
 
 /// Puts the alignment needle's frame at the dial's pivot once `align.art` is loaded.
-fn place_needles(frames: Res<Assets<ArtFrames>>, art: Option<Res<EditorArt>>, mut needles: Query<(&AlignmentNeedle, &mut ImageNode, &mut Node)>) {
-    let Some(set) = art.and_then(|a| frames.get(&a.needle)) else { return };
+fn place_needles(
+    frames: Res<Assets<ArtFrames>>,
+    art: Option<Res<EditorArt>>,
+    mut needles: Query<(&AlignmentNeedle, &mut ImageNode, &mut Node)>,
+) {
+    let Some(set) = art.and_then(|a| frames.get(&a.needle)) else {
+        return;
+    };
     for (needle, mut image, mut node) in &mut needles {
-        let Some((frame, center, size)) = set.rotations.first().and_then(|r| r.frame(needle.0)) else { continue };
+        let Some((frame, center, size)) = set.rotations.first().and_then(|r| r.frame(needle.0))
+        else {
+            continue;
+        };
         if image.image == *frame {
             continue;
         }
         image.image = frame.clone();
-        let place = win(NEEDLE_PIVOT.x - center.x as f32, NEEDLE_PIVOT.y - center.y as f32, size.x as f32, size.y as f32);
+        let place = win(
+            NEEDLE_PIVOT.x - center.x as f32,
+            NEEDLE_PIVOT.y - center.y as f32,
+            size.x as f32,
+            size.y as f32,
+        );
         let placed = at(place);
-        (node.left, node.top, node.width, node.height) = (placed.left, placed.top, placed.width, placed.height);
+        (node.left, node.top, node.width, node.height) =
+            (placed.left, placed.top, placed.width, placed.height);
     }
 }
 
@@ -334,7 +420,13 @@ fn show_panel(
             },
         ))
         .with_children(|screen| {
-            screen.spawn((ImageNode::new(art.background.clone()), at(rect(Vec2::new(0.0, TOP_BAR_HEIGHT), Vec2::new(800.0, 400.0)))));
+            screen.spawn((
+                ImageNode::new(art.background.clone()),
+                at(rect(
+                    Vec2::new(0.0, TOP_BAR_HEIGHT),
+                    Vec2::new(800.0, 400.0),
+                )),
+            ));
             spawn_buttons(screen, &art);
         });
 }
@@ -349,9 +441,16 @@ fn show_panel_values(
     contents: Query<Entity, With<EditorContent>>,
     roots: Query<Entity, With<CharacterPanelScreen>>,
     fonts: Option<Res<ArcanumFonts>>,
-    (art, view, mut drawn, assets): (Res<EditorArt>, Res<EditorView>, Local<Option<arcanum_rules::CharacterSheet>>, Res<AssetServer>),
+    (art, view, mut drawn, assets): (
+        Res<EditorArt>,
+        Res<EditorView>,
+        Local<Option<arcanum_rules::CharacterSheet>>,
+        Res<AssetServer>,
+    ),
 ) {
-    let (Some(data), Ok(root), Some(c)) = (data, roots.single(), sheet.sheet()) else { return };
+    let (Some(data), Ok(root), Some(c)) = (data, roots.single(), sheet.sheet()) else {
+        return;
+    };
     // The bridge takes the outgoing requests every frame, so the resource always looks changed:
     // compare the sheet itself.
     if drawn.as_ref() == Some(c) && !view.is_changed() && added.is_empty() {
@@ -366,14 +465,21 @@ fn show_panel_values(
 }
 
 /// Escape closes the in-game character screen (before it would leave the game).
-fn close_panel_on_escape(mut keys: ResMut<ButtonInput<KeyCode>>, mut panel: ResMut<CharacterPanel>) {
+fn close_panel_on_escape(
+    mut keys: ResMut<ButtonInput<KeyCode>>,
+    mut panel: ResMut<CharacterPanel>,
+) {
     if panel.open && keys.clear_just_pressed(KeyCode::Escape) {
         panel.open = false;
     }
 }
 
 /// The top bar's character button toggles the screen.
-fn on_hud_button(activate: On<Activate>, buttons: Query<&crate::hud::HudAction>, mut panel: ResMut<CharacterPanel>) {
+fn on_hud_button(
+    activate: On<Activate>,
+    buttons: Query<&crate::hud::HudAction>,
+    mut panel: ResMut<CharacterPanel>,
+) {
     if buttons.get(activate.entity) == Ok(&crate::hud::HudAction::Character) {
         panel.open = !panel.open;
     }
@@ -400,80 +506,259 @@ fn show_values(
         commands.entity(old).despawn();
     }
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-    draw_values(&mut commands, root, host.sheet(), &data, &fonts, &art, *view, &assets);
+    draw_values(
+        &mut commands,
+        root,
+        host.sheet(),
+        &data,
+        &fonts,
+        &art,
+        *view,
+        &assets,
+    );
 }
 
 /// Spawns every value of `c` under `root` (an 800x600 screen).
 #[allow(clippy::too_many_arguments)]
-fn draw_values(commands: &mut Commands, root: Entity, c: &arcanum_rules::CharacterSheet, data: &CreationData, fonts: &ArcanumFonts, art: &EditorArt, view: EditorView, assets: &AssetServer) {
+fn draw_values(
+    commands: &mut Commands,
+    root: Entity,
+    c: &arcanum_rules::CharacterSheet,
+    data: &CreationData,
+    fonts: &ArcanumFonts,
+    art: &EditorArt,
+    view: EditorView,
+    assets: &AssetServer,
+) {
     let rules = &data.rules;
     let label = |id: u32, fallback: &str| data.charedit.get(id).unwrap_or(fallback).to_string();
     let stat_name = |id: u32| data.stats.get(id).unwrap_or("?").to_string();
     let stats = rules.stats(c);
     let derived = rules.derived(c);
     let resist = rules.resistances(c);
-    let race = data.menu.get(720 + u32::from(c.race)).unwrap_or("").to_string();
-    let gender = data.menu.get(740 + u32::from(c.gender)).unwrap_or("").to_string();
+    let race = data
+        .menu
+        .get(720 + u32::from(c.race))
+        .unwrap_or("")
+        .to_string();
+    let gender = data
+        .menu
+        .get(740 + u32::from(c.gender))
+        .unwrap_or("")
+        .to_string();
 
     let content = commands
         .spawn((
             EditorContent,
             bevy::picking::Pickable::IGNORE,
-            Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                ..default()
+            },
         ))
         .with_children(|p| {
-            let mut put = |r: Rect, text: &str, which: EditorText, font: UiFont, colour: Color, centre: bool| {
-                let justify = if centre { JustifyContent::Center } else { JustifyContent::FlexStart };
-                p.spawn((bevy::picking::Pickable::IGNORE, Node { justify_content: justify, align_items: AlignItems::Center, ..at(r) })).with_children(|cell| {
-                    let mut t = cell.spawn((which, bevy::picking::Pickable::IGNORE, TextColor(colour)));
+            let mut put = |r: Rect,
+                           text: &str,
+                           which: EditorText,
+                           font: UiFont,
+                           colour: Color,
+                           centre: bool| {
+                let justify = if centre {
+                    JustifyContent::Center
+                } else {
+                    JustifyContent::FlexStart
+                };
+                p.spawn((
+                    bevy::picking::Pickable::IGNORE,
+                    Node {
+                        justify_content: justify,
+                        align_items: AlignItems::Center,
+                        ..at(r)
+                    },
+                ))
+                .with_children(|cell| {
+                    let mut t =
+                        cell.spawn((which, bevy::picking::Pickable::IGNORE, TextColor(colour)));
                     fonts.insert_text(&mut t, text, font);
                 });
             };
             // Info panel.
-            put(win(212.0, 15.0, 240.0, 19.0), &c.name, EditorText::Name, UiFont::Small, NAME_COLOR, false);
-            put(win(212.0, 34.0, 120.0, 19.0), &format!("{}: {}", label(1, "Level"), c.level), EditorText::Level, UiFont::Small, SCREEN_WHITE, false);
-            put(win(212.0, 53.0, 120.0, 19.0), &format!("{}: {}", label(0, "Points"), rules.unspent(c)), EditorText::Points, UiFont::Small, SCREEN_WHITE, false);
+            put(
+                win(212.0, 15.0, 240.0, 19.0),
+                &c.name,
+                EditorText::Name,
+                UiFont::Small,
+                NAME_COLOR,
+                false,
+            );
+            put(
+                win(212.0, 34.0, 120.0, 19.0),
+                &format!("{}: {}", label(1, "Level"), c.level),
+                EditorText::Level,
+                UiFont::Small,
+                SCREEN_WHITE,
+                false,
+            );
+            put(
+                win(212.0, 53.0, 120.0, 19.0),
+                &format!("{}: {}", label(0, "Points"), rules.unspent(c)),
+                EditorText::Points,
+                UiFont::Small,
+                SCREEN_WHITE,
+                false,
+            );
             // The experience still needed (0x55b510 → 0x4a68b0).
-            put(win(212.0, 72.0, 120.0, 19.0), &format!("{}: {}", label(2, "XP Next"), rules.xp_to_next(c)), EditorText::XpNext, UiFont::Small, SCREEN_WHITE, false);
-            put(win(337.0, 34.0, 130.0, 19.0), &format!("{}: {race}", label(4, "Race")), EditorText::Race, UiFont::Small, SCREEN_WHITE, false);
-            put(win(337.0, 53.0, 130.0, 19.0), &format!("{}: {gender}", label(5, "Gender")), EditorText::Gender, UiFont::Small, SCREEN_WHITE, false);
-            put(win(337.0, 72.0, 130.0, 19.0), &format!("{}: 20", label(6, "Age")), EditorText::Age, UiFont::Small, SCREEN_WHITE, false);
+            put(
+                win(212.0, 72.0, 120.0, 19.0),
+                &format!("{}: {}", label(2, "XP Next"), rules.xp_to_next(c)),
+                EditorText::XpNext,
+                UiFont::Small,
+                SCREEN_WHITE,
+                false,
+            );
+            put(
+                win(337.0, 34.0, 130.0, 19.0),
+                &format!("{}: {race}", label(4, "Race")),
+                EditorText::Race,
+                UiFont::Small,
+                SCREEN_WHITE,
+                false,
+            );
+            put(
+                win(337.0, 53.0, 130.0, 19.0),
+                &format!("{}: {gender}", label(5, "Gender")),
+                EditorText::Gender,
+                UiFont::Small,
+                SCREEN_WHITE,
+                false,
+            );
+            put(
+                win(337.0, 72.0, 130.0, 19.0),
+                &format!("{}: 20", label(6, "Age")),
+                EditorText::Age,
+                UiFont::Small,
+                SCREEN_WHITE,
+                false,
+            );
             // Primary stats.
             for (i, &y) in STAT_ROWS.iter().enumerate() {
                 for (x, stat) in [(211.0, LEFT_STATS[i]), (350.0, RIGHT_STATS[i])] {
-                    let colour = if c.draft.stats[stat] > 0 { RAISED } else { SCREEN_WHITE };
-                    put(centred_on(x, y, 40.0, 19.0), &stats[stat].to_string(), EditorText::Stat(stat), UiFont::Small, colour, true);
+                    let colour = if c.draft.stats[stat] > 0 {
+                        RAISED
+                    } else {
+                        SCREEN_WHITE
+                    };
+                    put(
+                        centred_on(x, y, 40.0, 19.0),
+                        &stats[stat].to_string(),
+                        EditorText::Stat(stat),
+                        UiFont::Small,
+                        colour,
+                        true,
+                    );
                 }
             }
             let pool_colour = |bought: i32| if bought > 0 { RAISED } else { SCREEN_WHITE };
-            put(centred_on(447.0, 143.0, 40.0, 19.0), &derived.hit_points.to_string(), EditorText::HitPoints, UiFont::Small, pool_colour(c.draft.hit_points), true);
-            put(centred_on(447.0, 213.0, 40.0, 19.0), &derived.fatigue.to_string(), EditorText::Fatigue, UiFont::Small, pool_colour(c.draft.fatigue), true);
+            put(
+                centred_on(447.0, 143.0, 40.0, 19.0),
+                &derived.hit_points.to_string(),
+                EditorText::HitPoints,
+                UiFont::Small,
+                pool_colour(c.draft.hit_points),
+                true,
+            );
+            put(
+                centred_on(447.0, 213.0, 40.0, 19.0),
+                &derived.fatigue.to_string(),
+                EditorText::Fatigue,
+                UiFont::Small,
+                pool_colour(c.draft.fatigue),
+                true,
+            );
             // Derived stats and resistances.
-            put(win(51.0, 282.0, 253.0, 18.0), &label(7, "Derived Stats"), EditorText::Derived(99), UiFont::Small, SCREEN_WHITE, true);
+            put(
+                win(51.0, 282.0, 253.0, 18.0),
+                &label(7, "Derived Stats"),
+                EditorText::Derived(99),
+                UiFont::Small,
+                SCREEN_WHITE,
+                true,
+            );
             let values = derived.by_stat_id();
             for (i, &y) in DERIVED_ROWS.iter().enumerate() {
                 for (x, slot) in [(49.0, i), (178.0, i + 4)] {
                     let text = format!("{}: {}", stat_name(8 + slot as u32), values[slot]);
-                    put(win(x, y, 125.0, 14.0), &text, EditorText::Derived(slot), UiFont::Body, SCREEN_WHITE, false);
+                    put(
+                        win(x, y, 125.0, 14.0),
+                        &text,
+                        EditorText::Derived(slot),
+                        UiFont::Body,
+                        SCREEN_WHITE,
+                        false,
+                    );
                 }
             }
-            put(win(315.0, 282.0, 136.0, 18.0), &label(8, "Resistance"), EditorText::Resist(99), UiFont::Small, SCREEN_WHITE, true);
+            put(
+                win(315.0, 282.0, 136.0, 18.0),
+                &label(8, "Resistance"),
+                EditorText::Resist(99),
+                UiFont::Small,
+                SCREEN_WHITE,
+                true,
+            );
             for (i, &y) in RESIST_ROWS.iter().enumerate() {
                 let text = format!("{}: {}", label(12 + i as u32, "?"), resist[i]);
-                put(win(322.0, y, 105.0, 14.0), &text, EditorText::Resist(i), UiFont::Body, SCREEN_WHITE, false);
+                put(
+                    win(322.0, y, 105.0, 14.0),
+                    &text,
+                    EditorText::Resist(i),
+                    UiFont::Body,
+                    SCREEN_WHITE,
+                    false,
+                );
             }
             // The alignment dial and its number, the aptitude bar and its number (0x55ec90).
             let alignment = rules.alignment(c);
-            put(win(43.0, 198.0, 28.0, 17.0), &(alignment / 10).to_string(), EditorText::Alignment, UiFont::Body, SCREEN_WHITE, true);
+            put(
+                win(43.0, 198.0, 28.0, 17.0),
+                &(alignment / 10).to_string(),
+                EditorText::Alignment,
+                UiFont::Body,
+                SCREEN_WHITE,
+                true,
+            );
             let aptitude = rules.aptitude(c);
             let number_y = if aptitude >= 0 { 66.0 } else { 365.0 };
-            put(win(752.0, number_y, 30.0, 16.0), &aptitude.abs().to_string(), EditorText::Aptitude, UiFont::Body, SCREEN_WHITE, true);
-            p.spawn((bevy::picking::Pickable::IGNORE, AlignmentNeedle(needle_frame(alignment)), ImageNode::default(), at(win(0.0, 0.0, 0.0, 0.0))));
+            put(
+                win(752.0, number_y, 30.0, 16.0),
+                &aptitude.abs().to_string(),
+                EditorText::Aptitude,
+                UiFont::Body,
+                SCREEN_WHITE,
+                true,
+            );
+            p.spawn((
+                bevy::picking::Pickable::IGNORE,
+                AlignmentNeedle(needle_frame(alignment)),
+                ImageNode::default(),
+                at(win(0.0, 0.0, 0.0, 0.0)),
+            ));
             let top = aptitude_top(aptitude);
-            p.spawn((bevy::picking::Pickable::IGNORE, AptitudeMark(top), ImageNode::new(art.aptitude.clone()), at(win(775.0, top as f32, 14.0, 6.0))));
+            p.spawn((
+                bevy::picking::Pickable::IGNORE,
+                AptitudeMark(top),
+                ImageNode::new(art.aptitude.clone()),
+                at(win(775.0, top as f32, 14.0, 6.0)),
+            ));
             // The portrait (64x64, `portrait/<stem>.bmp`; 0x4ce470).
             if let Some(stem) = rules.portrait(c) {
-                p.spawn((bevy::picking::Pickable::IGNORE, ImageNode::new(assets.load(format!("portrait/{stem}.bmp"))), at(win(142.0, 22.0, 64.0, 64.0))));
+                p.spawn((
+                    bevy::picking::Pickable::IGNORE,
+                    ImageNode::new(assets.load(format!("portrait/{stem}.bmp"))),
+                    at(win(142.0, 22.0, 64.0, 64.0)),
+                ));
             }
             crate::editor_tabs::draw_tab(p, c, data, fonts, &art.tabs, view);
         })
@@ -492,9 +777,16 @@ fn on_activate(
     mut message: ResMut<HelpMessage>,
     sounds: Option<Res<MenuSounds>>,
     state: Res<State<AppState>>,
-    (mut sheet, mut view, boxed, time): (ResMut<SheetHost>, ResMut<EditorView>, Option<ResMut<MessageBox>>, Option<Res<Time<Real>>>),
+    (mut sheet, mut view, boxed, time): (
+        ResMut<SheetHost>,
+        ResMut<EditorView>,
+        Option<ResMut<MessageBox>>,
+        Option<Res<Time<Real>>>,
+    ),
 ) {
-    let Ok(&action) = actions.get(activate.entity) else { return };
+    let Ok(&action) = actions.get(activate.entity) else {
+        return;
+    };
     if let Some(sounds) = &sounds {
         sounds.play_button_press(&mut commands);
     }
@@ -502,7 +794,11 @@ fn on_activate(
     let change = |d: i32, raise, lower| if d > 0 { raise } else { lower };
     if *state.get() == AppState::InGame {
         let request = match action {
-            EditorAction::Stat(i, d) if i < PRIMARY_STATS => change(d, CharacterAction::RaiseStat(i), CharacterAction::LowerStat(i)),
+            EditorAction::Stat(i, d) if i < PRIMARY_STATS => change(
+                d,
+                CharacterAction::RaiseStat(i),
+                CharacterAction::LowerStat(i),
+            ),
             EditorAction::HitPoints(d) => CharacterAction::AdjustPool(Pool::HitPoints, d),
             EditorAction::Fatigue(d) => CharacterAction::AdjustPool(Pool::Fatigue, d),
             EditorAction::Back | EditorAction::Next | EditorAction::Stat(..) => return,
@@ -512,8 +808,13 @@ fn on_activate(
             },
         };
         // A refusal goes to the bottom bar's message box (kind 4, 0x55f160).
-        if let (Err(e), Some(mut boxed)) = (sheet.request(&rules, SheetRequest::Action(request)), boxed) {
-            boxed.post(BoxMessage::plain(refusal_text(e, data.as_deref())), time.map_or(0.0, |t| t.elapsed_secs_f64()));
+        if let (Err(e), Some(mut boxed)) =
+            (sheet.request(&rules, SheetRequest::Action(request)), boxed)
+        {
+            boxed.post(
+                BoxMessage::plain(refusal_text(e, data.as_deref())),
+                time.map_or(0.0, |t| t.elapsed_secs_f64()),
+            );
         }
         return;
     }
@@ -526,12 +827,21 @@ fn on_activate(
             commands.insert_resource(LoadRequest::new(AppState::InGame).after_world_boots());
             next_state.set(AppState::Loading);
         }),
-        EditorAction::Stat(i, d) if i < PRIMARY_STATS => {
-            host.apply(&rules, if d > 0 { CharacterAction::RaiseStat(i) } else { CharacterAction::LowerStat(i) })
-        }
+        EditorAction::Stat(i, d) if i < PRIMARY_STATS => host.apply(
+            &rules,
+            if d > 0 {
+                CharacterAction::RaiseStat(i)
+            } else {
+                CharacterAction::LowerStat(i)
+            },
+        ),
         EditorAction::Stat(..) => Ok(()),
-        EditorAction::HitPoints(d) => host.apply(&rules, CharacterAction::AdjustPool(Pool::HitPoints, d)),
-        EditorAction::Fatigue(d) => host.apply(&rules, CharacterAction::AdjustPool(Pool::Fatigue, d)),
+        EditorAction::HitPoints(d) => {
+            host.apply(&rules, CharacterAction::AdjustPool(Pool::HitPoints, d))
+        }
+        EditorAction::Fatigue(d) => {
+            host.apply(&rules, CharacterAction::AdjustPool(Pool::Fatigue, d))
+        }
         tab => match crate::editor_tabs::tab_change(&mut view, tab) {
             Some(change) => host.apply(&rules, change),
             None => Ok(()),
@@ -556,8 +866,15 @@ mod tests {
 
     #[test]
     fn the_dial_and_the_bar_follow_the_original_formulas() {
-        assert_eq!([-1000, -150, -99, 0, 99, 150, 1000].map(needle_frame), [0, 9, 10, 10, 10, 11, 20], "v / 10 / 10 + 10, rounded towards zero");
-        assert_eq!([100, 50, 0, -1, -100].map(aptitude_top), [93, 157, 221, 222, 349]);
+        assert_eq!(
+            [-1000, -150, -99, 0, 99, 150, 1000].map(needle_frame),
+            [0, 9, 10, 10, 10, 11, 20],
+            "v / 10 / 10 + 10, rounded towards zero"
+        );
+        assert_eq!(
+            [100, 50, 0, -1, -100].map(aptitude_top),
+            [93, 157, 221, 222, 349]
+        );
     }
 
     #[test]

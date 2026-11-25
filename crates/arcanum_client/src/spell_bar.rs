@@ -31,7 +31,10 @@ use crate::message_box::MessageBoxRoot;
 use crate::resource_pack::paths::interface;
 
 /// The college buttons' x (0x5c6618), at [`COLLEGE_Y`].
-pub const COLLEGE_X: [f32; COLLEGES] = [201.0, 226.0, 251.0, 276.0, 301.0, 326.0, 351.0, 376.0, 400.0, 425.0, 450.0, 475.0, 500.0, 525.0, 550.0, 575.0];
+pub const COLLEGE_X: [f32; COLLEGES] = [
+    201.0, 226.0, 251.0, 276.0, 301.0, 326.0, 351.0, 376.0, 400.0, 425.0, 450.0, 475.0, 500.0,
+    525.0, 550.0, 575.0,
+];
 pub const COLLEGE_Y: f32 = 497.0;
 /// The college buttons' size.
 pub const COLLEGE_SIZE: f32 = 24.0;
@@ -62,11 +65,19 @@ impl Plugin for SpellBarPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<BarView>()
             .init_resource::<SpellDrag>()
-            .add_systems(OnExit(AppState::InGame), |mut view: ResMut<BarView>, mut drag: ResMut<SpellDrag>| {
-                *view = BarView::default();
-                *drag = SpellDrag::default();
-            })
-            .add_systems(Update, (close_above_the_bar, click_view, show_view, show_drag).chain().run_if(in_state(AppState::InGame)))
+            .add_systems(
+                OnExit(AppState::InGame),
+                |mut view: ResMut<BarView>, mut drag: ResMut<SpellDrag>| {
+                    *view = BarView::default();
+                    *drag = SpellDrag::default();
+                },
+            )
+            .add_systems(
+                Update,
+                (close_above_the_bar, click_view, show_view, show_drag)
+                    .chain()
+                    .run_if(in_state(AppState::InGame)),
+            )
             .add_observer(on_spells_button);
     }
 }
@@ -74,7 +85,11 @@ impl Plugin for SpellBarPlugin {
 /// A spell's icon (`s_<college>n.art`, 0x4b1570).
 pub fn spell_icon(spell: usize) -> String {
     let stem = crate::editor_tabs::COLLEGE_STEMS[(spell / SPELLS_PER_COLLEGE).min(COLLEGES - 1)];
-    format!("{}/s_{stem}{}.art", interface::DIR, spell % SPELLS_PER_COLLEGE + 1)
+    format!(
+        "{}/s_{stem}{}.art",
+        interface::DIR,
+        spell % SPELLS_PER_COLLEGE + 1
+    )
 }
 
 /// The spell being dragged out of the view, if any.
@@ -87,32 +102,54 @@ pub struct DraggedSpell;
 
 /// The spells known in `college` by a PC knowing `known` there, in order.
 pub fn shown_spells(college: usize, known: i32) -> impl Iterator<Item = usize> {
-    (0..known.clamp(0, SPELLS_PER_COLLEGE as i32) as usize).map(move |k| college * SPELLS_PER_COLLEGE + k)
+    (0..known.clamp(0, SPELLS_PER_COLLEGE as i32) as usize)
+        .map(move |k| college * SPELLS_PER_COLLEGE + k)
 }
 
 /// What of the view is at `point` (800x600 screen pixels) for a PC knowing `spells` per college
 /// with `college` chosen.
-pub fn part_at(point: Vec2, spells: &[i32; COLLEGES], college: Option<usize>) -> Option<SpellViewPart> {
-    let inside = |x: f32, y: f32, size: f32| (x..x + size).contains(&point.x) && (y..y + size).contains(&point.y);
-    if let Some(c) = (0..COLLEGES).find(|&c| spells[c] > 0 && inside(COLLEGE_X[c], COLLEGE_Y, COLLEGE_SIZE)) {
+pub fn part_at(
+    point: Vec2,
+    spells: &[i32; COLLEGES],
+    college: Option<usize>,
+) -> Option<SpellViewPart> {
+    let inside = |x: f32, y: f32, size: f32| {
+        (x..x + size).contains(&point.x) && (y..y + size).contains(&point.y)
+    };
+    if let Some(c) =
+        (0..COLLEGES).find(|&c| spells[c] > 0 && inside(COLLEGE_X[c], COLLEGE_Y, COLLEGE_SIZE))
+    {
         return Some(SpellViewPart::College(c));
     }
     let college = college?;
-    shown_spells(college, spells[college]).zip(SPELL_X).find(|&(_, x)| inside(x, SPELL_Y, SPELL_SIZE)).map(|(s, _)| SpellViewPart::Spell(s))
+    shown_spells(college, spells[college])
+        .zip(SPELL_X)
+        .find(|&(_, x)| inside(x, SPELL_Y, SPELL_SIZE))
+        .map(|(s, _)| SpellViewPart::Spell(s))
 }
 
-fn on_spells_button(activate: On<bevy::ui_widgets::Activate>, buttons: Query<&HudAction>, mut view: ResMut<BarView>) {
+fn on_spells_button(
+    activate: On<bevy::ui_widgets::Activate>,
+    buttons: Query<&HudAction>,
+    mut view: ResMut<BarView>,
+) {
     if buttons.get(activate.entity) == Ok(&HudAction::Spells) {
         view.spells = !view.spells;
     }
 }
 
 fn cursor(windows: &Query<&Window>) -> Option<Vec2> {
-    windows.iter().find_map(|w| w.cursor_position().map(|c| screen_point(w.size(), c)))
+    windows
+        .iter()
+        .find_map(|w| w.cursor_position().map(|c| screen_point(w.size(), c)))
 }
 
 /// The view closes when the cursor goes up past the bar's top (0x54b5d0); a drag ends.
-fn close_above_the_bar(windows: Query<&Window>, mut view: ResMut<BarView>, mut drag: ResMut<SpellDrag>) {
+fn close_above_the_bar(
+    windows: Query<&Window>,
+    mut view: ResMut<BarView>,
+    mut drag: ResMut<SpellDrag>,
+) {
     if view.spells && cursor(&windows).is_some_and(|p| p.y < BOTTOM_TOP) {
         view.spells = false;
         drag.0 = None;
@@ -131,13 +168,22 @@ fn click_view(
     mut inventory: ResMut<crate::inventory_screen::PcInventory>,
     armed: Option<ResMut<crate::skill_use::SkillTargeting>>,
     client: Option<Res<crate::world_render::ClientMap>>,
-    (mut cache, assets, frames): (ResMut<crate::inventory_screen::ItemArtCache>, Res<AssetServer>, Res<Assets<crate::art_loader::ArtFrames>>),
+    (mut cache, assets, frames): (
+        ResMut<crate::inventory_screen::ItemArtCache>,
+        Res<AssetServer>,
+        Res<Assets<crate::art_loader::ArtFrames>>,
+    ),
 ) {
-    let (pressed, released) = (buttons.just_pressed(MouseButton::Left), buttons.just_released(MouseButton::Left));
+    let (pressed, released) = (
+        buttons.just_pressed(MouseButton::Left),
+        buttons.just_released(MouseButton::Left),
+    );
     if !view.spells || !(pressed || released) {
         return;
     }
-    let (Some(point), Some(sheet)) = (cursor(&windows), sheet_host.sheet()) else { return };
+    let (Some(point), Some(sheet)) = (cursor(&windows), sheet_host.sheet()) else {
+        return;
+    };
     let part = part_at(point, &sheet.spells, view.college);
     if pressed {
         match part {
@@ -149,12 +195,28 @@ fn click_view(
     }
     let Some(spell) = drag.0.take() else { return };
     if let Some(slot) = crate::hotkey_bar::slot_at(point) {
-        let Some(inv) = inventory.shown().cloned() else { return };
+        let Some(inv) = inventory.shown().cloned() else {
+            return;
+        };
         let empty = arcanum_formats::object::Prototypes::default();
         let prototypes = client.as_ref().map_or(&empty, |c| &c.map.prototypes);
-        let sizes = crate::inventory_screen::inventory_sizes(&inv, prototypes, client.as_ref().and_then(|c| c.art_index()), &mut cache, &assets, &frames);
+        let sizes = crate::inventory_screen::inventory_sizes(
+            &inv,
+            prototypes,
+            client.as_ref().and_then(|c| c.art_index()),
+            &mut cache,
+            &assets,
+            &frames,
+        );
         let wearer = crate::inventory_screen::wearer(&sheet_host);
-        let _ = inventory.request(arcanum_sim::InventoryRequest::HotkeySpell { spell, to: crate::hotkey_bar::location(slot) }, wearer, crate::inventory_screen::client_info(prototypes, &sizes));
+        let _ = inventory.request(
+            arcanum_sim::InventoryRequest::HotkeySpell {
+                spell,
+                to: crate::hotkey_bar::location(slot),
+            },
+            wearer,
+            crate::inventory_screen::client_info(prototypes, &sizes),
+        );
     } else if part == Some(SpellViewPart::Spell(spell))
         && let Some(mut armed) = armed
     {
@@ -163,7 +225,14 @@ fn click_view(
 }
 
 /// Draws the dragged spell's icon with its top-left at the cursor.
-fn show_drag(mut commands: Commands, drag: Res<SpellDrag>, windows: Query<&Window>, assets: Res<AssetServer>, boxes: Query<&ChildOf, With<MessageBoxRoot>>, mut icons: Query<(Entity, &mut Node), With<DraggedSpell>>) {
+fn show_drag(
+    mut commands: Commands,
+    drag: Res<SpellDrag>,
+    windows: Query<&Window>,
+    assets: Res<AssetServer>,
+    boxes: Query<&ChildOf, With<MessageBoxRoot>>,
+    mut icons: Query<(Entity, &mut Node), With<DraggedSpell>>,
+) {
     let (Some(spell), Some(point)) = (drag.0, cursor(&windows)) else {
         for (e, _) in &icons {
             commands.entity(e).despawn();
@@ -177,7 +246,15 @@ fn show_drag(mut commands: Commands, drag: Res<SpellDrag>, windows: Query<&Windo
         return;
     }
     let Ok(bar) = boxes.single() else { return };
-    let icon = commands.spawn((DraggedSpell, bevy::picking::Pickable::IGNORE, GlobalZIndex(10), ImageNode::new(assets.load(spell_icon(spell))), at(rect(corner, Vec2::splat(SPELL_SIZE))))).id();
+    let icon = commands
+        .spawn((
+            DraggedSpell,
+            bevy::picking::Pickable::IGNORE,
+            GlobalZIndex(10),
+            ImageNode::new(assets.load(spell_icon(spell))),
+            at(rect(corner, Vec2::splat(SPELL_SIZE))),
+        ))
+        .id();
     commands.entity(bar.parent()).add_child(icon);
 }
 
@@ -205,19 +282,48 @@ fn show_view(
     for e in &parts {
         commands.entity(e).despawn();
     }
-    let Ok((mut visibility, parent)) = boxes.single_mut() else { return };
-    *visibility = if view.spells { Visibility::Hidden } else { Visibility::Inherited };
+    let Ok((mut visibility, parent)) = boxes.single_mut() else {
+        return;
+    };
+    *visibility = if view.spells {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    };
     if !view.spells {
         return;
     }
-    let local = |x: f32, y: f32, size: f32| at(rect(Vec2::new(x, y - BOTTOM_TOP), Vec2::splat(size)));
+    let local =
+        |x: f32, y: f32, size: f32| at(rect(Vec2::new(x, y - BOTTOM_TOP), Vec2::splat(size)));
     let mut spawned = Vec::new();
-    for (c, path) in crate::editor_tabs::college_buttons().into_iter().enumerate().filter(|(c, _)| spells[*c] > 0) {
-        spawned.push(commands.spawn((SpellViewPart::College(c), bevy::picking::Pickable::IGNORE, ImageNode::new(assets.load(path)), local(COLLEGE_X[c], COLLEGE_Y, COLLEGE_SIZE))).id());
+    for (c, path) in crate::editor_tabs::college_buttons()
+        .into_iter()
+        .enumerate()
+        .filter(|(c, _)| spells[*c] > 0)
+    {
+        spawned.push(
+            commands
+                .spawn((
+                    SpellViewPart::College(c),
+                    bevy::picking::Pickable::IGNORE,
+                    ImageNode::new(assets.load(path)),
+                    local(COLLEGE_X[c], COLLEGE_Y, COLLEGE_SIZE),
+                ))
+                .id(),
+        );
     }
     if let Some(college) = view.college {
         for (spell, x) in shown_spells(college, spells[college]).zip(SPELL_X) {
-            spawned.push(commands.spawn((SpellViewPart::Spell(spell), bevy::picking::Pickable::IGNORE, ImageNode::new(assets.load(spell_icon(spell))), local(x, SPELL_Y, SPELL_SIZE))).id());
+            spawned.push(
+                commands
+                    .spawn((
+                        SpellViewPart::Spell(spell),
+                        bevy::picking::Pickable::IGNORE,
+                        ImageNode::new(assets.load(spell_icon(spell))),
+                        local(x, SPELL_Y, SPELL_SIZE),
+                    ))
+                    .id(),
+            );
         }
     }
     commands.entity(parent.parent()).add_children(&spawned);
@@ -232,12 +338,33 @@ mod tests {
         let mut spells = [0; COLLEGES];
         spells[0] = 2;
         spells[15] = 5;
-        assert_eq!(part_at(Vec2::new(205.0, 500.0), &spells, None), Some(SpellViewPart::College(0)));
-        assert_eq!(part_at(Vec2::new(230.0, 500.0), &spells, None), None, "no spell known in divination");
-        assert_eq!(part_at(Vec2::new(580.0, 510.0), &spells, None), Some(SpellViewPart::College(15)));
-        assert_eq!(part_at(Vec2::new(340.0, 540.0), &spells, Some(0)), Some(SpellViewPart::Spell(1)), "the Unlocking Cantrip");
-        assert_eq!(part_at(Vec2::new(390.0, 540.0), &spells, Some(0)), None, "the third is not known");
-        assert_eq!(part_at(Vec2::new(490.0, 540.0), &spells, Some(15)), Some(SpellViewPart::Spell(79)));
+        assert_eq!(
+            part_at(Vec2::new(205.0, 500.0), &spells, None),
+            Some(SpellViewPart::College(0))
+        );
+        assert_eq!(
+            part_at(Vec2::new(230.0, 500.0), &spells, None),
+            None,
+            "no spell known in divination"
+        );
+        assert_eq!(
+            part_at(Vec2::new(580.0, 510.0), &spells, None),
+            Some(SpellViewPart::College(15))
+        );
+        assert_eq!(
+            part_at(Vec2::new(340.0, 540.0), &spells, Some(0)),
+            Some(SpellViewPart::Spell(1)),
+            "the Unlocking Cantrip"
+        );
+        assert_eq!(
+            part_at(Vec2::new(390.0, 540.0), &spells, Some(0)),
+            None,
+            "the third is not known"
+        );
+        assert_eq!(
+            part_at(Vec2::new(490.0, 540.0), &spells, Some(15)),
+            Some(SpellViewPart::Spell(79))
+        );
         assert_eq!(part_at(Vec2::new(340.0, 540.0), &spells, None), None);
     }
 }

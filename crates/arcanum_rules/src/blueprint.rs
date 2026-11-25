@@ -52,7 +52,11 @@ pub struct InventorySource {
 impl InventorySource {
     /// The items that are always given (100%).
     pub fn certain_items(&self) -> Vec<u32> {
-        self.items.iter().filter(|(chance, _)| *chance >= 100).map(|(_, p)| *p).collect()
+        self.items
+            .iter()
+            .filter(|(chance, _)| *chance >= 100)
+            .map(|(_, p)| *p)
+            .collect()
     }
 }
 
@@ -77,14 +81,22 @@ pub fn parse_inventory_source(text: &str) -> Option<InventorySource> {
         Some((a.trim().parse::<i64>().ok()?, b.trim().parse::<i64>().ok()?))
     });
     let (min, max) = pairs.next()?;
-    let items = pairs.filter_map(|(c, p)| Some((u32::try_from(c).ok()?, u32::try_from(p).ok()?))).collect();
-    Some(InventorySource { gold: (min as i32, max as i32), items })
+    let items = pairs
+        .filter_map(|(c, p)| Some((u32::try_from(c).ok()?, u32::try_from(p).ok()?)))
+        .collect();
+    Some(InventorySource {
+        gold: (min as i32, max as i32),
+        items,
+    })
 }
 
 impl RulesData {
     /// A pre-made character's sheet from its PC prototype: stored base stats, level, unspent
     /// points, skills, tech degrees, spells, age, gender, race, name, background and portrait. Nothing is in a draft.
-    pub fn premade_from_prototype(&self, object: &arcanum_formats::object::Object) -> CharacterSheet {
+    pub fn premade_from_prototype(
+        &self,
+        object: &arcanum_formats::object::Object,
+    ) -> CharacterSheet {
         let base = object.ints("critter_stat_base_idx").unwrap_or_default();
         let stat = |i: usize| base.get(i).copied().unwrap_or(0);
         // Skills: bits 0-5 points, bits 6-7 training rank.
@@ -92,23 +104,48 @@ impl RulesData {
         let tech = object.ints("critter_tech_skill_idx").unwrap_or_default();
         // Spells known per college (0-15), mastery (16), tech degrees (17-24).
         let spell_tech = object.ints("critter_spell_tech_idx").unwrap_or_default();
-        let skill_field = |k: usize| if k < BASIC_SKILLS { basic.get(k) } else { tech.get(k - BASIC_SKILLS) }.copied().unwrap_or(0);
+        let skill_field = |k: usize| {
+            if k < BASIC_SKILLS {
+                basic.get(k)
+            } else {
+                tech.get(k - BASIC_SKILLS)
+            }
+            .copied()
+            .unwrap_or(0)
+        };
         CharacterSheet {
             name: object.string("pc_player_name").unwrap_or("").to_string(),
             race: stat(STAT_RACE).clamp(0, RACE_COUNT as i32 - 1) as u8,
             gender: if stat(STAT_GENDER) == 0 { FEMALE } else { MALE },
             age: stat(STAT_AGE),
             level: stat(STAT_LEVEL).max(1),
-            background: object.int("pc_background").and_then(|b| u32::try_from(b).ok()).unwrap_or(0),
-            portrait: object.int("critter_portrait").and_then(|p| u32::try_from(p).ok()),
+            background: object
+                .int("pc_background")
+                .and_then(|b| u32::try_from(b).ok())
+                .unwrap_or(0),
+            portrait: object
+                .int("critter_portrait")
+                .and_then(|p| u32::try_from(p).ok()),
             base: std::array::from_fn(|i| stat(i)),
             hp_points: 0,
             fatigue_points: 0,
             unspent: stat(STAT_UNSPENT),
             skills: std::array::from_fn(|k| skill_field(k) & SKILL_POINTS_MASK),
             training: std::array::from_fn(|k| ((skill_field(k) >> 6) & 3) as u8),
-            spells: std::array::from_fn(|c| spell_tech.get(c).copied().unwrap_or(0).clamp(0, SPELLS_PER_COLLEGE as i32)),
-            tech: std::array::from_fn(|d| spell_tech.get(TECH_SLOTS + d).copied().unwrap_or(0).clamp(0, MAX_DEGREE)),
+            spells: std::array::from_fn(|c| {
+                spell_tech
+                    .get(c)
+                    .copied()
+                    .unwrap_or(0)
+                    .clamp(0, SPELLS_PER_COLLEGE as i32)
+            }),
+            tech: std::array::from_fn(|d| {
+                spell_tech
+                    .get(TECH_SLOTS + d)
+                    .copied()
+                    .unwrap_or(0)
+                    .clamp(0, MAX_DEGREE)
+            }),
             fatigue_damage: 0,
             experience: stat(0x12),
             alignment: stat(0x13),
@@ -131,16 +168,25 @@ impl RulesData {
         self.premades = (FIRST_PREMADE..=LAST_PREMADE)
             .filter_map(|number| {
                 let prefix = format!("{PROTO_DIR}/{number:06} - ").to_ascii_lowercase();
-                let path = files.iter().find(|f| f.to_ascii_lowercase().starts_with(&prefix))?;
-                let object = arcanum_formats::object::Object::parse_prototype(&vfs.read(path).ok()?).ok()?;
+                let path = files
+                    .iter()
+                    .find(|f| f.to_ascii_lowercase().starts_with(&prefix))?;
+                let object =
+                    arcanum_formats::object::Object::parse_prototype(&vfs.read(path).ok()?).ok()?;
                 let sheet = self.premade_from_prototype(&object);
                 let source = object
                     .int("critter_inventory_source")
                     .and_then(|id| u32::try_from(id).ok())
                     .and_then(|id| sources.as_ref()?.get(id))
                     .and_then(parse_inventory_source);
-                let (gold, items) = source.map_or((0, Vec::new()), |s| (s.gold.0, s.certain_items()));
-                Some(Premade { prototype: number, sheet, gold, items })
+                let (gold, items) =
+                    source.map_or((0, Vec::new()), |s| (s.gold.0, s.certain_items()));
+                Some(Premade {
+                    prototype: number,
+                    sheet,
+                    gold,
+                    items,
+                })
             })
             .collect();
     }
@@ -151,14 +197,30 @@ impl RulesData {
         if !s.has_name() {
             return Err(Refusal::NoName);
         }
-        let (gold, items) = self.background(s).map_or((0, Vec::new()), |b| (b.money, b.items.clone()));
-        Ok(CharacterBlueprint { sheet: self.accept(s), gold, items, prototype: None })
+        let (gold, items) = self
+            .background(s)
+            .map_or((0, Vec::new()), |b| (b.money, b.items.clone()));
+        Ok(CharacterBlueprint {
+            sheet: self.accept(s),
+            gold,
+            items,
+            prototype: None,
+        })
     }
 
     /// A pre-made character's blueprint.
     pub fn premade_blueprint(&self, prototype: u32) -> Result<CharacterBlueprint, Refusal> {
-        let p = self.premades.iter().find(|p| p.prototype == prototype).ok_or(Refusal::UnknownPremade)?;
-        Ok(CharacterBlueprint { sheet: p.sheet.clone(), gold: p.gold, items: p.items.clone(), prototype: Some(prototype) })
+        let p = self
+            .premades
+            .iter()
+            .find(|p| p.prototype == prototype)
+            .ok_or(Refusal::UnknownPremade)?;
+        Ok(CharacterBlueprint {
+            sheet: p.sheet.clone(),
+            gold: p.gold,
+            items: p.items.clone(),
+            prototype: Some(prototype),
+        })
     }
 }
 
@@ -173,7 +235,9 @@ mod tests {
 
     fn rules() -> RulesData {
         RulesData::from_files(
-            &mes("{0}{1000}{1}{86}{2}{}{3}{400}{4}{}{10}{1001}{11}{87}{12}{}{13}{250}{14}{ 8054  x 8055 }{390}{1039}{392}{NPC}{393}{100}{394}{9000}"),
+            &mes(
+                "{0}{1000}{1}{86}{2}{}{3}{400}{4}{}{10}{1001}{11}{87}{12}{}{13}{250}{14}{ 8054  x 8055 }{390}{1039}{392}{NPC}{393}{100}{394}{9000}",
+            ),
             &mes("{87}{pe +1}"),
             &mes("{1005}{HUM1}"),
         )
@@ -192,33 +256,70 @@ mod tests {
     fn apply_matches_the_operations() {
         let r = rules();
         let s = r.new_sheet();
-        assert_eq!(r.apply(&s, &CharacterAction::RaiseStat(0)), r.raise_stat(&s, 0));
+        assert_eq!(
+            r.apply(&s, &CharacterAction::RaiseStat(0)),
+            r.raise_stat(&s, 0)
+        );
         let raised = r.raise_stat(&s, 0).unwrap();
-        assert_eq!(r.apply(&raised, &CharacterAction::Accept), Ok(r.accept(&raised)));
-        assert_eq!(r.apply(&s, &CharacterAction::SetName("Virgil".into())).unwrap().name, "Virgil");
-        assert_eq!(r.apply(&s, &CharacterAction::AdjustPool(Pool::Fatigue, -1)), Err(Refusal::BelowAccepted));
+        assert_eq!(
+            r.apply(&raised, &CharacterAction::Accept),
+            Ok(r.accept(&raised))
+        );
+        assert_eq!(
+            r.apply(&s, &CharacterAction::SetName("Virgil".into()))
+                .unwrap()
+                .name,
+            "Virgil"
+        );
+        assert_eq!(
+            r.apply(&s, &CharacterAction::AdjustPool(Pool::Fatigue, -1)),
+            Err(Refusal::BelowAccepted)
+        );
     }
 
     #[test]
     fn unknown_premade_is_refused() {
         let r = rules();
-        assert_eq!(r.apply(&r.new_sheet(), &CharacterAction::PickPremade(99999)), Err(Refusal::UnknownPremade));
+        assert_eq!(
+            r.apply(&r.new_sheet(), &CharacterAction::PickPremade(99999)),
+            Err(Refusal::UnknownPremade)
+        );
     }
 
     #[test]
     fn picking_a_premade_takes_its_sheet() {
         let mut r = rules();
-        let sheet = CharacterSheet { name: "Lugard".into(), race: 1, background: 39, ..CharacterSheet::default() };
-        r.premades.push(Premade { prototype: 16094, sheet: sheet.clone(), gold: 0, items: vec![] });
-        assert_eq!(r.apply(&r.new_sheet(), &CharacterAction::PickPremade(16094)), Ok(sheet));
+        let sheet = CharacterSheet {
+            name: "Lugard".into(),
+            race: 1,
+            background: 39,
+            ..CharacterSheet::default()
+        };
+        r.premades.push(Premade {
+            prototype: 16094,
+            sheet: sheet.clone(),
+            gold: 0,
+            items: vec![],
+        });
+        assert_eq!(
+            r.apply(&r.new_sheet(), &CharacterAction::PickPremade(16094)),
+            Ok(sheet)
+        );
         let bp = r.premade_blueprint(16094).unwrap();
-        assert_eq!((bp.prototype, bp.sheet.name.as_str()), (Some(16094), "Lugard"));
+        assert_eq!(
+            (bp.prototype, bp.sheet.name.as_str()),
+            (Some(16094), "Lugard")
+        );
     }
 
     #[test]
     fn inventory_sources_are_parsed() {
-        let s = parse_inventory_source("General(sm)PC: 385,385 100,6029 100,8168 100,8065").unwrap();
-        assert_eq!((s.gold, s.items.clone()), ((385, 385), vec![(100, 6029), (100, 8168), (100, 8065)]));
+        let s =
+            parse_inventory_source("General(sm)PC: 385,385 100,6029 100,8168 100,8065").unwrap();
+        assert_eq!(
+            (s.gold, s.items.clone()),
+            ((385, 385), vec![(100, 6029), (100, 8168), (100, 8065)])
+        );
         // Stray commas and a space after the comma, as in the real file.
         let s = parse_inventory_source("Adventure: 75,75 100,6029 100,8170, 80, 6167 x,1").unwrap();
         assert_eq!(s.items, [(100, 6029), (100, 8170), (80, 6167)]);
@@ -233,7 +334,14 @@ mod tests {
         let s = r.set_name(&r.step_background(&r.new_sheet(), 1), "Virgil");
         let s = r.raise_stat(&s, 0).unwrap();
         let bp = r.blueprint(&s).unwrap();
-        assert_eq!((bp.gold, bp.items.clone(), bp.prototype), (250, vec![8054, 8055], None));
-        assert_eq!((bp.sheet.draft.clone(), bp.sheet.base[0]), (Draft::default(), 9), "accepted on finish");
+        assert_eq!(
+            (bp.gold, bp.items.clone(), bp.prototype),
+            (250, vec![8054, 8055], None)
+        );
+        assert_eq!(
+            (bp.sheet.draft.clone(), bp.sheet.base[0]),
+            (Draft::default(), 9),
+            "accepted on finish"
+        );
     }
 }

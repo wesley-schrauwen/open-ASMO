@@ -21,9 +21,9 @@ use bevy::prelude::*;
 use crate::art_loader::ArtFrames;
 use crate::character_host::CharacterHost;
 use crate::fonts::ORIGINAL_SCALE;
-use crate::sim_bridge::{HostLink, LocalPc};
 use crate::main_menu::AppState;
 use crate::resource_pack::paths::{backgrounds, interface};
+use crate::sim_bridge::{HostLink, LocalPc};
 
 /// Shortest time the loading screen stays up, so it never just flickers.
 pub const MIN_LOADING_SECS: f32 = 1.5;
@@ -55,7 +55,13 @@ pub struct LoadRequest {
 
 impl LoadRequest {
     pub fn new(next: AppState) -> Self {
-        Self { next, assets: Vec::new(), min_secs: MIN_LOADING_SECS, wait_for_host: false, wait_for_save: false }
+        Self {
+            next,
+            assets: Vec::new(),
+            min_secs: MIN_LOADING_SECS,
+            wait_for_host: false,
+            wait_for_save: false,
+        }
     }
 
     /// Also waits for the host to accept the character and spawn the player's PC (counted as
@@ -97,7 +103,11 @@ pub struct LoadingProgress {
 impl LoadingProgress {
     /// `0.0..=1.0`; 1.0 when there is nothing to load.
     pub fn fraction(&self) -> f32 {
-        if self.total == 0 { 1.0 } else { self.done as f32 / self.total as f32 }
+        if self.total == 0 {
+            1.0
+        } else {
+            self.done as f32 / self.total as f32
+        }
     }
 
     /// Everything is loaded and the screen has been up for at least `min_secs`.
@@ -137,7 +147,10 @@ impl Plugin for LoadingPlugin {
 
 /// One of the three pictures, varying from run to run.
 fn pick_picture() -> usize {
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(0);
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
     nanos as usize % backgrounds::LOADING.len()
 }
 
@@ -152,7 +165,9 @@ fn enter_loading(
     request: Option<Res<LoadRequest>>,
 ) {
     if request.is_none() {
-        warn!("entered the loading screen without a LoadRequest; returning to the main menu afterwards");
+        warn!(
+            "entered the loading screen without a LoadRequest; returning to the main menu afterwards"
+        );
         commands.insert_resource(LoadRequest::new(AppState::MainMenu));
     }
     commands.insert_resource(LoadingStarted(time.elapsed_secs()));
@@ -223,12 +238,16 @@ fn track_progress(
     host: Option<Res<HostLink>>,
     pc: Option<Res<LocalPc>>,
 ) {
-    let (Some(request), Some(started), Some(mut progress)) = (request, started, progress) else { return };
+    let (Some(request), Some(started), Some(mut progress)) = (request, started, progress) else {
+        return;
+    };
     let mut done = 0;
     let mut total = request.assets.len();
     if request.wait_for_host {
         if host.is_none() {
-            warn!("loading screen: no host is running to accept the character; returning to the main menu");
+            warn!(
+                "loading screen: no host is running to accept the character; returning to the main menu"
+            );
             next_state.set(AppState::MainMenu);
             return;
         }
@@ -271,7 +290,11 @@ fn track_progress(
             Some(_) => {}
         }
     }
-    let now = LoadingProgress { done, total, elapsed: time.elapsed_secs() - started.0 };
+    let now = LoadingProgress {
+        done,
+        total,
+        elapsed: time.elapsed_secs() - started.0,
+    };
     if *progress != now {
         *progress = now;
     }
@@ -290,7 +313,9 @@ fn animate_indicator(
 ) {
     let elapsed = started.map_or(0.0, |s| time.elapsed_secs() - s.0);
     for (indicator, mut image) in &mut indicators {
-        let Some(set) = frames.get(&indicator.0) else { continue };
+        let Some(set) = frames.get(&indicator.0) else {
+            continue;
+        };
         let index = indicator_frame(elapsed, set.frames.len());
         if let Some(frame) = set.frame(index)
             && image.image != *frame
@@ -308,7 +333,10 @@ pub fn indicator_frame(elapsed: f32, count: usize) -> usize {
 }
 
 /// True once the loading picture is on screen (for screenshots).
-pub fn loading_ready(pictures: Query<&ImageNode, With<LoadingPicture>>, images: Res<Assets<Image>>) -> bool {
+pub fn loading_ready(
+    pictures: Query<&ImageNode, With<LoadingPicture>>,
+    images: Res<Assets<Image>>,
+) -> bool {
     pictures.iter().any(|p| images.get(&p.image).is_some())
 }
 
@@ -318,7 +346,11 @@ mod tests {
 
     #[test]
     fn finishes_only_when_loaded_and_shown_long_enough() {
-        let p = |done, total, elapsed| LoadingProgress { done, total, elapsed };
+        let p = |done, total, elapsed| LoadingProgress {
+            done,
+            total,
+            elapsed,
+        };
         let min = MIN_LOADING_SECS;
         assert!(!p(1, 2, 5.0).is_finished(min), "still loading");
         assert!(!p(2, 2, 0.5).is_finished(min), "too soon");

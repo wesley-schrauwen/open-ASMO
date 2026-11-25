@@ -50,7 +50,12 @@ pub fn spells_known(s: &CharacterSheet) -> [i32; COLLEGES] {
 
 /// The Willpower the known spells need (0 with none).
 pub fn spell_willpower_needed(s: &CharacterSheet) -> i32 {
-    spells_known(s).iter().filter(|&&n| n > 0).map(|&n| SPELL_WILLPOWER[(n as usize - 1).min(SPELLS_PER_COLLEGE - 1)]).max().unwrap_or(0)
+    spells_known(s)
+        .iter()
+        .filter(|&&n| n > 0)
+        .map(|&n| SPELL_WILLPOWER[(n as usize - 1).min(SPELLS_PER_COLLEGE - 1)])
+        .max()
+        .unwrap_or(0)
 }
 
 /// Magick/tech aptitude limits: +100 is all magick, -100 all tech.
@@ -138,7 +143,11 @@ impl RulesData {
             return Err(Refusal::NotAllowed);
         }
         if s.draft.spells[c] == 0 {
-            return Err(if s.spells[c] > 0 { Refusal::SpellAccepted } else { Refusal::NotAllowed });
+            return Err(if s.spells[c] > 0 {
+                Refusal::SpellAccepted
+            } else {
+                Refusal::NotAllowed
+            });
         }
         let mut out = s.clone();
         out.draft.spells[c] -= 1;
@@ -152,17 +161,35 @@ mod tests {
     use crate::sheet::Message;
 
     fn sheet(points: i32, base: [i32; 8]) -> CharacterSheet {
-        CharacterSheet { unspent: points, base, ..RulesData::default().new_sheet() }
+        CharacterSheet {
+            unspent: points,
+            base,
+            ..RulesData::default().new_sheet()
+        }
     }
 
     #[test]
     fn the_alignment_is_the_sheets_plus_effects() {
-        let r = RulesData::from_files(&arcanum_formats::mes::MesFile::default(), &arcanum_formats::mes::MesFile::parse(b"{400}{alignment +30}").unwrap(), &arcanum_formats::mes::MesFile::default());
-        let mut s = CharacterSheet { alignment: 250, ..CharacterSheet::default() };
+        let r = RulesData::from_files(
+            &arcanum_formats::mes::MesFile::default(),
+            &arcanum_formats::mes::MesFile::parse(b"{400}{alignment +30}").unwrap(),
+            &arcanum_formats::mes::MesFile::default(),
+        );
+        let mut s = CharacterSheet {
+            alignment: 250,
+            ..CharacterSheet::default()
+        };
         assert_eq!(r.alignment(&s), 250, "dialogue's al sets it");
         s.add_effect(400, 5);
         assert_eq!(r.alignment(&s), 280);
-        assert_eq!(r.alignment(&CharacterSheet { alignment: 2000, ..CharacterSheet::default() }), 1000, "clamped");
+        assert_eq!(
+            r.alignment(&CharacterSheet {
+                alignment: 2000,
+                ..CharacterSheet::default()
+            }),
+            1000,
+            "clamped"
+        );
     }
 
     #[test]
@@ -171,12 +198,27 @@ mod tests {
         let s = r.raise_tech(&sheet(5, [8; 8]), 2).unwrap();
         assert_eq!((tech_degree(&s, 2), r.unspent(&s)), (1, 4));
         let s = r.raise_tech(&s, 2).unwrap();
-        assert_eq!(r.raise_tech(&s, 2), Err(Refusal::RaiseStatFirst(4)), "IN 8 allows degree 2, not 3 (11)");
+        assert_eq!(
+            r.raise_tech(&s, 2),
+            Err(Refusal::RaiseStatFirst(4)),
+            "IN 8 allows degree 2, not 3 (11)"
+        );
         let sold = r.lower_tech(&s, 2).unwrap();
         assert_eq!((tech_degree(&sold, 2), r.unspent(&sold)), (1, 4));
-        assert_eq!(r.lower_tech(&r.accept(&s), 2), Err(Refusal::NotAllowed), "not below the opening degree");
-        let doctor = CharacterSheet { tech: [7, 0, 0, 0, 0, 0, 0, 0], ..sheet(5, [20; 8]) };
-        assert_eq!(r.raise_tech(&doctor, 0), Err(Refusal::RaiseStatFirst(4)), "degree 7 says raise IN, as the original");
+        assert_eq!(
+            r.lower_tech(&r.accept(&s), 2),
+            Err(Refusal::NotAllowed),
+            "not below the opening degree"
+        );
+        let doctor = CharacterSheet {
+            tech: [7, 0, 0, 0, 0, 0, 0, 0],
+            ..sheet(5, [20; 8])
+        };
+        assert_eq!(
+            r.raise_tech(&doctor, 0),
+            Err(Refusal::RaiseStatFirst(4)),
+            "degree 7 says raise IN, as the original"
+        );
     }
 
     #[test]
@@ -186,12 +228,19 @@ mod tests {
         let s = r.raise_spell(&s, 3).unwrap();
         let s = r.raise_spell(&s, 3).unwrap();
         assert_eq!(spells_known(&s)[3], 2);
-        assert_eq!(r.raise_spell(&s, 3), Err(Refusal::SpellLevel), "rank 2 needs level 5");
+        assert_eq!(
+            r.raise_spell(&s, 3),
+            Err(Refusal::SpellLevel),
+            "rank 2 needs level 5"
+        );
         let dull = sheet(5, [8, 8, 8, 8, 4, 8, 9, 8]);
         assert_eq!(r.raise_spell(&dull, 0), Err(Refusal::RaiseStatFirst(4)));
         let weak = sheet(5, [8, 8, 8, 8, 8, 8, 5, 8]);
         assert_eq!(r.raise_spell(&weak, 0), Err(Refusal::RaiseStatFirst(6)));
-        assert_eq!(Refusal::RaiseStatFirst(6).message(), Some(Message::Charedit(36)));
+        assert_eq!(
+            Refusal::RaiseStatFirst(6).message(),
+            Some(Message::Charedit(36))
+        );
         // Only the top one goes back, and only while not accepted.
         let s = r.lower_spell(&s, 3).unwrap();
         let s = r.accept(&s);
@@ -204,18 +253,34 @@ mod tests {
         use arcanum_formats::mes::MesFile;
         let mes = |t: &str| MesFile::parse(t.as_bytes()).unwrap();
         // Dwarves (race effect 65) count three tech degrees; background 1 is evil.
-        let r = RulesData::from_files(&mes("{0}{1000}{1}{}{2}{}{10}{1001}{11}{86}{12}{}"), &mes("{65}{techpts +3}{86}{alignment -50, alignment max -200}"), &mes("{1001}{DWM1}"));
+        let r = RulesData::from_files(
+            &mes("{0}{1000}{1}{}{2}{}{10}{1001}{11}{86}{12}{}"),
+            &mes("{65}{techpts +3}{86}{alignment -50, alignment max -200}"),
+            &mes("{1001}{DWM1}"),
+        );
         let human = sheet(5, [8, 8, 8, 8, 8, 8, 9, 8]);
         assert_eq!(r.aptitude(&human), 0);
         let mage = r.raise_spell(&human, 0).unwrap();
         assert_eq!(r.aptitude(&mage), 5, "50 / 10");
         let both = r.raise_tech(&mage, 0).unwrap();
         assert_eq!(r.aptitude(&both), 0, "(50 - 55) / 10 rounds towards zero");
-        let dwarf = CharacterSheet { race: 1, ..human.clone() };
+        let dwarf = CharacterSheet {
+            race: 1,
+            ..human.clone()
+        };
         assert_eq!(r.aptitude(&dwarf), -16, "-165 / 10");
-        let full = CharacterSheet { spells: [5; 16], ..human.clone() };
+        let full = CharacterSheet {
+            spells: [5; 16],
+            ..human.clone()
+        };
         assert_eq!(r.aptitude(&full), MAX_APTITUDE, "clamped");
-        assert_eq!(r.alignment(&CharacterSheet { background: 1, ..human }), -50);
+        assert_eq!(
+            r.alignment(&CharacterSheet {
+                background: 1,
+                ..human
+            }),
+            -50
+        );
     }
 
     #[test]
@@ -224,14 +289,27 @@ mod tests {
         // WP 9 bought from 8: the second spell needs 9.
         let s = r.raise_stat(&sheet(5, [8; 8]), WILLPOWER).unwrap();
         let s = r.raise_spell(&r.raise_spell(&s, 0).unwrap(), 0).unwrap();
-        assert_eq!(r.lower_stat(&s, WILLPOWER), Err(Refusal::SpellNeedsWillpower));
+        assert_eq!(
+            r.lower_stat(&s, WILLPOWER),
+            Err(Refusal::SpellNeedsWillpower)
+        );
         // IN 8 bought from 7: degree 2 needs 8.
-        let s = r.raise_stat(&sheet(5, [8, 8, 8, 8, 7, 8, 8, 8]), INTELLIGENCE).unwrap();
+        let s = r
+            .raise_stat(&sheet(5, [8, 8, 8, 8, 7, 8, 8, 8]), INTELLIGENCE)
+            .unwrap();
         let s = r.raise_tech(&r.raise_tech(&s, 0).unwrap(), 0).unwrap();
-        assert_eq!(r.lower_stat(&s, INTELLIGENCE), Err(Refusal::TechNeedsIntelligence));
+        assert_eq!(
+            r.lower_stat(&s, INTELLIGENCE),
+            Err(Refusal::TechNeedsIntelligence)
+        );
         // Spells check IN 5 first: IN 5 bought from 4 with a spell known.
-        let s = r.raise_stat(&sheet(5, [8, 8, 8, 8, 4, 8, 8, 8]), INTELLIGENCE).unwrap();
+        let s = r
+            .raise_stat(&sheet(5, [8, 8, 8, 8, 4, 8, 8, 8]), INTELLIGENCE)
+            .unwrap();
         let s = r.raise_spell(&s, 0).unwrap();
-        assert_eq!(r.lower_stat(&s, INTELLIGENCE), Err(Refusal::SpellNeedsIntelligence));
+        assert_eq!(
+            r.lower_stat(&s, INTELLIGENCE),
+            Err(Refusal::SpellNeedsIntelligence)
+        );
     }
 }

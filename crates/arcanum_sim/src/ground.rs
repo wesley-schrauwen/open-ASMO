@@ -26,11 +26,17 @@
 //! is left out by the owner's decision.
 
 use arcanum_formats::map::{SectorId, TileLoc};
-use arcanum_formats::object::{Object, TYPE_AMMO, TYPE_CONTAINER, TYPE_GENERIC, TYPE_GOLD, TYPE_WEAPON, Value};
+use arcanum_formats::object::{
+    Object, TYPE_AMMO, TYPE_CONTAINER, TYPE_GENERIC, TYPE_GOLD, TYPE_WEAPON, Value,
+};
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{Inventory, InventoryRequest, ItemRefusal, LedgerDelta, LoadedMap, NetId, Outbox, PlayerControlled, PlayerId, Position, Session, SessionPlayer, Sheet, SimRules, WorldState, Wearer, within_radius};
+use crate::{
+    Inventory, InventoryRequest, ItemRefusal, LedgerDelta, LoadedMap, NetId, Outbox,
+    PlayerControlled, PlayerId, Position, Session, SessionPlayer, Sheet, SimRules, Wearer,
+    WorldState, within_radius,
+};
 
 /// An item lying on the map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -49,7 +55,10 @@ pub enum GroundItemId {
 impl GroundItemId {
     pub fn sector(self) -> SectorId {
         match self {
-            Self::Mobile { sector, .. } | Self::Dropped { sector, .. } | Self::Pile { sector, .. } | Self::Container { sector, .. } => sector,
+            Self::Mobile { sector, .. }
+            | Self::Dropped { sector, .. }
+            | Self::Pile { sector, .. }
+            | Self::Container { sector, .. } => sector,
         }
     }
 }
@@ -69,7 +78,12 @@ pub struct GroundItem {
 impl GroundItem {
     /// The item as carried, at `location`.
     pub fn carried(&self, location: i32) -> crate::CarriedItem {
-        crate::CarriedItem { prototype: self.prototype, location, quantity: self.quantity, keys: self.keys.clone() }
+        crate::CarriedItem {
+            prototype: self.prototype,
+            location,
+            quantity: self.quantity,
+            keys: self.keys.clone(),
+        }
     }
 }
 
@@ -98,8 +112,17 @@ impl LoadedMap {
                 if changes.is_some_and(|c| c.taken.contains(&index)) {
                     return None;
                 }
-                let object = self.mobiles.get(&sector)?.get(index as usize).filter(|o| is_item(o.object_type))?;
-                Some(GroundItem { prototype: object.prototype.prototype()?, quantity: self.quantity_of(object), location: crate::object_location(object)?, keys: crate::object_keys(object, &self.prototypes) })
+                let object = self
+                    .mobiles
+                    .get(&sector)?
+                    .get(index as usize)
+                    .filter(|o| is_item(o.object_type))?;
+                Some(GroundItem {
+                    prototype: object.prototype.prototype()?,
+                    quantity: self.quantity_of(object),
+                    location: crate::object_location(object)?,
+                    keys: crate::object_keys(object, &self.prototypes),
+                })
             }
             GroundItemId::Dropped { number, .. } => changes?.dropped.get(&number).cloned(),
             GroundItemId::Pile { .. } | GroundItemId::Container { .. } => None,
@@ -110,14 +133,26 @@ impl LoadedMap {
     /// contents (its changed ones, else the map's stored list).
     pub fn pile(&self, id: GroundItemId) -> Option<Pile> {
         match id {
-            GroundItemId::Pile { sector, number } => self.changes.get(&sector)?.piles.get(&number).cloned(),
+            GroundItemId::Pile { sector, number } => {
+                self.changes.get(&sector)?.piles.get(&number).cloned()
+            }
             GroundItemId::Container { sector, index } => {
                 let object = self.container_object(id)?;
                 let location = crate::object_location(object)?;
-                if let Some(inventory) = self.changes.get(&sector).and_then(|c| c.containers.get(&index)) {
-                    return Some(Pile { location, inventory: inventory.clone() });
+                if let Some(inventory) = self
+                    .changes
+                    .get(&sector)
+                    .and_then(|c| c.containers.get(&index))
+                {
+                    return Some(Pile {
+                        location,
+                        inventory: inventory.clone(),
+                    });
                 }
-                Some(Pile { location, inventory: self.stored_contents(object) })
+                Some(Pile {
+                    location,
+                    inventory: self.stored_contents(object),
+                })
             }
             _ => None,
         }
@@ -125,8 +160,13 @@ impl LoadedMap {
 
     /// The map's container `id`.
     pub fn container_object(&self, id: GroundItemId) -> Option<&Object> {
-        let GroundItemId::Container { sector, index } = id else { return None };
-        self.mobiles.get(&sector)?.get(index as usize).filter(|o| o.object_type == TYPE_CONTAINER)
+        let GroundItemId::Container { sector, index } = id else {
+            return None;
+        };
+        self.mobiles
+            .get(&sector)?
+            .get(index as usize)
+            .filter(|o| o.object_type == TYPE_CONTAINER)
     }
 
     /// A container's stored list (`container_inventory_list_idx`), each item at its stored
@@ -140,7 +180,10 @@ impl LoadedMap {
     /// A critter's stored list (`critter_inventory_list_idx`), each item at its stored
     /// `item_inv_location` (worn ones in their slots, 1000-1008).
     pub fn critter_contents(&self, critter: &Object) -> Inventory {
-        Inventory { items: self.listed_items(critter, "critter_inventory_list_idx"), ..Inventory::default() }
+        Inventory {
+            items: self.listed_items(critter, "critter_inventory_list_idx"),
+            ..Inventory::default()
+        }
     }
 
     fn listed_items(&self, owner: &Object, field: &str) -> Vec<crate::CarriedItem> {
@@ -150,10 +193,19 @@ impl LoadedMap {
         };
         let mut items = Vec::new();
         for id in ids {
-            let Some(item) = self.stored_items.get(&id) else { continue };
-            let Some(prototype) = item.prototype.prototype() else { continue };
+            let Some(item) = self.stored_items.get(&id) else {
+                continue;
+            };
+            let Some(prototype) = item.prototype.prototype() else {
+                continue;
+            };
             let location = self.prototypes.int(item, "item_inv_location").unwrap_or(0);
-            items.push(crate::CarriedItem { prototype, location, quantity: self.quantity_of(item), keys: crate::object_keys(item, &self.prototypes) });
+            items.push(crate::CarriedItem {
+                prototype,
+                location,
+                quantity: self.quantity_of(item),
+                keys: crate::object_keys(item, &self.prototypes),
+            });
         }
         items
     }
@@ -174,7 +226,11 @@ impl LoadedMap {
 
     /// NPC `index` of `sector`'s mobile objects' inventory: as changed (bartered), else as stored.
     pub fn npc_inventory(&self, sector: SectorId, index: u32) -> Option<Inventory> {
-        if let Some(changed) = self.changes.get(&sector).and_then(|c| c.npc_inventories.get(&index)) {
+        if let Some(changed) = self
+            .changes
+            .get(&sector)
+            .and_then(|c| c.npc_inventories.get(&index))
+        {
             return Some(changed.clone());
         }
         let npc = self.mobiles.get(&sector)?.get(index as usize)?;
@@ -183,7 +239,11 @@ impl LoadedMap {
 
     /// Keeps NPC `index`'s changed inventory (saved with the sector).
     pub fn set_npc_inventory(&mut self, sector: SectorId, index: u32, inventory: Inventory) {
-        self.changes.entry(sector).or_default().npc_inventories.insert(index, inventory);
+        self.changes
+            .entry(sector)
+            .or_default()
+            .npc_inventories
+            .insert(index, inventory);
     }
 
     /// Sets pile `id`'s contents, or removes it; a container keeps its changed contents.
@@ -202,7 +262,11 @@ impl LoadedMap {
             }
             GroundItemId::Container { sector, index } => {
                 if let Some(p) = pile {
-                    self.changes.entry(sector).or_default().containers.insert(index, p.inventory);
+                    self.changes
+                        .entry(sector)
+                        .or_default()
+                        .containers
+                        .insert(index, p.inventory);
                 }
             }
             _ => {}
@@ -211,13 +275,19 @@ impl LoadedMap {
 
     /// Whether container `id` shows open (frame 1).
     pub fn container_open(&self, id: GroundItemId) -> bool {
-        let GroundItemId::Container { sector, index } = id else { return false };
-        self.changes.get(&sector).is_some_and(|c| c.opened.contains(&index))
+        let GroundItemId::Container { sector, index } = id else {
+            return false;
+        };
+        self.changes
+            .get(&sector)
+            .is_some_and(|c| c.opened.contains(&index))
     }
 
     /// Shows container `id` open or shut.
     pub fn set_container_open(&mut self, id: GroundItemId, open: bool) {
-        let GroundItemId::Container { sector, index } = id else { return };
+        let GroundItemId::Container { sector, index } = id else {
+            return;
+        };
         let changes = self.changes.entry(sector).or_default();
         if open {
             changes.opened.insert(index);
@@ -231,14 +301,30 @@ impl LoadedMap {
         let sector = at.sector();
         let mobiles = self.mobiles.get(&sector).map_or(0, Vec::len) as u32;
         let own = (0..mobiles).map(|index| GroundItemId::Mobile { sector, index });
-        let dropped = self.changes.get(&sector).into_iter().flat_map(|c| c.dropped.keys().map(|&number| GroundItemId::Dropped { sector, number }));
-        own.chain(dropped).filter_map(|id| Some((id, self.ground_item(id)?))).filter(|(_, g)| g.location == at).collect()
+        let dropped = self.changes.get(&sector).into_iter().flat_map(|c| {
+            c.dropped
+                .keys()
+                .map(|&number| GroundItemId::Dropped { sector, number })
+        });
+        own.chain(dropped)
+            .filter_map(|id| Some((id, self.ground_item(id)?)))
+            .filter(|(_, g)| g.location == at)
+            .collect()
     }
 
     /// The piles on tile `at`, oldest first.
     pub fn piles_on_tile(&self, at: TileLoc) -> Vec<GroundItemId> {
         let sector = at.sector();
-        self.changes.get(&sector).into_iter().flat_map(|c| c.piles.iter().filter(|(_, p)| p.location == at).map(|(&number, _)| GroundItemId::Pile { sector, number })).collect()
+        self.changes
+            .get(&sector)
+            .into_iter()
+            .flat_map(|c| {
+                c.piles
+                    .iter()
+                    .filter(|(_, p)| p.location == at)
+                    .map(|(&number, _)| GroundItemId::Pile { sector, number })
+            })
+            .collect()
     }
 
     /// A stack's quantity (gold and ammo), its own or its prototype's.
@@ -270,7 +356,11 @@ impl LoadedMap {
     /// Puts a dropped item on the ground.
     pub fn drop_ground_item(&mut self, id: GroundItemId, item: GroundItem) {
         if let GroundItemId::Dropped { number, .. } = id {
-            self.changes.entry(id.sector()).or_default().dropped.insert(number, item);
+            self.changes
+                .entry(id.sector())
+                .or_default()
+                .dropped
+                .insert(number, item);
         }
     }
 }
@@ -327,8 +417,17 @@ pub fn drop_item(
     session: &Session,
     outbox: &mut Outbox,
 ) -> Result<Inventory, ItemRefusal> {
-    let item = inventory.items.iter().find(|i| i.location == from).cloned().ok_or(ItemRefusal::Silent)?;
-    let changed = inventory.apply(&InventoryRequest::Drop { from }, Wearer { race: 0, gender: 0 }, &info)?;
+    let item = inventory
+        .items
+        .iter()
+        .find(|i| i.location == from)
+        .cloned()
+        .ok_or(ItemRefusal::Silent)?;
+    let changed = inventory.apply(
+        &InventoryRequest::Drop { from },
+        Wearer { race: 0, gender: 0 },
+        &info,
+    )?;
     place_on_ground(item, at, &info, map, world, session, outbox);
     Ok(changed)
 }
@@ -337,16 +436,39 @@ pub fn drop_item(
 /// there with room; else, if bare items lie there, into a new pile with them (they go first);
 /// else bare on the tile.
 #[allow(clippy::too_many_arguments)]
-fn place_on_ground(item: crate::CarriedItem, at: TileLoc, info: &impl Fn(u32) -> Option<crate::ItemInfo>, map: &mut LoadedMap, world: &mut WorldState, session: &Session, outbox: &mut Outbox) {
+fn place_on_ground(
+    item: crate::CarriedItem,
+    at: TileLoc,
+    info: &impl Fn(u32) -> Option<crate::ItemInfo>,
+    map: &mut LoadedMap,
+    world: &mut WorldState,
+    session: &Session,
+    outbox: &mut Outbox,
+) {
     let sector = at.sector();
     for pile_id in map.piles_on_tile(at) {
-        let Some(pile) = map.pile(pile_id) else { continue };
+        let Some(pile) = map.pile(pile_id) else {
+            continue;
+        };
         let mut contents = pile.inventory.clone();
-        if contents.insert_item(item.clone(), info, i32::MAX, 0).is_ok() {
-            let pile = Pile { location: at, inventory: contents };
+        if contents
+            .insert_item(item.clone(), info, i32::MAX, 0)
+            .is_ok()
+        {
+            let pile = Pile {
+                location: at,
+                inventory: contents,
+            };
             map.set_pile(pile_id, Some(pile.clone()));
             save_change(world, map, sector);
-            broadcast(session, outbox, LedgerDelta::PileChanged { pile: pile_id, contents: Some(pile) });
+            broadcast(
+                session,
+                outbox,
+                LedgerDelta::PileChanged {
+                    pile: pile_id,
+                    contents: Some(pile),
+                },
+            );
             return;
         }
     }
@@ -356,25 +478,47 @@ fn place_on_ground(item: crate::CarriedItem, at: TileLoc, info: &impl Fn(u32) ->
     let bare = map.items_on_tile(at);
     if bare.is_empty() {
         let id = GroundItemId::Dropped { sector, number };
-        let ground = GroundItem { prototype: item.prototype, quantity: item.quantity, location: at, keys: item.keys };
+        let ground = GroundItem {
+            prototype: item.prototype,
+            quantity: item.quantity,
+            location: at,
+            keys: item.keys,
+        };
         map.drop_ground_item(id, ground.clone());
         save_change(world, map, sector);
-        broadcast(session, outbox, LedgerDelta::GroundItemDropped { item: id, ground });
+        broadcast(
+            session,
+            outbox,
+            LedgerDelta::GroundItemDropped { item: id, ground },
+        );
         return;
     }
     let mut contents = Inventory::container();
     for (id, ground) in bare {
-        if contents.insert_item(ground.carried(0), info, i32::MAX, 0).is_ok() {
+        if contents
+            .insert_item(ground.carried(0), info, i32::MAX, 0)
+            .is_ok()
+        {
             map.take_ground_item(id);
             broadcast(session, outbox, LedgerDelta::GroundItemTaken { item: id });
         }
     }
     let _ = contents.insert_item(item, info, i32::MAX, 0);
     let pile_id = GroundItemId::Pile { sector, number };
-    let pile = Pile { location: at, inventory: contents };
+    let pile = Pile {
+        location: at,
+        inventory: contents,
+    };
     map.set_pile(pile_id, Some(pile.clone()));
     save_change(world, map, sector);
-    broadcast(session, outbox, LedgerDelta::PileChanged { pile: pile_id, contents: Some(pile) });
+    broadcast(
+        session,
+        outbox,
+        LedgerDelta::PileChanged {
+            pile: pile_id,
+            contents: Some(pile),
+        },
+    );
 }
 
 /// The pile a PC's loot window shows.
@@ -409,7 +553,11 @@ pub fn apply_loot(
             if info(item.prototype).is_some_and(|i| i.item_flags & crate::ITEM_NO_DROP != 0) {
                 return Err(ItemRefusal::NoDrop);
             }
-            (rest, pile.inventory.put_in(&item, to, wearer, &info, i32::MAX, 0)?)
+            (
+                rest,
+                pile.inventory
+                    .put_in(&item, to, wearer, &info, i32::MAX, 0)?,
+            )
         }
         InventoryRequest::TakeAll => {
             // Each item the PC can take, in order; the rest stay, with no message (0x579770).
@@ -417,7 +565,9 @@ pub fn apply_loot(
             for item in pile.inventory.items.clone() {
                 if let Ok(taken) = pc.put_in(&item, None, wearer, &info, carry, aptitude) {
                     pc = taken;
-                    contents = contents.take_out(item.location).map_or(contents, |(rest, _)| rest);
+                    contents = contents
+                        .take_out(item.location)
+                        .map_or(contents, |(rest, _)| rest);
                 }
             }
             (pc, contents)
@@ -426,11 +576,20 @@ pub fn apply_loot(
             // A container shuts once nobody has it open, unless sticky (0x573440); it stays,
             // even empty.
             if let Some(object) = map.container_object(pile_id) {
-                let sticky = map.prototypes.int(object, "container_flags").unwrap_or(0) & crate::OCOF_STICKY != 0;
+                let sticky = map.prototypes.int(object, "container_flags").unwrap_or(0)
+                    & crate::OCOF_STICKY
+                    != 0;
                 if !others_open && !sticky && map.container_open(pile_id) {
                     map.set_container_open(pile_id, false);
                     save_change(world, map, pile_id.sector());
-                    broadcast(session, outbox, LedgerDelta::ContainerShown { container: pile_id, open: false });
+                    broadcast(
+                        session,
+                        outbox,
+                        LedgerDelta::ContainerShown {
+                            container: pile_id,
+                            open: false,
+                        },
+                    );
                 }
                 return Ok(pc.clone());
             }
@@ -441,12 +600,34 @@ pub fn apply_loot(
                     [] => {
                         map.set_pile(pile_id, None);
                         save_change(world, map, sector);
-                        broadcast(session, outbox, LedgerDelta::PileChanged { pile: pile_id, contents: None });
+                        broadcast(
+                            session,
+                            outbox,
+                            LedgerDelta::PileChanged {
+                                pile: pile_id,
+                                contents: None,
+                            },
+                        );
                     }
                     [only] => {
                         map.set_pile(pile_id, None);
-                        broadcast(session, outbox, LedgerDelta::PileChanged { pile: pile_id, contents: None });
-                        place_on_ground(only.clone(), pile.location, &info, map, world, session, outbox);
+                        broadcast(
+                            session,
+                            outbox,
+                            LedgerDelta::PileChanged {
+                                pile: pile_id,
+                                contents: None,
+                            },
+                        );
+                        place_on_ground(
+                            only.clone(),
+                            pile.location,
+                            &info,
+                            map,
+                            world,
+                            session,
+                            outbox,
+                        );
                         save_change(world, map, sector);
                     }
                     _ => {}
@@ -456,14 +637,33 @@ pub fn apply_loot(
         }
         _ => return Err(ItemRefusal::Silent),
     };
-    let pile = Pile { location: pile.location, inventory: contents };
+    let pile = Pile {
+        location: pile.location,
+        inventory: contents,
+    };
     map.set_pile(pile_id, Some(pile.clone()));
     save_change(world, map, pile_id.sector());
-    broadcast(session, outbox, LedgerDelta::PileChanged { pile: pile_id, contents: Some(pile) });
+    broadcast(
+        session,
+        outbox,
+        LedgerDelta::PileChanged {
+            pile: pile_id,
+            contents: Some(pile),
+        },
+    );
     Ok(pc)
 }
 
-type PickerQuery<'a> = (Entity, &'a NetId, &'a PlayerControlled, &'a Position, Option<&'a crate::Walking>, Option<&'a PendingPickUp>, &'a Sheet, &'a mut Inventory);
+type PickerQuery<'a> = (
+    Entity,
+    &'a NetId,
+    &'a PlayerControlled,
+    &'a Position,
+    Option<&'a crate::Walking>,
+    Option<&'a PendingPickUp>,
+    &'a Sheet,
+    &'a mut Inventory,
+);
 
 /// Takes pick-up requests (each becomes the PC's [`PendingPickUp`]), then picks up the items whose
 /// PC is in range; a request whose PC stopped out of range is dropped.
@@ -481,7 +681,8 @@ pub fn pick_up_items(
     mut pcs: Query<PickerQuery>,
     mut scripts: crate::ScriptHost,
 ) {
-    let mut fresh: std::collections::HashMap<Entity, PendingPickUp> = std::collections::HashMap::new();
+    let mut fresh: std::collections::HashMap<Entity, PendingPickUp> =
+        std::collections::HashMap::new();
     for (player, item, seq) in requests.0.drain(..) {
         if let Some((entity, ..)) = pcs.iter().find(|pc| pc.2.0 == player) {
             fresh.insert(entity, PendingPickUp { item, seq });
@@ -489,9 +690,15 @@ pub fn pick_up_items(
     }
     let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
     let vfs = vfs_guard.as_deref();
-    for (entity, &net_id, controlled, position, walking, pending, sheet, mut inventory) in &mut pcs {
-        let Some(want) = fresh.get(&entity).copied().or(pending.copied()) else { continue };
-        let target = map.ground_item(want.item).map(|g| g.location).or(map.pile(want.item).map(|p| p.location));
+    for (entity, &net_id, controlled, position, walking, pending, sheet, mut inventory) in &mut pcs
+    {
+        let Some(want) = fresh.get(&entity).copied().or(pending.copied()) else {
+            continue;
+        };
+        let target = map
+            .ground_item(want.item)
+            .map(|g| g.location)
+            .or(map.pile(want.item).map(|p| p.location));
         let Some(location) = target else {
             commands.entity(entity).remove::<PendingPickUp>();
             continue;
@@ -510,7 +717,15 @@ pub fn pick_up_items(
         if map.container_object(want.item).is_some() {
             // The container's "use" script first (0x428c17): it may handle the opening itself.
             let attachee = crate::ScriptObject::ground(want.item).expect("a container");
-            if scripts.hook(&mut world, &mut map, &mut outbox, attachee, crate::EVENT_USE, player) == crate::HookResult::SkipDefault {
+            if scripts.hook(
+                &mut world,
+                &mut map,
+                &mut outbox,
+                attachee,
+                crate::EVENT_USE,
+                player,
+            ) == crate::HookResult::SkipDefault
+            {
                 continue;
             }
         }
@@ -518,44 +733,87 @@ pub fn pick_up_items(
             let flags = map.prototypes.int(object, "container_flags").unwrap_or(0);
             let lock = map.prototypes.int(object, "container_key_id").unwrap_or(0);
             if let Err(refusal) = crate::open_check(flags, map.lock_day, inventory.has_key(lock)) {
-                outbox.0.push((player, LedgerDelta::OpenRefused { message: refusal.message() }));
+                outbox.0.push((
+                    player,
+                    LedgerDelta::OpenRefused {
+                        message: refusal.message(),
+                    },
+                ));
                 continue;
             }
             let first = !map.changes.get(&want.item.sector()).is_some_and(|c| matches!(want.item, GroundItemId::Container { index, .. } if c.containers.contains_key(&index)));
-            let turns = map.prototypes.art_id(object).is_some_and(crate::opens_to_frame);
-            let source = map.prototypes.int(object, "container_inventory_source").and_then(|s| u32::try_from(s).ok()).filter(|&s| s != 0);
-            let Some(mut pile) = map.pile(want.item) else { continue };
+            let turns = map
+                .prototypes
+                .art_id(object)
+                .is_some_and(crate::opens_to_frame);
+            let source = map
+                .prototypes
+                .int(object, "container_inventory_source")
+                .and_then(|s| u32::try_from(s).ok())
+                .filter(|&s| s != 0);
+            let Some(mut pile) = map.pile(want.item) else {
+                continue;
+            };
             if first {
                 if flags & crate::OCOF_INVEN_SPAWN_PENDING != 0
                     && let Some(source) = source.and_then(|s| crate::inventory_source(vfs?, s))
                 {
                     let (prototypes, art) = (map.prototypes.clone(), map.art.clone());
-                    let info = crate::item_info(&prototypes, |id| crate::world::art_size(vfs, art.as_deref(), id));
-                    crate::roll_source(&mut pile.inventory, &source, &mut crate::Rng(crate::roll_seed(pile.location)), info);
+                    let info = crate::item_info(&prototypes, |id| {
+                        crate::world::art_size(vfs, art.as_deref(), id)
+                    });
+                    crate::roll_source(
+                        &mut pile.inventory,
+                        &source,
+                        &mut crate::Rng(crate::roll_seed(pile.location)),
+                        info,
+                    );
                 }
                 map.set_pile(want.item, Some(pile.clone()));
-                broadcast(&session, &mut outbox, LedgerDelta::PileChanged { pile: want.item, contents: Some(pile) });
+                broadcast(
+                    &session,
+                    &mut outbox,
+                    LedgerDelta::PileChanged {
+                        pile: want.item,
+                        contents: Some(pile),
+                    },
+                );
             }
             if turns && !map.container_open(want.item) {
                 map.set_container_open(want.item, true);
-                broadcast(&session, &mut outbox, LedgerDelta::ContainerShown { container: want.item, open: true });
+                broadcast(
+                    &session,
+                    &mut outbox,
+                    LedgerDelta::ContainerShown {
+                        container: want.item,
+                        open: true,
+                    },
+                );
             }
             save_change(&mut world, &map, want.item.sector());
             commands.entity(entity).insert(LootOpen(want.item));
-            outbox.0.push((player, LedgerDelta::PileOpened { pile: want.item }));
+            outbox
+                .0
+                .push((player, LedgerDelta::PileOpened { pile: want.item }));
             continue;
         }
         // A pile opens the loot window (0x57cb10, mode 2).
         if map.pile(want.item).is_some() {
             commands.entity(entity).insert(LootOpen(want.item));
-            outbox.0.push((player, LedgerDelta::PileOpened { pile: want.item }));
+            outbox
+                .0
+                .push((player, LedgerDelta::PileOpened { pile: want.item }));
             continue;
         }
-        let Some(ground) = map.ground_item(want.item) else { continue };
+        let Some(ground) = map.ground_item(want.item) else {
+            continue;
+        };
         let derived = rules.0.derived(&sheet.0);
         let aptitude = rules.0.aptitude(&sheet.0);
         let (prototypes, art) = (map.prototypes.clone(), map.art.clone());
-        let info = crate::item_info(&prototypes, |id| crate::world::art_size(vfs, art.as_deref(), id));
+        let info = crate::item_info(&prototypes, |id| {
+            crate::world::art_size(vfs, art.as_deref(), id)
+        });
         let mut changed = inventory.clone();
         match changed.insert_item(ground.carried(0), &info, derived.carry_weight, aptitude) {
             Ok(_) => {
@@ -565,16 +823,29 @@ pub fn pick_up_items(
                 if let Some(saved) = world.0.as_mut().and_then(|w| w.players.get_mut(&player)) {
                     saved.inventory = Some(inventory.clone());
                 }
-                broadcast(&session, &mut outbox, LedgerDelta::GroundItemTaken { item: want.item });
+                broadcast(
+                    &session,
+                    &mut outbox,
+                    LedgerDelta::GroundItemTaken { item: want.item },
+                );
                 let ack = acks.0.get(&player).copied().unwrap_or(0);
-                outbox.0.push((player, LedgerDelta::Inventory { net_id, ack, inventory: inventory.clone() }));
+                outbox.0.push((
+                    player,
+                    LedgerDelta::Inventory {
+                        net_id,
+                        ack,
+                        inventory: inventory.clone(),
+                    },
+                ));
             }
             Err(refusal) => {
                 let message = match refusal {
                     crate::InsertRefusal::TooHeavy => 101,
                     crate::InsertRefusal::NoRoom => 102,
                 };
-                outbox.0.push((player, LedgerDelta::ItemRefused { message }));
+                outbox
+                    .0
+                    .push((player, LedgerDelta::ItemRefused { message }));
             }
         }
     }

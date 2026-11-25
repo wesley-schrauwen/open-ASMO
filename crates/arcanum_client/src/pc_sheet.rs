@@ -31,12 +31,17 @@ impl SheetHost {
     /// Applies `request` to the preview and queues it for the host. Refused requests change
     /// nothing and are not sent; nothing is sent before the host's copy is in.
     pub fn request(&mut self, rules: &RulesData, request: SheetRequest) -> Result<(), Refusal> {
-        let Some(preview) = &self.preview else { return Err(Refusal::NotAllowed) };
+        let Some(preview) = &self.preview else {
+            return Err(Refusal::NotAllowed);
+        };
         let changed = apply_sheet_request(rules, preview, &request)?;
         self.preview = Some(changed);
         self.last_seq += 1;
         self.pending.push_back((self.last_seq, request.clone()));
-        self.outgoing.push(PlayerIntent::Sheet { seq: self.last_seq, request });
+        self.outgoing.push(PlayerIntent::Sheet {
+            seq: self.last_seq,
+            request,
+        });
         Ok(())
     }
 
@@ -47,7 +52,9 @@ impl SheetHost {
 
     /// Takes the host's copy from a `SheetUpdate`; other deltas are ignored.
     pub fn receive(&mut self, rules: &RulesData, delta: &LedgerDelta) {
-        let LedgerDelta::SheetUpdate { ack, sheet } = delta else { return };
+        let LedgerDelta::SheetUpdate { ack, sheet } = delta else {
+            return;
+        };
         while self.pending.front().is_some_and(|(seq, _)| seq <= ack) {
             self.pending.pop_front();
         }
@@ -69,7 +76,10 @@ mod tests {
     use super::*;
 
     fn sheet(points: i32) -> CharacterSheet {
-        CharacterSheet { unspent: points, ..RulesData::default().new_sheet() }
+        CharacterSheet {
+            unspent: points,
+            ..RulesData::default().new_sheet()
+        }
     }
 
     #[test]
@@ -84,21 +94,55 @@ mod tests {
     fn changes_show_at_once_and_the_hosts_answers_win() {
         let rules = RulesData::default();
         let mut host = SheetHost::default();
-        host.receive(&rules, &LedgerDelta::SheetUpdate { ack: 0, sheet: sheet(2) });
+        host.receive(
+            &rules,
+            &LedgerDelta::SheetUpdate {
+                ack: 0,
+                sheet: sheet(2),
+            },
+        );
         host.request(&rules, SheetRequest::Open).unwrap();
-        host.request(&rules, SheetRequest::Action(CharacterAction::AdjustPool(Pool::Fatigue, 1))).unwrap();
+        host.request(
+            &rules,
+            SheetRequest::Action(CharacterAction::AdjustPool(Pool::Fatigue, 1)),
+        )
+        .unwrap();
         assert_eq!(host.sheet().unwrap().draft.fatigue, 1, "at once");
         let sent = host.take_outgoing();
         assert_eq!(sent.len(), 2);
         assert!(matches!(&sent[1], PlayerIntent::Sheet { seq: 2, .. }));
         // The host answered the Open with a sheet that has 3 points: the fatigue point is
         // replayed on it.
-        host.receive(&rules, &LedgerDelta::SheetUpdate { ack: 1, sheet: sheet(3) });
-        assert_eq!((host.sheet().unwrap().draft.fatigue, rules.unspent(host.sheet().unwrap())), (1, 2));
+        host.receive(
+            &rules,
+            &LedgerDelta::SheetUpdate {
+                ack: 1,
+                sheet: sheet(3),
+            },
+        );
+        assert_eq!(
+            (
+                host.sheet().unwrap().draft.fatigue,
+                rules.unspent(host.sheet().unwrap())
+            ),
+            (1, 2)
+        );
         // The answer to it leaves nothing to replay.
         let answered = host.sheet().unwrap().clone();
-        host.receive(&rules, &LedgerDelta::SheetUpdate { ack: 2, sheet: answered.clone() });
+        host.receive(
+            &rules,
+            &LedgerDelta::SheetUpdate {
+                ack: 2,
+                sheet: answered.clone(),
+            },
+        );
         assert_eq!(host.sheet(), Some(&answered));
-        assert_eq!(host.request(&rules, SheetRequest::Action(CharacterAction::SetName("X".into()))), Err(Refusal::NotAllowed));
+        assert_eq!(
+            host.request(
+                &rules,
+                SheetRequest::Action(CharacterAction::SetName("X".into()))
+            ),
+            Err(Refusal::NotAllowed)
+        );
     }
 }

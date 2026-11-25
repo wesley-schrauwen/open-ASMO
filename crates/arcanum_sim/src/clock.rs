@@ -29,7 +29,9 @@ pub const GAME_INIT: &str = "rules/gameinit.mes";
 
 /// A moment of game time: whole days since the start of the first year, and milliseconds into
 /// the day (always below [`DAY_MS`]).
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
 pub struct GameTime {
     pub days: u32,
     pub ms: u32,
@@ -38,13 +40,19 @@ pub struct GameTime {
 impl GameTime {
     /// Day 0 at `hour` o'clock.
     pub fn at_hour(hour: u32) -> Self {
-        Self { days: 0, ms: (hour % 24) * HOUR_MS }
+        Self {
+            days: 0,
+            ms: (hour % 24) * HOUR_MS,
+        }
     }
 
     /// `ms` later (0x45aa10).
     pub fn plus_ms(self, ms: u64) -> Self {
         let total = u64::from(self.ms) + ms;
-        Self { days: self.days + (total / u64::from(DAY_MS)) as u32, ms: (total % u64::from(DAY_MS)) as u32 }
+        Self {
+            days: self.days + (total / u64::from(DAY_MS)) as u32,
+            ms: (total % u64::from(DAY_MS)) as u32,
+        }
     }
 
     /// 0 to 23 (0x45a870).
@@ -88,7 +96,10 @@ pub struct GameStart {
 impl Default for GameStart {
     /// The original's fallback when the file is missing: 1885, 15:00.
     fn default() -> Self {
-        Self { year: 1885, hour: 15 }
+        Self {
+            year: 1885,
+            hour: 15,
+        }
     }
 }
 
@@ -96,8 +107,18 @@ impl GameStart {
     /// Reads entries 4 (year) and 5 (hour) of [`GAME_INIT`]; the defaults where they are missing.
     pub fn load(vfs: &Vfs) -> Self {
         let mut start = Self::default();
-        let Some(mes) = vfs.read(GAME_INIT).ok().and_then(|d| MesFile::parse(&d).ok()) else { return start };
-        let number = |key: u32| mes.messages.get(&key).and_then(|t| t.trim().parse::<u32>().ok());
+        let Some(mes) = vfs
+            .read(GAME_INIT)
+            .ok()
+            .and_then(|d| MesFile::parse(&d).ok())
+        else {
+            return start;
+        };
+        let number = |key: u32| {
+            mes.messages
+                .get(&key)
+                .and_then(|t| t.trim().parse::<u32>().ok())
+        };
         if let Some(year) = number(4) {
             start.year = year;
         }
@@ -138,7 +159,11 @@ impl GameClock {
 }
 
 /// Advances the clock by one tick once a world exists, and has day and night locks follow it.
-pub fn advance_clock(mut clock: ResMut<GameClock>, world: Res<crate::WorldState>, mut map: ResMut<crate::LoadedMap>) {
+pub fn advance_clock(
+    mut clock: ResMut<GameClock>,
+    world: Res<crate::WorldState>,
+    mut map: ResMut<crate::LoadedMap>,
+) {
     if world.0.is_none() {
         return;
     }
@@ -152,9 +177,25 @@ mod tests {
 
     #[test]
     fn the_calendar_has_twelve_months_of_thirty_days() {
-        let t = GameTime { days: 359 + 31, ms: 15 * HOUR_MS + 30 * 60_000 };
-        assert_eq!((t.year(1885), t.month(), t.day_of_month(), t.hour(), t.minute()), (1886, 2, 1, 15, 30));
-        assert_eq!(GameTime::at_hour(15).plus_ms(u64::from(9 * HOUR_MS)), GameTime { days: 1, ms: 0 }, "midnight rolls the day");
+        let t = GameTime {
+            days: 359 + 31,
+            ms: 15 * HOUR_MS + 30 * 60_000,
+        };
+        assert_eq!(
+            (
+                t.year(1885),
+                t.month(),
+                t.day_of_month(),
+                t.hour(),
+                t.minute()
+            ),
+            (1886, 2, 1, 15, 30)
+        );
+        assert_eq!(
+            GameTime::at_hour(15).plus_ms(u64::from(9 * HOUR_MS)),
+            GameTime { days: 1, ms: 0 },
+            "midnight rolls the day"
+        );
         assert!(GameTime::at_hour(6).is_day() && !GameTime::at_hour(18).is_day());
     }
 
@@ -164,7 +205,13 @@ mod tests {
         for _ in 0..TICK_HZ as usize {
             clock.tick();
         }
-        assert_eq!(clock.now, GameTime { days: 0, ms: 15 * HOUR_MS + 8000 });
+        assert_eq!(
+            clock.now,
+            GameTime {
+                days: 0,
+                ms: 15 * HOUR_MS + 8000
+            }
+        );
         // A game day in three real hours.
         let mut clock = GameClock::default();
         for _ in 0..(3 * 3600 * TICK_HZ as usize) {

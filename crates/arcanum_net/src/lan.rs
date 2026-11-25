@@ -25,7 +25,9 @@
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
-use std::net::{Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket};
+use std::net::{
+    Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs, UdpSocket,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread::JoinHandle;
@@ -55,7 +57,10 @@ const POLL: Duration = Duration::from_millis(1);
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToHost {
     /// The first message on the connection: who this client plays, and its wire version.
-    Hello { protocol: u32, player: PlayerId },
+    Hello {
+        protocol: u32,
+        player: PlayerId,
+    },
     Intent(PlayerIntent),
     /// A datagram so the host knows the client's UDP address.
     Ping,
@@ -67,7 +72,9 @@ pub enum ToHost {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToClient {
     /// The answer to `Hello`: the token the client's datagrams must carry.
-    Welcome { token: u64 },
+    Welcome {
+        token: u64,
+    },
     Delta(LedgerDelta),
     /// The host is closing, or refused the client.
     Bye,
@@ -101,7 +108,12 @@ impl Stream {
     fn new(stream: TcpStream) -> io::Result<Self> {
         stream.set_nonblocking(true)?;
         stream.set_nodelay(true)?;
-        Ok(Self { stream, input: Vec::new(), output: Vec::new(), closed: false })
+        Ok(Self {
+            stream,
+            input: Vec::new(),
+            output: Vec::new(),
+            closed: false,
+        })
     }
 
     fn send(&mut self, msg: &impl Serialize) {
@@ -153,7 +165,9 @@ impl Stream {
     /// Sends what is left, as far as it goes at once, and closes.
     fn close(mut self) {
         let _ = self.stream.set_nonblocking(false);
-        let _ = self.stream.set_write_timeout(Some(Duration::from_millis(200)));
+        let _ = self
+            .stream
+            .set_write_timeout(Some(Duration::from_millis(200)));
         let _ = self.stream.write_all(&self.output);
         let _ = self.stream.shutdown(Shutdown::Both);
     }
@@ -178,7 +192,11 @@ fn receive_datagrams(socket: &UdpSocket, mut each: impl FnMut(&[u8], SocketAddr)
 fn random_token() -> u64 {
     use std::hash::{BuildHasher, Hasher};
     let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-    h.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
+    h.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos()),
+    );
     h.finish()
 }
 
@@ -211,8 +229,16 @@ impl LanHost {
         let (in_tx, in_rx) = unbounded();
         let players = Arc::new(RwLock::new(HashMap::new()));
         let shared = players.clone();
-        let thread = std::thread::Builder::new().name("lan host".into()).spawn(move || host_loop(&listener, &udp, &out_rx, &in_tx, &shared))?;
-        Ok(Self { addr, out: Some(out_tx), intents: in_rx, players, thread: Some(thread) })
+        let thread = std::thread::Builder::new()
+            .name("lan host".into())
+            .spawn(move || host_loop(&listener, &udp, &out_rx, &in_tx, &shared))?;
+        Ok(Self {
+            addr,
+            out: Some(out_tx),
+            intents: in_rx,
+            players,
+            thread: Some(thread),
+        })
     }
 
     pub fn local_addr(&self) -> SocketAddr {
@@ -226,18 +252,34 @@ impl LanHost {
 
     /// Whether the host knows `player`'s UDP address (so unreliable messages reach it).
     pub fn has_datagrams(&self, player: PlayerId) -> bool {
-        self.players.read().unwrap().get(&player).copied().unwrap_or(false)
+        self.players
+            .read()
+            .unwrap()
+            .get(&player)
+            .copied()
+            .unwrap_or(false)
     }
 }
 
-fn host_loop(listener: &TcpListener, udp: &UdpSocket, out: &Receiver<(PlayerId, LedgerDelta)>, intents: &Sender<(PlayerId, PlayerIntent)>, players: &RwLock<HashMap<PlayerId, bool>>) {
+fn host_loop(
+    listener: &TcpListener,
+    udp: &UdpSocket,
+    out: &Receiver<(PlayerId, LedgerDelta)>,
+    intents: &Sender<(PlayerId, PlayerIntent)>,
+    players: &RwLock<HashMap<PlayerId, bool>>,
+) {
     let mut conns: Vec<Conn> = Vec::new();
     loop {
         // New connections.
         loop {
             match listener.accept() {
                 Ok((stream, _)) => match Stream::new(stream) {
-                    Ok(stream) => conns.push(Conn { stream, player: None, token: random_token(), udp: None }),
+                    Ok(stream) => conns.push(Conn {
+                        stream,
+                        player: None,
+                        token: random_token(),
+                        udp: None,
+                    }),
                     Err(e) => log::warn!("cannot take a connection: {e}"),
                 },
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
@@ -249,8 +291,15 @@ fn host_loop(listener: &TcpListener, udp: &UdpSocket, out: &Receiver<(PlayerId, 
         }
         // Datagrams.
         receive_datagrams(udp, |data, from| {
-            let Ok(d) = serde_json::from_slice::<FromClient>(data) else { return };
-            let Some(conn) = conns.iter_mut().find(|c| c.player == Some(d.player) && c.token == d.token) else { return };
+            let Ok(d) = serde_json::from_slice::<FromClient>(data) else {
+                return;
+            };
+            let Some(conn) = conns
+                .iter_mut()
+                .find(|c| c.player == Some(d.player) && c.token == d.token)
+            else {
+                return;
+            };
             if conn.udp != Some(from) {
                 conn.udp = Some(from);
                 players.write().unwrap().insert(d.player, true);
@@ -263,7 +312,9 @@ fn host_loop(listener: &TcpListener, udp: &UdpSocket, out: &Receiver<(PlayerId, 
         loop {
             match out.try_recv() {
                 Ok((player, delta)) => {
-                    let Some(conn) = conns.iter_mut().find(|c| c.player == Some(player)) else { continue };
+                    let Some(conn) = conns.iter_mut().find(|c| c.player == Some(player)) else {
+                        continue;
+                    };
                     let msg = ToClient::Delta(delta);
                     if !msg_reliable(&msg) {
                         let data = serde_json::to_vec(&msg).expect("messages always serialise");
@@ -294,7 +345,10 @@ fn host_loop(listener: &TcpListener, udp: &UdpSocket, out: &Receiver<(PlayerId, 
                 match (msg, conn.player) {
                     (ToHost::Hello { protocol, player }, None) => {
                         if protocol != PROTOCOL {
-                            log::warn!("refused player {}: wire version {protocol}, this host speaks {PROTOCOL}", player.0);
+                            log::warn!(
+                                "refused player {}: wire version {protocol}, this host speaks {PROTOCOL}",
+                                player.0
+                            );
                             conn.stream.send(&ToClient::Bye);
                             conn.stream.closed = true;
                             continue;
@@ -358,7 +412,8 @@ impl HostTransport for LanHost {
             return Err(TransportError::UnknownPlayer(player));
         }
         let out = self.out.as_ref().ok_or(TransportError::Disconnected)?;
-        out.send((player, delta)).map_err(|_| TransportError::Disconnected)
+        out.send((player, delta))
+            .map_err(|_| TransportError::Disconnected)
     }
 
     fn recv_intents(&self) -> Vec<(PlayerId, PlayerIntent)> {
@@ -383,19 +438,32 @@ impl LanClient {
     /// Connects to the host at `host` as `player`. Nothing is waited for: the connection is
     /// made in the background ([`LanClient::welcomed`], [`LanClient::alive`]).
     pub fn connect(host: impl ToSocketAddrs, player: PlayerId) -> io::Result<Self> {
-        let host = host.to_socket_addrs()?.next().ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no address"))?;
+        let host = host
+            .to_socket_addrs()?
+            .next()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "no address"))?;
         let (out_tx, out_rx) = unbounded();
         let (in_tx, in_rx) = unbounded();
         let welcomed = Arc::new(AtomicBool::new(false));
         let alive = Arc::new(AtomicBool::new(true));
         let (w, a) = (welcomed.clone(), alive.clone());
-        let thread = std::thread::Builder::new().name("lan client".into()).spawn(move || {
-            if let Err(e) = client_loop(host, player, &out_rx, &in_tx, &w) {
-                log::warn!("lost the host at {host}: {e}");
-            }
-            a.store(false, Ordering::Relaxed);
-        })?;
-        Ok(Self { player, host, out: Some(out_tx), deltas: in_rx, welcomed, alive, thread: Some(thread) })
+        let thread = std::thread::Builder::new()
+            .name("lan client".into())
+            .spawn(move || {
+                if let Err(e) = client_loop(host, player, &out_rx, &in_tx, &w) {
+                    log::warn!("lost the host at {host}: {e}");
+                }
+                a.store(false, Ordering::Relaxed);
+            })?;
+        Ok(Self {
+            player,
+            host,
+            out: Some(out_tx),
+            deltas: in_rx,
+            welcomed,
+            alive,
+            thread: Some(thread),
+        })
     }
 
     pub fn host(&self) -> SocketAddr {
@@ -413,15 +481,31 @@ impl LanClient {
     }
 }
 
-fn client_loop(host: SocketAddr, player: PlayerId, out: &Receiver<PlayerIntent>, deltas: &Sender<LedgerDelta>, welcomed: &AtomicBool) -> io::Result<()> {
+fn client_loop(
+    host: SocketAddr,
+    player: PlayerId,
+    out: &Receiver<PlayerIntent>,
+    deltas: &Sender<LedgerDelta>,
+    welcomed: &AtomicBool,
+) -> io::Result<()> {
     let mut stream = Stream::new(TcpStream::connect_timeout(&host, CONNECT_TIMEOUT)?)?;
-    let local: SocketAddr = if host.is_ipv4() { (Ipv4Addr::UNSPECIFIED, 0).into() } else { (Ipv6Addr::UNSPECIFIED, 0).into() };
+    let local: SocketAddr = if host.is_ipv4() {
+        (Ipv4Addr::UNSPECIFIED, 0).into()
+    } else {
+        (Ipv6Addr::UNSPECIFIED, 0).into()
+    };
     let udp = UdpSocket::bind(local)?;
-    stream.send(&ToHost::Hello { protocol: PROTOCOL, player });
+    stream.send(&ToHost::Hello {
+        protocol: PROTOCOL,
+        player,
+    });
     let mut token: Option<u64> = None;
     let mut last_ping: Option<Instant> = None;
     loop {
-        let datagram = |msg: ToHost, token: u64| serde_json::to_vec(&FromClient { player, token, msg }).expect("messages always serialise");
+        let datagram = |msg: ToHost, token: u64| {
+            serde_json::to_vec(&FromClient { player, token, msg })
+                .expect("messages always serialise")
+        };
         receive_datagrams(&udp, |data, from| {
             if from.port() != host.port() {
                 return;
@@ -467,11 +551,19 @@ fn client_loop(host: SocketAddr, player: PlayerId, out: &Receiver<PlayerIntent>,
                 ToClient::Delta(delta) => {
                     let _ = deltas.send(delta);
                 }
-                ToClient::Bye => return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "the host closed the session")),
+                ToClient::Bye => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::ConnectionAborted,
+                        "the host closed the session",
+                    ));
+                }
             }
         }
         if stream.closed {
-            return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "the connection closed"));
+            return Err(io::Error::new(
+                io::ErrorKind::ConnectionAborted,
+                "the connection closed",
+            ));
         }
     }
 }
@@ -506,7 +598,7 @@ impl ClientTransport for LanClient {
 #[cfg(test)]
 mod tests {
     use arcanum_formats::map::TileLoc;
-    use arcanum_sim::{CharacterRequest, NetId, ActorState};
+    use arcanum_sim::{ActorState, CharacterRequest, NetId};
 
     use super::*;
 
@@ -522,7 +614,16 @@ mod tests {
     }
 
     fn sync(number: u32) -> LedgerDelta {
-        LedgerDelta::StateSync { number, time: Default::default(), actors: vec![ActorState { net_id: NetId(0), position: TileLoc { x: 1, y: 2 }, path: vec![], seq: 0 }] }
+        LedgerDelta::StateSync {
+            number,
+            time: Default::default(),
+            actors: vec![ActorState {
+                net_id: NetId(0),
+                position: TileLoc { x: 1, y: 2 },
+                path: vec![],
+                seq: 0,
+            }],
+        }
     }
 
     #[test]
@@ -530,13 +631,32 @@ mod tests {
         let host = LanHost::bind("127.0.0.1:0").unwrap();
         let p = PlayerId(42);
         let client = LanClient::connect(host.local_addr(), p).unwrap();
-        client.send_intent(PlayerIntent::Character { seq: 1, request: CharacterRequest::New }).unwrap();
+        client
+            .send_intent(PlayerIntent::Character {
+                seq: 1,
+                request: CharacterRequest::New,
+            })
+            .unwrap();
         let got = wait_for(|| Some(host.recv_intents()).filter(|v| !v.is_empty()));
-        assert_eq!(got, vec![(p, PlayerIntent::Character { seq: 1, request: CharacterRequest::New })]);
+        assert_eq!(
+            got,
+            vec![(
+                p,
+                PlayerIntent::Character {
+                    seq: 1,
+                    request: CharacterRequest::New
+                }
+            )]
+        );
         wait_for(|| client.welcomed().then_some(()));
-        assert_eq!(host.send_delta(PlayerId(9), LedgerDelta::Tick(1)), Err(TransportError::UnknownPlayer(PlayerId(9))));
+        assert_eq!(
+            host.send_delta(PlayerId(9), LedgerDelta::Tick(1)),
+            Err(TransportError::UnknownPlayer(PlayerId(9)))
+        );
 
-        let reliable: Vec<LedgerDelta> = (0..200).map(|n| LedgerDelta::Despawn { net_id: NetId(n) }).collect();
+        let reliable: Vec<LedgerDelta> = (0..200)
+            .map(|n| LedgerDelta::Despawn { net_id: NetId(n) })
+            .collect();
         for d in &reliable {
             host.send_delta(p, d.clone()).unwrap();
         }
@@ -551,7 +671,9 @@ mod tests {
         wait_for(|| host.has_datagrams(p).then_some(()));
         host.send_delta(p, sync(7)).unwrap();
         wait_for(|| client.recv_deltas().contains(&sync(7)).then_some(()));
-        client.send_intent(PlayerIntent::SyncAck { number: 7 }).unwrap();
+        client
+            .send_intent(PlayerIntent::SyncAck { number: 7 })
+            .unwrap();
         let got = wait_for(|| Some(host.recv_intents()).filter(|v| !v.is_empty()));
         assert_eq!(got, vec![(p, PlayerIntent::SyncAck { number: 7 })]);
 
@@ -559,7 +681,23 @@ mod tests {
         let big = LedgerDelta::StateSync {
             number: 8,
             time: Default::default(),
-            actors: (0..50).map(|n| ActorState { net_id: NetId(n), position: TileLoc { x: 100_000, y: 100_000 }, path: vec![TileLoc { x: 100_001, y: 100_001 }; 10], seq: 1 }).collect(),
+            actors: (0..50)
+                .map(|n| ActorState {
+                    net_id: NetId(n),
+                    position: TileLoc {
+                        x: 100_000,
+                        y: 100_000,
+                    },
+                    path: vec![
+                        TileLoc {
+                            x: 100_001,
+                            y: 100_001
+                        };
+                        10
+                    ],
+                    seq: 1,
+                })
+                .collect(),
         };
         host.send_delta(p, big.clone()).unwrap();
         wait_for(|| client.recv_deltas().contains(&big).then_some(()));
@@ -575,13 +713,22 @@ mod tests {
         wait_for(|| host.has_player(PlayerId(1)).then_some(()));
         drop(host);
         wait_for(|| (!client.alive()).then_some(()));
-        assert_eq!(client.send_intent(PlayerIntent::Move { seq: 1, path: vec![] }), Err(TransportError::Disconnected));
+        assert_eq!(
+            client.send_intent(PlayerIntent::Move {
+                seq: 1,
+                path: vec![]
+            }),
+            Err(TransportError::Disconnected)
+        );
     }
 
     #[test]
     fn an_unreachable_host_is_reported() {
         // Bind and drop to find a port nobody listens on.
-        let addr = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap();
+        let addr = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
         let client = LanClient::connect(addr, PlayerId(1)).unwrap();
         wait_for(|| (!client.alive()).then_some(()));
     }
@@ -594,6 +741,11 @@ mod tests {
         let second = LanClient::connect(host.local_addr(), PlayerId(5)).unwrap();
         wait_for(|| (!first.alive()).then_some(()));
         host.send_delta(PlayerId(5), LedgerDelta::Tick(3)).unwrap();
-        wait_for(|| second.recv_deltas().contains(&LedgerDelta::Tick(3)).then_some(()));
+        wait_for(|| {
+            second
+                .recv_deltas()
+                .contains(&LedgerDelta::Tick(3))
+                .then_some(())
+        });
     }
 }

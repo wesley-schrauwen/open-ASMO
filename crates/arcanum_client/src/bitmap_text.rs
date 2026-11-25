@@ -57,8 +57,13 @@ impl AssetLoader for BitmapFontLoader {
         _load_context: &mut LoadContext<'_>,
     ) -> Result<BitmapFontAsset, BitmapFontLoadError> {
         let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).await.map_err(BitmapFontLoadError::Io)?;
-        BitmapFont::parse(&bytes).map(BitmapFontAsset).map_err(BitmapFontLoadError::Font)
+        reader
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(BitmapFontLoadError::Io)?;
+        BitmapFont::parse(&bytes)
+            .map(BitmapFontAsset)
+            .map_err(BitmapFontLoadError::Font)
     }
 
     fn extensions(&self) -> &[&str] {
@@ -89,7 +94,15 @@ pub struct BitmapText {
 impl BitmapText {
     /// One block of text in `font`, unwrapped, left-aligned, with a shadow.
     pub fn new(text: impl Into<String>, font: Handle<BitmapFontAsset>, scale: f32) -> Self {
-        Self { text: text.into(), font, scale, shadow: true, max_width: None, align: Align::Left, max_height: None }
+        Self {
+            text: text.into(),
+            font,
+            scale,
+            shadow: true,
+            max_width: None,
+            align: Align::Left,
+            max_height: None,
+        }
     }
 
     /// Wraps to `width` logical pixels.
@@ -107,7 +120,8 @@ impl BitmapText {
 
     /// The wrap width in font pixels.
     fn wrap_in_font_pixels(&self) -> Option<u32> {
-        self.max_width.map(|w| (w / self.scale).floor().max(1.0) as u32)
+        self.max_width
+            .map(|w| (w / self.scale).floor().max(1.0) as u32)
     }
 }
 
@@ -130,7 +144,11 @@ pub fn compose_rgba(text: &RenderedText, shadow: bool) -> (u32, u32, Vec<u8>) {
     for y in 0..h as i64 {
         for x in 0..w as i64 {
             let a_text = coverage(x, y);
-            let a_shadow = if shadow { coverage(x - 1, y - 1) * SHADOW_OPACITY } else { 0.0 };
+            let a_shadow = if shadow {
+                coverage(x - 1, y - 1) * SHADOW_OPACITY
+            } else {
+                0.0
+            };
             // White text "over" black shadow.
             let a = a_text + a_shadow * (1.0 - a_text);
             let grey = if a > 0.0 { a_text / a } else { 1.0 };
@@ -152,7 +170,16 @@ impl Plugin for BitmapTextPlugin {
     fn build(&self, app: &mut App) {
         app.init_asset::<BitmapFontAsset>()
             .register_asset_loader(BitmapFontLoader)
-            .add_systems(PostUpdate, (fall_back_to_plain_text, render_bitmap_text, tint_bitmap_text).chain().before(bevy::ui::UiSystems::Layout));
+            .add_systems(
+                PostUpdate,
+                (
+                    fall_back_to_plain_text,
+                    render_bitmap_text,
+                    tint_bitmap_text,
+                )
+                    .chain()
+                    .before(bevy::ui::UiSystems::Layout),
+            );
     }
 }
 
@@ -173,8 +200,14 @@ fn render_bitmap_text(
         };
         let wrap = text.wrap_in_font_pixels();
         // Whole lines that fit the height; the shadow adds one font pixel below the last line.
-        let max_lines = text.max_height.map(|h| ((h / text.scale - f32::from(text.shadow)) / font.0.line_height as f32).floor().max(1.0) as usize);
-        let rendered = font.0.render_block_limited(&text.text, wrap, text.align, max_lines);
+        let max_lines = text.max_height.map(|h| {
+            ((h / text.scale - f32::from(text.shadow)) / font.0.line_height as f32)
+                .floor()
+                .max(1.0) as usize
+        });
+        let rendered = font
+            .0
+            .render_block_limited(&text.text, wrap, text.align, max_lines);
         let mut entity_commands = commands.entity(entity);
         if rendered.width == 0 {
             node.width = Val::Px(0.0);
@@ -185,7 +218,11 @@ fn render_bitmap_text(
             node.width = Val::Px(width as f32 * text.scale);
             node.height = Val::Px(height as f32 * text.scale);
             let image = Image::new(
-                Extent3d { width, height, depth_or_array_layers: 1 },
+                Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
                 TextureDimension::D2,
                 rgba,
                 TextureFormat::Rgba8UnormSrgb,
@@ -199,7 +236,9 @@ fn render_bitmap_text(
 }
 
 /// Keeps the image tint in step with [`TextColor`] (e.g. hover highlighting).
-fn tint_bitmap_text(mut texts: Query<(&TextColor, &mut ImageNode), (With<BitmapText>, Changed<TextColor>)>) {
+fn tint_bitmap_text(
+    mut texts: Query<(&TextColor, &mut ImageNode), (With<BitmapText>, Changed<TextColor>)>,
+) {
     for (color, mut image) in &mut texts {
         image.color = color.0;
     }
@@ -213,13 +252,22 @@ fn fall_back_to_plain_text(
 ) {
     for (entity, text) in &texts {
         if let Some(LoadState::Failed(err)) = assets.get_load_state(&text.font) {
-            warn!("bitmap font failed to load ({err}); using the built-in font for {:?}", text.text);
+            warn!(
+                "bitmap font failed to load ({err}); using the built-in font for {:?}",
+                text.text
+            );
             // Roughly the bitmap fonts' cap height relative to their line height.
             let size = text.scale * 24.0;
             commands
                 .entity(entity)
                 .remove::<(BitmapText, ImageNode)>()
-                .insert((Text::new(text.text.clone()), TextFont { font_size: FontSize::Px(size), ..default() }));
+                .insert((
+                    Text::new(text.text.clone()),
+                    TextFont {
+                        font_size: FontSize::Px(size),
+                        ..default()
+                    },
+                ));
         }
     }
 }
@@ -229,7 +277,11 @@ mod tests {
     use super::*;
 
     fn text(width: u32, height: u32, alpha: &[u8]) -> RenderedText {
-        RenderedText { width, height, alpha: alpha.to_vec() }
+        RenderedText {
+            width,
+            height,
+            alpha: alpha.to_vec(),
+        }
     }
 
     #[test]
@@ -265,7 +317,10 @@ mod tests {
         let (w, _, rgba) = compose_rgba(&text(2, 2, &[255, 0, 0, 128]), true);
         let i = (w as usize + 1) * 4; // pixel (1, 1)
         let p = &rgba[i..i + 4];
-        assert!(p[0] > 100 && p[0] < 200, "grey between text and shadow: {p:?}");
+        assert!(
+            p[0] > 100 && p[0] < 200,
+            "grey between text and shadow: {p:?}"
+        );
         assert!(p[3] >= 225, "nearly opaque: {p:?}");
     }
 }

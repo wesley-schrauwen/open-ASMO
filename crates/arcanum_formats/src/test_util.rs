@@ -17,7 +17,13 @@ impl TestFrame {
     /// Uncompressed palette indices.
     pub fn raw(width: u32, height: u32, indices: &[u8]) -> Self {
         assert_eq!(indices.len(), (width * height) as usize);
-        Self { width, height, center: (0, 0), delta: (0, 0), stored: indices.to_vec() }
+        Self {
+            width,
+            height,
+            center: (0, 0),
+            delta: (0, 0),
+            stored: indices.to_vec(),
+        }
     }
 
     /// RLE-encoded palette indices. Panics if the encoding happens to be `width * height`
@@ -25,13 +31,29 @@ impl TestFrame {
     pub fn rle(width: u32, height: u32, indices: &[u8]) -> Self {
         assert_eq!(indices.len(), (width * height) as usize);
         let stored = rle_encode(indices);
-        assert_ne!(stored.len(), indices.len(), "RLE output would be read as raw");
-        Self { width, height, center: (0, 0), delta: (0, 0), stored }
+        assert_ne!(
+            stored.len(),
+            indices.len(),
+            "RLE output would be read as raw"
+        );
+        Self {
+            width,
+            height,
+            center: (0, 0),
+            delta: (0, 0),
+            stored,
+        }
     }
 
     /// Arbitrary stored bytes, for malformed frames.
     pub fn stored(width: u32, height: u32, stored: Vec<u8>) -> Self {
-        Self { width, height, center: (0, 0), delta: (0, 0), stored }
+        Self {
+            width,
+            height,
+            center: (0, 0),
+            delta: (0, 0),
+            stored,
+        }
     }
 
     pub fn with_offsets(mut self, center: (i32, i32), delta: (i32, i32)) -> Self {
@@ -47,7 +69,11 @@ pub fn rle_encode(indices: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < indices.len() {
-        let run = indices[i..].iter().take(127).take_while(|&&v| v == indices[i]).count();
+        let run = indices[i..]
+            .iter()
+            .take(127)
+            .take_while(|&&v| v == indices[i])
+            .count();
         if run >= 3 {
             out.extend_from_slice(&[run as u8, indices[i]]);
             i += run;
@@ -103,7 +129,9 @@ impl ArtBuilder {
             frame_rate: 10,
             action_frame: 0,
             palettes: [Some(ramp_palette()), None, None, None],
-            rotations: (0..8).map(|r| (0..frames).map(|f| frame(r, f)).collect()).collect(),
+            rotations: (0..8)
+                .map(|r| (0..frames).map(|f| frame(r, f)).collect())
+                .collect(),
         }
     }
 
@@ -155,12 +183,19 @@ impl ArtBuilder {
 pub fn font_art(line_height: u32) -> Vec<u8> {
     let frame = |n: usize| {
         let w = (n % 7 + 1) as u32;
-        let indices: Vec<u8> = (0..line_height).flat_map(|r| std::iter::repeat_n((r * 60).min(255) as u8, w as usize)).collect();
+        let indices: Vec<u8> = (0..line_height)
+            .flat_map(|r| std::iter::repeat_n((r * 60).min(255) as u8, w as usize))
+            .collect();
         TestFrame::raw(w, line_height, &indices)
     };
     let mut b = ArtBuilder::single(frame(0));
     b.rotations[0].extend((1..225).map(frame));
-    b.palettes = [Some((0..=255u8).map(|i| [i, i, i, 0]).collect()), None, None, None];
+    b.palettes = [
+        Some((0..=255u8).map(|i| [i, i, i, 0]).collect()),
+        None,
+        None,
+        None,
+    ];
     b.build()
 }
 
@@ -176,7 +211,10 @@ pub fn object_id_bytes(id: &ObjectId) -> [u8; 24] {
 pub fn prototype_id(number: u32) -> ObjectId {
     let mut payload = [0u8; 16];
     payload[..4].copy_from_slice(&number.to_le_bytes());
-    ObjectId { kind: ObjectId::KIND_PROTOTYPE, payload }
+    ObjectId {
+        kind: ObjectId::KIND_PROTOTYPE,
+        payload,
+    }
 }
 
 /// Writes one field value in its storage encoding. Panics if the value does not fit `storage`.
@@ -208,7 +246,12 @@ pub fn value_bytes(storage: Storage, value: &Value) -> Vec<u8> {
             None => out.push(0),
         },
         (Storage::Array, Value::Array(v)) => match v {
-            Some(Array { elem_size, id, data, bitset }) => {
+            Some(Array {
+                elem_size,
+                id,
+                data,
+                bitset,
+            }) => {
                 out.push(1);
                 out.extend(elem_size.to_le_bytes());
                 out.extend((data.len() as u32 / elem_size).to_le_bytes());
@@ -240,7 +283,16 @@ pub struct ObjectBuilder {
 impl ObjectBuilder {
     /// An object of `object_type` with prototype 1 and an all-zero own id (kind 0, as in sectors).
     pub fn new(object_type: u32) -> Self {
-        Self { object_type, prototype: prototype_id(1), id: ObjectId { kind: 0, payload: [0; 16] }, fields: Vec::new(), extra_bits: Vec::new() }
+        Self {
+            object_type,
+            prototype: prototype_id(1),
+            id: ObjectId {
+                kind: 0,
+                payload: [0; 16],
+            },
+            fields: Vec::new(),
+            extra_bits: Vec::new(),
+        }
     }
 
     pub fn field(mut self, name: &'static str, value: Value) -> Self {
@@ -255,7 +307,10 @@ impl ObjectBuilder {
         let mut bitmap = vec![0u32; words];
         let mut values: Vec<(u32, Vec<u8>)> = Vec::new();
         for (name, value) in &self.fields {
-            let (bit, def) = bits.iter().find(|(_, d)| d.name == *name).unwrap_or_else(|| panic!("{name} is not a field of type {}", self.object_type));
+            let (bit, def) = bits
+                .iter()
+                .find(|(_, d)| d.name == *name)
+                .unwrap_or_else(|| panic!("{name} is not a field of type {}", self.object_type));
             bitmap[*bit as usize / 32] |= 1 << (bit % 32);
             values.push((*bit, value_bytes(def.storage, value)));
         }
@@ -340,12 +395,23 @@ impl SectorBuilder {
         assert_eq!(self.tiles.len(), sector::TILE_COUNT);
         assert_eq!(self.blocked.len(), sector::BLOCKED_WORDS);
         let mut out = Vec::new();
-        let u32s = |out: &mut Vec<u8>, vals: &[u32]| out.extend(vals.iter().flat_map(|v| v.to_le_bytes()));
+        let u32s =
+            |out: &mut Vec<u8>, vals: &[u32]| out.extend(vals.iter().flat_map(|v| v.to_le_bytes()));
         u32s(&mut out, &[self.lights.len() as u32]);
         for l in &self.lights {
             let start = out.len();
             out.extend(l.handle.to_le_bytes());
-            u32s(&mut out, &[l.x as u32, l.y as u32, l.offset_x as u32, l.offset_y as u32, l.flags, l.art_id.0]);
+            u32s(
+                &mut out,
+                &[
+                    l.x as u32,
+                    l.y as u32,
+                    l.offset_x as u32,
+                    l.offset_y as u32,
+                    l.flags,
+                    l.art_id.0,
+                ],
+            );
             out.extend(l.color);
             out.resize(start + sector::LIGHT_SIZE, 0);
         }
@@ -358,18 +424,43 @@ impl SectorBuilder {
             }
             None => u32s(&mut out, &[1]),
         }
-        u32s(&mut out, &[self.version_word.unwrap_or(sector::VERSION_BASE + self.version)]);
+        u32s(
+            &mut out,
+            &[self
+                .version_word
+                .unwrap_or(sector::VERSION_BASE + self.version)],
+        );
         if self.version >= 1 {
             u32s(&mut out, &[self.tile_scripts.len() as u32]);
             for t in &self.tile_scripts {
-                u32s(&mut out, &[t.node_flags, t.tile, t.script.flags, t.script.counters, t.script.number, 0xdead_beef]);
+                u32s(
+                    &mut out,
+                    &[
+                        t.node_flags,
+                        t.tile,
+                        t.script.flags,
+                        t.script.counters,
+                        t.script.number,
+                        0xdead_beef,
+                    ],
+                );
             }
         }
         if self.version >= 2 {
-            u32s(&mut out, &[self.script.flags, self.script.counters, self.script.number]);
+            u32s(
+                &mut out,
+                &[self.script.flags, self.script.counters, self.script.number],
+            );
         }
         if self.version >= 3 {
-            u32s(&mut out, &[self.townmap_info, self.aptitude_adjustment as u32, self.light_scheme]);
+            u32s(
+                &mut out,
+                &[
+                    self.townmap_info,
+                    self.aptitude_adjustment as u32,
+                    self.light_scheme,
+                ],
+            );
             u32s(&mut out, &self.sound_list);
         }
         if self.version >= 4 {
@@ -383,7 +474,11 @@ impl SectorBuilder {
         for o in &self.objects {
             out.extend(o);
         }
-        out.extend(self.count.unwrap_or(self.objects.len() as u32).to_le_bytes());
+        out.extend(
+            self.count
+                .unwrap_or(self.objects.len() as u32)
+                .to_le_bytes(),
+        );
         out
     }
 }

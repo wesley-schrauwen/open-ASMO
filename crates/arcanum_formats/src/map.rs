@@ -65,7 +65,10 @@ pub struct TileLoc {
 impl TileLoc {
     /// Decodes an object's packed `location` field: low 32 bits = x, high 32 bits = y.
     pub fn from_packed(packed: i64) -> Self {
-        Self { x: packed as u32, y: ((packed as u64) >> 32) as u32 }
+        Self {
+            x: packed as u32,
+            y: ((packed as u64) >> 32) as u32,
+        }
     }
 
     pub fn sector(self) -> SectorId {
@@ -99,13 +102,22 @@ pub struct MapEntry {
 pub fn parse_map_list(mes: &MesFile) -> Result<Vec<MapEntry>, MapError> {
     let mut ids: Vec<u32> = mes.messages.keys().copied().collect();
     ids.sort_unstable();
-    ids.into_iter().map(|id| parse_entry(id, &mes.messages[&id])).collect()
+    ids.into_iter()
+        .map(|id| parse_entry(id, &mes.messages[&id]))
+        .collect()
 }
 
 fn parse_entry(id: u32, text: &str) -> Result<MapEntry, MapError> {
-    let bad = || MapError::BadEntry { id, text: text.to_string() };
+    let bad = || MapError::BadEntry {
+        id,
+        text: text.to_string(),
+    };
     let mut parts = text.split(',').map(str::trim);
-    let name = parts.next().filter(|n| !n.is_empty()).ok_or_else(bad)?.to_string();
+    let name = parts
+        .next()
+        .filter(|n| !n.is_empty())
+        .ok_or_else(bad)?
+        .to_string();
     let x = parts.next().and_then(|s| s.parse().ok()).ok_or_else(bad)?;
     let y = parts.next().and_then(|s| s.parse().ok()).ok_or_else(bad)?;
     let mut entry = MapEntry {
@@ -117,7 +129,9 @@ fn parse_entry(id: u32, text: &str) -> Result<MapEntry, MapError> {
         area: None,
     };
     for part in parts {
-        let Some((key, value)) = part.split_once(':') else { continue };
+        let Some((key, value)) = part.split_once(':') else {
+            continue;
+        };
         let value = value.trim();
         match key.trim().to_ascii_lowercase().as_str() {
             "type" => match value.to_ascii_uppercase().as_str() {
@@ -153,11 +167,19 @@ pub struct MapProperties {
 impl MapProperties {
     pub fn parse(data: &[u8]) -> Result<Self, MapError> {
         if data.len() < 24 {
-            return Err(MapError::Truncated { offset: data.len(), what: "map.prp" });
+            return Err(MapError::Truncated {
+                offset: data.len(),
+                what: "map.prp",
+            });
         }
         let u32_at = |o: usize| u32::from_le_bytes(data[o..o + 4].try_into().unwrap());
         let u64_at = |o: usize| u64::from_le_bytes(data[o..o + 8].try_into().unwrap());
-        Ok(Self { base_terrain: u32_at(0), unknown: u32_at(4), width: u64_at(8), height: u64_at(16) })
+        Ok(Self {
+            base_terrain: u32_at(0),
+            unknown: u32_at(4),
+            width: u64_at(8),
+            height: u64_at(16),
+        })
     }
 
     pub fn contains(&self, loc: TileLoc) -> bool {
@@ -190,14 +212,29 @@ pub const JUMP_MAP_BASE: u32 = 4999;
 /// pad, destination location; locations x in the low dword, y in the high). A short file gives
 /// the entries it holds.
 pub fn parse_jump_points(data: &[u8]) -> Vec<JumpPoint> {
-    let u32_at = |o: usize| data.get(o..o + 4).map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+    let u32_at = |o: usize| {
+        data.get(o..o + 4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+    };
     let count = u32_at(0).unwrap_or(0) as usize;
     (0..count)
         .map_while(|i| {
             let o = 4 + 32 * i;
-            let (flags, fx, fy, map, tx, ty) = (u32_at(o)?, u32_at(o + 8)?, u32_at(o + 12)?, u32_at(o + 16)?, u32_at(o + 24)?, u32_at(o + 28)?);
+            let (flags, fx, fy, map, tx, ty) = (
+                u32_at(o)?,
+                u32_at(o + 8)?,
+                u32_at(o + 12)?,
+                u32_at(o + 16)?,
+                u32_at(o + 24)?,
+                u32_at(o + 28)?,
+            );
             let map = (map != u32::MAX).then(|| map.wrapping_add(JUMP_MAP_BASE));
-            Some(JumpPoint { flags, from: TileLoc { x: fx, y: fy }, map, to: TileLoc { x: tx, y: ty } })
+            Some(JumpPoint {
+                flags,
+                from: TileLoc { x: fx, y: fy },
+                map,
+                to: TileLoc { x: tx, y: ty },
+            })
         })
         .collect()
 }
@@ -209,16 +246,31 @@ mod tests {
     #[test]
     fn jump_points_read_their_tiles_and_maps() {
         let mut data = 2u32.to_le_bytes().to_vec();
-        for (x, y, map, tx, ty) in [(110u32, 92u32, 1u32, 61976u32, 65664u32), (436, 215, u32::MAX, 304, 219)] {
+        for (x, y, map, tx, ty) in [
+            (110u32, 92u32, 1u32, 61976u32, 65664u32),
+            (436, 215, u32::MAX, 304, 219),
+        ] {
             for v in [0, 0, x, y, map, 0, tx, ty] {
                 data.extend(u32::to_le_bytes(v));
             }
         }
         let points = parse_jump_points(&data);
-        assert_eq!(points[0], JumpPoint { flags: 0, from: TileLoc { x: 110, y: 92 }, map: Some(5000), to: TileLoc { x: 61976, y: 65664 } });
+        assert_eq!(
+            points[0],
+            JumpPoint {
+                flags: 0,
+                from: TileLoc { x: 110, y: 92 },
+                map: Some(5000),
+                to: TileLoc { x: 61976, y: 65664 }
+            }
+        );
         assert_eq!(points[1].map, None, "-1: this map");
         assert!(parse_jump_points(&0u32.to_le_bytes()).is_empty());
-        assert_eq!(parse_jump_points(&data[..40]).len(), 1, "a short file gives what it holds");
+        assert_eq!(
+            parse_jump_points(&data[..40]).len(),
+            1,
+            "a short file gives what it holds"
+        );
     }
 
     fn hex(s: &str) -> Vec<u8> {
@@ -247,10 +299,19 @@ mod tests {
     #[test]
     fn packed_location_is_x_low_y_high() {
         // The prototype fixture's location 0x0086_0000_077c: y = 0x86, x = 0x77c.
-        assert_eq!(TileLoc::from_packed(0x0086_0000_077c), TileLoc { x: 0x77c, y: 0x86 });
+        assert_eq!(
+            TileLoc::from_packed(0x0086_0000_077c),
+            TileLoc { x: 0x77c, y: 0x86 }
+        );
         assert_eq!(TileLoc::from_packed(0), TileLoc { x: 0, y: 0 });
         // A y with the top bit set is not sign-extended into x or lost.
-        assert_eq!(TileLoc::from_packed(0x8000_0001_0000_0002u64 as i64), TileLoc { x: 2, y: 0x8000_0001 });
+        assert_eq!(
+            TileLoc::from_packed(0x8000_0001_0000_0002u64 as i64),
+            TileLoc {
+                x: 2,
+                y: 0x8000_0001
+            }
+        );
         let t = TileLoc { x: 92958, y: 82592 };
         assert_eq!(TileLoc::from_packed((t.y as i64) << 32 | t.x as i64), t);
     }
@@ -275,11 +336,17 @@ mod tests {
         let e = &list[0];
         assert_eq!(e.name, "Arcanum1-024-fixed");
         assert_eq!(e.start, TileLoc { x: 92958, y: 82592 });
-        assert_eq!((e.kind, e.world_map, e.area), (MapKind::Start, Some(0), None));
+        assert_eq!(
+            (e.kind, e.world_map, e.area),
+            (MapKind::Start, Some(0), None)
+        );
         let e = &list[2];
         assert_eq!(e.name, "Bates Mansion Lev 1");
         assert_eq!(e.start, TileLoc { x: 104, y: 92 });
-        assert_eq!((e.kind, e.world_map, e.area), (MapKind::Normal, Some(0), Some(21)));
+        assert_eq!(
+            (e.kind, e.world_map, e.area),
+            (MapKind::Normal, Some(0), Some(21))
+        );
         assert_eq!(list[3].kind, MapKind::Shopping);
         assert_eq!(list[1].kind, MapKind::Normal);
         assert_eq!(list[4].start, TileLoc { x: 96, y: 126 }); // unknown key ignored
@@ -289,33 +356,65 @@ mod tests {
 
     #[test]
     fn bad_map_entry_is_an_error() {
-        for text in [&b"{5099}{Broken, abc, 3}"[..], b"{5099}{Broken, 1}", b"{5099}{, 1, 2}", b"{5099}{M, 1, 2, Area: x}", b"{5099}{M, 1, 2, WorldMap: x}"] {
+        for text in [
+            &b"{5099}{Broken, abc, 3}"[..],
+            b"{5099}{Broken, 1}",
+            b"{5099}{, 1, 2}",
+            b"{5099}{M, 1, 2, Area: x}",
+            b"{5099}{M, 1, 2, WorldMap: x}",
+        ] {
             let mes = MesFile::parse(text).unwrap();
-            assert!(matches!(parse_map_list(&mes), Err(MapError::BadEntry { id: 5099, .. })), "{text:?}");
+            assert!(
+                matches!(
+                    parse_map_list(&mes),
+                    Err(MapError::BadEntry { id: 5099, .. })
+                ),
+                "{text:?}"
+            );
         }
     }
 
     #[test]
     fn map_properties() {
-        let p = MapProperties::parse(&hex("02000000 01000000 00f40100 00000000 00f40100 00000000")).unwrap();
-        assert_eq!((p.base_terrain, p.unknown, p.width, p.height), (2, 1, 128_000, 128_000));
+        let p = MapProperties::parse(&hex(
+            "02000000 01000000 00f40100 00000000 00f40100 00000000",
+        ))
+        .unwrap();
+        assert_eq!(
+            (p.base_terrain, p.unknown, p.width, p.height),
+            (2, 1, 128_000, 128_000)
+        );
         assert!(p.contains(TileLoc { x: 127_999, y: 0 }));
         assert!(!p.contains(TileLoc { x: 128_000, y: 0 }));
         assert!(!p.contains(TileLoc { x: 0, y: 128_000 }));
-        assert!(matches!(MapProperties::parse(&[0; 23]), Err(MapError::Truncated { .. })));
+        assert!(matches!(
+            MapProperties::parse(&[0; 23]),
+            Err(MapError::Truncated { .. })
+        ));
     }
 
     #[test]
     fn sector_of_checks_bounds() {
-        let p = MapProperties { base_terrain: 2, unknown: 1, width: 128_000, height: 128_000 };
-        assert_eq!(p.sector_of(TileLoc { x: 92958, y: 82592 }), Some(SectorId::new(1452, 1290)));
+        let p = MapProperties {
+            base_terrain: 2,
+            unknown: 1,
+            width: 128_000,
+            height: 128_000,
+        };
+        assert_eq!(
+            p.sector_of(TileLoc { x: 92958, y: 82592 }),
+            Some(SectorId::new(1452, 1290))
+        );
         assert_eq!(p.sector_of(TileLoc { x: 128_000, y: 0 }), None);
         assert_eq!(p.sector_of(TileLoc { x: 0, y: 128_000 }), None);
     }
 
     #[test]
     fn errors_display() {
-        let e = MapError::BadEntry { id: 1, text: "x".into() };
+        let e = MapError::BadEntry {
+            id: 1,
+            text: "x".into(),
+        };
         assert_eq!(e.to_string(), "bad map list entry 1: \"x\"");
     }
 }
