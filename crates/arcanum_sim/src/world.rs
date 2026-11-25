@@ -912,14 +912,18 @@ mod tests {
         let pc = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::PlayerControlled)>().iter(world).next().unwrap().0 };
         sim.take_deltas();
         let mut attacks = 0;
+        let mut npc_hits = 0;
         let mut ended = false;
         for seq in 0..200 {
             sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: npc, seq })]);
             sim.update();
             for (_, d) in sim.take_deltas() {
                 match d {
-                    LedgerDelta::Attacked { attacker, target, .. } => {
-                        assert_eq!((attacker, target), (pc, npc));
+                    LedgerDelta::Attacked { attacker, target, outcome } => {
+                        assert!((attacker, target) == (pc, npc) || (attacker, target) == (npc, pc), "each strikes the other");
+                        if attacker == npc {
+                            npc_hits += i32::from(outcome.hit);
+                        }
                         attacks += 1;
                     }
                     LedgerDelta::Combat { order, turn, .. } if order.is_empty() => {
@@ -940,6 +944,7 @@ mod tests {
         let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
         assert!(save.sector_changes[&SectorId::new(1, 1)].npc_damage[&index] >= 4, "4 hit points: no stats");
         assert!(save.players[&PlayerId(1)].blueprint.sheet.experience > 0, "experience for the hits and the kill");
+        assert_eq!(save.players[&PlayerId(1)].blueprint.sheet.hp_damage > 0, npc_hits > 0, "the NPC's hits hurt the PC");
     }
 
     #[test]
@@ -955,7 +960,7 @@ mod tests {
         sim.take_deltas();
         let anim = |sim: &mut SimApp| {
             let world = sim.app.world_mut();
-            let (look, prowling) = world.query::<(&crate::Appearance, Has<crate::Prowling>)>().iter(world).next().map(|(a, p)| (*a, p)).unwrap();
+            let (look, prowling) = world.query_filtered::<(&crate::Appearance, Has<crate::Prowling>), With<crate::PlayerControlled>>().iter(world).next().map(|(a, p)| (*a, p)).unwrap();
             (arcanum_formats::art_id::CritterArt::from_id(look.art).anim, prowling)
         };
         sim.receive([(PlayerId(1), crate::PlayerIntent::Prowl { on: true })]);

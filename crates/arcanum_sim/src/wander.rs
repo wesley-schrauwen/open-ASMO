@@ -69,7 +69,7 @@ impl Standpoints {
     }
 }
 
-/// The host's random numbers (a xorshift; seeded the same each run, for repeatable tests).
+/// The host's random numbers (xorshift64*; seeded the same each run, for repeatable tests).
 #[derive(Resource, Debug, Clone)]
 pub struct HostRng(pub u64);
 
@@ -86,7 +86,9 @@ impl HostRng {
         x ^= x >> 7;
         x ^= x << 17;
         self.0 = x;
-        x
+        // xorshift64*: the multiply mixes the bits (plain xorshift's neighbouring outputs
+        // correlate under `%`: every other 1-100 roll came out high).
+        x.wrapping_mul(0x2545_f491_4f6c_dd1d)
     }
 
     /// A whole number from `low` to `high`, both included (the original's 0x4cef00).

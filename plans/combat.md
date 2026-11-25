@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1 built (`feat/combat-turns`); the rest planned.
+Status: steps 1-2 built (`feat/combat-turns`, `feat/combat-npcs`); the rest planned.
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -114,8 +114,17 @@ of `combat_design.md` come after the original's rules work.
    - Resistances: worn armour's, summed (builder's call: 0x43d6d0 not read).
    - Deltas: `Combat { order, turn, ap }` (empty order: over), `Attacked { attacker, target,
      outcome }`.
-2. **NPC turns:** approach and attack the target; ranged NPCs shoot; flee and surrender by
-   `ai_params.mes`; allies join; PCs take damage (hit points, fatigue, poison) and fall.
+2. **NPC turns** (built, `feat/combat-npcs`).
+   - A fighting NPC's turn: flee at its row's hit point percent (column 0; `critter_flags`
+     0x8000000 never), walking up to 8 tiles away (builder's call) and dropping out; else attack
+     its target, or the nearest standing PC of the fight, walking next to it first, until out of
+     points. NPCs no longer fighting, or dead, pass.
+   - PCs take hits on their sheets (hit points, poison, fatigue); a PC with no hit points takes no
+     turns. A fight with no NPC fighting or no PC standing ends at once.
+   - `HostRng` is xorshift64* now: plain xorshift's neighbouring outputs correlated under `%`
+     (a 25 % roll missed 46 times in a row).
+   - Not built: allies joining, surrender, ranged NPCs keeping their distance, fleeing weighed
+     against the target.
 3. **The client:** the combat button, the AP bar and End Turn, clicking a critter to attack,
    the floats, the attack, hit and death animations, the battle cursor.
 4. **Hooks:** script events 12-14 and hit / miss, action 0x24, dialogue `co`, PC death and the

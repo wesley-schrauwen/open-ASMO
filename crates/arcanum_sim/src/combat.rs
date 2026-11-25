@@ -8,15 +8,21 @@
 //! - **Turns and action points** (0x4b6e70): `max(5, speed)` at the start of a turn, none kept.
 //!   A step costs [`STEP_AP`] (walking, 0x4b7ba0); an attack its weapon's cost
 //!   ([`attack_cost`], 0x4b7c30). Out of points, or `PlayerIntent::EndTurn` (0x4b7c90), the next
-//!   critter's turn starts. NPCs end their turns at once until they fight back (next step).
+//!   critter's turn starts. A fight with no NPC fighting or no PC standing ends at once.
+//! - **NPC turns** ([`npc_turn`]): at the start, flee when hurt to its `ai_params.mes` row's
+//!   percent ([`should_flee`]); else attack its target (or the nearest standing PC of the fight),
+//!   walking next to it first, until out of points.
 //! - **The attack** ([`resolve`], 0x4b3170): see the function. A hit makes an NPC victim fight
 //!   its attacker (0x4a9650) and join the encounter (0x4b7e00).
 //! - **Damage to NPCs** is kept as `hp_damage` in the sector's changes; at 0 hit points they die
 //!   as action 0x3a kills (0x45da20), and the experience is shared (team rule).
 //!
-//! Not built yet: NPC turns (moving, attacking, fleeing), allies joining, PCs hurt in turn
-//! (their sheet takes the damage as script damage does), critical effects other than the
-//! multiplier, called shots, the light, range and cover terms, ammunition.
+//! - **PCs hurt:** an NPC's hit goes on the PC's sheet (hit points, poison, fatigue) as script
+//!   damage does; a PC with no hit points left takes no turns.
+//!
+//! Not built yet: allies joining (0x4a9e10), surrender, fleeing weighed against the target
+//! (columns 1-3), critical effects other than the multiplier, called shots, the light, range and
+//! cover terms, ammunition, PC death.
 
 use arcanum_formats::map::TileLoc;
 use arcanum_formats::object::{Object, Prototypes};
@@ -331,6 +337,8 @@ pub struct Encounter {
     pub turn: usize,
     pub ap: i32,
     pub round: u32,
+    /// The turn has just started (an NPC decides whether to flee).
+    pub fresh: bool,
 }
 
 impl Encounter {
@@ -413,10 +421,12 @@ pub struct CombatWorld<'w> {
     pub awards: ResMut<'w, crate::ExperienceAwards>,
     pub toggled: ResMut<'w, crate::world::ToggledNpcs>,
     pub vfs: Option<Res<'w, crate::SimVfs>>,
+    pub sheets: ResMut<'w, crate::ScriptSheets>,
+    pub ai: ResMut<'w, AiParams>,
 }
 
 /// A critter as the combat systems see it.
-type CombatantQuery<'a> = (Entity, &'a NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::Sheet>, Option<&'a crate::Inventory>, Has<Fighting>, Has<crate::Walking>, Option<&'a PendingAttack>);
+type CombatantQuery<'a> = (Entity, &'a NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::Sheet>, Option<&'a crate::Inventory>, Option<&'a Fighting>, Has<crate::Walking>, Option<&'a PendingAttack>);
 
 /// One critter of the query, copied out.
 #[derive(Clone)]
@@ -429,6 +439,8 @@ struct Seen {
     sheet: Option<arcanum_rules::CharacterSheet>,
     inventory: Option<crate::Inventory>,
     fighting: bool,
+    /// Whom it fights.
+    target: Option<NetId>,
     walking: bool,
     pending: Option<PendingAttack>,
 }
@@ -436,6 +448,7 @@ struct Seen {
 fn seen(q: &Query<CombatantQuery>) -> Vec<Seen> {
     q.iter()
         .map(|(entity, &net_id, at, pc, npc, sheet, inventory, fighting, walking, pending)| Seen {
+            target: fighting.map(|f| f.target),
             entity,
             net_id,
             at: at.0,
@@ -443,7 +456,7 @@ fn seen(q: &Query<CombatantQuery>) -> Vec<Seen> {
             npc: npc.copied(),
             sheet: sheet.map(|s| s.0.clone()),
             inventory: inventory.cloned(),
-            fighting,
+            fighting: fighting.is_some(),
             walking,
             pending: pending.copied(),
         })
@@ -495,6 +508,25 @@ impl CombatWorld<'_> {
         speed.max(MIN_AP)
     }
 
+    /// A PC with no hit points left (it takes no turns; death is step 4).
+    fn pc_down(&self, c: &Seen) -> bool {
+        let Some(p) = c.player else { return false };
+        self.world.0.as_ref().and_then(|w| w.players.get(&p)).is_some_and(|s| s.blueprint.sheet.hp_damage >= self.rules.0.derived(&s.blueprint.sheet).hit_points)
+    }
+
+    /// A PC takes an attack's damage on its sheet (0x4b4390): hit points (at most all of them),
+    /// poison, fatigue; the sheet is sent on ([`crate::sync_script_sheets`]).
+    fn hurt_pc(&mut self, player: PlayerId, outcome: &AttackOutcome) {
+        let rules = &self.rules.0;
+        let Some(saved) = self.world.0.as_mut().and_then(|w| w.players.get_mut(&player)) else { return };
+        let sheet = &mut saved.blueprint.sheet;
+        let max = rules.derived(sheet).hit_points;
+        sheet.hp_damage = (sheet.hp_damage + outcome.hp.max(0)).min(max);
+        sheet.poison += outcome.poison.max(0);
+        sheet.fatigue_damage += outcome.fatigue.max(0);
+        self.sheets.0.insert(player);
+    }
+
     fn tell(&mut self) {
         let delta = match &self.combat.0 {
             Some(e) => e.delta(),
@@ -520,6 +552,8 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
     let all = seen(&critters);
     let find = |id: NetId| all.iter().find(|c| c.net_id == id).cloned();
     let mut changed = false;
+    // NPCs made to fight this tick (their `Fighting` lands after the system).
+    let mut joined: Vec<NetId> = Vec::new();
     // Attacks asked for: the first starts the fight (0x4b3f20 → 0x4b71e0).
     for (player, target, _seq) in std::mem::take(&mut w.requests.attacks) {
         let (Some(pc), Some(victim)) = (all.iter().find(|c| c.player == Some(player)).cloned(), find(target)) else { continue };
@@ -529,6 +563,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
         }
         if !victim.fighting {
             commands.entity(victim.entity).insert(Fighting { target: pc.net_id });
+            joined.push(target);
         }
         if w.combat.0.is_none() {
             let mut order = gather(&all, pc.at, Some(pc.net_id));
@@ -536,7 +571,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
                 order.push(target);
             }
             let ap = w.turn_ap(&pc);
-            w.combat.0 = Some(Encounter { order, turn: 0, ap, round: 1 });
+            w.combat.0 = Some(Encounter { order, turn: 0, ap, round: 1, fresh: true });
             changed = true;
         }
         let Some(e) = w.combat.0.as_mut() else { continue };
@@ -565,17 +600,35 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
             changed |= attack_or_approach(&mut commands, &mut w, &c, &victim);
         }
     }
-    // NPCs pass their turns (their fighting is the next step); a PC out of points or gone ends
-    // its turn.
+    // An NPC's turn: flee or fight; a PC out of points, down or gone ends its turn.
     if let Some(e) = w.combat.0.clone() {
         let current = e.current().and_then(find);
         let done = match &current {
             None => true,
-            Some(c) if c.npc.is_some() => true,
-            Some(c) => e.ap <= 0 && !c.walking && c.pending.is_none(),
+            Some(c) if c.walking || c.pending.is_some() => false,
+            Some(c) if c.npc.is_some_and(|n| w.map.is_dead(n.sector, n.index)) => true,
+            Some(c) if c.npc.is_some() => {
+                let acted = npc_turn(&mut commands, &mut w, c, &all, e.fresh);
+                if let Some(e) = w.combat.0.as_mut() {
+                    e.fresh = false;
+                }
+                changed |= acted;
+                !acted
+            }
+            Some(c) => e.ap <= 0 || w.pc_down(c),
         };
         if done {
             next_turn(&mut w, &all);
+            changed = true;
+        }
+    }
+    // No NPC left fighting, or no PC standing: the fight is over at once (0x4b7580 finds no
+    // active critter).
+    if let Some(e) = &w.combat.0 {
+        let fights = e.order.iter().filter_map(|id| find(*id)).any(|c| c.npc.is_some_and(|n| !w.map.is_dead(n.sector, n.index)) && (c.fighting || joined.contains(&c.net_id)));
+        let stands = e.order.iter().filter_map(|id| find(*id)).any(|c| c.player.is_some() && !w.pc_down(&c));
+        if !fights || !stands {
+            w.combat.0 = None;
             changed = true;
         }
     }
@@ -587,24 +640,33 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
 /// The next critter's turn (0x4b7690); past the last, a new round gathered again (0x4b73a0),
 /// or the end when no NPC fights (0x4b7330).
 fn next_turn(w: &mut CombatWorld, all: &[Seen]) {
-    let Some(e) = w.combat.0.as_mut() else { return };
-    e.turn += 1;
-    if e.turn >= e.order.len() {
+    let Some((turn, len, centre)) = w.combat.0.as_mut().map(|e| {
+        e.turn += 1;
         let centre = e.order.iter().find_map(|id| all.iter().find(|c| c.net_id == *id && c.player.is_some())).map(|c| c.at);
+        (e.turn, e.order.len(), centre)
+    }) else {
+        return;
+    };
+    if turn >= len {
         let alive: Vec<Seen> = all.iter().filter(|c| c.npc.is_none_or(|n| !w.map.is_dead(n.sector, n.index))).cloned().collect();
         let order = centre.map(|at| gather(&alive, at, None)).unwrap_or_default();
-        if !order.iter().any(|id| alive.iter().any(|c| c.net_id == *id && c.npc.is_some())) {
+        let fights = order.iter().any(|id| alive.iter().any(|c| c.net_id == *id && c.npc.is_some()));
+        let stands = order.iter().any(|id| alive.iter().any(|c| c.net_id == *id && c.player.is_some() && !w.pc_down(c)));
+        if !fights || !stands {
             w.combat.0 = None;
             return;
         }
-        e.order = order;
-        e.turn = 0;
-        e.round += 1;
+        if let Some(e) = w.combat.0.as_mut() {
+            e.order = order;
+            e.turn = 0;
+            e.round += 1;
+        }
     }
-    let next = e.current().and_then(|id| all.iter().find(|c| c.net_id == id)).cloned();
+    let next = w.combat.0.as_ref().and_then(Encounter::current).and_then(|id| all.iter().find(|c| c.net_id == id)).cloned();
     let ap = next.map_or(0, |c| w.turn_ap(&c));
     if let Some(e) = w.combat.0.as_mut() {
         e.ap = ap;
+        e.fresh = true;
     }
 }
 
@@ -644,6 +706,98 @@ fn attack_or_approach(commands: &mut Commands, w: &mut CombatWorld, attacker: &S
     true
 }
 
+/// `rules/ai_params.mes`: 17 numbers a row, the row by `npc_ai_data` (0x4aaa60).
+#[derive(Resource, Debug, Default)]
+pub struct AiParams(pub Option<Vec<[i32; 17]>>);
+
+/// The AI rows of `mes`.
+pub fn parse_ai_params(mes: &arcanum_formats::mes::MesFile) -> Vec<[i32; 17]> {
+    let mut rows = Vec::new();
+    for n in 0.. {
+        let Some(line) = mes.get(n) else { break };
+        let mut row = [0; 17];
+        for (r, v) in row.iter_mut().zip(line.split_whitespace()) {
+            *r = v.parse().unwrap_or(0);
+        }
+        rows.push(row);
+    }
+    rows
+}
+
+/// `critter_flags`: never flees (0x4ab2f0).
+pub const OCF_NO_FLEE: i32 = 0x0800_0000;
+/// How far a fleeing NPC runs in one turn at most, in tiles (builder's call).
+pub const FLEE_TILES: u32 = 8;
+
+/// Whether an NPC at `hp_percent` flees (0x4ab2f0): at or below its row's percent (column 0),
+/// unless it never flees. The original also weighs the target's hit points and the distances
+/// (columns 1-3); not built.
+pub fn should_flee(hp_percent: i32, row: &[i32; 17], critter_flags: i32) -> bool {
+    critter_flags & OCF_NO_FLEE == 0 && hp_percent <= row[0]
+}
+
+/// A fighting NPC's turn: at its start, flee if hurt enough (it walks away and stops fighting);
+/// else attack its target, or a standing PC of the fight when that one is gone, walking next to
+/// it first. False when it has nothing more to do.
+fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[Seen], fresh: bool) -> bool {
+    let Some(source) = npc.npc else { return false };
+    if !npc.fighting {
+        return false;
+    }
+    if fresh {
+        if w.ai.0.is_none() {
+            let vfs = w.vfs.as_ref().map(|v| v.0.clone());
+            let guard = vfs.as_ref().and_then(|v| v.read().ok());
+            let mes = guard.as_deref().and_then(|v| v.read(AI_PARAMS).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).unwrap_or_default();
+            w.ai.0 = Some(parse_ai_params(&mes));
+        }
+        let o = w.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize));
+        let row = o.and_then(|o| w.ai.0.as_ref()?.get(w.map.prototypes.int(o, "npc_ai_data").unwrap_or(0).max(0) as usize).copied());
+        let flags = o.and_then(|o| w.map.prototypes.int(o, "critter_flags")).unwrap_or(0);
+        let percent = w.map.npc_hp(source.sector, source.index).map_or(100, |(left, max)| if max > 0 { left * 100 / max } else { 100 });
+        if let Some(row) = row
+            && should_flee(percent, &row, flags)
+        {
+            let from = npc.target.and_then(|t| all.iter().find(|c| c.net_id == t)).map_or(npc.at, |c| c.at);
+            commands.entity(npc.entity).remove::<Fighting>();
+            let away = flee_goal(npc.at, from, FLEE_TILES);
+            if let Ok(mut path) = crate::find_path(&*w.map, npc.at, away) {
+                let ap = w.combat.0.as_ref().map_or(0, |e| e.ap);
+                path.truncate((ap / STEP_AP).max(0) as usize);
+                if !path.is_empty() {
+                    commands.entity(npc.entity).insert(crate::Walking { steps: path.into(), progress: 0.0 });
+                }
+            }
+            if let Some(e) = w.combat.0.as_mut() {
+                e.ap = 0;
+            }
+            return false;
+        }
+    }
+    let in_fight = |c: &&Seen| w.combat.0.as_ref().is_some_and(|e| e.order.contains(&c.net_id));
+    let target = npc.target.and_then(|t| all.iter().find(|c| c.net_id == t)).filter(|c| c.player.is_none() || !w.pc_down(c)).cloned();
+    let target = target.or_else(|| all.iter().filter(in_fight).filter(|c| c.player.is_some() && !w.pc_down(c)).min_by_key(|c| crate::tile_distance(c.at, npc.at)).cloned());
+    let Some(target) = target else { return false };
+    if npc.target != Some(target.net_id) {
+        commands.entity(npc.entity).insert(Fighting { target: target.net_id });
+    }
+    attack_or_approach(commands, w, npc, &target)
+}
+
+/// `rules/ai_params.mes`.
+pub const AI_PARAMS: &str = "rules/ai_params.mes";
+
+/// A tile up to `tiles` away from `from`, straight on past `at`.
+fn flee_goal(at: TileLoc, from: TileLoc, tiles: u32) -> TileLoc {
+    let dx = i64::from(at.x) - i64::from(from.x);
+    let dy = i64::from(at.y) - i64::from(from.y);
+    let (sx, sy) = (dx.signum(), dy.signum());
+    let (sx, sy) = if (sx, sy) == (0, 0) { (1, 0) } else { (sx, sy) };
+    let x = (i64::from(at.x) + sx * i64::from(tiles)).max(0) as u32;
+    let y = (i64::from(at.y) + sy * i64::from(tiles)).max(0) as u32;
+    TileLoc { x, y }
+}
+
 /// The eight tiles round `at`.
 pub fn neighbours(at: TileLoc) -> Vec<TileLoc> {
     let mut out = Vec::new();
@@ -666,6 +820,12 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, attacker: &Seen, victim:
     let defender = w.fighter(victim);
     let outcome = resolve(fighter, &defender, &mut w.rng);
     crate::ground::broadcast(&w.session, &mut w.outbox, LedgerDelta::Attacked { attacker: attacker.net_id, target: victim.net_id, outcome });
+    if let Some(player) = victim.player {
+        if outcome.hit {
+            w.hurt_pc(player, &outcome);
+        }
+        return;
+    }
     let Some(source) = victim.npc else { return };
     commands.entity(victim.entity).insert(Fighting { target: attacker.net_id });
     if !outcome.hit || outcome.hp <= 0 {
@@ -713,6 +873,16 @@ mod tests {
         assert_eq!(pc_unarmed(40)[0], (15, 45));
         assert_eq!(hit_experience(10, 20, 100, 100), 50);
         assert_eq!(hit_experience(10, 20, 100, 30), 30, "what is left");
+    }
+
+    #[test]
+    fn npcs_flee_by_their_ai_row() {
+        let rows = parse_ai_params(&arcanum_formats::mes::MesFile::parse(b"{0}{0 1000 1000 20 6 20 1001 1000 2 0 0 2001 100 50 20 1 1}{1}{50 20 3 20 20 20 20 20 2 0 0 2001 100 15 100 0 1}").unwrap());
+        assert_eq!(rows.len(), 2);
+        assert!(!should_flee(10, &rows[0], 0), "row 0 never flees");
+        assert!(should_flee(50, &rows[1], 0) && !should_flee(51, &rows[1], 0));
+        assert!(!should_flee(10, &rows[1], OCF_NO_FLEE));
+        assert_eq!(flee_goal(TileLoc { x: 10, y: 10 }, TileLoc { x: 9, y: 10 }, 8), TileLoc { x: 18, y: 10 });
     }
 
     #[test]
