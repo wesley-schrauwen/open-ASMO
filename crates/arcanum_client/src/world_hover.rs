@@ -278,7 +278,7 @@ pub fn details(o: &Object, prototypes: &Prototypes, intgame: &dyn Fn(u32) -> Str
 /// A PC's level and gauges: `cur/max` for the player's own PC, else percentages.
 pub fn pc_details(status: &arcanum_sim::PcStatus, own: bool, intgame: &dyn Fn(u32) -> String) -> BoxDetails {
     let level = BoxRow { row: 1, left: None, right: cell(format!("{}: {}", intgame(0), status.level), WHITE) };
-    BoxDetails { title_colour: None, rows: vec![level], gauges: vec![] }.with_gauges(status.hit_points, status.fatigue, own, false)
+    BoxDetails { title_colour: None, rows: vec![level], gauges: vec![], to_hit: None }.with_gauges(status.hit_points, status.fatigue, own, false)
 }
 
 /// An NPC's icon (by race), level and gauges (full: NPCs take no damage yet).
@@ -288,7 +288,7 @@ pub fn npc_details(o: &Object, prototypes: &Prototypes, intgame: &dyn Fn(u32) ->
     let icon = RACE_ICONS.get(stat(27).max(0) as usize).copied();
     let level = BoxRow { row: 1, left: None, right: cell(format!("{}: {}", intgame(0), stat(17)), WHITE) };
     let full = arcanum_sim::Pool::full(1);
-    (icon, BoxDetails { title_colour: None, rows: vec![level], gauges: vec![] }.with_gauges(full, full, false, false))
+    (icon, BoxDetails { title_colour: None, rows: vec![level], gauges: vec![], to_hit: None }.with_gauges(full, full, false, false))
 }
 
 trait Gauges {
@@ -307,6 +307,22 @@ impl Gauges for BoxDetails {
         self
     }
 }
+
+/// The player's chance to hit (0x554830, simplified): the weapon skill's chance less the
+/// difficulty (the weapon's to-hit, the Strength short), at least 0; the defender's dodge and
+/// the original's 0x461620 term are not counted.
+pub fn to_hit(sheet: &arcanum_rules::CharacterSheet, rules: &arcanum_rules::RulesData, weapon: Option<&Object>, prototypes: &Prototypes) -> i32 {
+    use arcanum_sim::combat::{SKILL_MELEE, weapon_chance, weapon_of};
+    let weapon = weapon.filter(|w| w.object_type == arcanum_formats::object::TYPE_WEAPON).map(|w| weapon_of(w, prototypes));
+    let skill = weapon.as_ref().map_or(SKILL_MELEE, |w| w.skill);
+    let chance = weapon_chance(skill, rules.skill_level(sheet, skill));
+    let (bonus, min_st) = weapon.as_ref().map_or((0, 0), |w| (w.to_hit, w.min_strength));
+    let short = (min_st - rules.stats(sheet)[0]).max(0);
+    (chance + bonus - 5 * short).clamp(0, 100)
+}
+
+/// The fight and what the to-hit panel needs of the player's PC.
+type Fighting<'w> = (Option<Res<'w, crate::combat_ui::CombatView>>, Res<'w, crate::pc_sheet::SheetHost>, Option<Res<'w, crate::create_character::CreationData>>, Res<'w, crate::inventory_screen::PcInventory>);
 
 /// The windows that cover the world.
 type Covering<'w> = (Option<Res<'w, crate::character_editor::CharacterPanel>>, Option<Res<'w, crate::inventory_screen::InventoryPanel>>, Option<Res<'w, crate::written_window::WrittenPanel>>, Option<Res<'w, crate::dialogue_ui::DialogueState>>);
@@ -327,6 +343,7 @@ fn hover_world(
     (panel, inventory, written, dialogue): Covering,
     mut messages: ResMut<MessageBox>,
     time: Option<Res<Time<Real>>>,
+    (combat, sheet_host, data, pc_inventory): Fighting,
     mut texts: Local<Descriptions>,
     mut shown: Local<Option<Entity>>,
 ) {
@@ -366,7 +383,14 @@ fn hover_world(
             Some(EntityKind::Pc { .. }) => party.status.get(&actor.net_id).map(|s| (s.name.clone(), None, pc_details(s, local.0.is_some_and(|(id, _)| id == actor.net_id), &intgame))),
             Some(&EntityKind::Npc { prototype }) => map.prototypes.get(prototype).and_then(|p| {
                 let name = critter_name(p, &map.prototypes, known.0.contains(&actor.net_id)).and_then(|n| texts.text(n))?;
-                let (icon, details) = npc_details(p, &map.prototypes, &intgame);
+                let (icon, mut details) = npc_details(p, &map.prototypes, &intgame);
+                let me = local.0.map(|(id, _)| id);
+                if combat.as_ref().is_some_and(|c| c.attacks(me))
+                    && let (Some(sheet), Some(rules)) = (sheet_host.sheet(), data.as_ref().map(|d| &d.rules))
+                {
+                    let weapon = pc_inventory.shown().and_then(|inv| inv.items.iter().find(|i| i.location == arcanum_sim::combat::WEAPON_SLOT)).and_then(|i| map.prototypes.get(i.prototype));
+                    details.to_hit = Some((intgame(20), format!("{}%", to_hit(sheet, rules, weapon, &map.prototypes))));
+                }
                 Some((name, icon, details))
             }),
             None => None,
@@ -471,6 +495,16 @@ mod tests {
         assert_eq!(d.rows[0].right, Some(BoxCell::new("Level: 7", WHITE)));
         assert_eq!(d.gauges.iter().map(|g| (g.row, g.fill, g.percent)).collect::<Vec<_>>(), [(2, 463, 100), (3, 465, 100)]);
         assert_eq!(d.rows[1].right, Some(BoxCell::new("100%", BLUE)));
+    }
+
+    #[test]
+    fn the_to_hit_panel_shows_the_weapon_chance() {
+        let rules = arcanum_rules::RulesData::default();
+        let sheet = arcanum_rules::CharacterSheet::default();
+        let prototypes = Prototypes::default();
+        assert_eq!(to_hit(&sheet, &rules, None, &prototypes), 25, "bare hands: melee 25");
+        let heavy = Object::parse_instance(&ObjectBuilder::new(TYPE_WEAPON).field("weapon_bonus_to_hit", Value::Int32(10)).field("weapon_min_strength", Value::Int32(60)).field("weapon_ammo_type", Value::Int32(10000)).build()).unwrap();
+        assert_eq!(to_hit(&sheet, &rules, Some(&heavy), &prototypes), 0, "far too heavy");
     }
 
     #[test]
