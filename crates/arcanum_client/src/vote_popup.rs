@@ -1,7 +1,7 @@
 //! The big-move vote (owner's rules, [`arcanum_sim::big_move`]): a teleport waits until every
 //! player has said yes; one no cancels it. The original has no such window (it skips these
 //! moves in multiplayer), so its look is the builder's: a black panel like the dialogue's
-//! options, one line naming who wants the move, then "Yes" and "No" rows (white, cyan under the
+//! options, a title ("Confirm Group Action", owner's wording), one line naming who wants the move, then "Yes" and "No" rows (white, cyan under the
 //! cursor). Several votes queue; the oldest shows. A vote that ends (either way) goes.
 
 use bevy::picking::hover::Hovered;
@@ -17,7 +17,9 @@ use crate::menu_window::{at, px, rect};
 use crate::sim_bridge::HostLink;
 
 /// The panel, in screen pixels (above the dialogue options' place).
-pub const PANEL: Rect = Rect { min: Vec2::new(250.0, 200.0), max: Vec2::new(550.0, 270.0) };
+pub const PANEL: Rect = Rect { min: Vec2::new(250.0, 200.0), max: Vec2::new(550.0, 301.0) };
+/// The panel's title (owner's wording).
+pub const TITLE: &str = "Confirm Group Action";
 const ROW_HEIGHT: f32 = 19.0;
 const WHITE: Color = Color::WHITE;
 const CYAN: Color = Color::srgb(0.0, 1.0, 1.0);
@@ -95,13 +97,18 @@ fn show_panel(mut commands: Commands, mut votes: ResMut<Votes>, panels: Query<En
         ))
         .with_children(|screen| {
             screen.spawn((BackgroundColor(Color::BLACK), at(PANEL)));
-            let line = rect(PANEL.min + Vec2::new(6.0, 3.0), Vec2::new(PANEL.width() - 12.0, ROW_HEIGHT * 2.0));
+            let title = rect(PANEL.min + Vec2::new(6.0, 3.0), Vec2::new(PANEL.width() - 12.0, ROW_HEIGHT));
+            screen.spawn((bevy::picking::Pickable::IGNORE, Node { overflow: Overflow::clip(), ..at(title) })).with_children(|cell| {
+                let mut t = cell.spawn((TextColor(WHITE), bevy::picking::Pickable::IGNORE));
+                fonts.insert_text(&mut t, TITLE, UiFont::Small);
+            });
+            let line = rect(PANEL.min + Vec2::new(6.0, 3.0 + ROW_HEIGHT), Vec2::new(PANEL.width() - 12.0, ROW_HEIGHT * 2.0));
             screen.spawn((bevy::picking::Pickable::IGNORE, Node { overflow: Overflow::clip(), ..at(line) })).with_children(|cell| {
                 let mut t = cell.spawn((TextColor(WHITE), bevy::picking::Pickable::IGNORE));
                 fonts.insert_text(&mut t, &Votes::line(&ask), UiFont::Body);
             });
             for (i, (yes, label)) in [(true, "Yes"), (false, "No")].into_iter().enumerate() {
-                let row = rect(PANEL.min + Vec2::new(6.0, 3.0 + ROW_HEIGHT * (2 + i) as f32), Vec2::new(PANEL.width() - 12.0, ROW_HEIGHT));
+                let row = rect(PANEL.min + Vec2::new(6.0, 3.0 + ROW_HEIGHT * (3 + i) as f32), Vec2::new(PANEL.width() - 12.0, ROW_HEIGHT));
                 screen.spawn((VoteRow(yes), Button, ActivateOnPress, Hovered::default(), Node { overflow: Overflow::clip(), ..at(row) })).with_children(|cell| {
                     let mut t = cell.spawn((TextColor(WHITE), bevy::picking::Pickable::IGNORE));
                     fonts.insert_text(&mut t, label, UiFont::Body);
