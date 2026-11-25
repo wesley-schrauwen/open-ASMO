@@ -606,6 +606,7 @@ fn click_to_move(
     armed: Option<ResMut<crate::skill_use::SkillTargeting>>,
     (link, party, local): (Option<Res<HostLink>>, Res<Party>, Res<LocalPc>),
     (rest, dialogue, actors): (Option<Res<crate::rest_window::RestPanel>>, Option<Res<crate::dialogue_ui::DialogueState>>, Query<PickedActor>),
+    fate: Option<Res<crate::fate_window::FatePanel>>,
 ) {
     // An unconscious PC does nothing (0x4348e0).
     if local.0.is_some_and(|(id, _)| unconscious(&party, id)) {
@@ -628,7 +629,7 @@ fn click_to_move(
                 return;
             }
             // The sleep window takes its clicks; while resting, nothing reaches the world.
-            if rest.is_some_and(|r| r.resting || r.covers(crate::inventory_screen::screen_point(size, cursor))) {
+            if rest.is_some_and(|r| r.resting || r.covers(crate::inventory_screen::screen_point(size, cursor))) || fate.is_some_and(|f| f.covers(crate::inventory_screen::screen_point(size, cursor))) {
                 return;
             }
             // While talking, the options panel takes the clicks (builder's call: the world none).

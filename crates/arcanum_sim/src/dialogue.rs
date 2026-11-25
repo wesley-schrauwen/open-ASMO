@@ -446,8 +446,15 @@ impl Talk<'_> {
         self.sheet_changes.training.iter().rev().find(|(k, _)| *k == skill).map_or(self.sheet.training[skill], |&(_, r)| r)
     }
 
+    /// The base alignment (stat 0x13 as 0x4b0740 reads it: what `al` changes).
     fn alignment(&self) -> i32 {
         self.sheet_changes.alignment.unwrap_or(self.sheet.alignment)
+    }
+
+    /// The alignment with effects (0x4b0490: what the tests read).
+    fn effective_alignment(&self) -> i32 {
+        let effects = self.rules.alignment(self.sheet) - self.sheet.alignment;
+        (self.alignment() + effects).clamp(-arcanum_rules::MAX_ALIGNMENT, arcanum_rules::MAX_ALIGNMENT)
     }
 
     /// What deciding whether the NPC joins this PC reads (0x4ad950).
@@ -456,7 +463,7 @@ impl Talk<'_> {
         crate::follow::JoinCheck {
             pc_persuasion_rank: self.sheet.training[crate::follow::PERSUASION],
             pc_charisma: self.rules.stats(self.sheet)[7],
-            pc_alignment: self.alignment(),
+            pc_alignment: self.effective_alignment(),
             pc_level: self.sheet.level,
             max_followers: self.rules.derived(self.sheet).max_followers,
             followers: f.followers,
@@ -603,10 +610,10 @@ impl Talk<'_> {
             "ni" => !self.npc_has(-a),
             // Alignment (stat 0x13), the aptitude (stat 0x10: magick up, tech down), and "na"
             // (0x4159bc: alignment at least -a, or at most a when a is negative).
-            "al" => passes(self.alignment(), a),
+            "al" => passes(self.effective_alignment(), a),
             "ma" => passes(self.rules.aptitude(self.sheet), a),
             "ta" => passes(-self.rules.aptitude(self.sheet), a),
-            "na" => if a >= 0 { self.alignment() >= -a } else { self.alignment() <= a },
+            "na" => if a >= 0 { self.effective_alignment() >= -a } else { self.effective_alignment() <= a },
             // Training rank and skill level of skill S (12-15 the tech skills), spell college C.
             "tr" => usize::try_from(a).ok().filter(|&k| k < arcanum_rules::SKILLS).is_some_and(|k| passes(i32::from(self.rank(k)), b)),
             "sk" => usize::try_from(a).ok().filter(|&k| k < arcanum_rules::SKILLS).is_some_and(|k| passes(self.rules.skill_level(self.sheet, k), b)),
@@ -1096,6 +1103,12 @@ pub fn run_conversations(
             xp_quest: xp_quest.as_ref(),
             item_info: &item_info,
         };
+        // "Force good reaction" (fate option 1, 0x4c1020): a talk starting below 100 starts at
+        // 100, and the fate use is spent.
+        let forced = matches!(step, Step::Start(_)) && sheet.0.fate_pending & crate::fate_bit(crate::FATE_GOOD_REACTION) != 0 && talk.reaction() < 100;
+        if forced {
+            talk.change_reaction(100, arcanum_formats::dialog::Change::Set);
+        }
         let mut say = Say { npc_net, dialog, pc_name: &sheet.0.name, npc: &npc_info, generic: &mut generic, vfs, rng: &mut rng, deltas: Vec::new(), jumps: 0, areas, pc_at };
         let next = match step {
             Step::Start(s) => say.show(&file, s.line, &mut talk),
@@ -1219,6 +1232,10 @@ pub fn run_conversations(
         }
         if sheet_changes.experience != 0 {
             awards.0.push(sheet_changes.experience);
+        }
+        if forced && crate::consume_fate(&mut sheet.0, crate::FATE_GOOD_REACTION) {
+            saved.blueprint.sheet = sheet.0.clone();
+            outbox.0.push((player, LedgerDelta::SheetUpdate { ack: 0, sheet: sheet.0.clone() }));
         }
         // The PC's alignment moved: every follower warns at its next check (0x4b0980 stat 0x13).
         if let Some(new) = sheet_changes.alignment

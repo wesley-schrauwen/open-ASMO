@@ -69,10 +69,10 @@ impl RulesData {
         ((50 * spells - 55 * degrees) / 10 + e.aptitude).clamp(-MAX_APTITUDE, MAX_APTITUDE)
     }
 
-    /// The alignment (stat 19): 0 plus `alignment` effects, clamped to -1000..1000. (A new
-    /// character's starting value was not traced; nothing changes it in play yet.)
+    /// The alignment (stat 19): the sheet's own (dialogue `al` sets it) plus `alignment`
+    /// effects, clamped to -1000..1000. (A new character's starting value was not traced: 0.)
     pub fn alignment(&self, s: &CharacterSheet) -> i32 {
-        self.character_effects(s).alignment.clamp(-MAX_ALIGNMENT, MAX_ALIGNMENT)
+        (s.alignment + self.character_effects(s).alignment).clamp(-MAX_ALIGNMENT, MAX_ALIGNMENT)
     }
 
     /// Raises discipline `d` by a degree.
@@ -153,6 +153,16 @@ mod tests {
 
     fn sheet(points: i32, base: [i32; 8]) -> CharacterSheet {
         CharacterSheet { unspent: points, base, ..RulesData::default().new_sheet() }
+    }
+
+    #[test]
+    fn the_alignment_is_the_sheets_plus_effects() {
+        let r = RulesData::from_files(&arcanum_formats::mes::MesFile::default(), &arcanum_formats::mes::MesFile::parse(b"{400}{alignment +30}").unwrap(), &arcanum_formats::mes::MesFile::default());
+        let mut s = CharacterSheet { alignment: 250, ..CharacterSheet::default() };
+        assert_eq!(r.alignment(&s), 250, "dialogue's al sets it");
+        s.add_effect(400, 5);
+        assert_eq!(r.alignment(&s), 280);
+        assert_eq!(r.alignment(&CharacterSheet { alignment: 2000, ..CharacterSheet::default() }), 1000, "clamped");
     }
 
     #[test]

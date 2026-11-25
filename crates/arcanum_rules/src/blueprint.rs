@@ -114,6 +114,7 @@ impl RulesData {
             alignment: stat(0x13),
             fate_points: stat(0x14),
             hp_damage: 0,
+            fate_pending: 0,
             poison: 0,
             effects: Vec::new(),
             draft: Draft::default(),

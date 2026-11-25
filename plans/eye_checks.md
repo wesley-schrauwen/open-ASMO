@@ -104,3 +104,10 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 - [ ] A follower whose reaction falls near its limit says a warning line; past it, it leaves with
       its refusal line.
 - [ ] A `$$` price in dialogue counts followers' gold.
+
+## Alignment and fate points
+
+- [ ] After a dialogue result moves the alignment, the character screen's dial points to it.
+- [ ] The top bar shows the fate points (two digits) beside the fate button; F or the button opens
+      the fate window under the bar; "Full heal now" spends one and heals; a row clicked again
+      gives the point back.
