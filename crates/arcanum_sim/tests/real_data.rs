@@ -683,3 +683,16 @@ fn every_effect_line_reads_whole() {
     eprintln!("{lines} effect lines, {changes} changes");
     assert!(short.is_empty(), "{short:?}");
 }
+
+/// The experience table: level 2 at 2100, 50 at 1,300,000; 5000 experience from level 1 is
+/// level 3 (4600) with two points.
+#[test]
+fn the_experience_table_reads_and_levels_rise() {
+    let Some(vfs) = vfs() else { return };
+    let rules = arcanum_rules::RulesData::load(&vfs).unwrap();
+    assert_eq!(rules.xp_levels.len(), 51);
+    assert_eq!((rules.xp_levels[0], rules.xp_levels[1], rules.xp_levels[49]), (0, 2100, 1_300_000));
+    let mut sheet = arcanum_rules::CharacterSheet { unspent: 0, ..Default::default() };
+    assert_eq!(rules.gain_experience(&mut sheet, 5000), [2, 3]);
+    assert_eq!((sheet.level, sheet.unspent, rules.xp_to_next(&sheet)), (3, 2, 7700 - 5000));
+}

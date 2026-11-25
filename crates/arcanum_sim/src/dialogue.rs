@@ -278,16 +278,16 @@ impl SheetChanges {
         *self == Self::default()
     }
 
-    /// Applies them to `sheet`.
-    pub fn apply(&self, sheet: &mut CharacterSheet) {
+    /// Applies them to `sheet`; experience can raise the level. Returns the levels reached.
+    pub fn apply(&self, rules: &RulesData, sheet: &mut CharacterSheet) -> Vec<i32> {
         for &(skill, rank) in &self.training {
             sheet.training[skill] = rank;
         }
         if let Some(a) = self.alignment {
             sheet.alignment = a;
         }
-        sheet.experience += self.experience;
         sheet.fate_points += self.fate_points;
+        rules.gain_experience(sheet, self.experience)
     }
 }
 
@@ -865,6 +865,8 @@ pub fn run_conversations(
         };
         let npc_stock = stock_id.and_then(|id| map.pile(id)).map(|p| p.inventory);
         let xp_quest = generic.file(vfs, "Rules/xp_quest.mes").cloned();
+        // "Congratulations! You are now level %d." (`mes/intgame.mes` 11).
+        let level_up = generic.file(vfs, "mes/intgame.mes").and_then(|m| m.get(11)).map(str::to_string);
         let areas = &*areas;
         let pc_area = map.name.as_deref().map_or(0, |m| areas.area_at(m, pc_at));
         let mut talk = Talk {
@@ -962,9 +964,17 @@ pub fn run_conversations(
             touched.push(sector);
         }
         if !sheet_changes.is_empty() {
-            sheet_changes.apply(&mut sheet.0);
+            let levels = sheet_changes.apply(&rules.0, &mut sheet.0);
             saved.blueprint.sheet = sheet.0.clone();
             outbox.0.push((player, LedgerDelta::SheetUpdate { ack: 0, sheet: sheet.0.clone() }));
+            for level in &levels {
+                if let Some(text) = &level_up {
+                    outbox.0.push((player, LedgerDelta::ScriptMessage { text: text.replace("%d", &level.to_string()) }));
+                }
+            }
+            if !levels.is_empty() {
+                crate::ground::broadcast(&session, &mut outbox, LedgerDelta::PcStatus { net_id: pc_net, status: crate::pc_status(&rules.0, &sheet.0) });
+            }
         }
         if gold_changed {
             saved.inventory = Some(inventory.clone());
@@ -1937,8 +1947,15 @@ mod tests {
         assert!(talk.passes_test("ni 2804, in 5222"), "the dagger went, the sword came");
         assert!(talk.npc_inventory_changed && talk.npc_has(2804) && !talk.npc_has(5222));
         let mut changed = sheet.clone();
-        talk.sheet_changes.apply(&mut changed);
+        talk.sheet_changes.apply(&rules, &mut changed);
         assert_eq!((changed.alignment, changed.training[9], changed.fate_points), (20, 1, 1));
+        // Experience raises the level through the rules' table.
+        let mut levelled = sheet.clone();
+        let mut rules = rules.clone();
+        rules.xp_levels = vec![0, 2100, 4600, 7700];
+        let gain = SheetChanges { experience: 5000, ..Default::default() };
+        assert_eq!(gain.apply(&rules, &mut levelled), [2, 3]);
+        assert_eq!((levelled.level, levelled.experience, levelled.unspent - sheet.unspent), (3, sheet.experience + 5000, 2));
         assert!(talk.unbuilt.is_empty(), "{:?}", talk.unbuilt);
     }
 }

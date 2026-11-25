@@ -36,8 +36,13 @@ pub fn reaction_modifier(beauty: i32) -> i32 {
 /// Effect every female character carries (`rules/effect.mes` 330).
 pub const FEMALE_EFFECT: u32 = 330;
 
-/// Experience needed for level 2 (`Rules/xp_level.mes` 2).
+/// Experience needed for level 2 (`Rules/xp_level.mes` 2), when the table is not loaded.
 pub const XP_FOR_LEVEL_2: i32 = 2100;
+/// The level stat's maximum (table 0x5b5204 entry 0x11): no one reaches it, so 50 is the
+/// highest level.
+pub const LEVEL_LIMIT: i32 = 51;
+/// "Experience to the next level" for a character at the highest level (0x4a68b0).
+pub const NO_NEXT_LEVEL: i32 = 999_999;
 
 /// The derived stats the character editor shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +73,12 @@ impl Derived {
             self.max_followers,
         ]
     }
+}
+
+/// Character points for going from level `from` to `to` (0x4a6980): one a level, one more at
+/// each fifth.
+pub fn level_points(from: i32, to: i32) -> i32 {
+    (from + 1..=to).map(|l| if l % 5 == 0 { 2 } else { 1 }).sum()
 }
 
 /// Steps `index` through `count` choices with wrap.
@@ -299,6 +310,42 @@ impl RulesData {
         out
     }
 
+    /// Experience still needed for the next level (0x4a68b0): at or past it, 0 or less.
+    pub fn xp_to_next(&self, s: &CharacterSheet) -> i32 {
+        if s.level >= LEVEL_LIMIT {
+            return NO_NEXT_LEVEL;
+        }
+        let needed = match self.xp_levels.get(s.level.max(0) as usize) {
+            Some(&n) => n,
+            None if s.level == 1 => XP_FOR_LEVEL_2,
+            None => return NO_NEXT_LEVEL,
+        };
+        needed - s.experience
+    }
+
+    /// Gives `amount` experience (0x45f110 at normal difficulty), after `xpgain` effects
+    /// (0x4eabc0), and raises the level as far as it reaches (0x4a69c0): each level gives a
+    /// character point, two at every fifth level (0x4a6980). Experience that would pass level
+    /// 50 is set back to level 50's. Returns the levels reached, in order.
+    pub fn gain_experience(&self, s: &mut CharacterSheet, amount: i32) -> Vec<i32> {
+        if amount == 0 {
+            return Vec::new();
+        }
+        s.experience += self.apply_effects(crate::EffectTarget::Other(9), amount, &self.effect_ids(s));
+        let mut reached = Vec::new();
+        while s.level < LEVEL_LIMIT && self.xp_to_next(s) <= 0 {
+            let level = s.level + 1;
+            if level == LEVEL_LIMIT {
+                s.experience = self.xp_levels.get(LEVEL_LIMIT as usize - 2).copied().unwrap_or(s.experience);
+                break;
+            }
+            s.unspent += level_points(s.level, level);
+            s.level = level;
+            reached.push(level);
+        }
+        reached
+    }
+
     /// The derived stats (Arcanum.exe 0x4b0740, 0x43d5a0, 0x45d670).
     pub fn derived(&self, s: &CharacterSheet) -> Derived {
         let [st, dx, cn, be, _in, _pe, wp, ch] = self.stats(s);
@@ -343,6 +390,33 @@ mod tests {
             &mes("{65}{st +1, cn +1, ch -1, dx -1, repair +2}{87}{resistpoison +20, be -1}{89}{repair -1}{90}{pe +1}"),
             &mes("{1000}{ELM1}{1001}{DWM1}{1005}{HUM1}{1018}{HUM2}{1020}{DWM2}{1008}{HUF1}{1035}{NPCDoc}"),
         )
+    }
+
+    #[test]
+    fn experience_raises_levels_with_a_point_each_and_two_every_fifth() {
+        let mut r = rules();
+        r.xp_levels = parse_xp_levels(&mes("{1}{0}{2}{2100}{3}{4600}{4}{7700}{5}{11400}{6}{15500}{50}{1300000}{51}{1380000}"));
+        assert_eq!(r.xp_levels.len(), 51);
+        let mut s = CharacterSheet { unspent: 0, ..r.new_sheet() };
+        assert_eq!(r.xp_to_next(&s), 2100);
+        assert!(r.gain_experience(&mut s, 2099).is_empty());
+        assert_eq!(r.gain_experience(&mut s, 12000), [2, 3, 4, 5], "past 11400, short of 15500");
+        assert_eq!((s.level, s.experience, s.unspent), (5, 14099, 5), "1 + 1 + 1 + 2");
+        assert_eq!(level_points(4, 10), 8);
+        let mut top = CharacterSheet { level: 50, experience: 1_300_000, ..r.new_sheet() };
+        assert_eq!(r.xp_to_next(&top), 80_000);
+        assert!(r.gain_experience(&mut top, 100_000).is_empty());
+        assert_eq!((top.level, top.experience), (50, 1_300_000), "set back to level 50's");
+    }
+
+    #[test]
+    fn xpgain_effects_scale_the_experience() {
+        let mut r = RulesData::from_files(&mes(""), &mes("{400}{xpgain +50%}"), &mes(""));
+        r.xp_levels = vec![0, 2100];
+        let mut s = CharacterSheet::default();
+        s.add_effect(400, 5);
+        r.gain_experience(&mut s, 1000);
+        assert_eq!(s.experience, 1500);
     }
 
     #[test]

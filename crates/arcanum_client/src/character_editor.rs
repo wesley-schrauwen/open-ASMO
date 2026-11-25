@@ -34,7 +34,7 @@ use crate::character_host::CharacterHost;
 use crate::pc_sheet::SheetHost;
 use arcanum_sim::SheetRequest;
 use crate::create_character::CreationData;
-use arcanum_rules::{CharacterAction, Message, PRIMARY_STATS, Pool, RESISTANCES, XP_FOR_LEVEL_2};
+use arcanum_rules::{CharacterAction, Message, PRIMARY_STATS, Pool, RESISTANCES};
 use crate::editor_tabs::{EditorView, TabArt};
 use crate::message_box::{BoxHelp, BoxMessage, MessageBox};
 use crate::fonts::{ArcanumFonts, UiFont};
@@ -431,9 +431,10 @@ fn draw_values(commands: &mut Commands, root: Entity, c: &arcanum_rules::Charact
             };
             // Info panel.
             put(win(212.0, 15.0, 240.0, 19.0), &c.name, EditorText::Name, UiFont::Small, NAME_COLOR, false);
-            put(win(212.0, 34.0, 120.0, 19.0), &format!("{}: 1", label(1, "Level")), EditorText::Level, UiFont::Small, SCREEN_WHITE, false);
+            put(win(212.0, 34.0, 120.0, 19.0), &format!("{}: {}", label(1, "Level"), c.level), EditorText::Level, UiFont::Small, SCREEN_WHITE, false);
             put(win(212.0, 53.0, 120.0, 19.0), &format!("{}: {}", label(0, "Points"), rules.unspent(c)), EditorText::Points, UiFont::Small, SCREEN_WHITE, false);
-            put(win(212.0, 72.0, 120.0, 19.0), &format!("{}: {XP_FOR_LEVEL_2}", label(2, "XP Next")), EditorText::XpNext, UiFont::Small, SCREEN_WHITE, false);
+            // The experience still needed (0x55b510 → 0x4a68b0).
+            put(win(212.0, 72.0, 120.0, 19.0), &format!("{}: {}", label(2, "XP Next"), rules.xp_to_next(c)), EditorText::XpNext, UiFont::Small, SCREEN_WHITE, false);
             put(win(337.0, 34.0, 130.0, 19.0), &format!("{}: {race}", label(4, "Race")), EditorText::Race, UiFont::Small, SCREEN_WHITE, false);
             put(win(337.0, 53.0, 130.0, 19.0), &format!("{}: {gender}", label(5, "Gender")), EditorText::Gender, UiFont::Small, SCREEN_WHITE, false);
             put(win(337.0, 72.0, 130.0, 19.0), &format!("{}: 20", label(6, "Age")), EditorText::Age, UiFont::Small, SCREEN_WHITE, false);

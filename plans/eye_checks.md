@@ -55,3 +55,9 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 - [ ] When a script switches an object off, it disappears for every player and stops blocking;
       switched on, it comes back in its place. An NPC switched off despawns.
 - [ ] The redrawn sector shows no gap or flicker beyond the one frame.
+
+## Levelling (levelling PR)
+
+- [ ] A dialogue line that gives experience raises the level when enough is reached, shows
+      "Congratulations! You are now level N." in the message box, and the points appear.
+- [ ] The character screen shows the new level and the experience still needed ("XP Next").
