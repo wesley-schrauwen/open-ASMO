@@ -70,3 +70,11 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 - [ ] Far away (31 tiles or more), he appears beside the PC.
 - [ ] A teleport within the map brings him along; a map change leaves him waiting behind.
 - [ ] Refusals show the NPC's line and end the talk.
+
+## Healing (dialogue healing PR)
+
+- [ ] An NPC with an `H:` option shows "I need healing."-type text; choosing it shows only what
+      that NPC can do, then the price, then "It is done."-type line and a thanks.
+- [ ] The gold goes; Virgil (a follower) heals for nothing.
+- [ ] The party bar's hit points rise after healing once something can hurt the PC (nothing does
+      yet).

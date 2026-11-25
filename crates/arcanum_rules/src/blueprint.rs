@@ -113,6 +113,8 @@ impl RulesData {
             experience: stat(0x12),
             alignment: stat(0x13),
             fate_points: stat(0x14),
+            hp_damage: 0,
+            poison: 0,
             effects: Vec::new(),
             draft: Draft::default(),
         }

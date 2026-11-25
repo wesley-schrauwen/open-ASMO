@@ -301,8 +301,8 @@ format and language are checked against all 709 `.dlg` files.
 5. **Barter** (`B:`): see `plans/barter.md`.
 6. **Services** (`arcanum_sim::dialogue`). Built: `R:` rumours, `T:` training, `Q:` quest
    lines, the price dialogue. Training sends the new sheet (`SheetUpdate`, ack 0) and saves it.
-   - **Not built:** `U:`, `H:` (skill use and spells on the PC), `D:` / `X:` (areas), `P:`
-     (newspapers), `L:` (no world map); what quells rumours; the rumour's timestamp and logbook.
+   - **Not built:** `P:` (newspapers), `L:` (no world map); what quells rumours; the rumour's
+     timestamp and logbook. (`D:` / `X:`: step 7; `H:` / `U:`: step 9.)
    - **Real data:** every `Q:` names a row of `gamequest.mes`; `T:` lists name skills 0-15.
 7. **Areas and directions** (`arcanum_sim::areas`). Built.
    - `mes/gamearea.mes` (82 areas: centre on the world map, name, description, radius) and
@@ -317,6 +317,40 @@ format and language are checked against all 709 `.dlg` files.
    - The direction (0x4b8d50) and the distance (0x4b96f0, divided by 3168) were not read: here
      the screen angle of the line between the tiles, and the tile distance.
    - Scripts: action 0x31 marks an area known for PCs, 0x54 stores an object's area.
+9. **Healing** (built, `feat/dialogue-healing`; 0x419830, 0x419a00-0x419d50).
+   - **`H:`** (gd_pc2 700) opens the menu.
+     - The NPC says `gd_cls` 14000 (override 10013).
+     - **Page 0:**
+       - "[Heal Skill]" (900, with a healing kit: a generic item with `generic_flags` 8);
+       - "[Magickal Healing]" (1100) with 1 or more white necromancy spells (college 12, field
+         0xdf);
+       - "[Magickal Poison Healing]" (1200) with 2 or more;
+       - Resurrect ("[%s Spell]", 1000) with all 5.
+     - **Page 1:** Minor Healing (1+), Major Healing (3+). **Page 2:** Halt Poison (2+).
+     - Each page ends with a "forget it" (800) back. Nothing asks whether the PC is hurt.
+   - **`U:N`** shows "[%s Skill]" with skill N's name and uses that skill on the PC.
+   - **Price:** free from the PC's own follower. Otherwise a skill costs `(level + 2) × (rank + 1)`
+     (0x4c62d0) and a spell 100 (0x4b1740), through the price dialogue.
+   - **Done** (`gd_cls` 15000, override 10014; then one `gd_cls_pc2` 1000 "thanks" back):
+     - **Heal skill** (0x4c7160 case 10): its level, × 1.5 when trained, at least 1. A Master
+       heals all of it; others heal 1 to it at random. A healer who follows nobody never fails.
+     - **Minor / Major Healing:** `lo + (hi - lo) × aptitude / 100` of 5-30 / 40-80
+       (`Rules/SpellList.mes`, 0x4521a0).
+     - **Halt Poison:** 50 poison.
+   - **The sheet:**
+     - it gains `hp_damage` (field 0x1d) and `poison` (stat 0x18);
+     - the PC's status shows the hit points left;
+     - rest heals the damage (the heal rate), and "until healed" waits for it.
+   - **Not built:**
+     - Resurrect: the PC is never dead.
+     - Skills other than Heal.
+     - The kit's charges.
+     - A Master's cured conditions and effect 7.
+     - The 0x4ae570 flag test (field 0xda).
+     - A follower's spell cost.
+     - Nothing damages or poisons a PC yet.
+     - Healing spells on a target that is not hurt (the original's target filter) heal nothing
+       here.
 8. **The other tests and results** (built, `feat/dialogue-tests`; 0x4150d0 table 0x415b04,
    0x415ba0 table 0x41672c).
    - Every test opcode is built: `al` alignment (stat 0x13), `ma` / `ta` the aptitude up /
