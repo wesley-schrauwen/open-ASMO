@@ -51,6 +51,14 @@ pub const WRITTEN_NEWSPAPER: i32 = 2;
 pub const WRITTEN_TELEGRAM: i32 = 3;
 pub const WRITTEN_IMAGE: i32 = 4;
 pub const WRITTEN_PLAQUE: i32 = 6;
+/// The weapon's inventory slot.
+pub const WEAPON_SLOT: i32 = 1004;
+
+/// The sector key of tile X, Y (0x4cfc50: 64-tile sectors, Y's above X's).
+pub fn blocked_key(x: i32, y: i32) -> u64 {
+    arcanum_formats::map::TileLoc { x: x as u32, y: y as u32 }.sector().0
+}
+
 /// Most lines one run steps through (0x4449b0's 1000).
 pub const MAX_STEPS: usize = 1000;
 /// Global variables (0x4446e0).
@@ -85,6 +93,10 @@ pub struct ScriptGlobals {
     /// 0x4c51c0).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub quests: BTreeMap<u32, i32>,
+    /// Sectors in the blocked list (0x601794; action 0x6a toggles, condition 0x2d tests), by
+    /// sector key.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub blocked_sectors: BTreeSet<u64>,
 }
 
 impl ScriptGlobals {
@@ -418,8 +430,28 @@ pub trait ScriptContext {
     fn under_spell(&mut self, _object: Self::Object, _spell: i32) -> bool {
         false
     }
-    /// Moves an NPC's day standpoint (field 0x121).
-    fn set_day_standpoint(&mut self, _npc: Self::Object, _to: arcanum_formats::map::TileLoc) {}
+    /// Moves an NPC's day (field 0x121) or night (0x122) standpoint.
+    fn set_standpoint(&mut self, _npc: Self::Object, _to: arcanum_formats::map::TileLoc, _night: bool) {}
+    /// Makes an object of basic prototype `basic` near `near` (0x4ed8b0).
+    fn create_near(&mut self, _basic: i32, _near: Self::Object) {}
+    /// Gives a PC experience (0x45f110): shared as the host shares it.
+    fn give_experience(&mut self, _pc: Self::Object, _amount: i32) {}
+    /// Experience for a quest of level `level` (`Rules/xp_quest.mes`, 0x4c53c0).
+    fn quest_experience(&mut self, _level: i32) -> i32 {
+        0
+    }
+    /// The item `holder` has in inventory slot `slot` (0x4649c0).
+    fn in_slot(&mut self, _holder: Self::Object, _slot: i32) -> Option<Self::Object> {
+        None
+    }
+    /// `listener` hears `target` (0x4af470 is 0).
+    fn can_hear(&mut self, _listener: Self::Object, _target: Self::Object) -> bool {
+        false
+    }
+    /// A portal or container is open (0x4f08c0 / 0x502b50 on its art).
+    fn is_open(&mut self, _object: Self::Object) -> bool {
+        false
+    }
     /// The trap on `object` has been spotted (object flag 0x2000000, 0x4bbfe0).
     fn trap_spotted(&mut self, _object: Self::Object) -> bool {
         false
@@ -873,9 +905,18 @@ fn condition<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &m
             let (quest, state) = (value(0), value(1));
             ctx.globals().quest(quest) == state
         }
-        // The sector at X, Y is in the list at 0x601794 (0x4d0ee0); who fills that list is not
-        // traced, so never (builder's call).
-        0x2d => false,
+        // The sector at X, Y is in the blocked list (0x4d0ee0; action 0x6a toggles it).
+        0x2d => {
+            let (x, y) = (value(0), value(1));
+            ctx.globals().blocked_sectors.contains(&blocked_key(x, y))
+        }
+        // Can hear (0x4af470) / is open (0x4f08c0): the first object.
+        0x1d => {
+            let a = objects(run, block.operands[0], line, unsupported)?.first().copied();
+            let b = objects(run, block.operands[1], line, unsupported)?.first().copied();
+            matches!((a, b), (Some(a), Some(b)) if ctx.can_hear(a, b))
+        }
+        0x24 => objects(run, block.operands[0], line, unsupported)?.first().copied().is_some_and(|o| ctx.is_open(o)),
         // Entry N of the switch table is on (0x4baba0).
         0x2e => {
             let n = value(0);
@@ -1231,9 +1272,18 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
             }
             Step::Next
         }
-        // Sound (0x52), eye candy (0x78) and slides (0x83): not shown or played yet; the script
-        // goes on, as the original's does.
-        0x52 | 0x78 | 0x83 => Step::Next,
+        // Sounds (0x52, 0x53 at an object, 0x57 a scheme), eye candy (0x68 / 0x74 a spell's,
+        // play and stop; 0x78 / 0x7c a script's) and slides (0x83): not shown or played yet; the
+        // script goes on, as the original's does.
+        0x52 | 0x53 | 0x57 | 0x68 | 0x74 | 0x78 | 0x7c | 0x83 => Step::Next,
+        // Where an object is: X and Y (0x5f).
+        0x5f => {
+            let o = objects(run, ops[0], line, unsupported)?.first().copied();
+            let at = o.and_then(|o| ctx.location(o));
+            set(ctx, attachment, run, ops[1], at.map_or(0, |t| t.x as i32));
+            set(ctx, attachment, run, ops[2], at.map_or(0, |t| t.y as i32));
+            Step::Next
+        }
         // Magic/tech adjust (0x461540): N scaled by how well the user's aptitude meets the
         // item's complexity, rounded: `(F × N + 50) / 100`.
         0x5b => {
@@ -1406,12 +1456,102 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
             Step::Next
         }
         // An NPC's day standpoint (0x44825b: field 0x121).
-        0x2d => {
+        0x2d | 0x2e => {
             let (x, y) = (value(ctx, attachment, run, 1), value(ctx, attachment, run, 2));
             for o in objects(run, ops[0], line, unsupported)? {
                 if ctx.is_npc(o) {
-                    ctx.set_day_standpoint(o, arcanum_formats::map::TileLoc { x: x as u32, y: y as u32 });
+                    ctx.set_standpoint(o, arcanum_formats::map::TileLoc { x: x as u32, y: y as u32 }, block.kind == 0x2e);
                 }
+            }
+            Step::Next
+        }
+        // Make an object of basic prototype N near the object (0x4ed8b0).
+        0x34 => {
+            let basic = value(ctx, attachment, run, 0);
+            if let Some(o) = objects(run, ops[1], line, unsupported)?.first().copied() {
+                ctx.create_near(basic, o);
+            }
+            Step::Next
+        }
+        // Experience for a quest of level N (0x4c53c0 → 0x45f110): PCs only.
+        0x3f => {
+            let level = value(ctx, attachment, run, 1);
+            let amount = ctx.quest_experience(level);
+            for o in objects(run, ops[0], line, unsupported)? {
+                if amount != 0 && ctx.object_type(o) == 15 {
+                    ctx.give_experience(o, amount);
+                }
+            }
+            Step::Next
+        }
+        // The wielded weapon's art nibble (0x4649c0 slot 1004, field 0x5f → 0x5044f0: bits 6-9
+        // of an item art); no weapon, 1.
+        0x46 => {
+            let o = objects(run, ops[0], line, unsupported)?.first().copied();
+            let weapon = o.and_then(|o| ctx.in_slot(o, WEAPON_SLOT));
+            let v = match weapon {
+                None => 1,
+                Some(w) => {
+                    let art = ctx.object_int(w, "item_use_aid_fragment").unwrap_or(0) as u32;
+                    if art >> 28 == 6 { (art >> 6 & 0xf) as i32 } else { 0 }
+                }
+            };
+            set(ctx, attachment, run, ops[1], v);
+            Step::Next
+        }
+        // An NPC's faction (0x45d080: field 0x124); others 0.
+        0x59 => {
+            let o = objects(run, ops[0], line, unsupported)?.first().copied();
+            let v = match o {
+                Some(o) if ctx.is_npc(o) => ctx.object_int(o, "npc_faction").unwrap_or(0),
+                _ => 0,
+            };
+            set(ctx, attachment, run, ops[1], v);
+            Step::Next
+        }
+        // The scroll distance (0x40e8b0): the player's Perception / 2 + 3.
+        0x5a => {
+            let v = ctx.player().map_or(0, |p| ctx.stat(p, 5) / 2 + 3);
+            set(ctx, attachment, run, ops[0], v);
+            Step::Next
+        }
+        // Prone at once (0x435b30: the knock-down animation's last frame): the pose is not shown
+        // yet; the script goes on.
+        0x5d => Step::Next,
+        // Toggle sector X, Y in the blocked list (0x4cfc50 → 0x4ef010).
+        0x6a => {
+            let (x, y) = (value(ctx, attachment, run, 0), value(ctx, attachment, run, 1));
+            let key = blocked_key(x, y);
+            let blocked = &mut ctx.globals().blocked_sectors;
+            if !blocked.remove(&key) {
+                blocked.insert(key);
+            }
+            Step::Next
+        }
+        // An armour's coverage (0x465c30: field 0x5d, bits 14-16 of an item art); not an
+        // armour, -1.
+        0x6f => {
+            let o = objects(run, ops[0], line, unsupported)?.first().copied();
+            let v = match o {
+                Some(o) if ctx.object_type(o) == 7 => {
+                    let art = ctx.object_int(o, "item_inv_aid").unwrap_or(0) as u32;
+                    if art >> 28 == 6 { (art >> 14 & 7) as i32 } else { 0 }
+                }
+                _ => -1,
+            };
+            set(ctx, attachment, run, ops[1], v);
+            Step::Next
+        }
+        // Unfog town map N (0x4bed30): there are no town maps yet; the script goes on.
+        0x71 => Step::Next,
+        // An item shown in or hidden from inventories (field 0x57 bit 0x10): carried items keep
+        // no flags here yet; the script goes on.
+        0x7f => Step::Next,
+        // A spell cast without a caster, unresistable (0x80 / 0x88: 0x3d's with flag 4).
+        0x80 | 0x88 => {
+            let spell = value(ctx, attachment, run, 0);
+            if let Some(target) = objects(run, ops[1], line, unsupported)?.first().copied() {
+                ctx.cast_on(spell, target);
             }
             Step::Next
         }
@@ -1975,5 +2115,23 @@ pub(crate) mod tests {
         invoke(&mut w, &mut Attachment::new(0, 0, 100));
         assert_eq!((w.globals.var(1), w.globals.var(2)), (1, 0));
         assert!(w.pcs.values().all(|p| p.curses.is_empty()));
+    }
+
+    #[test]
+    fn locations_and_blocked_sectors() {
+        use arcanum_formats::map::TileLoc;
+        let lines = vec![
+            always(block(0x5f, &[op(0, 0), op(1, 1), op(1, 2)])),
+            always(block(0x6a, &[n(130), n(70)])),
+            line(block(0x2d, &[n(190), n(127)]), block(0xa, &[op(1, 3), n(1)]), block(0, &[])),
+            line(block(0x2d, &[n(200), n(70)]), block(0xa, &[op(1, 4), n(1)]), block(0, &[])),
+        ];
+        let mut w = world(lines, 0);
+        w.at.insert(1, TileLoc { x: 40, y: 41 });
+        assert!(invoke(&mut w, &mut Attachment::new(0, 0, 100)).unsupported.is_empty());
+        assert_eq!((w.globals.var(1), w.globals.var(2)), (40, 41));
+        assert_eq!((w.globals.var(3), w.globals.var(4)), (1, 0), "the same 64-tile sector; another not");
+        invoke(&mut w, &mut Attachment::new(0, 0, 100));
+        assert!(w.globals.blocked_sectors.is_empty(), "toggled back");
     }
 }

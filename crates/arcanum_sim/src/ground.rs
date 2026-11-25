@@ -337,7 +337,7 @@ pub fn drop_item(
 /// there with room; else, if bare items lie there, into a new pile with them (they go first);
 /// else bare on the tile.
 #[allow(clippy::too_many_arguments)]
-fn place_on_ground(item: crate::CarriedItem, at: TileLoc, info: &impl Fn(u32) -> Option<crate::ItemInfo>, map: &mut LoadedMap, world: &mut WorldState, session: &Session, outbox: &mut Outbox) {
+pub(crate) fn place_on_ground(item: crate::CarriedItem, at: TileLoc, info: &impl Fn(u32) -> Option<crate::ItemInfo>, map: &mut LoadedMap, world: &mut WorldState, session: &Session, outbox: &mut Outbox) {
     let sector = at.sector();
     for pile_id in map.piles_on_tile(at) {
         let Some(pile) = map.pile(pile_id) else { continue };
