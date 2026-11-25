@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-16 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`, `feat/combat-events`, `feat/ammunition`, `feat/combat-stun`, `feat/sight`, `feat/combat-cursor`).
+Status: steps 1-17 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`, `feat/combat-events`, `feat/ammunition`, `feat/combat-stun`, `feat/sight`, `feat/combat-cursor`, `feat/knock-out`).
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -344,7 +344,7 @@ of `combat_design.md` come after the original's rules work.
    - Built: all of that but knocking out and the real-time stun count (a stun ends with the
      fight, builder's call); knocked down plays the fall and the get-up on the client.
      Floats "Stunned", "Knocked down", "Weapon destroyed", "Ammo lost".
-   - Not built: knocking out (NPC fatigue is not kept), dropping or wearing the weapon from a
+   - Not built: knocking out (built in step 17), dropping or wearing the weapon from a
      critical miss, the critical miss's spell weapons (0x4b65d0), 0x44c820.
 15. **Sight** (built, `feat/sight`).
    - Findings (0x4af260, returns 0 when seen; callers test `== 0`): 1000 for a fleeing, dead or
@@ -371,3 +371,14 @@ of `combat_design.md` come after the original's rules work.
    - Checked by screenshot (`DEBUG_ARCANUM_HOVER=700,600`, the fight at the crash site): 3
      orange and 9 red lights for a 12-point walk with 3 points left.
    - Not built: the planned path drawn on the ground.
+17. **NPC fatigue and knocking out** (built, `feat/knock-out`).
+   - NPCs' fatigue is kept (`critter_fatigue_damage`, `SectorDelta::npc_fatigue`; most as
+     0x45d670: `pts × 4 + adj + 4 + (level + CO) × 2 + WP`). Hits' fatigue damage lands on it
+     (fists' 1-5, saps), and a critical knocks out (0x4b5f40 flag 0x100: after a stun, an NPC
+     without `critter_flags` 0x4000000, another roll up to `E` and a CO save at − 5): fatigue to
+     its most + 10-20 (0x4cef00(10, 20)). Float "Unconscious" (17).
+   - Below 1 an NPC is down (0x45d800): it lies on animation 7's last frame, loses its turns,
+     counts for no side, notices nothing and does not wander. Its fatigue recovers by
+     `(CO + 1) / 3` every 80 000 game ms (as PCs', 0x45e610); above 0 it gets up.
+   - Not built: the get-up animation for NPCs (they are spawned again standing), the turn
+     ending for a PC knocked out on its turn (0x4b7c90).

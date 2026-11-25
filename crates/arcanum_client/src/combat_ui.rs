@@ -152,12 +152,12 @@ fn facing(from: arcanum_formats::map::TileLoc, to: arcanum_formats::map::TileLoc
     arcanum_sim::rotation_of_step(from, step)
 }
 
-/// A critical's effect lines (0x4b4390): "Stunned" (16), "Knocked down" (18), "Blinded" (4),
+/// A critical's effect lines (0x4b4390): "Stunned" (16), "Unconscious" (17), "Knocked down" (18), "Blinded" (4),
 /// "Crippled arm" (5), "Crippled leg" (6).
 fn effect_floats(effects: u8, injured: i32, mes: &dyn Fn(u32) -> String) -> Vec<String> {
-    use arcanum_sim::combat::{KNOCKED_DOWN, OCF_BLINDED, OCF_CRIPPLED_ARM, OCF_CRIPPLED_ARMS, OCF_CRIPPLED_LEGS, STUNNED};
+    use arcanum_sim::combat::{KNOCKED_DOWN, KNOCKED_OUT, OCF_BLINDED, OCF_CRIPPLED_ARM, OCF_CRIPPLED_ARMS, OCF_CRIPPLED_LEGS, STUNNED};
     let mut out = Vec::new();
-    for (bit, line) in [(STUNNED, 16), (KNOCKED_DOWN, 18)] {
+    for (bit, line) in [(STUNNED, 16), (KNOCKED_OUT, 17), (KNOCKED_DOWN, 18)] {
         if effects & bit != 0 {
             out.push(mes(line));
         }
