@@ -98,6 +98,42 @@ pub struct Weapon {
     pub crit_chance: i32,
     pub crit_effect: i32,
     pub crit_chart: i32,
+    /// `weapon_ammo_type` (0 arrows, 1 bullets, 2 charges, 3 fuel; [`NO_AMMO`] none) and
+    /// `weapon_ammo_consumption`, rounds a shot.
+    pub ammo_type: i32,
+    pub ammo_per_shot: i32,
+}
+
+/// `weapon_ammo_type` of weapons that use none (0x465ca0).
+pub const NO_AMMO: i32 = 10000;
+/// Object type of ammunition.
+pub const TYPE_AMMO: u32 = 6;
+
+impl Weapon {
+    /// Whether it shoots ammunition.
+    pub fn uses_ammo(&self) -> bool {
+        self.ammo_type != NO_AMMO && self.ammo_per_shot > 0
+    }
+}
+
+/// Rounds of ammunition type `ammo_type` in `inventory` (0x465820: the stack's `ammo_quantity`).
+pub fn ammo_count(inventory: &crate::Inventory, ammo_type: i32, prototypes: &Prototypes) -> i32 {
+    inventory.items.iter().filter(|i| is_ammo_of(i.prototype, ammo_type, prototypes)).map(|i| i.quantity).sum()
+}
+
+fn is_ammo_of(prototype: u32, ammo_type: i32, prototypes: &Prototypes) -> bool {
+    prototypes.get(prototype).is_some_and(|p| p.object_type == TYPE_AMMO && prototypes.int(p, "ammo_type") == Some(ammo_type))
+}
+
+/// Takes `rounds` of `ammo_type` from `inventory`'s stacks, an emptied stack gone (0x4658e0).
+pub fn take_ammo(inventory: &mut crate::Inventory, ammo_type: i32, rounds: i32, prototypes: &Prototypes) {
+    let mut left = rounds;
+    for item in inventory.items.iter_mut().filter(|i| is_ammo_of(i.prototype, ammo_type, prototypes)) {
+        let taken = left.min(item.quantity);
+        item.quantity -= taken;
+        left -= taken;
+    }
+    inventory.items.retain(|i| i.quantity > 0 || !is_ammo_of(i.prototype, ammo_type, prototypes));
 }
 
 /// One side of an attack.
@@ -127,6 +163,21 @@ pub struct Fighter {
     pub helmet: bool,
     /// `critter_flags` 0x4: undead, not injured by critical hits.
     pub undead: bool,
+    /// Rounds it carries for its weapon's ammunition.
+    pub ammo: i32,
+}
+
+impl Fighter {
+    /// The same with the rounds it carries counted.
+    fn with_ammo(self, inventory: &crate::Inventory, prototypes: &Prototypes) -> Self {
+        let ammo = self.weapon.as_ref().filter(|w| w.uses_ammo()).map_or(0, |w| ammo_count(inventory, w.ammo_type, prototypes));
+        Self { ammo, ..self }
+    }
+
+    /// Whether its weapon needs ammunition it has not got (0x432cf0).
+    pub fn out_of_ammo(&self) -> bool {
+        self.weapon.as_ref().is_some_and(|w| w.uses_ammo() && self.ammo < w.ammo_per_shot)
+    }
 }
 
 /// `critter_flags`: undead, blinded, one / both arms crippled, legs crippled (0x4b5f40).
@@ -419,6 +470,8 @@ pub fn weapon_of(item: &Object, prototypes: &Prototypes) -> Weapon {
         crit_chance: int("weapon_magic_crit_hit_chance"),
         crit_effect: int("weapon_magic_crit_hit_effect"),
         crit_chart: int("weapon_crit_hit_chart"),
+        ammo_type: prototypes.int(item, "weapon_ammo_type").unwrap_or(NO_AMMO),
+        ammo_per_shot: int("weapon_ammo_consumption"),
     }
 }
 
@@ -772,7 +825,9 @@ impl CombatWorld<'_, '_> {
                 injuries: sheet.injuries,
                 helmet: item(inv, HELMET_SLOT).is_some(),
                 undead: false,
-            };
+                ammo: 0,
+            }
+            .with_ammo(inv, prototypes);
         }
         let Some(source) = c.npc else { return Fighter::default() };
         let Some(o) = self.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { return Fighter::default() };
@@ -791,7 +846,9 @@ impl CombatWorld<'_, '_> {
             injuries: prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_INJURIES,
             helmet: item(&inv, HELMET_SLOT).is_some(),
             undead: prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_UNDEAD != 0,
+            ammo: 0,
         }
+        .with_ammo(&inv, prototypes)
     }
 
     /// A turn's action points: `max(5, speed)` (0x4b6e70).
@@ -834,6 +891,28 @@ impl CombatWorld<'_, '_> {
         }
         let row = self.npc_int(source, "npc_ai_data").max(0) as usize;
         self.ai.0.as_ref()?.get(row).copied()
+    }
+
+    /// Takes a shot's rounds from the attacker's inventory (builder's call: the original's
+    /// decrement was not found; its check 0x432cf0 counts `weapon_ammo_consumption`).
+    fn spend_ammo(&mut self, attacker: &Seen, ammo_type: i32, rounds: i32) {
+        match (attacker.player, attacker.npc) {
+            (Some(p), _) => {
+                let prototypes = self.map.prototypes.clone();
+                if let Some(inv) = self.world.0.as_mut().and_then(|w| w.players.get_mut(&p)).and_then(|s| s.inventory.as_mut()) {
+                    take_ammo(inv, ammo_type, rounds, &prototypes);
+                    self.inventories.0.insert(p);
+                }
+            }
+            (None, Some(n)) => {
+                if let Some(mut inv) = self.map.npc_inventory(n.sector, n.index) {
+                    take_ammo(&mut inv, ammo_type, rounds, &self.map.prototypes);
+                    self.map.set_npc_inventory(n.sector, n.index, inv);
+                    crate::ground::save_change(&mut self.world, &self.map, n.sector);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Wears the victim's items a critical hit struck (0x4b4390): the armour where it landed and
@@ -1117,7 +1196,15 @@ fn next_turn(w: &mut CombatWorld, all: &[Seen]) {
 /// towards it first until in reach, as far as its points go (0x4b78d0). True if something
 /// changed.
 fn attack_or_approach(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen) -> bool {
-    let fighter = w.fighter(attacker);
+    let mut fighter = w.fighter(attacker);
+    // Out of ammunition (0x432cf0): a PC cannot shoot; an NPC fights bare-handed (0x465170 picks
+    // no weapon whose rounds are short).
+    if fighter.out_of_ammo() {
+        if attacker.player.is_some() {
+            return false;
+        }
+        fighter.weapon = None;
+    }
     let cost = fighter.attack_cost();
     let ap = w.combat.0.as_ref().map_or(0, |e| e.ap);
     if reach_between(attacker.at, victim.at) <= fighter.reach() {
@@ -1433,6 +1520,9 @@ pub fn neighbours(at: TileLoc) -> Vec<TileLoc> {
 fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen, fighter: &Fighter) {
     let defender = w.fighter(victim);
     let mut outcome = resolve(fighter, &defender, &mut w.rng);
+    if let Some(weapon) = fighter.weapon.as_ref().filter(|w| w.uses_ammo()) {
+        w.spend_ammo(attacker, weapon.ammo_type, weapon.ammo_per_shot);
+    }
     if outcome.items != 0 {
         outcome.items = w.wear_items(victim, &outcome);
     }
@@ -1660,6 +1750,29 @@ mod tests {
         assert!(!should_flee(60, 100, one(1), one(3), &rows[1], 0));
         assert!(should_flee(60, 100, one(1), Party { count: 21, levels: 0 }, &rows[1], 0), "a side 20 larger");
         assert_eq!(flee_goal(TileLoc { x: 10, y: 10 }, TileLoc { x: 9, y: 10 }, 8), TileLoc { x: 18, y: 10 });
+    }
+
+    #[test]
+    fn shots_need_and_spend_their_rounds() {
+        use arcanum_formats::object::{Object, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, prototype_id};
+        let mut prototypes = Prototypes::default();
+        for (n, kind) in [(100u32, 0), (101, 1)] {
+            let mut o = Object::parse_instance(&ObjectBuilder::new(TYPE_AMMO).field("ammo_type", Value::Int32(kind)).build()).unwrap();
+            o.id = prototype_id(n);
+            prototypes.insert(o);
+        }
+        let stack = |prototype, location, quantity| crate::CarriedItem { prototype, location, quantity, keys: vec![], written: 0, wear: Default::default() };
+        let mut inv = crate::Inventory { items: vec![stack(100, 0, 3), stack(101, 1, 9), stack(100, 2, 4)], ..Default::default() };
+        assert_eq!((ammo_count(&inv, 0, &prototypes), ammo_count(&inv, 1, &prototypes)), (7, 9));
+        take_ammo(&mut inv, 0, 5, &prototypes);
+        assert_eq!(inv.items.iter().map(|i| (i.location, i.quantity)).collect::<Vec<_>>(), [(1, 9), (2, 2)], "the first stack emptied and gone");
+        let bow = Weapon { ammo_type: 0, ammo_per_shot: 3, range: 10, ..Default::default() };
+        let archer = Fighter { weapon: Some(bow), ammo: 2, ..Default::default() };
+        assert!(archer.out_of_ammo());
+        assert!(!Fighter { ammo: 3, ..archer.clone() }.out_of_ammo());
+        let sword = Weapon { ammo_type: NO_AMMO, ..Default::default() };
+        assert!(!Fighter { weapon: Some(sword), ..Default::default() }.out_of_ammo());
     }
 
     #[test]
