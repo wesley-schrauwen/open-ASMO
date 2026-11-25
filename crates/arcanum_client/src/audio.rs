@@ -55,13 +55,7 @@ pub struct MenuSounds {
 
 impl Default for MenuSounds {
     fn default() -> Self {
-        Self {
-            hover: None,
-            click: None,
-            button_press: None,
-            button_release: None,
-            volume: Volume::Linear(1.0),
-        }
+        Self { hover: None, click: None, button_press: None, button_release: None, volume: Volume::Linear(1.0) }
     }
 }
 
@@ -95,17 +89,9 @@ impl MenuSounds {
 }
 
 /// Plays a voice line once at the Voice volume.
-pub fn play_voice(
-    commands: &mut Commands,
-    settings: &GameSettings,
-    line: Handle<AudioSource>,
-) -> Entity {
+pub fn play_voice(commands: &mut Commands, settings: &GameSettings, line: Handle<AudioSource>) -> Entity {
     commands
-        .spawn((
-            VoiceLine,
-            AudioPlayer::new(line),
-            PlaybackSettings::DESPAWN.with_volume(voice_volume(settings)),
-        ))
+        .spawn((VoiceLine, AudioPlayer::new(line), PlaybackSettings::DESPAWN.with_volume(voice_volume(settings))))
         .id()
 }
 
@@ -116,10 +102,7 @@ impl Plugin for MenuAudioPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MenuSounds>()
             .add_systems(Startup, setup_audio)
-            .add_systems(
-                Update,
-                apply_volumes.run_if(resource_changed::<GameSettings>),
-            );
+            .add_systems(Update, apply_volumes.run_if(resource_changed::<GameSettings>));
     }
 }
 
@@ -131,9 +114,7 @@ fn setup_audio(
     settings: Option<Res<GameSettings>>,
 ) {
     let exists = |path: &str| {
-        let found = vfs
-            .as_ref()
-            .is_some_and(|vfs| vfs.0.read().is_ok_and(|v| v.exists(path)));
+        let found = vfs.as_ref().is_some_and(|vfs| vfs.0.read().is_ok_and(|v| v.exists(path)));
         if !found {
             warn!("{path} not found in the VFS; skipping");
         }
@@ -155,9 +136,7 @@ fn setup_audio(
         commands.spawn((
             MenuMusic,
             AudioPlayer::new(assets.load(sound::MAIN_MENU_MUSIC)),
-            PlaybackSettings::LOOP.with_volume(menu_music_volume(
-                &settings.map(|s| s.clone()).unwrap_or_default(),
-            )),
+            PlaybackSettings::LOOP.with_volume(menu_music_volume(&settings.map(|s| s.clone()).unwrap_or_default())),
         ));
     }
 }
@@ -182,10 +161,7 @@ fn apply_volumes(
     set_volume(voices.iter_mut(), voice_volume(&settings));
 }
 
-fn set_volume<'a>(
-    sounds: impl Iterator<Item = (Mut<'a, PlaybackSettings>, Option<Mut<'a, AudioSink>>)>,
-    volume: Volume,
-) {
+fn set_volume<'a>(sounds: impl Iterator<Item = (Mut<'a, PlaybackSettings>, Option<Mut<'a, AudioSink>>)>, volume: Volume) {
     for (mut playback, sink) in sounds {
         if playback.volume != volume {
             playback.volume = volume;

@@ -28,10 +28,7 @@ use bevy::picking::Pickable;
 use bevy::picking::hover::Hovered;
 use bevy::prelude::*;
 
-use arcanum_rules::{
-    CharacterSheet, LEVELS_PER_POINT, PRIMARY_STATS, SKILL_STAT, SPELLS_PER_COLLEGE,
-    degree_intelligence, skill_cap, skill_points,
-};
+use arcanum_rules::{CharacterSheet, LEVELS_PER_POINT, PRIMARY_STATS, SKILL_STAT, SPELLS_PER_COLLEGE, degree_intelligence, skill_cap, skill_points};
 
 use crate::art_loader::ArtFrames;
 use crate::create_character::CreationData;
@@ -41,31 +38,13 @@ use crate::menu_window::{SCREEN_WHITE, at};
 use crate::resource_pack::paths::interface;
 
 /// The box, on the 800x600 screen.
-pub const BOX: Rect = Rect {
-    min: Vec2::new(211.0, 503.0),
-    max: Vec2::new(594.0, 585.0),
-};
+pub const BOX: Rect = Rect { min: Vec2::new(211.0, 503.0), max: Vec2::new(594.0, 585.0) };
 const ICON_AT: Vec2 = Vec2::new(217.0, 510.0);
-const TITLE: Rect = Rect {
-    min: Vec2::new(290.0, 504.0),
-    max: Vec2::new(581.0, 523.0),
-};
-const SECOND_LINE: Rect = Rect {
-    min: Vec2::new(290.0, 528.0),
-    max: Vec2::new(581.0, 546.0),
-};
-const BODY_UNDER_TITLE: Rect = Rect {
-    min: Vec2::new(290.0, 528.0),
-    max: Vec2::new(581.0, 582.0),
-};
-const BODY_ALONE: Rect = Rect {
-    min: Vec2::new(290.0, 504.0),
-    max: Vec2::new(581.0, 582.0),
-};
-const BODY_LOW: Rect = Rect {
-    min: Vec2::new(290.0, 546.0),
-    max: Vec2::new(581.0, 582.0),
-};
+const TITLE: Rect = Rect { min: Vec2::new(290.0, 504.0), max: Vec2::new(581.0, 523.0) };
+const SECOND_LINE: Rect = Rect { min: Vec2::new(290.0, 528.0), max: Vec2::new(581.0, 546.0) };
+const BODY_UNDER_TITLE: Rect = Rect { min: Vec2::new(290.0, 528.0), max: Vec2::new(581.0, 582.0) };
+const BODY_ALONE: Rect = Rect { min: Vec2::new(290.0, 504.0), max: Vec2::new(581.0, 582.0) };
+const BODY_LOW: Rect = Rect { min: Vec2::new(290.0, 546.0), max: Vec2::new(581.0, 582.0) };
 /// Hover help waits this long after a stored message (real seconds).
 pub const HELP_HOLD: f64 = 3.0;
 /// The requirement line on skill and degree help (0x64c49c: Flare12Font in pure blue).
@@ -103,12 +82,7 @@ pub struct BoxMessage {
 impl BoxMessage {
     /// A plain stored message, such as a refusal (kind 4).
     pub fn plain(text: impl Into<String>) -> Self {
-        Self {
-            icon: BoxIcon::Exclamation,
-            title: None,
-            body: text.into(),
-            extra: None,
-        }
+        Self { icon: BoxIcon::Exclamation, title: None, body: text.into(), extra: None }
     }
 
     /// Help text: a first line becomes the title, the rest the body (kinds 6 and 12).
@@ -117,12 +91,7 @@ impl BoxMessage {
             Some((t, b)) => (Some(t.trim().to_string()), b.trim().to_string()),
             None => (None, text.trim().to_string()),
         };
-        Self {
-            icon: BoxIcon::Arcanum,
-            title,
-            body,
-            extra: None,
-        }
+        Self { icon: BoxIcon::Arcanum, title, body, extra: None }
     }
 }
 
@@ -196,72 +165,34 @@ pub struct MessageBoxPlugin;
 impl Plugin for MessageBoxPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<MessageBox>()
-            .add_systems(
-                Startup,
-                |mut commands: Commands, assets: Res<AssetServer>| {
-                    commands.insert_resource(BoxArt {
-                        arcanum: assets.load(interface::ARCANUM_ICON),
-                        exclamation: assets.load(interface::EXCLAMATION_ICON),
-                        colleges: crate::editor_tabs::college_buttons()
-                            .into_iter()
-                            .map(|p| assets.load(p))
-                            .collect(),
-                    });
-                },
-            )
-            .add_systems(OnExit(AppState::InGame), |mut b: ResMut<MessageBox>| {
-                *b = MessageBox::default()
+            .add_systems(Startup, |mut commands: Commands, assets: Res<AssetServer>| {
+                commands.insert_resource(BoxArt {
+                    arcanum: assets.load(interface::ARCANUM_ICON),
+                    exclamation: assets.load(interface::EXCLAMATION_ICON),
+                    colleges: crate::editor_tabs::college_buttons().into_iter().map(|p| assets.load(p)).collect(),
+                });
             })
-            .add_systems(
-                Update,
-                (hover_help, show_box)
-                    .chain()
-                    .run_if(in_state(AppState::InGame)),
-            );
+            .add_systems(OnExit(AppState::InGame), |mut b: ResMut<MessageBox>| *b = MessageBox::default())
+            .add_systems(Update, (hover_help, show_box).chain().run_if(in_state(AppState::InGame)));
     }
 }
 
 /// A hover area that lets clicks and hovers through to what is under it.
 pub fn help_area(help: BoxHelp, r: Rect) -> impl Bundle {
-    (
-        help,
-        Hovered::default(),
-        Pickable {
-            should_block_lower: false,
-            is_hoverable: true,
-        },
-        at(r),
-    )
+    (help, Hovered::default(), Pickable { should_block_lower: false, is_hoverable: true }, at(r))
 }
 
 /// Spawns the box into the bottom bar (`local` turns screen rects into the bar's).
 pub fn spawn_box(bottom: &mut ChildSpawnerCommands, local: impl Fn(Rect) -> Rect) {
-    bottom.spawn((
-        MessageBoxRoot,
-        Pickable::IGNORE,
-        BackgroundColor(Color::BLACK),
-        at(local(BOX)),
-    ));
+    bottom.spawn((MessageBoxRoot, Pickable::IGNORE, BackgroundColor(Color::BLACK), at(local(BOX))));
 }
 
 fn in_box(r: Rect) -> Rect {
-    Rect {
-        min: r.min - BOX.min,
-        max: r.max - BOX.min,
-    }
+    Rect { min: r.min - BOX.min, max: r.max - BOX.min }
 }
 
 /// Redraws the box when its message changes.
-fn show_box(
-    mut commands: Commands,
-    messages: Res<MessageBox>,
-    roots: Query<(Entity, Option<&Children>), With<MessageBoxRoot>>,
-    art: Option<Res<BoxArt>>,
-    frames: Option<Res<Assets<ArtFrames>>>,
-    fonts: Option<Res<ArcanumFonts>>,
-    added: Query<(), Added<MessageBoxRoot>>,
-    mut pending: Local<bool>,
-) {
+fn show_box(mut commands: Commands, messages: Res<MessageBox>, roots: Query<(Entity, Option<&Children>), With<MessageBoxRoot>>, art: Option<Res<BoxArt>>, frames: Option<Res<Assets<ArtFrames>>>, fonts: Option<Res<ArcanumFonts>>, added: Query<(), Added<MessageBoxRoot>>, mut pending: Local<bool>) {
     if !messages.is_changed() && added.is_empty() && !*pending {
         return;
     }
@@ -278,12 +209,7 @@ fn show_box(
             BoxIcon::Arcanum => Some(art.arcanum.clone()),
             BoxIcon::Exclamation => Some(art.exclamation.clone()),
             BoxIcon::College(c) => {
-                let image = art
-                    .colleges
-                    .get(c)
-                    .and_then(|h| frames.as_ref()?.get(h))
-                    .and_then(|f| f.frame(0))
-                    .cloned();
+                let image = art.colleges.get(c).and_then(|h| frames.as_ref()?.get(h)).and_then(|f| f.frame(0)).cloned();
                 // Not loaded yet: draw again next frame.
                 *pending |= image.is_none();
                 image
@@ -291,33 +217,10 @@ fn show_box(
         };
         commands.entity(root).with_children(|b| {
             if let Some(icon) = icon {
-                b.spawn((
-                    Pickable::IGNORE,
-                    ImageNode::new(icon),
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: crate::menu_window::px(ICON_AT.x - BOX.min.x),
-                        top: crate::menu_window::px(ICON_AT.y - BOX.min.y),
-                        ..default()
-                    },
-                ));
+                b.spawn((Pickable::IGNORE, ImageNode::new(icon), Node { position_type: PositionType::Absolute, left: crate::menu_window::px(ICON_AT.x - BOX.min.x), top: crate::menu_window::px(ICON_AT.y - BOX.min.y), ..default() }));
             }
-            let mut line = |r: Rect,
-                            text: &str,
-                            which: BoxText,
-                            font: UiFont,
-                            colour: Color,
-                            justify: JustifyContent| {
-                b.spawn((
-                    Pickable::IGNORE,
-                    Node {
-                        justify_content: justify,
-                        align_items: AlignItems::FlexStart,
-                        overflow: Overflow::clip(),
-                        ..at(in_box(r))
-                    },
-                ))
-                .with_children(|cell| {
+            let mut line = |r: Rect, text: &str, which: BoxText, font: UiFont, colour: Color, justify: JustifyContent| {
+                b.spawn((Pickable::IGNORE, Node { justify_content: justify, align_items: AlignItems::FlexStart, overflow: Overflow::clip(), ..at(in_box(r)) })).with_children(|cell| {
                     let mut t = cell.spawn((which, TextColor(colour)));
                     fonts.insert_text(&mut t, text, font);
                 });
@@ -328,52 +231,17 @@ fn show_box(
                 (Some(_), _) => BODY_UNDER_TITLE,
             };
             if let Some(title) = &m.title {
-                line(
-                    TITLE,
-                    title,
-                    BoxText::Title,
-                    UiFont::Small,
-                    SCREEN_WHITE,
-                    JustifyContent::FlexStart,
-                );
+                line(TITLE, title, BoxText::Title, UiFont::Small, SCREEN_WHITE, JustifyContent::FlexStart);
             }
             match &m.extra {
-                Some(ExtraLine::Requirement(text)) => line(
-                    TITLE,
-                    text,
-                    BoxText::Extra,
-                    UiFont::Body,
-                    REQUIREMENT,
-                    JustifyContent::FlexEnd,
-                ),
-                Some(ExtraLine::UnderTitle(text)) => line(
-                    SECOND_LINE,
-                    text,
-                    BoxText::Extra,
-                    UiFont::Body,
-                    SCREEN_WHITE,
-                    JustifyContent::FlexStart,
-                ),
+                Some(ExtraLine::Requirement(text)) => line(TITLE, text, BoxText::Extra, UiFont::Body, REQUIREMENT, JustifyContent::FlexEnd),
+                Some(ExtraLine::UnderTitle(text)) => line(SECOND_LINE, text, BoxText::Extra, UiFont::Body, SCREEN_WHITE, JustifyContent::FlexStart),
                 None => {}
             }
-            b.spawn((
-                Pickable::IGNORE,
-                Node {
-                    overflow: Overflow::clip(),
-                    ..at(in_box(body_at))
-                },
-            ))
-            .with_children(|cell| {
+            b.spawn((Pickable::IGNORE, Node { overflow: Overflow::clip(), ..at(in_box(body_at)) })).with_children(|cell| {
                 let mut t = cell.spawn((BoxText::Body, TextColor(SCREEN_WHITE)));
                 let scale = crate::fonts::ORIGINAL_SCALE;
-                fonts.insert_block(
-                    &mut t,
-                    &m.body,
-                    UiFont::Body,
-                    body_at.width() * scale,
-                    Some(body_at.height() * scale),
-                    crate::bitmap_text::Align::Left,
-                );
+                fonts.insert_block(&mut t, &m.body, UiFont::Body, body_at.width() * scale, Some(body_at.height() * scale), crate::bitmap_text::Align::Left);
             });
         });
     }
@@ -399,25 +267,15 @@ fn hover_help(
         *last = hovered;
         *clock_text = None;
     }
-    let (Some(help), Some(data)) = (hovered, data) else {
-        return;
-    };
+    let (Some(help), Some(data)) = (hovered, data) else { return };
     let message = match help {
         BoxHelp::Intgame(id) => data.intgame.get(id).map(BoxMessage::help),
-        BoxHelp::Editor(id) => sheet
-            .as_ref()
-            .and_then(|s| s.sheet())
-            .and_then(|c| editor_help(id, &data, c)),
+        BoxHelp::Editor(id) => sheet.as_ref().and_then(|s| s.sheet()).and_then(|c| editor_help(id, &data, c)),
         // The original formats it once, as the hover starts.
         BoxHelp::Clock => {
             if clock_text.is_none() {
                 *clock_text = clock.as_ref().and_then(|c| c.now).map(|now| {
-                    crate::hud_clock::clock_help(
-                        now,
-                        data.first_year,
-                        data.intgame.get(22).unwrap_or("Current Time"),
-                        data.intgame.get(23).unwrap_or("Current Date"),
-                    )
+                    crate::hud_clock::clock_help(now, data.first_year, data.intgame.get(22).unwrap_or("Current Time"), data.intgame.get(23).unwrap_or("Current Date"))
                 });
             }
             clock_text.as_deref().map(BoxMessage::help)
@@ -435,11 +293,7 @@ fn hovered_help(helps: &Query<(&BoxHelp, &Hovered)>) -> Option<BoxHelp> {
         BoxHelp::Intgame(i) | BoxHelp::Editor(i) => i,
         BoxHelp::Clock => 0,
     };
-    helps
-        .iter()
-        .filter(|(_, h)| h.get())
-        .map(|(help, _)| *help)
-        .max_by_key(id)
+    helps.iter().filter(|(_, h)| h.get()).map(|(help, _)| *help).max_by_key(id)
 }
 
 /// The lowest governing stat that allows skill `k` another point, if it has room for one.
@@ -452,26 +306,16 @@ pub fn stat_to_raise(k: usize, sheet: &CharacterSheet) -> Option<i32> {
 pub fn editor_help(id: u32, data: &CreationData, sheet: &CharacterSheet) -> Option<BoxMessage> {
     let rules = &data.rules;
     let idx = |base: u32| (id - base) as usize;
-    let arcanum = |title: &str, body: &str, extra| BoxMessage {
-        icon: BoxIcon::Arcanum,
-        title: Some(title.to_string()),
-        body: body.to_string(),
-        extra,
-    };
+    let arcanum = |title: &str, body: &str, extra| BoxMessage { icon: BoxIcon::Arcanum, title: Some(title.to_string()), body: body.to_string(), extra };
     match id {
         1000..=1999 => {
             let k = idx(1000);
             let skill = rules.skills.skills.get(k)?;
             let stat = SKILL_STAT[k];
-            let extra = stat_to_raise(k, sheet)
-                .filter(|_| stat < PRIMARY_STATS)
-                .map(|need| {
-                    let label = data
-                        .intgame
-                        .get(28 + stat as u32)
-                        .unwrap_or("Minimum to raise");
-                    ExtraLine::Requirement(format!("{label}: {need}"))
-                });
+            let extra = stat_to_raise(k, sheet).filter(|_| stat < PRIMARY_STATS).map(|need| {
+                let label = data.intgame.get(28 + stat as u32).unwrap_or("Minimum to raise");
+                ExtraLine::Requirement(format!("{label}: {need}"))
+            });
             Some(arcanum(&skill.name, &skill.description, extra))
         }
         2000..=2999 => {
@@ -480,19 +324,12 @@ pub fn editor_help(id: u32, data: &CreationData, sheet: &CharacterSheet) -> Opti
             let rank = spell % SPELLS_PER_COLLEGE;
             let wp = [6, 9, 12, 15, 18][rank];
             let label = data.intgame.get(73).unwrap_or("Minimum WP");
-            Some(BoxMessage {
-                icon: BoxIcon::College(s.college),
-                extra: Some(ExtraLine::UnderTitle(format!("{label}: {wp}"))),
-                ..arcanum(&s.name, &s.description, None)
-            })
+            Some(BoxMessage { icon: BoxIcon::College(s.college), extra: Some(ExtraLine::UnderTitle(format!("{label}: {wp}"))), ..arcanum(&s.name, &s.description, None) })
         }
         3000..=3999 => {
             let c = idx(3000);
             let name = rules.spells.colleges.get(c)?;
-            Some(BoxMessage {
-                icon: BoxIcon::College(c),
-                ..arcanum(name, "", None)
-            })
+            Some(BoxMessage { icon: BoxIcon::College(c), ..arcanum(name, "", None) })
         }
         4000..=4999 => {
             let d = rules.tech.disciplines.get(idx(4000))?;
@@ -502,14 +339,8 @@ pub fn editor_help(id: u32, data: &CreationData, sheet: &CharacterSheet) -> Opti
             let (d, degree) = (idx(5000) / 8, idx(5000) % 8);
             let discipline = rules.tech.disciplines.get(d)?;
             let label = data.intgame.get(32).unwrap_or("Minimum IN to raise");
-            let extra = (degree > 0).then(|| {
-                ExtraLine::Requirement(format!("{label}: {}", degree_intelligence(degree as i32)))
-            });
-            Some(arcanum(
-                &rules.tech.degrees[degree],
-                &discipline.degree_descriptions[degree],
-                extra,
-            ))
+            let extra = (degree > 0).then(|| ExtraLine::Requirement(format!("{label}: {}", degree_intelligence(degree as i32))));
+            Some(arcanum(&rules.tech.degrees[degree], &discipline.degree_descriptions[degree], extra))
         }
         _ => data.charedit.get(id).map(BoxMessage::help),
     }
@@ -528,15 +359,9 @@ mod tests {
     fn hover_help_waits_three_seconds_after_a_stored_message() {
         let mut b = MessageBox::default();
         assert!(b.show_help(BoxMessage::help("Skills"), 0.0));
-        b.post(
-            BoxMessage::plain("You haven't enough character points."),
-            10.0,
-        );
+        b.post(BoxMessage::plain("You haven't enough character points."), 10.0);
         assert!(!b.show_help(BoxMessage::help("Skills"), 12.9));
-        assert_eq!(
-            b.shown().unwrap().body,
-            "You haven't enough character points."
-        );
+        assert_eq!(b.shown().unwrap().body, "You haven't enough character points.");
         assert!(b.show_help(BoxMessage::help("Skills"), 13.0));
         b.clear();
         assert!(b.shown().is_none());
@@ -545,69 +370,34 @@ mod tests {
     #[test]
     fn help_texts_split_into_title_and_body() {
         let m = BoxMessage::help("Strength\nHow strong you are.");
-        assert_eq!(
-            (m.title.as_deref(), m.body.as_str()),
-            (Some("Strength"), "How strong you are.")
-        );
+        assert_eq!((m.title.as_deref(), m.body.as_str()), (Some("Strength"), "How strong you are."));
         assert_eq!(BoxMessage::help("Inventory").title, None);
     }
 
     #[test]
     fn skill_help_names_the_stat_the_next_point_needs() {
         let s = arcanum_rules::RulesData::default().new_sheet();
-        assert_eq!(
-            stat_to_raise(0, &s),
-            Some(6),
-            "the first point needs a cap of 4: stats 1-5 give 3"
-        );
+        assert_eq!(stat_to_raise(0, &s), Some(6), "the first point needs a cap of 4: stats 1-5 give 3");
     }
 
     #[test]
     fn the_character_screen_help_comes_from_the_rules_tables() {
         use arcanum_formats::mes::MesFile;
         let mes = |t: &str| MesFile::parse(t.as_bytes()).unwrap();
-        let mut data = CreationData {
-            intgame: mes("{29}{Minimum DX to raise}{32}{Minimum IN to raise}{73}{Minimum WP}"),
-            charedit: mes("{109}{Strength\nHow strong.}"),
-            ..Default::default()
-        };
+        let mut data = CreationData { intgame: mes("{29}{Minimum DX to raise}{32}{Minimum IN to raise}{73}{Minimum WP}"), charedit: mes("{109}{Strength\nHow strong.}"), ..Default::default() };
         data.rules.skills = arcanum_rules::SkillTable::from_mes(&mes("{0}{Bow}{20}{Bows. (DX)}"));
-        data.rules.tech = arcanum_rules::TechTable::from_mes(&mes(
-            "{0}{Herbology}{8}{Layman}{9}{Novice}{25}{Salves.}",
-        ));
-        data.rules.spells =
-            arcanum_rules::SpellTable::from_mes(&mes("{7}{Read Aura}{700}{x}{707}{Auras.}"));
+        data.rules.tech = arcanum_rules::TechTable::from_mes(&mes("{0}{Herbology}{8}{Layman}{9}{Novice}{25}{Salves.}"));
+        data.rules.spells = arcanum_rules::SpellTable::from_mes(&mes("{7}{Read Aura}{700}{x}{707}{Auras.}"));
         let s = data.rules.new_sheet();
         let bow = editor_help(1000, &data, &s).unwrap();
-        assert_eq!(
-            (bow.title.as_deref(), bow.body.as_str()),
-            (Some("Bow"), "Bows. (DX)")
-        );
-        assert_eq!(
-            bow.extra,
-            Some(ExtraLine::Requirement("Minimum DX to raise: 6".into()))
-        );
+        assert_eq!((bow.title.as_deref(), bow.body.as_str()), (Some("Bow"), "Bows. (DX)"));
+        assert_eq!(bow.extra, Some(ExtraLine::Requirement("Minimum DX to raise: 6".into())));
         let novice = editor_help(5001, &data, &s).unwrap();
-        assert_eq!(
-            (novice.title.as_deref(), novice.body.as_str()),
-            (Some("Novice"), "Salves.")
-        );
-        assert_eq!(
-            novice.extra,
-            Some(ExtraLine::Requirement("Minimum IN to raise: 5".into()))
-        );
+        assert_eq!((novice.title.as_deref(), novice.body.as_str()), (Some("Novice"), "Salves."));
+        assert_eq!(novice.extra, Some(ExtraLine::Requirement("Minimum IN to raise: 5".into())));
         let aura = editor_help(2007, &data, &s).unwrap();
-        assert_eq!(
-            (aura.icon, aura.extra),
-            (
-                BoxIcon::College(1),
-                Some(ExtraLine::UnderTitle("Minimum WP: 12".into()))
-            )
-        );
-        assert_eq!(
-            editor_help(109, &data, &s).unwrap().title.as_deref(),
-            Some("Strength")
-        );
+        assert_eq!((aura.icon, aura.extra), (BoxIcon::College(1), Some(ExtraLine::UnderTitle("Minimum WP: 12".into()))));
+        assert_eq!(editor_help(109, &data, &s).unwrap().title.as_deref(), Some("Strength"));
     }
 
     #[test]

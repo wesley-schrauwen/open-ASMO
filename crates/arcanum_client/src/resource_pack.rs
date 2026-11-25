@@ -33,11 +33,7 @@ pub mod paths {
         pub const SPLASH_DIR: &str = "art/splash";
         /// "Loading Arcanum..." pictures, 800x400 with the words painted in. The loading screen
         /// shows one at random.
-        pub const LOADING: [&str; 3] = [
-            "art/splash/Splash1.bmp",
-            "art/splash/Splash2.bmp",
-            "art/splash/Splash3.bmp",
-        ];
+        pub const LOADING: [&str; 3] = ["art/splash/Splash1.bmp", "art/splash/Splash2.bmp", "art/splash/Splash3.bmp"];
     }
 
     /// Interface art: buttons, windows, cursors.
@@ -81,21 +77,13 @@ pub mod paths {
         pub const CHAR_PLUS: &str = "art/interface/Char_Plus.art";
         pub const CHAR_MINUS: &str = "art/interface/Char_Minus.art";
         /// The editor's skills, tech and spells tabs (art 34-36, 39x39, 3 frames).
-        pub const CHAR_TABS: [&str; 3] = [
-            "art/interface/char_Common_Skills.art",
-            "art/interface/char_Tech_Skills.art",
-            "art/interface/char_Spells_Skills.art",
-        ];
+        pub const CHAR_TABS: [&str; 3] = ["art/interface/char_Common_Skills.art", "art/interface/char_Tech_Skills.art", "art/interface/char_Spells_Skills.art"];
         /// The skills panel (art 29, 235x325), its group buttons (art 302-305: combat, thieving,
         /// social, technological; 3 frames), the skill gauge (art 623, 120x27) and the row
         /// buttons (art 624/625, 29x30, 3 frames).
         pub const SKILLS_WINDOW: &str = "art/interface/Skills_Window.ART";
-        pub const SKILL_GROUPS: [&str; 4] = [
-            "art/interface/Combat_But.ART",
-            "art/interface/Thieving_But.ART",
-            "art/interface/Social_But.ART",
-            "art/interface/Technological_But.ART",
-        ];
+        pub const SKILL_GROUPS: [&str; 4] =
+            ["art/interface/Combat_But.ART", "art/interface/Thieving_But.ART", "art/interface/Social_But.ART", "art/interface/Technological_But.ART"];
         pub const SKILL_GAUGE: &str = "art/interface/SkilGauge.ART";
         pub const SKILL_PLUS: &str = "art/interface/SkilAddBut.ART";
         pub const SKILL_MINUS: &str = "art/interface/SkilMinusBut.ART";
@@ -349,15 +337,8 @@ impl ResourcePack {
 
     /// Like [`Self::from_env`], reading variables through `var` and falling back to
     /// `default_game_dir` (for tests).
-    pub fn from_vars(
-        var: impl Fn(&str) -> Option<String>,
-        default_game_dir: impl Into<PathBuf>,
-    ) -> Self {
-        let non_empty = |name| {
-            var(name)
-                .filter(|v: &String| !v.trim().is_empty())
-                .map(PathBuf::from)
-        };
+    pub fn from_vars(var: impl Fn(&str) -> Option<String>, default_game_dir: impl Into<PathBuf>) -> Self {
+        let non_empty = |name| var(name).filter(|v: &String| !v.trim().is_empty()).map(PathBuf::from);
         Self {
             game_dir: non_empty(GAME_DIR_VAR).unwrap_or_else(|| default_game_dir.into()),
             override_dir: non_empty(OVERRIDE_DIR_VAR),
@@ -426,33 +407,18 @@ mod tests {
     use super::*;
 
     fn vars(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
-        move |name| {
-            pairs
-                .iter()
-                .find(|(k, _)| *k == name)
-                .map(|(_, v)| v.to_string())
-        }
+        move |name| pairs.iter().find(|(k, _)| *k == name).map(|(_, v)| v.to_string())
     }
 
     #[test]
     fn defaults_without_variables() {
         let pack = ResourcePack::from_vars(vars(&[]), "fallback");
-        assert_eq!(
-            pack,
-            ResourcePack {
-                game_dir: "fallback".into(),
-                override_dir: None,
-                module: DEFAULT_MODULE.into()
-            }
-        );
+        assert_eq!(pack, ResourcePack { game_dir: "fallback".into(), override_dir: None, module: DEFAULT_MODULE.into() });
     }
 
     #[test]
     fn variables_override_defaults() {
-        let pack = ResourcePack::from_vars(
-            vars(&[(GAME_DIR_VAR, "/games/arcanum"), (OVERRIDE_DIR_VAR, "mods")]),
-            "fallback",
-        );
+        let pack = ResourcePack::from_vars(vars(&[(GAME_DIR_VAR, "/games/arcanum"), (OVERRIDE_DIR_VAR, "mods")]), "fallback");
         assert_eq!(pack.game_dir, PathBuf::from("/games/arcanum"));
         assert_eq!(pack.override_dir, Some(PathBuf::from("mods")));
         let pack = ResourcePack::from_vars(vars(&[(MODULE_VAR, " Vormantown ")]), "fallback");
@@ -461,35 +427,16 @@ mod tests {
 
     #[test]
     fn empty_variables_are_ignored() {
-        let pack = ResourcePack::from_vars(
-            vars(&[
-                (GAME_DIR_VAR, ""),
-                (OVERRIDE_DIR_VAR, "  "),
-                (MODULE_VAR, ""),
-            ]),
-            "fallback",
-        );
-        assert_eq!(
-            pack,
-            ResourcePack {
-                game_dir: "fallback".into(),
-                override_dir: None,
-                module: DEFAULT_MODULE.into()
-            }
-        );
+        let pack =
+            ResourcePack::from_vars(vars(&[(GAME_DIR_VAR, ""), (OVERRIDE_DIR_VAR, "  "), (MODULE_VAR, "")]), "fallback");
+        assert_eq!(pack, ResourcePack { game_dir: "fallback".into(), override_dir: None, module: DEFAULT_MODULE.into() });
     }
 
     #[test]
     fn paths_are_relative_vfs_paths() {
         for p in paths::ALL_FILES.iter().chain(paths::ALL_DIRS) {
-            assert!(
-                !p.is_empty() && !p.starts_with('/') && !p.ends_with('/'),
-                "{p}"
-            );
-            assert!(
-                !p.contains('\\') && !p.split('/').any(|c| c.is_empty() || c == "." || c == ".."),
-                "{p}"
-            );
+            assert!(!p.is_empty() && !p.starts_with('/') && !p.ends_with('/'), "{p}");
+            assert!(!p.contains('\\') && !p.split('/').any(|c| c.is_empty() || c == "." || c == ".."), "{p}");
         }
     }
 
@@ -523,26 +470,13 @@ mod tests {
         let game = tempfile::tempdir().unwrap();
         let g = game.path();
         // Each layer provides its own name for "who.txt", plus one file only it has.
-        DatBuilder::new()
-            .raw("who.txt", b"base")
-            .raw("base.txt", b"1")
-            .write(g.join("arcanum1.dat"));
-        DatBuilder::new()
-            .raw("who.txt", b"module dat")
-            .raw("dat.txt", b"1")
-            .write(g.join("modules/Arcanum.dat"));
+        DatBuilder::new().raw("who.txt", b"base").raw("base.txt", b"1").write(g.join("arcanum1.dat"));
+        DatBuilder::new().raw("who.txt", b"module dat").raw("dat.txt", b"1").write(g.join("modules/Arcanum.dat"));
         write(&g.join("modules/Arcanum/who.txt"), b"module dir");
         write(&g.join("modules/Arcanum/sound/music/Theme.mp3"), b"mp3");
-        DatBuilder::new()
-            .raw("who.txt", b"patch0")
-            .raw("p0.txt", b"1")
-            .write(g.join("modules/Arcanum.PATCH0"));
-        DatBuilder::new()
-            .raw("who.txt", b"patch1")
-            .write(g.join("modules/Arcanum.PATCH1"));
-        DatBuilder::new()
-            .raw("who.txt", b"other module")
-            .write(g.join("modules/Other.dat"));
+        DatBuilder::new().raw("who.txt", b"patch0").raw("p0.txt", b"1").write(g.join("modules/Arcanum.PATCH0"));
+        DatBuilder::new().raw("who.txt", b"patch1").write(g.join("modules/Arcanum.PATCH1"));
+        DatBuilder::new().raw("who.txt", b"other module").write(g.join("modules/Other.dat"));
 
         let pack = |override_dir: Option<PathBuf>, module: &str| ResourcePack {
             game_dir: g.to_path_buf(),
@@ -558,9 +492,7 @@ mod tests {
 
         let over = tempfile::tempdir().unwrap();
         write(&over.path().join("who.txt"), b"override");
-        let vfs = pack(Some(over.path().into()), "Arcanum")
-            .open_vfs()
-            .unwrap();
+        let vfs = pack(Some(over.path().into()), "Arcanum").open_vfs().unwrap();
         assert_eq!(vfs.read("who.txt").unwrap(), b"override");
 
         // Another module sees only its own pieces plus the base archives.
@@ -586,23 +518,14 @@ mod tests {
     #[test]
     fn module_patches_sort_numerically() {
         let dir = tempfile::tempdir().unwrap();
-        for name in [
-            "Arcanum.PATCH2",
-            "arcanum.patch10",
-            "Arcanum.PATCH0",
-            "Arcanum.PATCHx",
-            "Other.PATCH5",
-        ] {
+        for name in ["Arcanum.PATCH2", "arcanum.patch10", "Arcanum.PATCH0", "Arcanum.PATCHx", "Other.PATCH5"] {
             write(&dir.path().join(name), b"");
         }
         let names: Vec<String> = module_patches(dir.path(), "Arcanum")
             .iter()
             .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(
-            names,
-            ["arcanum.patch10", "Arcanum.PATCH2", "Arcanum.PATCH0"]
-        );
+        assert_eq!(names, ["arcanum.patch10", "Arcanum.PATCH2", "Arcanum.PATCH0"]);
     }
 
     #[test]

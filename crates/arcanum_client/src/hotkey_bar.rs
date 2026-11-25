@@ -26,10 +26,7 @@ use arcanum_sim::{HOTKEYS, InventoryRequest};
 
 use crate::art_loader::ArtFrames;
 use crate::hud::{HOTKEY_X, HOTKEY_Y};
-use crate::inventory_screen::{
-    HeldItem, InventoryPanel, ItemArtCache, PcInventory, art_frame, client_info, inventory_sizes,
-    item_art, screen_point, wearer,
-};
+use crate::inventory_screen::{HeldItem, InventoryPanel, ItemArtCache, PcInventory, art_frame, client_info, inventory_sizes, item_art, screen_point, wearer};
 use crate::main_menu::AppState;
 use crate::menu_window::{at, rect};
 
@@ -45,12 +42,7 @@ pub struct HotkeyBarPlugin;
 
 impl Plugin for HotkeyBarPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (use_hotkeys, show_hotkeys)
-                .chain()
-                .run_if(in_state(AppState::InGame)),
-        );
+        app.add_systems(Update, (use_hotkeys, show_hotkeys).chain().run_if(in_state(AppState::InGame)));
     }
 }
 
@@ -64,24 +56,11 @@ pub fn slot_at(point: Vec2) -> Option<usize> {
     if !(HOTKEY_Y..HOTKEY_Y + 32.0).contains(&point.y) {
         return None;
     }
-    HOTKEY_X
-        .iter()
-        .position(|&x| (x..x + 32.0).contains(&point.x))
+    HOTKEY_X.iter().position(|&x| (x..x + 32.0).contains(&point.x))
 }
 
 /// The slot keys, 1-9 then 0.
-const KEYS: [KeyCode; 10] = [
-    KeyCode::Digit1,
-    KeyCode::Digit2,
-    KeyCode::Digit3,
-    KeyCode::Digit4,
-    KeyCode::Digit5,
-    KeyCode::Digit6,
-    KeyCode::Digit7,
-    KeyCode::Digit8,
-    KeyCode::Digit9,
-    KeyCode::Digit0,
-];
+const KEYS: [KeyCode; 10] = [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7, KeyCode::Digit8, KeyCode::Digit9, KeyCode::Digit0];
 
 /// What using a slot's item does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,21 +72,12 @@ pub enum SlotUse {
 }
 
 /// What using `prototype` from the bar does (0x54fcf0), if anything is built for it.
-pub fn slot_use(
-    prototype: u32,
-    prototypes: &Prototypes,
-    info: impl Fn(u32) -> Option<arcanum_sim::ItemInfo>,
-) -> Option<SlotUse> {
+pub fn slot_use(prototype: u32, prototypes: &Prototypes, info: impl Fn(u32) -> Option<arcanum_sim::ItemInfo>) -> Option<SlotUse> {
     if arcanum_sim::is_lockpick(prototype, prototypes) {
         return Some(SlotUse::PickLocks);
     }
     let item = info(prototype)?;
-    matches!(
-        item.kind,
-        arcanum_formats::object::TYPE_WEAPON | arcanum_formats::object::TYPE_ARMOR
-    )
-    .then(|| item.slot().map(|s| SlotUse::Wear(s as i32)))
-    .flatten()
+    matches!(item.kind, arcanum_formats::object::TYPE_WEAPON | arcanum_formats::object::TYPE_ARMOR).then(|| item.slot().map(|s| SlotUse::Wear(s as i32))).flatten()
 }
 
 /// A click on a slot (the inventory closed) or its key uses the item there.
@@ -121,27 +91,15 @@ fn use_hotkeys(
     mut inventory: ResMut<PcInventory>,
     sheet: Res<crate::pc_sheet::SheetHost>,
     client: Option<Res<crate::world_render::ClientMap>>,
-    (mut cache, assets, frames): (
-        ResMut<ItemArtCache>,
-        Res<AssetServer>,
-        Res<Assets<ArtFrames>>,
-    ),
+    (mut cache, assets, frames): (ResMut<ItemArtCache>, Res<AssetServer>, Res<Assets<ArtFrames>>),
     armed: Option<ResMut<crate::skill_use::SkillTargeting>>,
 ) {
     let clicked = (buttons.just_pressed(MouseButton::Left) && !panel.open && held.0.is_none())
-        .then(|| {
-            windows
-                .iter()
-                .find_map(|w| w.cursor_position().map(|c| screen_point(w.size(), c)))
-        })
+        .then(|| windows.iter().find_map(|w| w.cursor_position().map(|c| screen_point(w.size(), c))))
         .flatten()
         .and_then(slot_at);
-    let Some(slot) = clicked.or_else(|| KEYS.iter().position(|k| keys.just_pressed(*k))) else {
-        return;
-    };
-    let Some(inv) = inventory.shown().cloned() else {
-        return;
-    };
+    let Some(slot) = clicked.or_else(|| KEYS.iter().position(|k| keys.just_pressed(*k))) else { return };
+    let Some(inv) = inventory.shown().cloned() else { return };
     if let Some(&spell) = inv.spells.get(&location(slot)) {
         // A spell is cast as from the spells view (0x54fcf0 type 3 → 0x57bc70).
         if let Some(mut armed) = armed {
@@ -149,38 +107,19 @@ fn use_hotkeys(
         }
         return;
     }
-    let Some(item) = inv.items.iter().find(|i| i.location == location(slot)) else {
-        return;
-    };
+    let Some(item) = inv.items.iter().find(|i| i.location == location(slot)) else { return };
     let empty = Prototypes::default();
     let prototypes = client.as_ref().map_or(&empty, |c| &c.map.prototypes);
-    let sizes = inventory_sizes(
-        &inv,
-        prototypes,
-        client.as_ref().and_then(|c| c.art_index()),
-        &mut cache,
-        &assets,
-        &frames,
-    );
+    let sizes = inventory_sizes(&inv, prototypes, client.as_ref().and_then(|c| c.art_index()), &mut cache, &assets, &frames);
     let info = client_info(prototypes, &sizes);
     match slot_use(item.prototype, prototypes, &info) {
         Some(SlotUse::PickLocks) => {
             if let Some(mut armed) = armed {
-                armed.0 = Some(crate::skill_use::Armed::Skill {
-                    skill: arcanum_sim::SKILL_PICK_LOCKS,
-                    tool: Some(item.location),
-                });
+                armed.0 = Some(crate::skill_use::Armed::Skill { skill: arcanum_sim::SKILL_PICK_LOCKS, tool: Some(item.location) });
             }
         }
         Some(SlotUse::Wear(to)) => {
-            let _ = inventory.request(
-                InventoryRequest::Move {
-                    from: item.location,
-                    to,
-                },
-                wearer(&sheet),
-                &info,
-            );
+            let _ = inventory.request(InventoryRequest::Move { from: item.location, to }, wearer(&sheet), &info);
         }
         None => {}
     }
@@ -196,12 +135,7 @@ fn show_hotkeys(
     slots: Query<(Entity, &HotkeySlot)>,
     drawn: Query<Entity, With<HotkeyItem>>,
     added: Query<(), Added<HotkeySlot>>,
-    (mut cache, assets, frames, mut pending): (
-        ResMut<ItemArtCache>,
-        Res<AssetServer>,
-        Res<Assets<ArtFrames>>,
-        Local<bool>,
-    ),
+    (mut cache, assets, frames, mut pending): (ResMut<ItemArtCache>, Res<AssetServer>, Res<Assets<ArtFrames>>, Local<bool>),
 ) {
     if !inventory.is_changed() && !held.is_changed() && added.is_empty() && !*pending {
         return;
@@ -216,45 +150,19 @@ fn show_hotkeys(
     let index = client.as_ref().and_then(|c| c.art_index());
     let lifted = held.0.filter(|h| !h.from_pile).map(|h| h.from);
     for (entity, slot) in &slots {
-        if let Some(&spell) = inv
-            .spells
-            .get(&location(slot.0))
-            .filter(|_| Some(location(slot.0)) != lifted)
-        {
-            let art = commands
-                .spawn((
-                    HotkeyItem(slot.0),
-                    bevy::picking::Pickable::IGNORE,
-                    ImageNode::new(assets.load(crate::spell_bar::spell_icon(spell))),
-                    at(rect(Vec2::ZERO, Vec2::splat(32.0))),
-                ))
-                .id();
+        if let Some(&spell) = inv.spells.get(&location(slot.0)).filter(|_| Some(location(slot.0)) != lifted) {
+            let art = commands.spawn((HotkeyItem(slot.0), bevy::picking::Pickable::IGNORE, ImageNode::new(assets.load(crate::spell_bar::spell_icon(spell))), at(rect(Vec2::ZERO, Vec2::splat(32.0))))).id();
             commands.entity(entity).add_child(art);
             continue;
         }
-        let Some(item) = inv
-            .items
-            .iter()
-            .find(|i| i.location == location(slot.0) && Some(i.location) != lifted)
-        else {
-            continue;
-        };
-        let Some(id) = item_art(prototypes, item) else {
-            continue;
-        };
+        let Some(item) = inv.items.iter().find(|i| i.location == location(slot.0) && Some(i.location) != lifted) else { continue };
+        let Some(id) = item_art(prototypes, item) else { continue };
         let Some((image, size)) = art_frame(index, &mut cache, &assets, &frames, id) else {
             *pending = true;
             continue;
         };
         let (corner, shown) = fit(size);
-        let art = commands
-            .spawn((
-                HotkeyItem(slot.0),
-                bevy::picking::Pickable::IGNORE,
-                ImageNode::new(image),
-                at(rect(corner, shown)),
-            ))
-            .id();
+        let art = commands.spawn((HotkeyItem(slot.0), bevy::picking::Pickable::IGNORE, ImageNode::new(image), at(rect(corner, shown)))).id();
         commands.entity(entity).add_child(art);
     }
 }
@@ -282,13 +190,7 @@ mod tests {
 
     #[test]
     fn art_is_centred_and_shrunk_to_the_slot() {
-        assert_eq!(
-            fit(UVec2::new(20, 10)),
-            (Vec2::new(6.0, 11.0), Vec2::new(20.0, 10.0))
-        );
-        assert_eq!(
-            fit(UVec2::new(64, 96)),
-            (Vec2::new(5.0, 0.0), Vec2::new(21.0, 32.0))
-        );
+        assert_eq!(fit(UVec2::new(20, 10)), (Vec2::new(6.0, 11.0), Vec2::new(20.0, 10.0)));
+        assert_eq!(fit(UVec2::new(64, 96)), (Vec2::new(5.0, 0.0), Vec2::new(21.0, 32.0)));
     }
 }

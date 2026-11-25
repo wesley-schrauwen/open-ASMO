@@ -57,32 +57,22 @@ impl CharacterHost {
 
     /// Applies one action with the shared rules; on refusal nothing changes or is sent.
     pub fn apply(&mut self, rules: &RulesData, action: CharacterAction) -> Result<(), Refusal> {
-        self.request(rules, CharacterRequest::Action(action))
-            .map(|_| ())
+        self.request(rules, CharacterRequest::Action(action)).map(|_| ())
     }
 
     /// Accepts the character and keeps its blueprint.
     pub fn finish(&mut self, rules: &RulesData) -> Result<&CharacterBlueprint, Refusal> {
-        let blueprint = self
-            .request(rules, CharacterRequest::Accept)?
-            .expect("Accept gives a blueprint");
+        let blueprint = self.request(rules, CharacterRequest::Accept)?.expect("Accept gives a blueprint");
         self.accept_seq = Some(self.last_seq);
         self.refused = false;
         Ok(self.finished.insert(blueprint))
     }
 
-    fn request(
-        &mut self,
-        rules: &RulesData,
-        request: CharacterRequest,
-    ) -> Result<Option<CharacterBlueprint>, Refusal> {
+    fn request(&mut self, rules: &RulesData, request: CharacterRequest) -> Result<Option<CharacterBlueprint>, Refusal> {
         let result = self.preview.request(rules, &request)?;
         self.last_seq += 1;
         self.pending.push_back((self.last_seq, request.clone()));
-        self.outgoing.push(PlayerIntent::Character {
-            seq: self.last_seq,
-            request,
-        });
+        self.outgoing.push(PlayerIntent::Character { seq: self.last_seq, request });
         Ok(result)
     }
 
@@ -111,9 +101,7 @@ impl CharacterHost {
                     let _ = self.preview.request(rules, request);
                 }
             }
-            LedgerDelta::CharacterAccepted { .. } if self.accept_seq.is_some() => {
-                self.accepted = true
-            }
+            LedgerDelta::CharacterAccepted { .. } if self.accept_seq.is_some() => self.accepted = true,
             _ => {}
         }
     }
@@ -126,34 +114,20 @@ mod tests {
     use super::*;
 
     fn update(ack: u32, creation: Creation) -> LedgerDelta {
-        LedgerDelta::CharacterUpdate {
-            player: PlayerId(1),
-            ack,
-            creation,
-        }
+        LedgerDelta::CharacterUpdate { player: PlayerId(1), ack, creation }
     }
 
     #[test]
     fn changes_show_at_once_and_are_sent_numbered() {
         let rules = RulesData::default();
         let mut host = CharacterHost::new(&rules);
-        host.apply(&rules, CharacterAction::SetName("Virgil".into()))
-            .unwrap();
+        host.apply(&rules, CharacterAction::SetName("Virgil".into())).unwrap();
         assert_eq!(host.sheet().name, "Virgil");
         let sent = host.take_outgoing();
-        assert_eq!(
-            sent,
-            vec![
-                PlayerIntent::Character {
-                    seq: 1,
-                    request: CharacterRequest::New
-                },
-                PlayerIntent::Character {
-                    seq: 2,
-                    request: CharacterRequest::Action(CharacterAction::SetName("Virgil".into()))
-                },
-            ]
-        );
+        assert_eq!(sent, vec![
+            PlayerIntent::Character { seq: 1, request: CharacterRequest::New },
+            PlayerIntent::Character { seq: 2, request: CharacterRequest::Action(CharacterAction::SetName("Virgil".into())) },
+        ]);
         assert!(host.take_outgoing().is_empty());
     }
 
@@ -162,10 +136,7 @@ mod tests {
         let rules = RulesData::default();
         let mut host = CharacterHost::new(&rules);
         host.take_outgoing();
-        assert_eq!(
-            host.apply(&rules, CharacterAction::LowerStat(0)),
-            Err(Refusal::BelowAccepted)
-        );
+        assert_eq!(host.apply(&rules, CharacterAction::LowerStat(0)), Err(Refusal::BelowAccepted));
         assert_eq!(host.finish(&rules).err(), Some(Refusal::NoName));
         assert!(host.take_outgoing().is_empty());
         assert!(host.finished.is_none());
@@ -175,23 +146,15 @@ mod tests {
     fn unanswered_changes_are_replayed_on_the_hosts_copy() {
         let rules = RulesData::default();
         let mut host = CharacterHost::new(&rules); // seq 1
-        host.apply(&rules, CharacterAction::SetName("Virgil".into()))
-            .unwrap(); // seq 2
-        host.apply(&rules, CharacterAction::StepPortrait(1))
-            .unwrap(); // seq 3
+        host.apply(&rules, CharacterAction::SetName("Virgil".into())).unwrap(); // seq 2
+        host.apply(&rules, CharacterAction::StepPortrait(1)).unwrap(); // seq 3
         // The host answered seq 2 with a different name (as if it disagreed).
         let mut theirs = Creation::new(&rules);
         theirs.sheet.name = "Host".into();
         host.receive(&rules, &update(2, theirs.clone()));
         let mut expected = theirs.clone();
-        expected
-            .apply(&rules, &CharacterAction::StepPortrait(1))
-            .unwrap();
-        assert_eq!(
-            host.sheet(),
-            &expected.sheet,
-            "the host's name, the portrait step replayed"
-        );
+        expected.apply(&rules, &CharacterAction::StepPortrait(1)).unwrap();
+        assert_eq!(host.sheet(), &expected.sheet, "the host's name, the portrait step replayed");
         // Answering seq 3 leaves nothing to replay.
         host.receive(&rules, &update(3, theirs.clone()));
         assert_eq!(host.sheet(), &theirs.sheet);
@@ -201,15 +164,9 @@ mod tests {
     fn acceptance_is_recorded_and_reset_clears_it() {
         let rules = RulesData::default();
         let mut host = CharacterHost::new(&rules);
-        host.apply(&rules, CharacterAction::SetName("Virgil".into()))
-            .unwrap();
+        host.apply(&rules, CharacterAction::SetName("Virgil".into())).unwrap();
         host.finish(&rules).unwrap(); // seq 3
-        host.receive(
-            &rules,
-            &LedgerDelta::CharacterAccepted {
-                player: PlayerId(1),
-            },
-        );
+        host.receive(&rules, &LedgerDelta::CharacterAccepted { player: PlayerId(1) });
         host.receive(&rules, &update(3, host.preview.clone()));
         assert!(host.accepted && !host.refused && host.finished.is_some());
         host.reset(&rules);
@@ -221,14 +178,10 @@ mod tests {
     fn an_answer_to_accept_without_acceptance_is_a_refusal() {
         let rules = RulesData::default();
         let mut host = CharacterHost::new(&rules); // seq 1
-        host.apply(&rules, CharacterAction::SetName("Virgil".into()))
-            .unwrap(); // seq 2
+        host.apply(&rules, CharacterAction::SetName("Virgil".into())).unwrap(); // seq 2
         host.finish(&rules).unwrap(); // seq 3
         host.receive(&rules, &update(2, host.preview.clone()));
-        assert!(
-            !host.refused,
-            "an earlier answer says nothing about the Accept"
-        );
+        assert!(!host.refused, "an earlier answer says nothing about the Accept");
         // The host never saw the name (as if it had restarted): it refuses the Accept.
         host.receive(&rules, &update(3, Creation::new(&rules)));
         assert!(host.refused && !host.accepted);

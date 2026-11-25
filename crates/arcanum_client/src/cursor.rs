@@ -31,8 +31,7 @@ pub struct CursorPlugin;
 
 impl Plugin for CursorPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, load_cursor)
-            .add_systems(Update, set_cursor);
+        app.add_systems(Startup, load_cursor).add_systems(Update, set_cursor);
     }
 }
 
@@ -46,11 +45,7 @@ struct GameCursor {
 }
 
 fn load_cursor(mut commands: Commands, assets: Res<AssetServer>) {
-    commands.insert_resource(GameCursor {
-        art: assets.load(interface::CURSOR),
-        size: UVec2::ZERO,
-        blue: false,
-    });
+    commands.insert_resource(GameCursor { art: assets.load(interface::CURSOR), size: UVec2::ZERO, blue: false });
 }
 
 /// Scale from art pixels to cursor pixels for a window `height` logical pixels tall.
@@ -60,10 +55,7 @@ pub fn cursor_factor(height: f32) -> f32 {
 
 /// The size of a `w` x `h` image scaled by `factor`, at least 1x1.
 pub fn scaled_size(w: u32, h: u32, factor: f32) -> UVec2 {
-    UVec2::new(
-        ((w as f32 * factor).round() as u32).max(1),
-        ((h as f32 * factor).round() as u32).max(1),
-    )
+    UVec2::new(((w as f32 * factor).round() as u32).max(1), ((h as f32 * factor).round() as u32).max(1))
 }
 
 /// `image` (RGBA8) resampled to `size`. Each output pixel averages a 4x4 grid of source samples
@@ -93,21 +85,13 @@ pub fn resample(image: &Image, size: UVec2) -> Option<Image> {
             }
             let a = acc[3] / (N * N) as f32;
             for c in 0..3 {
-                out.push(if acc[3] > 0.0 {
-                    (acc[c] / acc[3]).round() as u8
-                } else {
-                    0
-                });
+                out.push(if acc[3] > 0.0 { (acc[c] / acc[3]).round() as u8 } else { 0 });
             }
             out.push((a * 255.0).round() as u8);
         }
     }
     Some(Image::new(
-        bevy::render::render_resource::Extent3d {
-            width: size.x,
-            height: size.y,
-            depth_or_array_layers: 1,
-        },
+        bevy::render::render_resource::Extent3d { width: size.x, height: size.y, depth_or_array_layers: 1 },
         bevy::render::render_resource::TextureDimension::D2,
         out,
         image.texture_descriptor.format,
@@ -124,27 +108,17 @@ fn set_cursor(
     windows: Query<(Entity, &Window), With<PrimaryWindow>>,
     armed: Option<Res<crate::skill_use::SkillTargeting>>,
 ) {
-    let Ok((entity, window)) = windows.single() else {
-        return;
-    };
+    let Ok((entity, window)) = windows.single() else { return };
     let blue = armed.is_some_and(|a| a.0.is_some());
-    let Some(art) = frames.get(&cursor.art) else {
-        return;
-    };
-    let Some(frame) = art.frames.first() else {
-        return;
-    };
-    let Some(source) = images.get(frame) else {
-        return;
-    };
+    let Some(art) = frames.get(&cursor.art) else { return };
+    let Some(frame) = art.frames.first() else { return };
+    let Some(source) = images.get(frame) else { return };
     let factor = cursor_factor(window.height());
     let size = scaled_size(source.width(), source.height(), factor);
     if size == cursor.size && blue == cursor.blue {
         return;
     }
-    let Some(mut scaled) = resample(source, size) else {
-        return;
-    };
+    let Some(mut scaled) = resample(source, size) else { return };
     if blue {
         tint_blue(&mut scaled);
     }
@@ -153,22 +127,14 @@ fn set_cursor(
         ((TIP.1 as f32 * factor) as u32).min(size.y - 1) as u16,
     );
     let handle = images.add(scaled);
-    commands
-        .entity(entity)
-        .insert(CursorIcon::Custom(CustomCursor::Image(CustomCursorImage {
-            handle,
-            hotspot,
-            ..default()
-        })));
+    commands.entity(entity).insert(CursorIcon::Custom(CustomCursor::Image(CustomCursorImage { handle, hotspot, ..default() })));
     cursor.size = size;
     cursor.blue = blue;
 }
 
 /// Turns an RGBA8 image's colours to blues of the same brightness.
 pub fn tint_blue(image: &mut Image) {
-    let Some(data) = image.data.as_mut() else {
-        return;
-    };
+    let Some(data) = image.data.as_mut() else { return };
     for px in data.as_chunks_mut::<4>().0 {
         let light = (u32::from(px[0]) + u32::from(px[1]) + u32::from(px[2])) / 3;
         px[0] = (light / 4) as u8;
@@ -183,11 +149,7 @@ mod tests {
 
     fn image(w: u32, h: u32, data: Vec<u8>) -> Image {
         Image::new(
-            bevy::render::render_resource::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
+            bevy::render::render_resource::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
             bevy::render::render_resource::TextureDimension::D2,
             data,
             bevy::render::render_resource::TextureFormat::Rgba8UnormSrgb,
@@ -198,24 +160,14 @@ mod tests {
     #[test]
     fn the_cursor_is_30_percent_of_the_original_share_of_the_screen() {
         assert_eq!(scaled_size(24, 27, cursor_factor(600.0)), UVec2::new(7, 8));
-        assert_eq!(
-            scaled_size(24, 27, cursor_factor(1080.0)),
-            UVec2::new(13, 15)
-        );
-        assert_eq!(
-            scaled_size(24, 27, cursor_factor(2160.0)),
-            UVec2::new(26, 29)
-        );
+        assert_eq!(scaled_size(24, 27, cursor_factor(1080.0)), UVec2::new(13, 15));
+        assert_eq!(scaled_size(24, 27, cursor_factor(2160.0)), UVec2::new(26, 29));
         assert_eq!(scaled_size(24, 27, 0.0), UVec2::new(1, 1));
     }
 
     #[test]
     fn whole_number_enlargements_repeat_each_pixel() {
-        let big = resample(
-            &image(2, 1, vec![1, 2, 3, 255, 5, 6, 7, 255]),
-            UVec2::new(4, 2),
-        )
-        .unwrap();
+        let big = resample(&image(2, 1, vec![1, 2, 3, 255, 5, 6, 7, 255]), UVec2::new(4, 2)).unwrap();
         let row = [1, 2, 3, 255, 1, 2, 3, 255, 5, 6, 7, 255, 5, 6, 7, 255];
         assert_eq!(big.data.unwrap(), [row, row].concat());
     }
@@ -223,11 +175,7 @@ mod tests {
     #[test]
     fn shrinking_averages_and_transparent_pixels_do_not_darken() {
         // A white opaque pixel next to a black transparent one: half coverage, still white.
-        let small = resample(
-            &image(2, 1, vec![255, 255, 255, 255, 0, 0, 0, 0]),
-            UVec2::new(1, 1),
-        )
-        .unwrap();
+        let small = resample(&image(2, 1, vec![255, 255, 255, 255, 0, 0, 0, 0]), UVec2::new(1, 1)).unwrap();
         assert_eq!(small.data.unwrap(), vec![255, 255, 255, 128]);
     }
 }

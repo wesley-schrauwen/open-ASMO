@@ -31,10 +31,7 @@ use arcanum_rules::{CharacterAction, CharacterSheet, MAX_NAME, PRIMARY_STATS, Ru
 use crate::character_host::CharacterHost;
 use crate::fonts::{ArcanumFonts, ORIGINAL_SCALE, UiFont};
 use crate::main_menu::AppState;
-use crate::menu_window::{
-    HelpMessage, HoverHelp, MenuWindowPlugin, SCREEN_RED, SCREEN_WHITE, TOP_BAR_HEIGHT, WindowArt,
-    at, rect, screen_root, spawn_frame,
-};
+use crate::menu_window::{HelpMessage, HoverHelp, MenuWindowPlugin, SCREEN_RED, SCREEN_WHITE, TOP_BAR_HEIGHT, WindowArt, at, rect, screen_root, spawn_frame};
 use crate::premade::split_story;
 use crate::resource_pack::paths::interface;
 use crate::text_field::{TextField, TextFieldColors, TextFieldPlugin, spawn_text_field};
@@ -66,6 +63,7 @@ pub const NAME_HOVER: Color = Color::srgb_u8(255, 140, 140);
 /// Root of the parts that change with the character (redrawn on change).
 #[derive(Component)]
 pub struct CreateContent;
+
 
 /// Marks the text pieces, for tests.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,41 +135,21 @@ impl CreationData {
     }
 
     fn menu_text(&self, id: i64, fallback: &str) -> String {
-        u32::try_from(id)
-            .ok()
-            .and_then(|id| self.menu.get(id))
-            .unwrap_or(fallback)
-            .to_string()
+        u32::try_from(id).ok().and_then(|id| self.menu.get(id)).unwrap_or(fallback).to_string()
     }
 
     /// Texts for the bars, the stats and the large panel.
     pub fn texts(&self, c: &CharacterSheet) -> CreateTexts {
-        let name = if c.has_name() {
-            c.name.clone()
-        } else {
-            self.menu_text(500, "Choose Name")
-        };
-        let story = self
-            .rules
-            .background(c)
-            .and_then(|b| self.stories.get(b.description))
-            .unwrap_or("");
+        let name = if c.has_name() { c.name.clone() } else { self.menu_text(500, "Choose Name") };
+        let story = self.rules.background(c).and_then(|b| self.stories.get(b.description)).unwrap_or("");
         let (title, body) = split_story(story);
         let stats = self.rules.stats(c);
-        let stat_lines = std::array::from_fn(|i| {
-            format!("{}: {}", self.stats.get(i as u32).unwrap_or("?"), stats[i])
-        });
-        let has_background = self
-            .rules
-            .background(c)
-            .is_some_and(|b| b.description > 1000);
+        let stat_lines = std::array::from_fn(|i| format!("{}: {}", self.stats.get(i as u32).unwrap_or("?"), stats[i]));
+        let has_background = self.rules.background(c).is_some_and(|b| b.description > 1000);
         let (panel_heading, panel_body) = if has_background {
             (String::new(), body.to_string())
         } else {
-            (
-                self.menu_text(745, "Race"),
-                self.menu_text(770 + i64::from(c.gender) + 2 * i64::from(c.race), ""),
-            )
+            (self.menu_text(745, "Race"), self.menu_text(770 + i64::from(c.gender) + 2 * i64::from(c.race), ""))
         };
         CreateTexts {
             name,
@@ -210,34 +188,16 @@ struct CreateArt {
 
 // Layout: positions from the original's button table are screen coordinates; text rects are in
 // background pixels (add TOP_BAR_HEIGHT).
-const PORTRAIT: Rect = Rect {
-    min: Vec2::new(95.0, 28.0),
-    max: Vec2::new(223.0, 156.0),
-};
+const PORTRAIT: Rect = Rect { min: Vec2::new(95.0, 28.0), max: Vec2::new(223.0, 156.0) };
 const BIG_ARROW: Vec2 = Vec2::new(34.0, 33.0);
 const CYCLE_ARROW: Vec2 = Vec2::new(23.0, 23.0);
-const NAME_BAR: Rect = Rect {
-    min: Vec2::new(46.0, 183.0),
-    max: Vec2::new(274.0, 202.0),
-};
+const NAME_BAR: Rect = Rect { min: Vec2::new(46.0, 183.0), max: Vec2::new(274.0, 202.0) };
 const BARS: [Rect; 3] = [
-    Rect {
-        min: Vec2::new(66.0, 243.0),
-        max: Vec2::new(252.0, 262.0),
-    },
-    Rect {
-        min: Vec2::new(66.0, 293.0),
-        max: Vec2::new(252.0, 312.0),
-    },
-    Rect {
-        min: Vec2::new(66.0, 343.0),
-        max: Vec2::new(252.0, 362.0),
-    },
+    Rect { min: Vec2::new(66.0, 243.0), max: Vec2::new(252.0, 262.0) },
+    Rect { min: Vec2::new(66.0, 293.0), max: Vec2::new(252.0, 312.0) },
+    Rect { min: Vec2::new(66.0, 343.0), max: Vec2::new(252.0, 362.0) },
 ];
-const STATS_HEADING: Rect = Rect {
-    min: Vec2::new(339.0, 23.0),
-    max: Vec2::new(748.0, 42.0),
-};
+const STATS_HEADING: Rect = Rect { min: Vec2::new(339.0, 23.0), max: Vec2::new(748.0, 42.0) };
 /// Stat rows in the original's order table (0x5c5130: ST CN DX BE / IN WP PE CH) and rects
 /// (0x5c4f50): two columns of four.
 const STAT_ORDER: [usize; PRIMARY_STATS] = [0, 2, 1, 3, 4, 6, 5, 7];
@@ -252,24 +212,12 @@ const STAT_ROWS: [Vec2; PRIMARY_STATS] = [
     Vec2::new(406.0 + 60.0, 106.0),
 ];
 const STAT_SIZE: Vec2 = Vec2::new(115.0, 15.0);
-const PANEL: Rect = Rect {
-    min: Vec2::new(350.0, 155.0),
-    max: Vec2::new(745.0, 367.0),
-};
-const PANEL_HEADING: Rect = Rect {
-    min: Vec2::new(350.0, 159.0),
-    max: Vec2::new(745.0, 178.0),
-};
-const PANEL_BODY: Rect = Rect {
-    min: Vec2::new(350.0, 185.0),
-    max: Vec2::new(745.0, 367.0),
-};
+const PANEL: Rect = Rect { min: Vec2::new(350.0, 155.0), max: Vec2::new(745.0, 367.0) };
+const PANEL_HEADING: Rect = Rect { min: Vec2::new(350.0, 159.0), max: Vec2::new(745.0, 178.0) };
+const PANEL_BODY: Rect = Rect { min: Vec2::new(350.0, 185.0), max: Vec2::new(745.0, 367.0) };
 
 fn on_screen(r: Rect) -> Rect {
-    Rect::from_corners(
-        r.min + Vec2::Y * TOP_BAR_HEIGHT,
-        r.max + Vec2::Y * TOP_BAR_HEIGHT,
-    )
+    Rect::from_corners(r.min + Vec2::Y * TOP_BAR_HEIGHT, r.max + Vec2::Y * TOP_BAR_HEIGHT)
 }
 
 pub struct CreateCharacterPlugin;
@@ -283,39 +231,24 @@ impl Plugin for CreateCharacterPlugin {
             app.add_plugins(TextFieldPlugin);
         }
         app.init_resource::<CharacterHost>()
-            .add_systems(
-                Startup,
-                |mut commands: Commands, assets: Res<AssetServer>| {
-                    commands.insert_resource(CreateArt {
-                        background: assets.load(interface::CREATE_BACK),
-                        portrait_left: assets.load(interface::PICKER_LEFT),
-                        portrait_right: assets.load(interface::PICKER_RIGHT),
-                        cycle_left: assets.load(interface::CYCLE_LEFT),
-                        cycle_right: assets.load(interface::CYCLE_RIGHT),
-                    });
-                },
-            )
-            .add_systems(
-                OnEnter(AppState::CreateCharacter),
-                (load_creation_data, build_screen).chain(),
-            )
-            .add_systems(
-                Update,
-                (sync_name, show_character)
-                    .chain()
-                    .run_if(in_state(AppState::CreateCharacter)),
-            )
+            .add_systems(Startup, |mut commands: Commands, assets: Res<AssetServer>| {
+                commands.insert_resource(CreateArt {
+                    background: assets.load(interface::CREATE_BACK),
+                    portrait_left: assets.load(interface::PICKER_LEFT),
+                    portrait_right: assets.load(interface::PICKER_RIGHT),
+                    cycle_left: assets.load(interface::CYCLE_LEFT),
+                    cycle_right: assets.load(interface::CYCLE_RIGHT),
+                });
+            })
+            .add_systems(OnEnter(AppState::CreateCharacter), (load_creation_data, build_screen).chain())
+            .add_systems(Update, (sync_name, show_character).chain().run_if(in_state(AppState::CreateCharacter)))
             .add_observer(on_activate);
     }
 }
 
 /// Reads the rules and text tables once (character creation and the editor both need them). The
 /// draft itself is reset by the New Character menu entry, so coming back from the editor keeps it.
-pub fn load_creation_data(
-    mut commands: Commands,
-    data: Option<Res<CreationData>>,
-    vfs: Option<Res<VfsResource>>,
-) {
+pub fn load_creation_data(mut commands: Commands, data: Option<Res<CreationData>>, vfs: Option<Res<VfsResource>>) {
     if data.is_some() {
         return;
     }
@@ -332,15 +265,7 @@ pub fn load_creation_data(
 }
 
 fn button(action: CreateAction, frames: &Handle<ArtFrames>, r: Rect) -> impl Bundle {
-    (
-        action,
-        Button,
-        ActivateOnPress,
-        Hovered::default(),
-        FrameButton::arrow(frames.clone()),
-        ImageNode::default(),
-        at(r),
-    )
+    (action, Button, ActivateOnPress, Hovered::default(), FrameButton::arrow(frames.clone()), ImageNode::default(), at(r))
 }
 
 fn build_screen(
@@ -352,17 +277,9 @@ fn build_screen(
     host: Res<CharacterHost>,
 ) {
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-    let placeholder = data
-        .as_ref()
-        .and_then(|d| d.menu.get(500))
-        .unwrap_or("Choose Name")
-        .to_string();
+    let placeholder = data.as_ref().and_then(|d| d.menu.get(500)).unwrap_or("Choose Name").to_string();
     commands
-        .spawn((
-            CreateCharacterScreen,
-            DespawnOnExit(AppState::CreateCharacter),
-            screen_root(),
-        ))
+        .spawn((CreateCharacterScreen, DespawnOnExit(AppState::CreateCharacter), screen_root()))
         .with_children(|screen| {
             spawn_frame(
                 screen,
@@ -376,61 +293,25 @@ fn build_screen(
                 value: host.sheet().name.clone(),
                 placeholder,
                 max_chars: MAX_NAME,
-                colors: TextFieldColors {
-                    normal: SCREEN_RED,
-                    hover: NAME_HOVER,
-                    focused: NAME_HOVER,
-                },
+                colors: TextFieldColors { normal: SCREEN_RED, hover: NAME_HOVER, focused: NAME_HOVER },
             };
-            spawn_text_field(
-                screen,
-                name,
-                at(on_screen(NAME_BAR)),
-                UiFont::Small,
-                &fonts,
-                NameField,
-                CreateText::Name,
-            );
+            spawn_text_field(screen, name, at(on_screen(NAME_BAR)), UiFont::Small, &fonts, NameField, CreateText::Name);
             // Screen coordinates from the original's button table.
-            screen.spawn(button(
-                CreateAction::Portrait(-1),
-                &art.portrait_left,
-                rect(Vec2::new(43.0, 118.0), BIG_ARROW),
-            ));
-            screen.spawn(button(
-                CreateAction::Portrait(1),
-                &art.portrait_right,
-                rect(Vec2::new(244.0, 118.0), BIG_ARROW),
-            ));
+            screen.spawn(button(CreateAction::Portrait(-1), &art.portrait_left, rect(Vec2::new(43.0, 118.0), BIG_ARROW)));
+            screen.spawn(button(CreateAction::Portrait(1), &art.portrait_right, rect(Vec2::new(244.0, 118.0), BIG_ARROW)));
             for (y, left, right) in [
                 (281.0, CreateAction::Gender, CreateAction::Gender),
                 (331.0, CreateAction::Race(-1), CreateAction::Race(1)),
-                (
-                    381.0,
-                    CreateAction::Background(-1),
-                    CreateAction::Background(1),
-                ),
+                (381.0, CreateAction::Background(-1), CreateAction::Background(1)),
             ] {
-                screen.spawn(button(
-                    left,
-                    &art.cycle_left,
-                    rect(Vec2::new(42.0, y), CYCLE_ARROW),
-                ));
-                screen.spawn(button(
-                    right,
-                    &art.cycle_right,
-                    rect(Vec2::new(255.0, y + 1.0), CYCLE_ARROW),
-                ));
+                screen.spawn(button(left, &art.cycle_left, rect(Vec2::new(42.0, y), CYCLE_ARROW)));
+                screen.spawn(button(right, &art.cycle_right, rect(Vec2::new(255.0, y + 1.0), CYCLE_ARROW)));
             }
         });
 }
 
 /// Copies the name field into the draft.
-fn sync_name(
-    fields: Query<&TextField, (With<NameField>, Changed<TextField>)>,
-    mut host: ResMut<CharacterHost>,
-    data: Option<Res<CreationData>>,
-) {
+fn sync_name(fields: Query<&TextField, (With<NameField>, Changed<TextField>)>, mut host: ResMut<CharacterHost>, data: Option<Res<CreationData>>) {
     let rules = data.as_ref().map(|d| d.rules.clone()).unwrap_or_default();
     for field in &fields {
         if host.sheet().name != field.value {
@@ -460,21 +341,13 @@ fn show_character(
     }
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
     let texts = data.texts(host.sheet());
-    let portrait = data
-        .rules
-        .portrait(host.sheet())
-        .map(|stem| assets.load::<Image>(format!("portrait/{stem}_b.bmp")));
+    let portrait = data.rules.portrait(host.sheet()).map(|stem| assets.load::<Image>(format!("portrait/{stem}_b.bmp")));
     let content = commands
         .spawn((
             CreateContent,
             // Full-screen layer above the buttons: let the pointer through.
             bevy::picking::Pickable::IGNORE,
-            Node {
-                position_type: PositionType::Absolute,
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                ..default()
-            },
+            Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
         ))
         .with_children(|c| {
             if let Some(image) = portrait {
@@ -482,105 +355,30 @@ fn show_character(
             }
             // Fonts and colours as the original's slots: name morph15 red, bars Flare12 red,
             // headings morph15 white, stats and story Flare12 white.
-            let mut text = |r: Rect,
-                            value: &str,
-                            which: CreateText,
-                            centre: bool,
-                            font: UiFont,
-                            colour: Color| {
-                let justify = if centre {
-                    JustifyContent::Center
-                } else {
-                    JustifyContent::FlexStart
-                };
+            let mut text = |r: Rect, value: &str, which: CreateText, centre: bool, font: UiFont, colour: Color| {
+                let justify = if centre { JustifyContent::Center } else { JustifyContent::FlexStart };
                 // Clipped to the box: long texts (e.g. "No significant background") must not run
                 // under the bar's arrows.
-                c.spawn(Node {
-                    justify_content: justify,
-                    align_items: AlignItems::Center,
-                    overflow: Overflow::clip(),
-                    ..at(on_screen(r))
-                })
-                .with_children(|cell| {
+                c.spawn(Node { justify_content: justify, align_items: AlignItems::Center, overflow: Overflow::clip(), ..at(on_screen(r)) }).with_children(|cell| {
                     let mut t = cell.spawn((which, TextColor(colour)));
                     fonts.insert_text(&mut t, value, font);
                 });
             };
-            text(
-                BARS[0],
-                &texts.gender,
-                CreateText::Gender,
-                true,
-                UiFont::Body,
-                SCREEN_RED,
-            );
-            text(
-                BARS[1],
-                &texts.race,
-                CreateText::Race,
-                true,
-                UiFont::Body,
-                SCREEN_RED,
-            );
-            text(
-                BARS[2],
-                &texts.background,
-                CreateText::Background,
-                true,
-                UiFont::Body,
-                SCREEN_RED,
-            );
-            text(
-                STATS_HEADING,
-                &texts.stats_heading,
-                CreateText::StatsHeading,
-                true,
-                UiFont::Small,
-                SCREEN_WHITE,
-            );
+            text(BARS[0], &texts.gender, CreateText::Gender, true, UiFont::Body, SCREEN_RED);
+            text(BARS[1], &texts.race, CreateText::Race, true, UiFont::Body, SCREEN_RED);
+            text(BARS[2], &texts.background, CreateText::Background, true, UiFont::Body, SCREEN_RED);
+            text(STATS_HEADING, &texts.stats_heading, CreateText::StatsHeading, true, UiFont::Small, SCREEN_WHITE);
             for (slot, &stat) in STAT_ORDER.iter().enumerate() {
-                text(
-                    rect(STAT_ROWS[slot], STAT_SIZE),
-                    &texts.stats[stat],
-                    CreateText::Stat(stat),
-                    false,
-                    UiFont::Body,
-                    SCREEN_WHITE,
-                );
+                text(rect(STAT_ROWS[slot], STAT_SIZE), &texts.stats[stat], CreateText::Stat(stat), false, UiFont::Body, SCREEN_WHITE);
             }
-            let body_rect = if texts.panel_heading.is_empty() {
-                PANEL
-            } else {
-                PANEL_BODY
-            };
+            let body_rect = if texts.panel_heading.is_empty() { PANEL } else { PANEL_BODY };
             if !texts.panel_heading.is_empty() {
-                text(
-                    PANEL_HEADING,
-                    &texts.panel_heading,
-                    CreateText::PanelHeading,
-                    true,
-                    UiFont::Small,
-                    SCREEN_WHITE,
-                );
+                text(PANEL_HEADING, &texts.panel_heading, CreateText::PanelHeading, true, UiFont::Small, SCREEN_WHITE);
             }
-            c.spawn(Node {
-                overflow: Overflow::clip(),
-                ..at(on_screen(body_rect))
-            })
-            .with_children(|panel| {
+            c.spawn(Node { overflow: Overflow::clip(), ..at(on_screen(body_rect)) }).with_children(|panel| {
                 let mut t = panel.spawn((CreateText::PanelBody, TextColor(SCREEN_WHITE)));
-                let (w, h) = (
-                    body_rect.width() * ORIGINAL_SCALE,
-                    body_rect.height() * ORIGINAL_SCALE,
-                );
-                fonts.insert_block(
-                    &mut t,
-                    &texts.panel_body,
-                    UiFont::Body,
-                    w,
-                    Some(h),
-                    Align::Left,
-                );
+                let (w, h) = (body_rect.width() * ORIGINAL_SCALE, body_rect.height() * ORIGINAL_SCALE);
+                fonts.insert_block(&mut t, &texts.panel_body, UiFont::Body, w, Some(h), Align::Left);
             });
         })
         .id();
@@ -598,9 +396,7 @@ fn on_activate(
     mut message: ResMut<HelpMessage>,
     sounds: Option<Res<MenuSounds>>,
 ) {
-    let Ok(&action) = actions.get(activate.entity) else {
-        return;
-    };
+    let Ok(&action) = actions.get(activate.entity) else { return };
     if let Some(sounds) = &sounds {
         sounds.play_button_press(&mut commands);
     }
@@ -614,10 +410,7 @@ fn on_activate(
         CreateAction::Background(d) => drop(host.apply(&rules, CharacterAction::StepBackground(d))),
         CreateAction::Next => {
             if !host.sheet().has_name() {
-                let text = data
-                    .as_ref()
-                    .and_then(|d| d.menu.get(506))
-                    .unwrap_or("You must choose a name.");
+                let text = data.as_ref().and_then(|d| d.menu.get(506)).unwrap_or("You must choose a name.");
                 message.0 = Some(text.to_string());
                 return;
             }

@@ -25,10 +25,7 @@ pub const BACK_AT: Vec2 = Vec2::new(69.0, BOTTOM_BAR_TOP + 55.0);
 pub const NEXT_AT: Vec2 = Vec2::new(675.0, BOTTOM_BAR_TOP + 55.0);
 pub const ROUND_BUTTON: Vec2 = Vec2::new(61.0, 61.0);
 /// The bottom bar's text box.
-pub const HELP_BOX: Rect = Rect {
-    min: Vec2::new(206.0, BOTTOM_BAR_TOP + 58.0),
-    max: Vec2::new(594.0, BOTTOM_BAR_TOP + 150.0),
-};
+pub const HELP_BOX: Rect = Rect { min: Vec2::new(206.0, BOTTOM_BAR_TOP + 58.0), max: Vec2::new(594.0, BOTTOM_BAR_TOP + 150.0) };
 
 /// Hover help and other light text in the frame.
 pub const INFO_COLOR: Color = Color::srgb_u8(236, 220, 180);
@@ -120,12 +117,7 @@ pub fn screen_root() -> impl Bundle {
 }
 
 /// A button drawn from a three-frame `.art` file (normal, pressed, hover).
-pub fn image_button(
-    action: impl Bundle,
-    help: HoverHelp,
-    frames: &Handle<ArtFrames>,
-    rect: Rect,
-) -> impl Bundle {
+pub fn image_button(action: impl Bundle, help: HoverHelp, frames: &Handle<ArtFrames>, rect: Rect) -> impl Bundle {
     (
         action,
         help,
@@ -148,54 +140,20 @@ pub fn spawn_frame(
     back: impl Bundle,
     next: (impl Bundle, HoverHelp),
 ) {
-    screen.spawn((
-        ImageNode::new(art.top_bar.clone()),
-        at(rect(Vec2::ZERO, Vec2::new(800.0, TOP_BAR_HEIGHT))),
-    ));
-    screen.spawn((
-        ImageNode::new(background),
-        at(rect(
-            Vec2::new(0.0, TOP_BAR_HEIGHT),
-            Vec2::new(800.0, BACKGROUND_HEIGHT),
-        )),
-    ));
-    screen.spawn((
-        ImageNode::new(art.bottom_bar.clone()),
-        at(rect(
-            Vec2::new(0.0, BOTTOM_BAR_TOP),
-            Vec2::new(800.0, 159.0),
-        )),
-    ));
-    screen.spawn(image_button(
-        back,
-        HoverHelp(7002, "Previous Screen"),
-        &art.back,
-        rect(BACK_AT, ROUND_BUTTON),
-    ));
-    screen.spawn(image_button(
-        next.0,
-        next.1,
-        &art.next,
-        rect(NEXT_AT, ROUND_BUTTON),
-    ));
+    screen.spawn((ImageNode::new(art.top_bar.clone()), at(rect(Vec2::ZERO, Vec2::new(800.0, TOP_BAR_HEIGHT)))));
+    screen.spawn((ImageNode::new(background), at(rect(Vec2::new(0.0, TOP_BAR_HEIGHT), Vec2::new(800.0, BACKGROUND_HEIGHT)))));
+    screen.spawn((ImageNode::new(art.bottom_bar.clone()), at(rect(Vec2::new(0.0, BOTTOM_BAR_TOP), Vec2::new(800.0, 159.0)))));
+    screen.spawn(image_button(back, HoverHelp(7002, "Previous Screen"), &art.back, rect(BACK_AT, ROUND_BUTTON)));
+    screen.spawn(image_button(next.0, next.1, &art.next, rect(NEXT_AT, ROUND_BUTTON)));
     screen
-        .spawn(Node {
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            ..at(HELP_BOX)
-        })
+        .spawn(Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..at(HELP_BOX) })
         .with_children(|help_box| {
             let mut help = help_box.spawn((HoverHelpText, TextColor(INFO_COLOR)));
             fonts.insert_text(&mut help, "", UiFont::Small);
         });
 }
 
-fn clear_help_message(
-    transitions: Option<
-        MessageReader<bevy::state::state::StateTransitionEvent<crate::main_menu::AppState>>,
-    >,
-    mut message: ResMut<HelpMessage>,
-) {
+fn clear_help_message(transitions: Option<MessageReader<bevy::state::state::StateTransitionEvent<crate::main_menu::AppState>>>, mut message: ResMut<HelpMessage>) {
     if let Some(mut t) = transitions
         && t.read().count() > 0
         && message.0.is_some()
@@ -220,12 +178,7 @@ fn show_hover_help(
         .iter()
         .find(|(_, hovered)| hovered.get())
         .map(|(HoverHelp(id, fallback), _)| {
-            menu_text
-                .as_ref()
-                .and_then(|t| mes.get(&t.0))
-                .and_then(|m| m.get(*id))
-                .unwrap_or(fallback)
-                .to_string()
+            menu_text.as_ref().and_then(|t| mes.get(&t.0)).and_then(|m| m.get(*id)).unwrap_or(fallback).to_string()
         })
         .unwrap_or(fallback);
     for (bitmap, text) in &mut help {
@@ -249,10 +202,7 @@ mod tests {
     fn the_frame_stacks_into_the_original_screen() {
         assert_eq!(BOTTOM_BAR_TOP + 159.0, 600.0);
         for at in [BACK_AT, NEXT_AT] {
-            assert!(
-                at.x + ROUND_BUTTON.x <= 800.0 && at.y + ROUND_BUTTON.y <= 600.0,
-                "{at:?}"
-            );
+            assert!(at.x + ROUND_BUTTON.x <= 800.0 && at.y + ROUND_BUTTON.y <= 600.0, "{at:?}");
         }
     }
 }

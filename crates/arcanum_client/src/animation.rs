@@ -71,15 +71,7 @@ pub struct ArtAnimation {
 
 impl ArtAnimation {
     pub fn new(art: Handle<ArtFrames>, rotation: usize) -> Self {
-        Self {
-            art,
-            rotation,
-            clock: FrameClock::default(),
-            playing: true,
-            frame_millis: None,
-            once: false,
-            finished: false,
-        }
+        Self { art, rotation, clock: FrameClock::default(), playing: true, frame_millis: None, once: false, finished: false }
     }
 
     /// Switches to other art (or rotation), from its first frame. Nothing changes if it is the
@@ -105,12 +97,8 @@ fn play_animations(
 ) {
     let dt = time.delta_secs();
     for (mut animation, mut sprite, mut anchor) in &mut query {
-        let Some(art) = frames.get(&animation.art) else {
-            continue;
-        };
-        let Some(rotation) = art.rotation(animation.rotation) else {
-            continue;
-        };
+        let Some(art) = frames.get(&animation.art) else { continue };
+        let Some(rotation) = art.rotation(animation.rotation) else { continue };
         let count = rotation.frames.len();
         let period = match animation.frame_millis {
             Some(ms) => ms as f32 / 1000.0,
@@ -135,9 +123,7 @@ fn play_animations(
             // A held frame past the end of this art: its last.
             animation.clock.frame = count.saturating_sub(1);
         }
-        let Some((image, center, size)) = rotation.frame(animation.clock.frame) else {
-            continue;
-        };
+        let Some((image, center, size)) = rotation.frame(animation.clock.frame) else { continue };
         if sprite.image != *image {
             if images.get(image).is_some_and(|i| !matches!(i.sampler, ImageSampler::Descriptor(ref d) if d.mag_filter == ImageFilterMode::Nearest))
                 && let Some(mut i) = images.get_mut(image)
@@ -170,10 +156,7 @@ mod tests {
 
     #[test]
     fn the_clock_holds_still_art() {
-        let mut c = FrameClock {
-            frame: 5,
-            elapsed: 0.0,
-        };
+        let mut c = FrameClock { frame: 5, elapsed: 0.0 };
         assert_eq!(c.advance(1.0, 0.0, 8), 0, "period 0");
         assert_eq!(c.frame, 5);
         assert_eq!(c.advance(1.0, 0.1, 1), 0, "one frame");

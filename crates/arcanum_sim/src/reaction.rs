@@ -111,33 +111,21 @@ pub struct NpcReaction {
 impl NpcReaction {
     pub fn of(object: &Object, prototypes: &Prototypes) -> Self {
         let int = |name: &str| prototypes.int(object, name);
-        let stats = object
-            .ints("critter_stat_base_idx")
-            .or_else(|| prototypes.of(object)?.ints("critter_stat_base_idx"));
+        let stats = object.ints("critter_stat_base_idx").or_else(|| prototypes.of(object)?.ints("critter_stat_base_idx"));
         Self {
             base: int("npc_reaction_base").unwrap_or(BASE_REACTION),
             race: stats.and_then(|s| s.get(27).copied()).unwrap_or(0),
             origin: int("npc_origin").unwrap_or(0),
             faction: int("npc_faction").unwrap_or(0),
-            only_reputation: int("npc_flags").unwrap_or(0) & 0x20000 != 0
-                || int("critter_flags").unwrap_or(0) & 0x2000_800c != 0,
+            only_reputation: int("npc_flags").unwrap_or(0) & 0x20000 != 0 || int("critter_flags").unwrap_or(0) & 0x2000_800c != 0,
         }
     }
 
     /// The modifier for a PC of `race` with reaction modifier `looks` and these reputations
     /// (0x4c1500).
     pub fn modifier(&self, looks: i32, race: u8, reputations: i32) -> i32 {
-        let racial = usize::try_from(self.race)
-            .ok()
-            .and_then(|r| RACE_REACTION.get(r))
-            .and_then(|row| row.get(race as usize))
-            .copied()
-            .unwrap_or(0);
-        if self.only_reputation {
-            reputations
-        } else {
-            looks + racial + reputations
-        }
+        let racial = usize::try_from(self.race).ok().and_then(|r| RACE_REACTION.get(r)).and_then(|row| row.get(race as usize)).copied().unwrap_or(0);
+        if self.only_reputation { reputations } else { looks + racial + reputations }
     }
 }
 
@@ -147,19 +135,7 @@ mod tests {
 
     #[test]
     fn levels_run_from_friendly_to_hostile() {
-        assert_eq!(
-            [
-                level(120),
-                level(100),
-                level(61),
-                level(50),
-                level(40),
-                level(1),
-                level(0),
-                level(-30)
-            ],
-            [0, 1, 2, 3, 4, 5, 6, 6]
-        );
+        assert_eq!([level(120), level(100), level(61), level(50), level(40), level(1), level(0), level(-30)], [0, 1, 2, 3, 4, 5, 6, 6]);
     }
 
     #[test]
@@ -175,30 +151,9 @@ mod tests {
 
     #[test]
     fn looks_and_race_count_unless_the_npc_ignores_them() {
-        let npc = NpcReaction {
-            base: 50,
-            race: 2,
-            origin: 0,
-            faction: 0,
-            only_reputation: false,
-        };
-        assert_eq!(
-            npc.modifier(25, 1, 0),
-            5,
-            "Beauty 15 (+25), a dwarf NPC (row 2) to an elf PC (-20)"
-        );
-        assert_eq!(
-            NpcReaction {
-                only_reputation: true,
-                ..npc
-            }
-            .modifier(25, 1, 7),
-            7
-        );
-        assert_eq!(
-            NpcReaction { race: 40, ..npc }.modifier(0, 0, 0),
-            0,
-            "no row: nothing"
-        );
+        let npc = NpcReaction { base: 50, race: 2, origin: 0, faction: 0, only_reputation: false };
+        assert_eq!(npc.modifier(25, 1, 0), 5, "Beauty 15 (+25), a dwarf NPC (row 2) to an elf PC (-20)");
+        assert_eq!(NpcReaction { only_reputation: true, ..npc }.modifier(25, 1, 7), 7);
+        assert_eq!(NpcReaction { race: 40, ..npc }.modifier(0, 0, 0), 0, "no row: nothing");
     }
 }

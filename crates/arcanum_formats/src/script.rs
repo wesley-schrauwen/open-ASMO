@@ -120,14 +120,8 @@ pub struct Block {
 impl Block {
     fn parse(b: &[u8]) -> Self {
         let i32_at = |o: usize| i32::from_le_bytes(b[o..o + 4].try_into().expect("4 bytes"));
-        let operands = std::array::from_fn(|i| Operand {
-            tag: b[4 + i] as i8,
-            value: i32_at(0x0c + 4 * i),
-        });
-        Self {
-            kind: i32_at(0) as u32,
-            operands,
-        }
+        let operands = std::array::from_fn(|i| Operand { tag: b[4 + i] as i8, value: i32_at(0x0c + 4 * i) });
+        Self { kind: i32_at(0) as u32, operands }
     }
 }
 
@@ -151,43 +145,22 @@ impl Script {
     /// Parses a `.scr` file. Bytes past the last line are ignored.
     pub fn parse(data: &[u8]) -> Result<Self, ScriptError> {
         if data.len() < HEADER_SIZE {
-            return Err(ScriptError::Truncated {
-                needed: HEADER_SIZE,
-                len: data.len(),
-            });
+            return Err(ScriptError::Truncated { needed: HEADER_SIZE, len: data.len() });
         }
         let u32_at = |o: usize| u32::from_le_bytes(data[o..o + 4].try_into().expect("4 bytes"));
         let count = u32_at(0x34) as usize;
-        let needed = count
-            .checked_mul(LINE_SIZE)
-            .and_then(|n| n.checked_add(HEADER_SIZE))
-            .unwrap_or(usize::MAX);
+        let needed = count.checked_mul(LINE_SIZE).and_then(|n| n.checked_add(HEADER_SIZE)).unwrap_or(usize::MAX);
         if data.len() < needed {
-            return Err(ScriptError::Truncated {
-                needed,
-                len: data.len(),
-            });
+            return Err(ScriptError::Truncated { needed, len: data.len() });
         }
-        let description = data[0x08..0x30]
-            .iter()
-            .take_while(|&&b| b != 0)
-            .map(|&b| crate::cp1252::decode_byte(b))
-            .collect();
+        let description = data[0x08..0x30].iter().take_while(|&&b| b != 0).map(|&b| crate::cp1252::decode_byte(b)).collect();
         let lines = data[HEADER_SIZE..needed]
             .as_chunks::<LINE_SIZE>()
             .0
             .iter()
-            .map(|l| Line {
-                condition: Block::parse(&l[..BLOCK_SIZE]),
-                then: Block::parse(&l[BLOCK_SIZE..2 * BLOCK_SIZE]),
-                otherwise: Block::parse(&l[2 * BLOCK_SIZE..]),
-            })
+            .map(|l| Line { condition: Block::parse(&l[..BLOCK_SIZE]), then: Block::parse(&l[BLOCK_SIZE..2 * BLOCK_SIZE]), otherwise: Block::parse(&l[2 * BLOCK_SIZE..]) })
             .collect();
-        Ok(Self {
-            description,
-            flags: u32_at(0x30),
-            lines,
-        })
+        Ok(Self { description, flags: u32_at(0x30), lines })
     }
 
     /// Whether the attachment is cleared once the script has run.
@@ -218,16 +191,10 @@ impl ScriptIndex {
     pub fn new<'a>(names: impl IntoIterator<Item = &'a str>) -> Self {
         let mut index = Self::default();
         for name in names {
-            let is_script = name
-                .rsplit_once('.')
-                .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("scr"));
-            let Some(number) = script_number(name).filter(|_| is_script) else {
-                continue;
-            };
+            let is_script = name.rsplit_once('.').is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("scr"));
+            let Some(number) = script_number(name).filter(|_| is_script) else { continue };
             match index.files.entry(number) {
-                std::collections::btree_map::Entry::Occupied(_) => {
-                    index.duplicates.push(name.to_string())
-                }
+                std::collections::btree_map::Entry::Occupied(_) => index.duplicates.push(name.to_string()),
                 std::collections::btree_map::Entry::Vacant(slot) => {
                     slot.insert(name.to_string());
                 }
@@ -274,24 +241,14 @@ mod tests {
     fn lines_are_condition_then_else() {
         // As 01621Open_Bed_CM.scr: if global flag 2273 is 1, run the default (action 2), else
         // skip it (action 1).
-        let data = file(
-            "Search the bed",
-            0,
-            &[[block(4, &[(4, 2273), (3, 1)]), block(2, &[]), block(1, &[])]],
-        );
+        let data = file("Search the bed", 0, &[[block(4, &[(4, 2273), (3, 1)]), block(2, &[]), block(1, &[])]]);
         assert_eq!(data.len(), HEADER_SIZE + LINE_SIZE);
         let script = Script::parse(&data).unwrap();
         assert_eq!(script.description, "Search the bed");
         assert!(!script.runs_once());
         let line = script.lines[0];
         assert_eq!(line.condition.kind, 4);
-        assert_eq!(
-            line.condition.operands[0],
-            Operand {
-                tag: 4,
-                value: 2273
-            }
-        );
+        assert_eq!(line.condition.operands[0], Operand { tag: 4, value: 2273 });
         assert_eq!(line.condition.operands[0].kind(), OperandKind::GlobalFlag);
         assert_eq!(line.condition.operands[1].kind(), OperandKind::Number);
         assert_eq!((line.then.kind, line.otherwise.kind), (2, 1));
@@ -301,45 +258,19 @@ mod tests {
     fn short_files_are_refused_and_empty_scripts_are_fine() {
         assert!(Script::parse(&[0; 0x3f]).is_err());
         let mut data = file("", RUN_ONCE, &[]);
-        assert_eq!(
-            Script::parse(&data).unwrap(),
-            Script {
-                description: String::new(),
-                flags: RUN_ONCE,
-                lines: vec![]
-            }
-        );
+        assert_eq!(Script::parse(&data).unwrap(), Script { description: String::new(), flags: RUN_ONCE, lines: vec![] });
         data[0x34] = 1;
-        assert_eq!(
-            Script::parse(&data),
-            Err(ScriptError::Truncated {
-                needed: HEADER_SIZE + LINE_SIZE,
-                len: HEADER_SIZE
-            })
-        );
+        assert_eq!(Script::parse(&data), Err(ScriptError::Truncated { needed: HEADER_SIZE + LINE_SIZE, len: HEADER_SIZE }));
     }
 
     #[test]
     fn scripts_are_found_by_their_leading_digits() {
         assert_eq!(script_number("01729Bed_Use.scr"), Some(1729));
         assert_eq!(script_number("00997EndSlides.scr"), Some(997));
-        assert_eq!(
-            (script_number("Bed.scr"), script_number("00000.scr")),
-            (None, None)
-        );
-        let index = ScriptIndex::new([
-            "01729Bed_Use.scr",
-            "30017_TechBook_README.txt",
-            "30017Book.SCR",
-            "01729Other.scr",
-            "notes.scr",
-        ]);
+        assert_eq!((script_number("Bed.scr"), script_number("00000.scr")), (None, None));
+        let index = ScriptIndex::new(["01729Bed_Use.scr", "30017_TechBook_README.txt", "30017Book.SCR", "01729Other.scr", "notes.scr"]);
         assert_eq!(index.path(1729).as_deref(), Some("scr/01729Bed_Use.scr"));
-        assert_eq!(
-            index.path(30017).as_deref(),
-            Some("scr/30017Book.SCR"),
-            "only .scr files"
-        );
+        assert_eq!(index.path(30017).as_deref(), Some("scr/30017Book.SCR"), "only .scr files");
         assert_eq!(index.duplicates, ["01729Other.scr"]);
         assert_eq!(index.files.len(), 2);
     }

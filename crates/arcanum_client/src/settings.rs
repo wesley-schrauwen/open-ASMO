@@ -32,18 +32,9 @@ pub const MAX_ASPECT: (u32, u32) = (12, 5);
 pub enum ResolutionError {
     /// Not in `WIDTHxHEIGHT` form.
     Malformed(String),
-    TooSmall {
-        width: u32,
-        height: u32,
-    },
-    TooLarge {
-        width: u32,
-        height: u32,
-    },
-    AspectRatio {
-        width: u32,
-        height: u32,
-    },
+    TooSmall { width: u32, height: u32 },
+    TooLarge { width: u32, height: u32 },
+    AspectRatio { width: u32, height: u32 },
 }
 
 impl fmt::Display for ResolutionError {
@@ -53,16 +44,10 @@ impl fmt::Display for ResolutionError {
         match self {
             Self::Malformed(s) => write!(f, "expected WIDTHxHEIGHT, got {s:?}"),
             Self::TooSmall { width, height } => {
-                write!(
-                    f,
-                    "{width}x{height} is smaller than the minimum {min_w}x{min_h}"
-                )
+                write!(f, "{width}x{height} is smaller than the minimum {min_w}x{min_h}")
             }
             Self::TooLarge { width, height } => {
-                write!(
-                    f,
-                    "{width}x{height} is larger than the maximum {max_w}x{max_h}"
-                )
+                write!(f, "{width}x{height} is larger than the maximum {max_w}x{max_h}")
             }
             Self::AspectRatio { width, height } => write!(
                 f,
@@ -109,15 +94,8 @@ impl DisplayResolution {
     }
 
     /// All named presets, smallest first.
-    pub const PRESETS: [Self; 7] = [
-        Self::Hd,
-        Self::HdPlus,
-        Self::Fhd,
-        Self::Qhd,
-        Self::Wqxga,
-        Self::UltrawideQhd,
-        Self::Uhd4k,
-    ];
+    pub const PRESETS: [Self; 7] =
+        [Self::Hd, Self::HdPlus, Self::Fhd, Self::Qhd, Self::Wqxga, Self::UltrawideQhd, Self::Uhd4k];
 
     /// The named preset for these dimensions, or `Custom`. Does not validate; see [`Self::new`].
     pub fn from_dimensions(width: u32, height: u32) -> Self {
@@ -277,16 +255,9 @@ impl EnvOverrides {
                 None
             }
         });
-        let fullscreen = var("ARCANUM_FULLSCREEN").map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes"
-            )
-        });
-        Self {
-            resolution,
-            fullscreen,
-        }
+        let fullscreen = var("ARCANUM_FULLSCREEN")
+            .map(|value| matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"));
+        Self { resolution, fullscreen }
     }
 
     pub fn apply(&self, settings: &mut GameSettings) {
@@ -320,34 +291,14 @@ impl GameSettings {
         let mut changed = Vec::new();
         let sliders: [(&'static str, &mut f32, f32); 6] = [
             ("brightness", &mut self.brightness, defaults.brightness),
-            (
-                "text_duration",
-                &mut self.text_duration,
-                defaults.text_duration,
-            ),
+            ("text_duration", &mut self.text_duration, defaults.text_duration),
             ("float_speed", &mut self.float_speed, defaults.float_speed),
-            (
-                "effects_volume",
-                &mut self.effects_volume,
-                defaults.effects_volume,
-            ),
-            (
-                "voice_volume",
-                &mut self.voice_volume,
-                defaults.voice_volume,
-            ),
-            (
-                "music_volume",
-                &mut self.music_volume,
-                defaults.music_volume,
-            ),
+            ("effects_volume", &mut self.effects_volume, defaults.effects_volume),
+            ("voice_volume", &mut self.voice_volume, defaults.voice_volume),
+            ("music_volume", &mut self.music_volume, defaults.music_volume),
         ];
         for (name, value, default) in sliders {
-            let fixed = if value.is_finite() {
-                value.clamp(0.0, 1.0)
-            } else {
-                default
-            };
+            let fixed = if value.is_finite() { value.clamp(0.0, 1.0) } else { default };
             if fixed != *value {
                 *value = fixed;
                 changed.push(name);
@@ -384,14 +335,7 @@ pub struct DisplayPlugin;
 
 impl Plugin for DisplayPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (
-                sync_window.run_if(resource_changed::<GameSettings>),
-                sync_ui_scale,
-            )
-                .chain(),
-        );
+        app.add_systems(Update, (sync_window.run_if(resource_changed::<GameSettings>), sync_ui_scale).chain());
     }
 }
 
@@ -432,10 +376,7 @@ mod tests {
         assert_eq!(DisplayResolution::Wqxga.dimensions(), (2560, 1600));
         assert_eq!(DisplayResolution::Uhd4k.dimensions(), (3840, 2160));
         assert_eq!(DisplayResolution::UltrawideQhd.dimensions(), (3440, 1440));
-        assert_eq!(
-            DisplayResolution::Custom(1234, 777).dimensions(),
-            (1234, 777)
-        );
+        assert_eq!(DisplayResolution::Custom(1234, 777).dimensions(), (1234, 777));
     }
 
     #[test]
@@ -445,10 +386,7 @@ mod tests {
             let (w, h) = preset.dimensions();
             assert_eq!(DisplayResolution::from_dimensions(w, h), preset);
         }
-        let pixels: Vec<u32> = DisplayResolution::PRESETS
-            .iter()
-            .map(|p| p.dimensions().0 * p.dimensions().1)
-            .collect();
+        let pixels: Vec<u32> = DisplayResolution::PRESETS.iter().map(|p| p.dimensions().0 * p.dimensions().1).collect();
         assert!(pixels.windows(2).all(|w| w[0] < w[1]));
         assert_eq!(DisplayResolution::PRESETS[0].dimensions(), MIN_RESOLUTION);
     }
@@ -459,153 +397,51 @@ mod tests {
         assert_eq!("3440x1440".parse(), Ok(DisplayResolution::UltrawideQhd));
         assert_eq!(" 2560X1600 ".parse(), Ok(DisplayResolution::Wqxga));
         assert_eq!("1366x768".parse(), Ok(DisplayResolution::Custom(1366, 768)));
-        assert_eq!(
-            "7680x4320".parse(),
-            Ok(DisplayResolution::Custom(7680, 4320))
-        );
+        assert_eq!("7680x4320".parse(), Ok(DisplayResolution::Custom(7680, 4320)));
     }
 
     #[test]
     fn rejects_malformed_resolutions() {
-        for bad in [
-            "",
-            "1920",
-            "axb",
-            "1920x",
-            "x1080",
-            "-1x1080",
-            "1920x1080x1",
-            "1920 1080",
-        ] {
-            assert!(
-                matches!(
-                    bad.parse::<DisplayResolution>(),
-                    Err(ResolutionError::Malformed(_))
-                ),
-                "{bad:?}"
-            );
+        for bad in ["", "1920", "axb", "1920x", "x1080", "-1x1080", "1920x1080x1", "1920 1080"] {
+            assert!(matches!(bad.parse::<DisplayResolution>(), Err(ResolutionError::Malformed(_))), "{bad:?}");
         }
     }
 
     #[test]
     fn enforces_size_limits() {
         use ResolutionError::*;
-        assert_eq!(
-            DisplayResolution::new(1279, 720),
-            Err(TooSmall {
-                width: 1279,
-                height: 720
-            })
-        );
-        assert_eq!(
-            DisplayResolution::new(1280, 719),
-            Err(TooSmall {
-                width: 1280,
-                height: 719
-            })
-        );
-        assert_eq!(
-            DisplayResolution::new(1024, 768),
-            Err(TooSmall {
-                width: 1024,
-                height: 768
-            })
-        );
-        assert_eq!(
-            DisplayResolution::new(0, 0),
-            Err(TooSmall {
-                width: 0,
-                height: 0
-            })
-        );
-        assert_eq!(
-            DisplayResolution::new(7681, 4320),
-            Err(TooLarge {
-                width: 7681,
-                height: 4320
-            })
-        );
-        assert_eq!(
-            DisplayResolution::new(7680, 4321),
-            Err(TooLarge {
-                width: 7680,
-                height: 4321
-            })
-        );
-        assert_eq!(
-            DisplayResolution::new(u32::MAX, u32::MAX),
-            Err(TooLarge {
-                width: u32::MAX,
-                height: u32::MAX
-            })
-        );
+        assert_eq!(DisplayResolution::new(1279, 720), Err(TooSmall { width: 1279, height: 720 }));
+        assert_eq!(DisplayResolution::new(1280, 719), Err(TooSmall { width: 1280, height: 719 }));
+        assert_eq!(DisplayResolution::new(1024, 768), Err(TooSmall { width: 1024, height: 768 }));
+        assert_eq!(DisplayResolution::new(0, 0), Err(TooSmall { width: 0, height: 0 }));
+        assert_eq!(DisplayResolution::new(7681, 4320), Err(TooLarge { width: 7681, height: 4320 }));
+        assert_eq!(DisplayResolution::new(7680, 4321), Err(TooLarge { width: 7680, height: 4321 }));
+        assert_eq!(DisplayResolution::new(u32::MAX, u32::MAX), Err(TooLarge { width: u32::MAX, height: u32::MAX }));
     }
 
     #[test]
     fn enforces_aspect_ratios() {
         // Boundaries are inclusive: exactly 4:3 and exactly 2.4:1 are allowed.
-        assert_eq!(
-            DisplayResolution::new(1440, 1080),
-            Ok(DisplayResolution::Custom(1440, 1080))
-        );
-        assert_eq!(
-            DisplayResolution::new(2592, 1080),
-            Ok(DisplayResolution::Custom(2592, 1080))
-        );
+        assert_eq!(DisplayResolution::new(1440, 1080), Ok(DisplayResolution::Custom(1440, 1080)));
+        assert_eq!(DisplayResolution::new(2592, 1080), Ok(DisplayResolution::Custom(2592, 1080)));
         // 5:4 is narrower than the art; 32:9 is wider than 2.4:1.
-        assert_eq!(
-            DisplayResolution::new(1280, 1024),
-            Err(ResolutionError::AspectRatio {
-                width: 1280,
-                height: 1024
-            })
-        );
-        assert_eq!(
-            DisplayResolution::new(1439, 1080),
-            Err(ResolutionError::AspectRatio {
-                width: 1439,
-                height: 1080
-            })
-        );
-        assert_eq!(
-            DisplayResolution::new(2593, 1080),
-            Err(ResolutionError::AspectRatio {
-                width: 2593,
-                height: 1080
-            })
-        );
-        assert_eq!(
-            DisplayResolution::new(5120, 1440),
-            Err(ResolutionError::AspectRatio {
-                width: 5120,
-                height: 1440
-            })
-        );
+        assert_eq!(DisplayResolution::new(1280, 1024), Err(ResolutionError::AspectRatio { width: 1280, height: 1024 }));
+        assert_eq!(DisplayResolution::new(1439, 1080), Err(ResolutionError::AspectRatio { width: 1439, height: 1080 }));
+        assert_eq!(DisplayResolution::new(2593, 1080), Err(ResolutionError::AspectRatio { width: 2593, height: 1080 }));
+        assert_eq!(DisplayResolution::new(5120, 1440), Err(ResolutionError::AspectRatio { width: 5120, height: 1440 }));
         // Portrait.
-        assert_eq!(
-            DisplayResolution::new(1440, 2560),
-            Err(ResolutionError::AspectRatio {
-                width: 1440,
-                height: 2560
-            })
-        );
+        assert_eq!(DisplayResolution::new(1440, 2560), Err(ResolutionError::AspectRatio { width: 1440, height: 2560 }));
         assert!(!DisplayResolution::Custom(1280, 1024).is_supported());
     }
 
     #[test]
     fn errors_explain_the_limits() {
         assert_eq!(
-            "1024x768"
-                .parse::<DisplayResolution>()
-                .unwrap_err()
-                .to_string(),
+            "1024x768".parse::<DisplayResolution>().unwrap_err().to_string(),
             "1024x768 is smaller than the minimum 1280x720"
         );
         assert_eq!(
-            "5120x1440"
-                .parse::<DisplayResolution>()
-                .unwrap_err()
-                .to_string(),
+            "5120x1440".parse::<DisplayResolution>().unwrap_err().to_string(),
             "5120x1440 has an unsupported aspect ratio (supported: 4:3 to 12:5)"
         );
     }
@@ -623,47 +459,28 @@ mod tests {
     #[test]
     fn reads_overrides_from_variables() {
         let vars = |pairs: &'static [(&'static str, &'static str)]| {
-            move |name: &str| {
-                pairs
-                    .iter()
-                    .find(|(k, _)| *k == name)
-                    .map(|(_, v)| v.to_string())
-            }
+            move |name: &str| pairs.iter().find(|(k, _)| *k == name).map(|(_, v)| v.to_string())
         };
         assert_eq!(GameSettings::from_vars(vars(&[])), GameSettings::default());
 
-        let s = GameSettings::from_vars(vars(&[
-            ("ARCANUM_RES", "3440x1440"),
-            ("ARCANUM_FULLSCREEN", "TRUE"),
-        ]));
+        let s = GameSettings::from_vars(vars(&[("ARCANUM_RES", "3440x1440"), ("ARCANUM_FULLSCREEN", "TRUE")]));
         assert_eq!(s.resolution, DisplayResolution::UltrawideQhd);
         assert!(s.fullscreen);
-        assert_eq!(
-            s.window_mode(),
-            WindowMode::BorderlessFullscreen(MonitorSelection::Primary)
-        );
+        assert_eq!(s.window_mode(), WindowMode::BorderlessFullscreen(MonitorSelection::Primary));
 
         // Bad values fall back to the defaults.
-        let s = GameSettings::from_vars(vars(&[
-            ("ARCANUM_RES", "huge"),
-            ("ARCANUM_FULLSCREEN", "nope"),
-        ]));
+        let s = GameSettings::from_vars(vars(&[("ARCANUM_RES", "huge"), ("ARCANUM_FULLSCREEN", "nope")]));
         assert_eq!(s, GameSettings::default());
         // Well-formed but unsupported values are rejected too.
         for res in ["1024x768", "5120x1440", "15360x8640"] {
-            let s = GameSettings::from_vars(move |name: &str| {
-                (name == "ARCANUM_RES").then(|| res.to_string())
-            });
+            let s = GameSettings::from_vars(move |name: &str| (name == "ARCANUM_RES").then(|| res.to_string()));
             assert_eq!(s.resolution, DisplayResolution::Fhd, "{res}");
         }
     }
 
     #[test]
     fn window_resolution_is_physical_pixels() {
-        let s = GameSettings {
-            resolution: DisplayResolution::Qhd,
-            ..default()
-        };
+        let s = GameSettings { resolution: DisplayResolution::Qhd, ..default() };
         let r = s.window_resolution();
         assert_eq!((r.physical_width(), r.physical_height()), (2560, 1440));
     }
@@ -672,10 +489,7 @@ mod tests {
     fn resolution_round_trips_as_text() {
         assert_eq!(DisplayResolution::Qhd.to_string(), "2560x1440");
         assert_eq!(DisplayResolution::Custom(1366, 768).to_string(), "1366x768");
-        for r in DisplayResolution::PRESETS
-            .into_iter()
-            .chain([DisplayResolution::Custom(1366, 768)])
-        {
+        for r in DisplayResolution::PRESETS.into_iter().chain([DisplayResolution::Custom(1366, 768)]) {
             assert_eq!(r.to_string().parse(), Ok(r));
         }
     }
@@ -696,40 +510,20 @@ mod tests {
         assert_eq!(s.brightness, 0.5, "not a number: default");
         assert_eq!(s.voice_volume, 0.25, "in range: untouched");
         assert_eq!(s.resolution, DisplayResolution::Fhd);
-        assert_eq!(
-            changed,
-            ["brightness", "effects_volume", "music_volume", "resolution"]
-        );
+        assert_eq!(changed, ["brightness", "effects_volume", "music_volume", "resolution"]);
         assert!(GameSettings::default().sanitize().is_empty());
     }
 
     #[test]
     fn env_overrides_only_touch_what_is_set() {
-        let base = GameSettings {
-            resolution: DisplayResolution::Qhd,
-            fullscreen: true,
-            music_volume: 0.3,
-            ..default()
-        };
+        let base = GameSettings { resolution: DisplayResolution::Qhd, fullscreen: true, music_volume: 0.3, ..default() };
         let mut s = base.clone();
         EnvOverrides::from_vars(|_| None).apply(&mut s);
         assert_eq!(s, base);
         let o = EnvOverrides::from_vars(|name| (name == "ARCANUM_RES").then(|| "1280x720".into()));
-        assert_eq!(
-            o,
-            EnvOverrides {
-                resolution: Some(DisplayResolution::Hd),
-                fullscreen: None
-            }
-        );
+        assert_eq!(o, EnvOverrides { resolution: Some(DisplayResolution::Hd), fullscreen: None });
         o.apply(&mut s);
-        assert_eq!(
-            s,
-            GameSettings {
-                resolution: DisplayResolution::Hd,
-                ..base
-            }
-        );
+        assert_eq!(s, GameSettings { resolution: DisplayResolution::Hd, ..base });
     }
 
     #[test]

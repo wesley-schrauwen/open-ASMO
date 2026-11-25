@@ -24,10 +24,7 @@ pub const TILE_SIZE: Vec2 = Vec2::new(78.0, 40.0);
 pub fn tile_to_world(at: TileLoc, origin: TileLoc) -> Vec2 {
     let dx = i64::from(at.x) - i64::from(origin.x);
     let dy = i64::from(at.y) - i64::from(origin.y);
-    Vec2::new(
-        (i64::from(HALF_TILE.x) * (dy - dx)) as f32,
-        -(i64::from(HALF_TILE.y) * (dx + dy)) as f32,
-    )
+    Vec2::new((i64::from(HALF_TILE.x) * (dy - dx)) as f32, -(i64::from(HALF_TILE.y) * (dx + dy)) as f32)
 }
 
 /// The tile whose diamond holds world position `world` (relative to the centre of tile
@@ -62,11 +59,7 @@ mod tests {
         assert_eq!(tile_to_world(o, o), Vec2::ZERO);
         assert_eq!(tile_to_world(t(100, 101), o), Vec2::new(40.0, -20.0));
         assert_eq!(tile_to_world(t(101, 100), o), Vec2::new(-40.0, -20.0));
-        assert_eq!(
-            tile_to_world(t(101, 101), o),
-            Vec2::new(0.0, -40.0),
-            "one row down"
-        );
+        assert_eq!(tile_to_world(t(101, 101), o), Vec2::new(0.0, -40.0), "one row down");
         assert_eq!(tile_to_world(t(99, 99), o), Vec2::new(0.0, 40.0));
     }
 
@@ -77,42 +70,23 @@ mod tests {
             let c = tile_to_world(at, o);
             assert_eq!(world_to_tile(c, o), Some(at), "centre of {at:?}");
             // Just inside each corner of the diamond.
-            for d in [
-                Vec2::new(39.0, 0.0),
-                Vec2::new(-39.0, 0.0),
-                Vec2::new(0.0, 19.0),
-                Vec2::new(0.0, -19.0),
-            ] {
+            for d in [Vec2::new(39.0, 0.0), Vec2::new(-39.0, 0.0), Vec2::new(0.0, 19.0), Vec2::new(0.0, -19.0)] {
                 assert_eq!(world_to_tile(c + d, o), Some(at), "{at:?} + {d:?}");
             }
         }
-        assert_eq!(
-            world_to_tile(Vec2::new(21.0, -11.0), o),
-            Some(t(100, 101)),
-            "past the lower-right edge"
-        );
+        assert_eq!(world_to_tile(Vec2::new(21.0, -11.0), o), Some(t(100, 101)), "past the lower-right edge");
         // On the edges: up-left and up-right belong to the tile, down-left and down-right not.
         assert_eq!(world_to_tile(Vec2::new(-20.0, 10.0), o), Some(o));
         assert_eq!(world_to_tile(Vec2::new(20.0, 10.0), o), Some(o));
         assert_eq!(world_to_tile(Vec2::new(20.0, -10.0), o), Some(t(100, 101)));
         assert_eq!(world_to_tile(Vec2::new(-20.0, -10.0), o), Some(t(101, 100)));
-        assert_eq!(
-            world_to_tile(Vec2::new(0.0, -10_000.0), t(0, 0)),
-            Some(t(250, 250))
-        );
-        assert_eq!(
-            world_to_tile(Vec2::new(0.0, 100.0), t(0, 0)),
-            None,
-            "off the map"
-        );
+        assert_eq!(world_to_tile(Vec2::new(0.0, -10_000.0), t(0, 0)), Some(t(250, 250)));
+        assert_eq!(world_to_tile(Vec2::new(0.0, 100.0), t(0, 0)), None, "off the map");
     }
 
     #[test]
     fn far_tiles_stay_exact() {
         let o = t(92_928, 82_560);
-        assert_eq!(
-            tile_to_world(t(92_958, 82_592), o),
-            Vec2::new(40.0 * 2.0, -20.0 * 62.0)
-        );
+        assert_eq!(tile_to_world(t(92_958, 82_592), o), Vec2::new(40.0 * 2.0, -20.0 * 62.0));
     }
 }

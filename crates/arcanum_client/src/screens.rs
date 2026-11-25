@@ -26,15 +26,9 @@ pub struct ScreensPlugin;
 impl Plugin for ScreensPlugin {
     fn build(&self, app: &mut App) {
         for (state, title_id, fallback) in PLACEHOLDERS {
-            app.add_systems(
-                OnEnter(state),
-                move |commands: Commands,
-                      text: Option<Res<MenuText>>,
-                      mes: Res<Assets<MesAsset>>,
-                      fonts: Option<Res<ArcanumFonts>>| {
-                    spawn_placeholder(commands, state, title_id, fallback, text, mes, fonts)
-                },
-            );
+            app.add_systems(OnEnter(state), move |commands: Commands, text: Option<Res<MenuText>>, mes: Res<Assets<MesAsset>>, fonts: Option<Res<ArcanumFonts>>| {
+                spawn_placeholder(commands, state, title_id, fallback, text, mes, fonts)
+            });
         }
         app.add_systems(
             Update,
@@ -63,15 +57,7 @@ fn spawn_placeholder(
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
 
     commands
-        .spawn((
-            PlaceholderScreen(state),
-            DespawnOnExit(state),
-            Node {
-                align_items: AlignItems::Center,
-                row_gap: Val::Px(UiFont::Large.ttf_size()),
-                ..panel_node()
-            },
-        ))
+        .spawn((PlaceholderScreen(state), DespawnOnExit(state), Node { align_items: AlignItems::Center, row_gap: Val::Px(UiFont::Large.ttf_size()), ..panel_node() }))
         .with_children(|panel| {
             let mut heading = panel.spawn(TextColor(HOVER_COLOR));
             fonts.insert_text(&mut heading, &title, UiFont::Large);

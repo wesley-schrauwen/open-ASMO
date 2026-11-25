@@ -19,19 +19,16 @@ use bevy::ui_widgets::{Activate, ActivateOnPress, Button};
 use crate::art_loader::ArtFrames;
 use crate::audio::MenuSounds;
 use crate::bitmap_text::Align;
-use crate::character_host::CharacterHost;
 use crate::fonts::{ArcanumFonts, ORIGINAL_SCALE, UiFont};
 use crate::loading::LoadRequest;
 use crate::main_menu::AppState;
-use crate::menu_window::{
-    HoverHelp, MenuWindowPlugin, SCREEN_RED, SCREEN_WHITE, TOP_BAR_HEIGHT, WindowArt, at, rect,
-    screen_root, spawn_frame,
-};
+use crate::menu_window::{HoverHelp, MenuWindowPlugin, SCREEN_RED, SCREEN_WHITE, TOP_BAR_HEIGHT, WindowArt, at, rect, screen_root, spawn_frame};
+use crate::character_host::CharacterHost;
 use crate::premade::{Premade, PremadeCharacters, split_story};
+use arcanum_rules::CharacterAction;
 use crate::resource_pack::paths::interface;
 use crate::vfs_asset::VfsResource;
 use crate::widgets::FrameButton;
-use arcanum_rules::CharacterAction;
 
 /// What a New Game button does.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,55 +72,27 @@ struct NewGameArt {
 }
 
 // Layout in original pixels on the background (add TOP_BAR_HEIGHT for the screen).
-const PORTRAIT: Rect = Rect {
-    min: Vec2::new(95.0, 28.0),
-    max: Vec2::new(223.0, 156.0),
-};
+const PORTRAIT: Rect = Rect { min: Vec2::new(95.0, 28.0), max: Vec2::new(223.0, 156.0) };
 const LEFT_ARROW_AT: Vec2 = Vec2::new(43.0, 118.0 - TOP_BAR_HEIGHT);
 const RIGHT_ARROW_AT: Vec2 = Vec2::new(244.0, 118.0 - TOP_BAR_HEIGHT);
 const ARROW_SIZE: Vec2 = Vec2::new(36.0, 36.0);
-const NAME_BAR: Rect = Rect {
-    min: Vec2::new(46.0, 183.0),
-    max: Vec2::new(274.0, 202.0),
-};
+const NAME_BAR: Rect = Rect { min: Vec2::new(46.0, 183.0), max: Vec2::new(274.0, 202.0) };
 const BARS: [Rect; 3] = [
-    Rect {
-        min: Vec2::new(66.0, 243.0),
-        max: Vec2::new(252.0, 262.0),
-    },
-    Rect {
-        min: Vec2::new(66.0, 293.0),
-        max: Vec2::new(252.0, 312.0),
-    },
-    Rect {
-        min: Vec2::new(66.0, 343.0),
-        max: Vec2::new(252.0, 362.0),
-    },
+    Rect { min: Vec2::new(66.0, 243.0), max: Vec2::new(252.0, 262.0) },
+    Rect { min: Vec2::new(66.0, 293.0), max: Vec2::new(252.0, 312.0) },
+    Rect { min: Vec2::new(66.0, 343.0), max: Vec2::new(252.0, 362.0) },
 ];
-const STATS_HEADING: Rect = Rect {
-    min: Vec2::new(339.0, 23.0),
-    max: Vec2::new(748.0, 42.0),
-};
-const STORY_BODY: Rect = Rect {
-    min: Vec2::new(350.0, 155.0),
-    max: Vec2::new(745.0, 367.0),
-};
+const STATS_HEADING: Rect = Rect { min: Vec2::new(339.0, 23.0), max: Vec2::new(748.0, 42.0) };
+const STORY_BODY: Rect = Rect { min: Vec2::new(350.0, 155.0), max: Vec2::new(745.0, 367.0) };
 
 /// On the screen: background pixels moved below the top bar.
 fn on_screen(r: Rect) -> Rect {
-    Rect::from_corners(
-        r.min + Vec2::Y * TOP_BAR_HEIGHT,
-        r.max + Vec2::Y * TOP_BAR_HEIGHT,
-    )
+    Rect::from_corners(r.min + Vec2::Y * TOP_BAR_HEIGHT, r.max + Vec2::Y * TOP_BAR_HEIGHT)
 }
 
 /// The three detail bars' text for a character: gender, race, background title.
 pub fn bar_texts(p: &Premade) -> [String; 3] {
-    [
-        p.gender.clone(),
-        p.race.clone(),
-        split_story(&p.story).0.to_string(),
-    ]
+    [p.gender.clone(), p.race.clone(), split_story(&p.story).0.to_string()]
 }
 
 pub struct NewGamePlugin;
@@ -135,37 +104,21 @@ impl Plugin for NewGamePlugin {
         }
         app.init_resource::<PickerIndex>()
             .init_resource::<CharacterHost>()
-            .add_systems(
-                Startup,
-                |mut commands: Commands, assets: Res<AssetServer>| {
-                    commands.insert_resource(NewGameArt {
-                        background: assets.load(interface::PREGEN_BACK),
-                        left: assets.load(interface::PICKER_LEFT),
-                        right: assets.load(interface::PICKER_RIGHT),
-                    });
-                },
-            )
-            .add_systems(
-                OnEnter(AppState::NewGame),
-                (
-                    load_premades,
-                    crate::create_character::load_creation_data,
-                    build_screen,
-                )
-                    .chain(),
-            )
+            .add_systems(Startup, |mut commands: Commands, assets: Res<AssetServer>| {
+                commands.insert_resource(NewGameArt {
+                    background: assets.load(interface::PREGEN_BACK),
+                    left: assets.load(interface::PICKER_LEFT),
+                    right: assets.load(interface::PICKER_RIGHT),
+                });
+            })
+            .add_systems(OnEnter(AppState::NewGame), (load_premades, crate::create_character::load_creation_data, build_screen).chain())
             .add_systems(Update, show_character.run_if(in_state(AppState::NewGame)))
             .add_observer(on_activate);
     }
 }
 
 /// Reads the pre-made characters the first time the screen opens.
-fn load_premades(
-    mut commands: Commands,
-    existing: Option<Res<PremadeCharacters>>,
-    vfs: Option<Res<VfsResource>>,
-    mut index: ResMut<PickerIndex>,
-) {
+fn load_premades(mut commands: Commands, existing: Option<Res<PremadeCharacters>>, vfs: Option<Res<VfsResource>>, mut index: ResMut<PickerIndex>) {
     index.0 = 0;
     if existing.is_some() {
         return;
@@ -182,43 +135,32 @@ fn load_premades(
     }
 }
 
-fn build_screen(
-    mut commands: Commands,
-    art: Res<NewGameArt>,
-    frame: Res<WindowArt>,
-    fonts: Option<Res<ArcanumFonts>>,
-) {
+fn build_screen(mut commands: Commands, art: Res<NewGameArt>, frame: Res<WindowArt>, fonts: Option<Res<ArcanumFonts>>) {
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-    commands
-        .spawn((
-            NewGameScreen,
-            DespawnOnExit(AppState::NewGame),
-            screen_root(),
-        ))
-        .with_children(|screen| {
-            spawn_frame(
-                screen,
-                &frame,
-                &fonts,
-                art.background.clone(),
-                NewGameAction::Back,
-                (NewGameAction::Next, HoverHelp(7003, "Next Screen")),
-            );
-            for (action, frames, pos) in [
-                (NewGameAction::Previous, &art.left, LEFT_ARROW_AT),
-                (NewGameAction::Following, &art.right, RIGHT_ARROW_AT),
-            ] {
-                screen.spawn((
-                    action,
-                    Button,
-                    ActivateOnPress,
-                    Hovered::default(),
-                    FrameButton::arrow(frames.clone()),
-                    ImageNode::default(),
-                    at(on_screen(rect(pos, ARROW_SIZE))),
-                ));
-            }
-        });
+    commands.spawn((NewGameScreen, DespawnOnExit(AppState::NewGame), screen_root())).with_children(|screen| {
+        spawn_frame(
+            screen,
+            &frame,
+            &fonts,
+            art.background.clone(),
+            NewGameAction::Back,
+            (NewGameAction::Next, HoverHelp(7003, "Next Screen")),
+        );
+        for (action, frames, pos) in [
+            (NewGameAction::Previous, &art.left, LEFT_ARROW_AT),
+            (NewGameAction::Following, &art.right, RIGHT_ARROW_AT),
+        ] {
+            screen.spawn((
+                action,
+                Button,
+                ActivateOnPress,
+                Hovered::default(),
+                FrameButton::arrow(frames.clone()),
+                ImageNode::default(),
+                at(on_screen(rect(pos, ARROW_SIZE))),
+            ));
+        }
+    });
 }
 
 /// (Re)draws the current character when the screen or the selection changes.
@@ -248,9 +190,7 @@ fn show_character(
     for old in &contents {
         commands.entity(old).despawn();
     }
-    let Some(p) = premades.0.get(index.0).cloned() else {
-        return;
-    };
+    let Some(p) = premades.0.get(index.0).cloned() else { return };
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
     let body = split_story(&p.story).1.to_string();
     let portrait = p.portrait.clone().map(|path| assets.load::<Image>(path));
@@ -260,12 +200,7 @@ fn show_character(
             // A full-screen layer added after the buttons: it must let the pointer through, or it
             // swallows every hover and click on the arrows, Back and Next.
             bevy::picking::Pickable::IGNORE,
-            Node {
-                position_type: PositionType::Absolute,
-                width: Val::Percent(100.0),
-                height: Val::Percent(100.0),
-                ..default()
-            },
+            Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() },
         ))
         .with_children(|c| {
             if let Some(image) = portrait {
@@ -273,47 +208,22 @@ fn show_character(
             }
             // Fonts and colours as the original's slots: name morph15 red, bars Flare12 red,
             // headings morph15 white, story Flare12 white.
-            let mut centred =
-                |r: Rect, text: &str, which: PickerText, font: UiFont, colour: Color| {
-                    c.spawn(Node {
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        overflow: Overflow::clip(),
-                        ..at(on_screen(r))
-                    })
+            let mut centred = |r: Rect, text: &str, which: PickerText, font: UiFont, colour: Color| {
+                c.spawn(Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, overflow: Overflow::clip(), ..at(on_screen(r)) })
                     .with_children(|cell| {
                         let mut t = cell.spawn((which, TextColor(colour)));
                         fonts.insert_text(&mut t, text, font);
                     });
-                };
-            centred(
-                NAME_BAR,
-                &p.name,
-                PickerText::Name,
-                UiFont::Small,
-                SCREEN_RED,
-            );
+            };
+            centred(NAME_BAR, &p.name, PickerText::Name, UiFont::Small, SCREEN_RED);
             for (i, (r, text)) in BARS.iter().zip(bar_texts(&p)).enumerate() {
                 centred(*r, &text, PickerText::Bar(i), UiFont::Body, SCREEN_RED);
             }
-            centred(
-                STATS_HEADING,
-                &stats_heading,
-                PickerText::StatsHeading,
-                UiFont::Small,
-                SCREEN_WHITE,
-            );
+            centred(STATS_HEADING, &stats_heading, PickerText::StatsHeading, UiFont::Small, SCREEN_WHITE);
             // The body wraps to the panel and shows the whole lines that fit (no scrolling yet).
-            c.spawn(Node {
-                overflow: Overflow::clip(),
-                ..at(on_screen(STORY_BODY))
-            })
-            .with_children(|panel| {
+            c.spawn(Node { overflow: Overflow::clip(), ..at(on_screen(STORY_BODY)) }).with_children(|panel| {
                 let mut t = panel.spawn((PickerText::StoryBody, TextColor(SCREEN_WHITE)));
-                let (w, h) = (
-                    STORY_BODY.width() * ORIGINAL_SCALE,
-                    STORY_BODY.height() * ORIGINAL_SCALE,
-                );
+                let (w, h) = (STORY_BODY.width() * ORIGINAL_SCALE, STORY_BODY.height() * ORIGINAL_SCALE);
                 fonts.insert_block(&mut t, &body, UiFont::Body, w, Some(h), Align::Left);
             });
         })
@@ -332,9 +242,7 @@ fn on_activate(
     sounds: Option<Res<MenuSounds>>,
     mut host: ResMut<CharacterHost>,
 ) {
-    let Ok(&action) = actions.get(activate.entity) else {
-        return;
-    };
+    let Ok(&action) = actions.get(activate.entity) else { return };
     if let Some(sounds) = &sounds {
         sounds.play_button_press(&mut commands);
     }
@@ -345,15 +253,11 @@ fn on_activate(
         NewGameAction::Following if count > 0 => index.0 = (index.0 + 1) % count,
         NewGameAction::Previous | NewGameAction::Following => {}
         NewGameAction::Next => {
-            let Some(p) = premades.as_ref().and_then(|p| p.0.get(index.0)) else {
-                return;
-            };
+            let Some(p) = premades.as_ref().and_then(|p| p.0.get(index.0)) else { return };
             // The host takes the pre-made from its own rules data, built from the same prototype.
             let rules = data.as_ref().map(|d| d.rules.clone()).unwrap_or_default();
             host.reset(&rules);
-            let picked = host
-                .apply(&rules, CharacterAction::PickPremade(p.prototype))
-                .and_then(|()| host.finish(&rules).map(|_| ()));
+            let picked = host.apply(&rules, CharacterAction::PickPremade(p.prototype)).and_then(|()| host.finish(&rules).map(|_| ()));
             if let Err(e) = picked {
                 warn!("pre-made character {} cannot be picked: {e:?}", p.prototype);
                 return;

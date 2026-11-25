@@ -48,19 +48,12 @@ impl Plugin for SkillUsePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SkillTargeting>()
             .init_resource::<SkillResults>()
-            .add_systems(
-                Update,
-                (cancel_targeting, show_results).run_if(in_state(AppState::InGame)),
-            );
+            .add_systems(Update, (cancel_targeting, show_results).run_if(in_state(AppState::InGame)));
     }
 }
 
 /// A right click or Escape puts the skill away.
-fn cancel_targeting(
-    mut targeting: ResMut<SkillTargeting>,
-    buttons: Res<ButtonInput<MouseButton>>,
-    mut keys: ResMut<ButtonInput<KeyCode>>,
-) {
+fn cancel_targeting(mut targeting: ResMut<SkillTargeting>, buttons: Res<ButtonInput<MouseButton>>, mut keys: ResMut<ButtonInput<KeyCode>>) {
     if targeting.0.is_none() {
         return;
     }
@@ -70,12 +63,7 @@ fn cancel_targeting(
 }
 
 /// Posts the host's answers in the message box.
-fn show_results(
-    mut results: ResMut<SkillResults>,
-    data: Option<Res<crate::create_character::CreationData>>,
-    boxed: Option<ResMut<crate::message_box::MessageBox>>,
-    time: Option<Res<Time<Real>>>,
-) {
+fn show_results(mut results: ResMut<SkillResults>, data: Option<Res<crate::create_character::CreationData>>, boxed: Option<ResMut<crate::message_box::MessageBox>>, time: Option<Res<Time<Real>>>) {
     if results.0.is_empty() {
         return;
     }
@@ -95,9 +83,6 @@ fn show_results(
                 .unwrap_or("")
                 .to_string(),
         };
-        boxed.post(
-            crate::message_box::BoxMessage::plain(text),
-            time.as_ref().map_or(0.0, |t| t.elapsed_secs_f64()),
-        );
+        boxed.post(crate::message_box::BoxMessage::plain(text), time.as_ref().map_or(0.0, |t| t.elapsed_secs_f64()));
     }
 }

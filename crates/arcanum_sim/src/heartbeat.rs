@@ -54,14 +54,7 @@ pub fn run_heartbeats(
     mut map: ResMut<LoadedMap>,
     mut outbox: ResMut<Outbox>,
     pcs: Query<(&PlayerControlled, &Position)>,
-    mut npcs: Query<
-        (
-            &crate::NpcSource,
-            &Position,
-            Option<&mut crate::Standpoints>,
-        ),
-        Without<PlayerControlled>,
-    >,
+    mut npcs: Query<(&crate::NpcSource, &Position, Option<&mut crate::Standpoints>), Without<PlayerControlled>>,
 ) {
     beats.now_ms += (1000.0 / crate::TICK_HZ) as u64;
     let now = beats.now_ms;
@@ -81,35 +74,18 @@ pub fn run_heartbeats(
             if !beats.seen.insert((sector, index)) {
                 continue;
             }
-            let is_npc = map.mobiles[&sector][index as usize].object_type
-                == arcanum_formats::object::TYPE_NPC;
+            let is_npc = map.mobiles[&sector][index as usize].object_type == arcanum_formats::object::TYPE_NPC;
             let object = ScriptObject::Mobile { sector, index };
-            let scripted = [EVENT_FIRST_HEARTBEAT, EVENT_HEARTBEAT]
-                .iter()
-                .any(|&e| map.attachment(object, e).number != 0);
+            let scripted = [EVENT_FIRST_HEARTBEAT, EVENT_HEARTBEAT].iter().any(|&e| map.attachment(object, e).number != 0);
             if is_npc && scripted {
-                beats.beats.insert(
-                    (sector, index),
-                    Beat {
-                        due_ms: now + 1,
-                        first: true,
-                    },
-                );
+                beats.beats.insert((sector, index), Beat { due_ms: now + 1, first: true });
             }
         }
     }
-    let pcs: Vec<(PlayerId, arcanum_formats::map::TileLoc)> =
-        pcs.iter().map(|(p, at)| (p.0, at.0)).collect();
-    let due: Vec<(SectorId, u32)> = beats
-        .beats
-        .iter()
-        .filter(|(_, b)| b.due_ms <= now)
-        .map(|(&k, _)| k)
-        .collect();
+    let pcs: Vec<(PlayerId, arcanum_formats::map::TileLoc)> = pcs.iter().map(|(p, at)| (p.0, at.0)).collect();
+    let due: Vec<(SectorId, u32)> = beats.beats.iter().filter(|(_, b)| b.due_ms <= now).map(|(&k, _)| k).collect();
     for (sector, index) in due {
-        let Some(beat) = beats.beats.get(&(sector, index)).copied() else {
-            continue;
-        };
+        let Some(beat) = beats.beats.get(&(sector, index)).copied() else { continue };
         // The dead beat no more (0x4ad200: no events; the corpse clean-up is not built).
         if map.is_dead(sector, index) {
             beats.beats.remove(&(sector, index));
@@ -120,43 +96,18 @@ pub fn run_heartbeats(
             .iter()
             .find(|(s, ..)| s.sector == sector && s.index == index)
             .map(|(_, p, _)| p.0)
-            .or_else(|| {
-                map.mobiles
-                    .get(&sector)
-                    .and_then(|m| m.get(index as usize))
-                    .and_then(crate::object_location)
-            });
-        let nearest = at.and_then(|at| {
-            pcs.iter()
-                .map(|&(p, pc)| (crate::tile_distance(pc, at), p))
-                .min()
-        });
+            .or_else(|| map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).and_then(crate::object_location));
+        let nearest = at.and_then(|at| pcs.iter().map(|&(p, pc)| (crate::tile_distance(pc, at), p)).min());
         let distance = nearest.map_or(HEARTBEAT_RANGE, |(d, _)| d.min(HEARTBEAT_RANGE));
         let mut skip_default = false;
         if let Some((_, player)) = nearest {
             let mut beat_on = true;
             if beat.first {
-                let r = host.hook_by(
-                    &mut world,
-                    &mut map,
-                    &mut outbox,
-                    object,
-                    EVENT_FIRST_HEARTBEAT,
-                    player,
-                    object,
-                );
+                let r = host.hook_by(&mut world, &mut map, &mut outbox, object, EVENT_FIRST_HEARTBEAT, player, object);
                 beat_on = r == HookResult::RunDefault;
             }
             if beat_on && distance < HEARTBEAT_RANGE {
-                skip_default = host.hook_by(
-                    &mut world,
-                    &mut map,
-                    &mut outbox,
-                    object,
-                    EVENT_HEARTBEAT,
-                    player,
-                    object,
-                ) == HookResult::SkipDefault;
+                skip_default = host.hook_by(&mut world, &mut map, &mut outbox, object, EVENT_HEARTBEAT, player, object) == HookResult::SkipDefault;
             }
         }
         let mut delay = u64::from(crate::ai_delay_ms(distance));
@@ -164,17 +115,12 @@ pub fn run_heartbeats(
             delay += u64::from(host.rng().range(0, 5000) as u32);
         }
         if skip_default
-            && let Some((.., Some(mut standpoints))) = npcs
-                .iter_mut()
-                .find(|(s, ..)| s.sector == sector && s.index == index)
+            && let Some((.., Some(mut standpoints))) = npcs.iter_mut().find(|(s, ..)| s.sector == sector && s.index == index)
         {
             standpoints.next_think_ms = standpoints.next_think_ms.max(delay as u32);
         }
         if let Some(b) = beats.beats.get_mut(&(sector, index)) {
-            *b = Beat {
-                due_ms: now + delay,
-                first: false,
-            };
+            *b = Beat { due_ms: now + delay, first: false };
         }
     }
 }

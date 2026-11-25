@@ -6,12 +6,12 @@
 //! (single player, and the host of a LAN game). [`lan`] carries both ends over the LAN
 //! (TCP for messages that must arrive, UDP for those that may be lost); Steam comes later.
 
-pub mod lan;
 pub mod local;
 pub mod loopback;
 pub mod transport;
+pub mod lan;
 
-pub use lan::{LanClient, LanHost};
 pub use local::LocalHost;
 pub use loopback::{LoopbackClient, LoopbackHost};
 pub use transport::{ClientTransport, HostTransport, TransportError};
+pub use lan::{LanClient, LanHost};

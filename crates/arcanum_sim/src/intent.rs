@@ -28,33 +28,20 @@ pub enum PlayerIntent {
     /// A change to the player's own PC's sheet from the character screen ([`crate::sheet`]).
     /// `seq` counts up per client; the host answers each with a
     /// [`SheetUpdate`](crate::LedgerDelta::SheetUpdate) carrying it.
-    Sheet {
-        seq: u32,
-        request: crate::SheetRequest,
-    },
+    Sheet { seq: u32, request: crate::SheetRequest },
     /// A change to the player's own PC's inventory (the inventory screen). `seq` counts up per
     /// client; the host answers each with an [`Inventory`](crate::LedgerDelta::Inventory)
     /// carrying it.
-    Inventory {
-        seq: u32,
-        request: crate::InventoryRequest,
-    },
+    Inventory { seq: u32, request: crate::InventoryRequest },
     /// Pick up an item off the ground once the PC is within [`crate::USE_RANGE`] of it. `seq` is
     /// the move sent with it (a newer move cancels it).
     PickUp { item: crate::GroundItemId, seq: u32 },
     /// Pick the lock of a door or container ([`crate::lockpick`]) once the PC is within
     /// [`crate::USE_RANGE`] of it, with the lockpick at inventory location `tool` (if any).
     /// `seq` is the move sent with it (a newer move cancels it).
-    PickLock {
-        target: crate::LockTarget,
-        tool: Option<i32>,
-        seq: u32,
-    },
+    PickLock { target: crate::LockTarget, tool: Option<i32>, seq: u32 },
     /// Cast `spell` on a door or container from where the PC stands ([`crate::magick`]).
-    Cast {
-        spell: usize,
-        target: crate::LockTarget,
-    },
+    Cast { spell: usize, target: crate::LockTarget },
     /// Open the sleep window ([`crate::rest`]): the host answers with
     /// [`RestWindow`](crate::LedgerDelta::RestWindow) or [`RestRefused`](crate::LedgerDelta::RestRefused).
     RestWindow,

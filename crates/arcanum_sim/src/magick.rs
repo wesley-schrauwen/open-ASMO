@@ -28,10 +28,7 @@
 use arcanum_rules::{CharacterSheet, SPELLS_PER_COLLEGE};
 use bevy_ecs::prelude::{Commands, Component, Entity, Query, Res, ResMut, Resource};
 
-use crate::{
-    LedgerDelta, LoadedMap, LockTarget, NetId, Outbox, PlayerControlled, PlayerId, Position,
-    Session, Sheet, SimRules, WorldState, pc_status,
-};
+use crate::{LedgerDelta, LoadedMap, LockTarget, NetId, Outbox, PlayerControlled, PlayerId, Position, Session, Sheet, SimRules, WorldState, pc_status};
 
 /// The Unlocking Cantrip.
 pub const SPELL_UNLOCKING_CANTRIP: usize = 1;
@@ -71,13 +68,7 @@ pub fn recover_fatigue(
     session: Res<Session>,
     rules: Res<SimRules>,
     mut outbox: ResMut<Outbox>,
-    mut pcs: Query<(
-        Entity,
-        &NetId,
-        &PlayerControlled,
-        &mut Sheet,
-        Option<&FatigueRecovery>,
-    )>,
+    mut pcs: Query<(Entity, &NetId, &PlayerControlled, &mut Sheet, Option<&FatigueRecovery>)>,
 ) {
     let now = game_ms(clock.now);
     for (entity, &net_id, player, mut sheet, recovery) in &mut pcs {
@@ -88,43 +79,25 @@ pub fn recover_fatigue(
             continue;
         }
         let Some(&FatigueRecovery { due }) = recovery else {
-            commands.entity(entity).insert(FatigueRecovery {
-                due: now + RECOVERY_MS,
-            });
+            commands.entity(entity).insert(FatigueRecovery { due: now + RECOVERY_MS });
             continue;
         };
         if now < due {
             continue;
         }
         let steps = 1 + (now - due) / RECOVERY_MS;
-        sheet.0.fatigue_damage = recovered(
-            sheet.0.fatigue_damage,
-            rules.0.derived(&sheet.0).heal_rate,
-            steps,
-        );
-        commands.entity(entity).insert(FatigueRecovery {
-            due: due + steps * RECOVERY_MS,
-        });
+        sheet.0.fatigue_damage = recovered(sheet.0.fatigue_damage, rules.0.derived(&sheet.0).heal_rate, steps);
+        commands.entity(entity).insert(FatigueRecovery { due: due + steps * RECOVERY_MS });
         if let Some(saved) = world.0.as_mut().and_then(|w| w.players.get_mut(&player.0)) {
             saved.blueprint.sheet = sheet.0.clone();
         }
-        crate::ground::broadcast(
-            &session,
-            &mut outbox,
-            LedgerDelta::PcStatus {
-                net_id,
-                status: pc_status(&rules.0, &sheet.0),
-            },
-        );
+        crate::ground::broadcast(&session, &mut outbox, LedgerDelta::PcStatus { net_id, status: pc_status(&rules.0, &sheet.0) });
     }
 }
 
 /// Whether `sheet` knows `spell`: spells are known in order within a college.
 pub fn knows_spell(sheet: &CharacterSheet, spell: usize) -> bool {
-    sheet
-        .spells
-        .get(spell / SPELLS_PER_COLLEGE)
-        .is_some_and(|&known| known > (spell % SPELLS_PER_COLLEGE) as i32)
+    sheet.spells.get(spell / SPELLS_PER_COLLEGE).is_some_and(|&known| known > (spell % SPELLS_PER_COLLEGE) as i32)
 }
 
 /// Whether fatigue `current` pays `cost` (0x450420).
@@ -142,12 +115,7 @@ pub enum CastRefusal {
 }
 
 /// Checks a cast of `spell` by `sheet` with fatigue `current`; `Ok` is the cost.
-pub fn cast_check(
-    rules: &arcanum_rules::RulesData,
-    sheet: &CharacterSheet,
-    current: i32,
-    spell: usize,
-) -> Result<i32, CastRefusal> {
+pub fn cast_check(rules: &arcanum_rules::RulesData, sheet: &CharacterSheet, current: i32, spell: usize) -> Result<i32, CastRefusal> {
     if !knows_spell(sheet, spell) || rules.stats(sheet)[4] < MIN_INTELLIGENCE || current < 1 {
         return Err(CastRefusal::Silent);
     }
@@ -174,16 +142,11 @@ pub fn cast_spells(
     mut pcs: Query<(&NetId, &PlayerControlled, &Position, &mut Sheet)>,
 ) {
     for (player, spell, target) in requests.0.drain(..) {
-        let Some((&net_id, _, position, mut sheet)) = pcs.iter_mut().find(|pc| pc.1.0 == player)
-        else {
-            continue;
-        };
+        let Some((&net_id, _, position, mut sheet)) = pcs.iter_mut().find(|pc| pc.1.0 == player) else { continue };
         if spell != SPELL_UNLOCKING_CANTRIP {
             continue;
         }
-        let Some(location) = map.lock_location(target) else {
-            continue;
-        };
+        let Some(location) = map.lock_location(target) else { continue };
         if !crate::within_radius(position.0, location, CAST_RANGE) {
             continue;
         }
@@ -191,29 +154,18 @@ pub fn cast_spells(
         let cost = match cast_check(&rules.0, &sheet.0, current, spell) {
             Ok(cost) => cost,
             Err(CastRefusal::NoEnergy) => {
-                outbox.0.push((
-                    player,
-                    LedgerDelta::SpellResult {
-                        message: NOT_ENOUGH_ENERGY,
-                    },
-                ));
+                outbox.0.push((player, LedgerDelta::SpellResult { message: NOT_ENOUGH_ENERGY }));
                 continue;
             }
             Err(CastRefusal::Silent) => continue,
         };
-        let Some(flags) = map.lock_flags(target) else {
-            continue;
-        };
+        let Some(flags) = map.lock_flags(target) else { continue };
         sheet.0.fatigue_damage += cost;
         if let Some(saved) = world.0.as_mut().and_then(|w| w.players.get_mut(&player)) {
             saved.blueprint.sheet = sheet.0.clone();
         }
         let status = pc_status(&rules.0, &sheet.0);
-        crate::ground::broadcast(
-            &session,
-            &mut outbox,
-            LedgerDelta::PcStatus { net_id, status },
-        );
+        crate::ground::broadcast(&session, &mut outbox, LedgerDelta::PcStatus { net_id, status });
         let changed = flags & !crate::OPF_LOCKED;
         if changed != flags {
             map.set_lock_flags(target, changed);
@@ -222,14 +174,7 @@ pub fn cast_spells(
                 LockTarget::Container(id) => id.sector(),
             };
             crate::ground::save_change(&mut world, &map, sector);
-            crate::ground::broadcast(
-                &session,
-                &mut outbox,
-                LedgerDelta::LockChanged {
-                    target,
-                    flags: changed,
-                },
-            );
+            crate::ground::broadcast(&session, &mut outbox, LedgerDelta::LockChanged { target, flags: changed });
         }
     }
 }
@@ -264,27 +209,12 @@ mod tests {
         assert!(affords(0, 14));
         assert!(!affords(0, 15));
         let mut rules = arcanum_rules::RulesData::default();
-        rules.spells.spells = (0..arcanum_rules::SPELLS)
-            .map(|i| arcanum_rules::Spell {
-                name: String::new(),
-                description: String::new(),
-                college: i / 5,
-                cost: 10,
-            })
-            .collect();
+        rules.spells.spells = (0..arcanum_rules::SPELLS).map(|i| arcanum_rules::Spell { name: String::new(), description: String::new(), college: i / 5, cost: 10 }).collect();
         let mut sheet = CharacterSheet::default();
-        assert_eq!(
-            cast_check(&rules, &sheet, 30, 1),
-            Err(CastRefusal::Silent),
-            "not known"
-        );
+        assert_eq!(cast_check(&rules, &sheet, 30, 1), Err(CastRefusal::Silent), "not known");
         sheet.spells[0] = 2;
         assert_eq!(cast_check(&rules, &sheet, 30, 1), Ok(10));
         assert_eq!(cast_check(&rules, &sheet, 3, 1), Ok(10), "down to -7");
-        assert_eq!(
-            cast_check(&rules, &sheet, 0, 1),
-            Err(CastRefusal::Silent),
-            "unconscious"
-        );
+        assert_eq!(cast_check(&rules, &sheet, 0, 1), Err(CastRefusal::Silent), "unconscious");
     }
 }

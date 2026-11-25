@@ -3,10 +3,7 @@
 //! Every operation takes the current sheet and returns a new one (or a [`Refusal`]), so the same
 //! call can preview a change on the client and apply it on the host.
 
-use crate::data::{
-    Background, Effect, EffectTarget, MAX_FATIGUE, MAX_HIT_POINTS, RACE_EFFECT_BASE, RESISTANCES,
-    RulesData, race_gender_code,
-};
+use crate::data::{Background, Effect, EffectTarget, MAX_FATIGUE, MAX_HIT_POINTS, RACE_EFFECT_BASE, RESISTANCES, RulesData, race_gender_code};
 use crate::sheet::*;
 
 /// The highest value primary stat `stat` can reach for `race` (Arcanum.exe 0x4b0fd0; 20 unless
@@ -81,18 +78,12 @@ impl Derived {
 /// Character points for going from level `from` to `to` (0x4a6980): one a level, one more at
 /// each fifth.
 pub fn level_points(from: i32, to: i32) -> i32 {
-    (from + 1..=to)
-        .map(|l| if l % 5 == 0 { 2 } else { 1 })
-        .sum()
+    (from + 1..=to).map(|l| if l % 5 == 0 { 2 } else { 1 }).sum()
 }
 
 /// Steps `index` through `count` choices with wrap.
 fn wrap(index: usize, count: usize, delta: i32) -> usize {
-    if count == 0 {
-        0
-    } else {
-        (index as i64 + i64::from(delta)).rem_euclid(count as i64) as usize
-    }
+    if count == 0 { 0 } else { (index as i64 + i64::from(delta)).rem_euclid(count as i64) as usize }
 }
 
 impl RulesData {
@@ -100,53 +91,34 @@ impl RulesData {
     /// portrait, base 8 in every stat, 5 points.
     pub fn new_sheet(&self) -> CharacterSheet {
         let s = CharacterSheet::default();
-        CharacterSheet {
-            background: self.first_background(s.race, s.gender),
-            ..s
-        }
+        CharacterSheet { background: self.first_background(s.race, s.gender), ..s }
     }
 
     fn first_background(&self, race: u8, gender: u8) -> u32 {
-        self.backgrounds_for(race, gender)
-            .first()
-            .map_or(0, |b| b.id)
+        self.backgrounds_for(race, gender).first().map_or(0, |b| b.id)
     }
 
     /// Backgrounds legal for this race and gender, in file order (the first is "no background").
     pub fn backgrounds_for(&self, race: u8, gender: u8) -> Vec<&Background> {
-        self.backgrounds
-            .iter()
-            .filter(|b| b.allows(race, gender))
-            .collect()
+        self.backgrounds.iter().filter(|b| b.allows(race, gender)).collect()
     }
 
     fn portrait_entries(&self, race: u8, gender: u8) -> Vec<&(u32, String)> {
         let code = race_gender_code(race, gender);
         self.portraits
             .iter()
-            .filter(|(_, stem)| {
-                stem.len() > code.len()
-                    && stem.starts_with(&code)
-                    && stem[code.len()..].chars().all(|c| c.is_ascii_digit())
-            })
+            .filter(|(_, stem)| stem.len() > code.len() && stem.starts_with(&code) && stem[code.len()..].chars().all(|c| c.is_ascii_digit()))
             .collect()
     }
 
     /// Portrait file stems for this race and gender (`DWM1`, `DWM2`, ...).
     pub fn portraits_for(&self, race: u8, gender: u8) -> Vec<&str> {
-        self.portrait_entries(race, gender)
-            .into_iter()
-            .map(|(_, stem)| stem.as_str())
-            .collect()
+        self.portrait_entries(race, gender).into_iter().map(|(_, stem)| stem.as_str()).collect()
     }
 
     /// The race or gender changed: back to the first background and portrait.
     fn reset_choices(&self, s: CharacterSheet) -> CharacterSheet {
-        CharacterSheet {
-            background: self.first_background(s.race, s.gender),
-            portrait: None,
-            ..s
-        }
+        CharacterSheet { background: self.first_background(s.race, s.gender), portrait: None, ..s }
     }
 
     /// Steps the race by `delta`, skipping races that do not allow the current gender. Resets
@@ -159,10 +131,7 @@ impl RulesData {
                 break;
             }
         }
-        self.reset_choices(CharacterSheet {
-            race: race as u8,
-            ..s.clone()
-        })
+        self.reset_choices(CharacterSheet { race: race as u8, ..s.clone() })
     }
 
     /// Switches gender if the race allows it.
@@ -171,35 +140,21 @@ impl RulesData {
         if gender == FEMALE && !FEMALE_ALLOWED[s.race as usize % RACE_COUNT] {
             return Err(Refusal::NotAllowed);
         }
-        Ok(self.reset_choices(CharacterSheet {
-            gender,
-            ..s.clone()
-        }))
+        Ok(self.reset_choices(CharacterSheet { gender, ..s.clone() }))
     }
 
     pub fn step_portrait(&self, s: &CharacterSheet, delta: i32) -> CharacterSheet {
         let list = self.portrait_entries(s.race, s.gender);
-        let at = s
-            .portrait
-            .and_then(|id| list.iter().position(|(p, _)| *p == id))
-            .unwrap_or(0);
+        let at = s.portrait.and_then(|id| list.iter().position(|(p, _)| *p == id)).unwrap_or(0);
         let portrait = list.get(wrap(at, list.len(), delta)).map(|(id, _)| *id);
-        CharacterSheet {
-            portrait,
-            ..s.clone()
-        }
+        CharacterSheet { portrait, ..s.clone() }
     }
 
     pub fn step_background(&self, s: &CharacterSheet, delta: i32) -> CharacterSheet {
         let list = self.backgrounds_for(s.race, s.gender);
         let at = list.iter().position(|b| b.id == s.background).unwrap_or(0);
-        let background = list
-            .get(wrap(at, list.len(), delta))
-            .map_or(s.background, |b| b.id);
-        CharacterSheet {
-            background,
-            ..s.clone()
-        }
+        let background = list.get(wrap(at, list.len(), delta)).map_or(s.background, |b| b.id);
+        CharacterSheet { background, ..s.clone() }
     }
 
     /// Sets the name, keeping at most [`MAX_NAME`] characters the game's fonts can show.
@@ -214,9 +169,7 @@ impl RulesData {
 
     /// The sheet's background: one legal for its race and gender, or a pre-made's own (`NPC`).
     pub fn background(&self, s: &CharacterSheet) -> Option<&Background> {
-        self.backgrounds
-            .iter()
-            .find(|b| b.id == s.background && (b.npc || b.allows(s.race, s.gender)))
+        self.backgrounds.iter().find(|b| b.id == s.background && (b.npc || b.allows(s.race, s.gender)))
     }
 
     pub fn portrait(&self, s: &CharacterSheet) -> Option<&str> {
@@ -244,31 +197,22 @@ impl RulesData {
     /// The flat parts of every effect held, summed (for the aptitude, magick and tech points and
     /// the alignment).
     pub(crate) fn character_effects(&self, s: &CharacterSheet) -> Effect {
-        self.effect_ids(s)
-            .into_iter()
-            .map(|id| self.effect(id))
-            .fold(Effect::default(), |a, e| Effect {
-                stats: std::array::from_fn(|i| a.stats[i] + e.stats[i]),
-                resist: std::array::from_fn(|i| a.resist[i] + e.resist[i]),
-                skills: std::array::from_fn(|i| a.skills[i] + e.skills[i]),
-                magick_points: a.magick_points + e.magick_points,
-                tech_points: a.tech_points + e.tech_points,
-                aptitude: a.aptitude + e.aptitude,
-                alignment: a.alignment + e.alignment,
-            })
+        self.effect_ids(s).into_iter().map(|id| self.effect(id)).fold(Effect::default(), |a, e| Effect {
+            stats: std::array::from_fn(|i| a.stats[i] + e.stats[i]),
+            resist: std::array::from_fn(|i| a.resist[i] + e.resist[i]),
+            skills: std::array::from_fn(|i| a.skills[i] + e.skills[i]),
+            magick_points: a.magick_points + e.magick_points,
+            tech_points: a.tech_points + e.tech_points,
+            aptitude: a.aptitude + e.aptitude,
+            alignment: a.alignment + e.alignment,
+        })
     }
 
     /// Current primary stats: base plus the draft, then every effect held (0x4b0490 →
     /// 0x4ea690). The stat's own limits (0x4b0fc0 / 0x4b0fd0) are not applied here.
     pub fn stats(&self, s: &CharacterSheet) -> [i32; PRIMARY_STATS] {
         let ids = self.effect_ids(s);
-        std::array::from_fn(|i| {
-            self.apply_effects(
-                EffectTarget::Stat(i as u8),
-                s.base[i] + s.draft.stats[i],
-                &ids,
-            )
-        })
+        std::array::from_fn(|i| self.apply_effects(EffectTarget::Stat(i as u8), s.base[i] + s.draft.stats[i], &ids))
     }
 
     /// Resistances from the effects held, in percent ([`RESIST_KEYS`] order; 0x43d7ee →
@@ -300,48 +244,30 @@ impl RulesData {
     /// (0x55a997), nor below what a skill it governs needs (charedit 28, 0x4c6b50).
     pub fn lower_stat(&self, s: &CharacterSheet, stat: usize) -> Result<CharacterSheet, Refusal> {
         if s.draft.stats[stat] == 0 {
-            return Err(if self.stats(s)[stat] <= MIN_STAT {
-                Refusal::AtMinimum
-            } else {
-                Refusal::BelowAccepted
-            });
+            return Err(if self.stats(s)[stat] <= MIN_STAT { Refusal::AtMinimum } else { Refusal::BelowAccepted });
         }
         let mut out = s.clone();
         out.draft.stats[stat] -= 1;
         let lowered = self.stats(&out)[stat];
-        let needed = (0..crate::SKILLS).any(|k| {
-            crate::SKILL_STAT[k] == stat
-                && crate::skill_points(s, k) * crate::LEVELS_PER_POINT > crate::skill_cap(lowered)
-        });
+        let needed = (0..crate::SKILLS).any(|k| crate::SKILL_STAT[k] == stat && crate::skill_points(s, k) * crate::LEVELS_PER_POINT > crate::skill_cap(lowered));
         if needed {
             return Err(Refusal::SkillPrerequisite);
         }
         // Then known spells and tech degrees (0x4b1b90, 0x4b1c00, 0x4b02b0).
-        if stat == crate::INTELLIGENCE
-            && lowered < crate::SPELL_INTELLIGENCE
-            && crate::spells_known(&out).iter().any(|&n| n > 0)
-        {
+        if stat == crate::INTELLIGENCE && lowered < crate::SPELL_INTELLIGENCE && crate::spells_known(&out).iter().any(|&n| n > 0) {
             return Err(Refusal::SpellNeedsIntelligence);
         }
         if stat == crate::WILLPOWER && lowered < crate::spell_willpower_needed(&out) {
             return Err(Refusal::SpellNeedsWillpower);
         }
-        if stat == crate::INTELLIGENCE
-            && (0..crate::DISCIPLINES)
-                .any(|d| lowered < crate::degree_intelligence(crate::tech_degree(&out, d)))
-        {
+        if stat == crate::INTELLIGENCE && (0..crate::DISCIPLINES).any(|d| lowered < crate::degree_intelligence(crate::tech_degree(&out, d))) {
             return Err(Refusal::TechNeedsIntelligence);
         }
         Ok(out)
     }
 
     /// Buys (`delta > 0`) or sells a step of hit points or fatigue.
-    pub fn adjust_pool(
-        &self,
-        s: &CharacterSheet,
-        pool: Pool,
-        delta: i32,
-    ) -> Result<CharacterSheet, Refusal> {
+    pub fn adjust_pool(&self, s: &CharacterSheet, pool: Pool, delta: i32) -> Result<CharacterSheet, Refusal> {
         let unspent = self.unspent(s);
         let mut out = s.clone();
         let points = match pool {
@@ -405,17 +331,12 @@ impl RulesData {
         if amount == 0 {
             return Vec::new();
         }
-        s.experience +=
-            self.apply_effects(crate::EffectTarget::Other(9), amount, &self.effect_ids(s));
+        s.experience += self.apply_effects(crate::EffectTarget::Other(9), amount, &self.effect_ids(s));
         let mut reached = Vec::new();
         while s.level < LEVEL_LIMIT && self.xp_to_next(s) <= 0 {
             let level = s.level + 1;
             if level == LEVEL_LIMIT {
-                s.experience = self
-                    .xp_levels
-                    .get(LEVEL_LIMIT as usize - 2)
-                    .copied()
-                    .unwrap_or(s.experience);
+                s.experience = self.xp_levels.get(LEVEL_LIMIT as usize - 2).copied().unwrap_or(s.experience);
                 break;
             }
             s.unspent += level_points(s.level, level);
@@ -448,16 +369,8 @@ impl RulesData {
             reaction: stat(14, reaction_modifier(be)),
             // An Expert or Master of Persuasion leads one more (0x4b0490 stat 0xf).
             max_followers: stat(15, ch / 4 + i32::from(s.training[11] > 1)),
-            hit_points: self.apply_effects(
-                MAX_HIT_POINTS,
-                4 * (s.hp_points + s.draft.hit_points) + wp + 2 * (level + st) + 4,
-                &ids,
-            ),
-            fatigue: self.apply_effects(
-                MAX_FATIGUE,
-                4 * (s.fatigue_points + s.draft.fatigue) + wp + 2 * (level + cn) + 4,
-                &ids,
-            ),
+            hit_points: self.apply_effects(MAX_HIT_POINTS, 4 * (s.hp_points + s.draft.hit_points) + wp + 2 * (level + st) + 4, &ids),
+            fatigue: self.apply_effects(MAX_FATIGUE, 4 * (s.fatigue_points + s.draft.fatigue) + wp + 2 * (level + cn) + 4, &ids),
         }
     }
 }
@@ -474,54 +387,27 @@ mod tests {
 
     fn rules() -> RulesData {
         RulesData::from_files(
-            &mes(
-                "{0}{1000}{1}{86}{2}{}{10}{1001}{11}{87}{12}{}{30}{1003}{31}{89}{32}{HUF HUM}{390}{1039}{392}{NPC}{40}{1004}{41}{90}{42}{DWM}",
-            ),
-            &mes(
-                "{65}{st +1, cn +1, ch -1, dx -1, repair +2}{87}{resistpoison +20, be -1}{89}{repair -1}{90}{pe +1}",
-            ),
-            &mes(
-                "{1000}{ELM1}{1001}{DWM1}{1005}{HUM1}{1018}{HUM2}{1020}{DWM2}{1008}{HUF1}{1035}{NPCDoc}",
-            ),
+            &mes("{0}{1000}{1}{86}{2}{}{10}{1001}{11}{87}{12}{}{30}{1003}{31}{89}{32}{HUF HUM}{390}{1039}{392}{NPC}{40}{1004}{41}{90}{42}{DWM}"),
+            &mes("{65}{st +1, cn +1, ch -1, dx -1, repair +2}{87}{resistpoison +20, be -1}{89}{repair -1}{90}{pe +1}"),
+            &mes("{1000}{ELM1}{1001}{DWM1}{1005}{HUM1}{1018}{HUM2}{1020}{DWM2}{1008}{HUF1}{1035}{NPCDoc}"),
         )
     }
 
     #[test]
     fn experience_raises_levels_with_a_point_each_and_two_every_fifth() {
         let mut r = rules();
-        r.xp_levels = parse_xp_levels(&mes(
-            "{1}{0}{2}{2100}{3}{4600}{4}{7700}{5}{11400}{6}{15500}{50}{1300000}{51}{1380000}",
-        ));
+        r.xp_levels = parse_xp_levels(&mes("{1}{0}{2}{2100}{3}{4600}{4}{7700}{5}{11400}{6}{15500}{50}{1300000}{51}{1380000}"));
         assert_eq!(r.xp_levels.len(), 51);
-        let mut s = CharacterSheet {
-            unspent: 0,
-            ..r.new_sheet()
-        };
+        let mut s = CharacterSheet { unspent: 0, ..r.new_sheet() };
         assert_eq!(r.xp_to_next(&s), 2100);
         assert!(r.gain_experience(&mut s, 2099).is_empty());
-        assert_eq!(
-            r.gain_experience(&mut s, 12000),
-            [2, 3, 4, 5],
-            "past 11400, short of 15500"
-        );
-        assert_eq!(
-            (s.level, s.experience, s.unspent),
-            (5, 14099, 5),
-            "1 + 1 + 1 + 2"
-        );
+        assert_eq!(r.gain_experience(&mut s, 12000), [2, 3, 4, 5], "past 11400, short of 15500");
+        assert_eq!((s.level, s.experience, s.unspent), (5, 14099, 5), "1 + 1 + 1 + 2");
         assert_eq!(level_points(4, 10), 8);
-        let mut top = CharacterSheet {
-            level: 50,
-            experience: 1_300_000,
-            ..r.new_sheet()
-        };
+        let mut top = CharacterSheet { level: 50, experience: 1_300_000, ..r.new_sheet() };
         assert_eq!(r.xp_to_next(&top), 80_000);
         assert!(r.gain_experience(&mut top, 100_000).is_empty());
-        assert_eq!(
-            (top.level, top.experience),
-            (50, 1_300_000),
-            "set back to level 50's"
-        );
+        assert_eq!((top.level, top.experience), (50, 1_300_000), "set back to level 50's");
     }
 
     #[test]
@@ -537,12 +423,7 @@ mod tests {
     #[test]
     fn backgrounds_follow_the_legal_codes_and_skip_npc_ones() {
         let r = rules();
-        let ids = |race, gender| {
-            r.backgrounds_for(race, gender)
-                .iter()
-                .map(|b| b.id)
-                .collect::<Vec<_>>()
-        };
+        let ids = |race, gender| r.backgrounds_for(race, gender).iter().map(|b| b.id).collect::<Vec<_>>();
         assert_eq!(ids(0, MALE), [0, 1, 3], "human male: no restriction, HUM");
         assert_eq!(ids(1, MALE), [0, 1, 4], "dwarf male: DWM only");
     }
@@ -566,29 +447,17 @@ mod tests {
     fn stats_add_race_and_background_effects() {
         let r = rules();
         let s = r.step_race(&r.new_sheet(), 1);
-        assert_eq!(
-            r.stats(&s),
-            [9, 7, 9, 8, 8, 8, 8, 7],
-            "dwarf: st +1 cn +1 ch -1 dx -1"
-        );
+        assert_eq!(r.stats(&s), [9, 7, 9, 8, 8, 8, 8, 7], "dwarf: st +1 cn +1 ch -1 dx -1");
         let s = CharacterSheet { background: 4, ..s }; // DWM-only background, pe +1
         assert_eq!(r.background(&s).unwrap().id, 4);
         assert_eq!(r.stats(&s)[5], 9);
-        assert_eq!(
-            parse_stat_effect("wp +1, dx +1, be +1, cn -2, st -1, magicpts +3"),
-            [-1, 1, -2, 1, 0, 0, 1, 0]
-        );
+        assert_eq!(parse_stat_effect("wp +1, dx +1, be +1, cn -2, st -1, magicpts +3"), [-1, 1, -2, 1, 0, 0, 1, 0]);
     }
 
     #[test]
     fn race_skips_male_only_races_for_women_and_resets_choices() {
         let r = rules();
-        let s = CharacterSheet {
-            gender: FEMALE,
-            portrait: Some(1008),
-            background: 3,
-            ..r.new_sheet()
-        };
+        let s = CharacterSheet { gender: FEMALE, portrait: Some(1008), background: 3, ..r.new_sheet() };
         let s = r.step_race(&s, 1);
         assert_eq!(s.race, 2, "dwarf has no women: straight to elf");
         assert_eq!((s.portrait, s.background), (None, 0));
@@ -605,15 +474,8 @@ mod tests {
     fn gender_only_switches_where_the_race_allows_it() {
         let r = rules();
         let dwarf = r.step_race(&r.new_sheet(), 1);
-        assert_eq!(
-            r.toggle_gender(&dwarf),
-            Err(Refusal::NotAllowed),
-            "dwarves are male only"
-        );
-        let elf = CharacterSheet {
-            race: 2,
-            ..r.new_sheet()
-        };
+        assert_eq!(r.toggle_gender(&dwarf), Err(Refusal::NotAllowed), "dwarves are male only");
+        let elf = CharacterSheet { race: 2, ..r.new_sheet() };
         assert_eq!(r.toggle_gender(&elf).unwrap().gender, FEMALE);
     }
 
@@ -636,10 +498,7 @@ mod tests {
         let s = r.set_name(&s, "Virgil the very long-named hero");
         assert_eq!(s.name.chars().count(), MAX_NAME);
         let d = r.set_name(&r.new_sheet(), "\u{8}日 ");
-        assert!(
-            !d.has_name(),
-            "control, unsupported and blank input do not make a name"
-        );
+        assert!(!d.has_name(), "control, unsupported and blank input do not make a name");
     }
 
     #[test]
@@ -649,26 +508,16 @@ mod tests {
         assert_eq!(r.unspent(&s), STARTING_POINTS);
         let s = r.raise_stat(&s, 0).unwrap();
         assert_eq!((r.stats(&s)[0], r.unspent(&s)), (9, 4));
-        assert_eq!(
-            r.lower_stat(&s, 1),
-            Err(Refusal::BelowAccepted),
-            "not below the starting value"
-        );
+        assert_eq!(r.lower_stat(&s, 1), Err(Refusal::BelowAccepted), "not below the starting value");
         let mut s = r.lower_stat(&s, 0).unwrap();
         assert_eq!(r.unspent(&s), STARTING_POINTS);
         for _ in 0..5 {
             s = r.raise_stat(&s, 7).unwrap();
         }
         assert_eq!(r.raise_stat(&s, 7), Err(Refusal::NoPoints));
-        assert_eq!(
-            r.adjust_pool(&s, Pool::HitPoints, 1),
-            Err(Refusal::NoPoints)
-        );
+        assert_eq!(r.adjust_pool(&s, Pool::HitPoints, 1), Err(Refusal::NoPoints));
         // The race maximum stops a stat even with points left.
-        let d = CharacterSheet {
-            base: [20, 8, 8, 8, 8, 8, 8, 8],
-            ..r.new_sheet()
-        };
+        let d = CharacterSheet { base: [20, 8, 8, 8, 8, 8, 8, 8], ..r.new_sheet() };
         assert_eq!(r.raise_stat(&d, 0), Err(Refusal::AtMaximum));
         assert_eq!(race_max(7, 0), 24, "half-ogres reach 24 strength");
     }
@@ -678,23 +527,13 @@ mod tests {
         let r = rules();
         let s = r.new_sheet();
         let d = r.derived(&s);
-        assert_eq!(
-            (d.carry_weight, d.damage_bonus, d.ac_adjustment, d.speed),
-            (4000, -1, -2, 8)
-        );
-        assert_eq!(
-            (d.heal_rate, d.poison_recovery, d.reaction, d.max_followers),
-            (3, 8, -7, 2)
-        );
+        assert_eq!((d.carry_weight, d.damage_bonus, d.ac_adjustment, d.speed), (4000, -1, -2, 8));
+        assert_eq!((d.heal_rate, d.poison_recovery, d.reaction, d.max_followers), (3, 8, -7, 2));
         // HP = 4 x bought + WP + 2 x (level + ST) + 4 = 0 + 8 + 18 + 4.
         assert_eq!((d.hit_points, d.fatigue), (30, 30));
         let e = r.adjust_pool(&s, Pool::HitPoints, 1).unwrap();
         assert_eq!(r.derived(&e).hit_points, 34);
-        assert_eq!(
-            r.derived(&r.accept(&e)).hit_points,
-            34,
-            "accepted pool points still count"
-        );
+        assert_eq!(r.derived(&r.accept(&e)).hit_points, 34, "accepted pool points still count");
         assert_eq!(reaction_modifier(10), 0);
         assert_eq!(reaction_modifier(15), 25);
         assert_eq!(reaction_modifier(1), -65);
@@ -711,20 +550,14 @@ mod tests {
         let s = r.adjust_pool(&s, Pool::Fatigue, 1).unwrap();
         let s = r.accept(&s);
         assert_eq!((s.fatigue_points, s.unspent), (1, 3));
-        assert_eq!(
-            r.adjust_pool(&s, Pool::Fatigue, -1),
-            Err(Refusal::BelowAccepted)
-        );
+        assert_eq!(r.adjust_pool(&s, Pool::Fatigue, -1), Err(Refusal::BelowAccepted));
     }
 
     #[test]
     fn empty_rules_still_make_a_sheet() {
         let r = RulesData::default();
         let s = r.new_sheet();
-        assert_eq!(
-            (s.portrait, r.portrait(&s), r.unspent(&s)),
-            (None, None, STARTING_POINTS)
-        );
+        assert_eq!((s.portrait, r.portrait(&s), r.unspent(&s)), (None, None, STARTING_POINTS));
         let s = r.step_portrait(&s, 1);
         let s = r.step_background(&s, -1);
         let s = r.step_race(&s, 1);
@@ -745,27 +578,16 @@ mod tests {
 
     #[test]
     fn women_get_the_female_effect() {
-        let r = RulesData::from_files(
-            &mes("{0}{1000}{1}{86}{2}{}"),
-            &mes("{330}{st -1, cn +1}"),
-            &mes("{1008}{HUF1}"),
-        );
+        let r = RulesData::from_files(&mes("{0}{1000}{1}{86}{2}{}"), &mes("{330}{st -1, cn +1}"), &mes("{1008}{HUF1}"));
         let woman = r.toggle_gender(&r.new_sheet()).unwrap();
-        assert_eq!(
-            r.stats(&woman),
-            [7, 8, 9, 8, 8, 8, 8, 8],
-            "effect 330: st -1, cn +1 for all females"
-        );
+        assert_eq!(r.stats(&woman), [7, 8, 9, 8, 8, 8, 8, 8], "effect 330: st -1, cn +1 for all females");
         assert_eq!(r.stats(&r.new_sheet())[0], 8, "men unchanged");
     }
 
     #[test]
     fn refusals_name_their_messages() {
         assert_eq!(Refusal::AtMaximum.message(), Some(Message::Charedit(17)));
-        assert_eq!(
-            Refusal::BelowAccepted.message(),
-            Some(Message::Charedit(19))
-        );
+        assert_eq!(Refusal::BelowAccepted.message(), Some(Message::Charedit(19)));
         assert_eq!(Refusal::NoName.message(), Some(Message::MainMenu(506)));
         assert_eq!(Refusal::NotAllowed.message(), None);
     }

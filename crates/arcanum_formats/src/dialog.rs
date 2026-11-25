@@ -50,21 +50,9 @@ impl DialogFile {
             if entry.len() < 7 {
                 continue;
             }
-            let Some(number) = entry.first().and_then(|n| n.trim().parse::<i32>().ok()) else {
-                continue;
-            };
+            let Some(number) = entry.first().and_then(|n| n.trim().parse::<i32>().ok()) else { continue };
             let field = |i: usize| entry.get(i).cloned().unwrap_or_default();
-            lines.insert(
-                number,
-                DialogLine {
-                    text: field(1),
-                    female_text: field(2),
-                    intelligence: field(3),
-                    test: field(4),
-                    response: field(5),
-                    result: field(6),
-                },
-            );
+            lines.insert(number, DialogLine { text: field(1), female_text: field(2), intelligence: field(3), test: field(4), response: field(5), result: field(6) });
         }
         Self { lines }
     }
@@ -73,11 +61,7 @@ impl DialogFile {
     /// female one is empty.
     pub fn text(&self, number: i32, female: bool) -> Option<&str> {
         let line = self.lines.get(&number)?;
-        Some(if female && !line.female_text.is_empty() {
-            &line.female_text
-        } else {
-            &line.text
-        })
+        Some(if female && !line.female_text.is_empty() { &line.female_text } else { &line.text })
     }
 }
 
@@ -114,24 +98,20 @@ pub const MAX_OPTIONS: usize = 5;
 
 /// The test opcodes (table 0x5a06bc), in the engine's order.
 pub const TEST_OPCODES: [&str; 37] = [
-    "ps", "ch", "pe", "al", "ma", "ta", "gv", "gf", "qu", "re", "$$", "in", "ha", "lf", "lc", "tr",
-    "sk", "ru", "rq", "fo", "le", "qb", "me", "ni", "qa", "ra", "pa", "ss", "wa", "wt", "pv", "pf",
-    "na", "ar", "rp", "ia", "sc",
+    "ps", "ch", "pe", "al", "ma", "ta", "gv", "gf", "qu", "re", "$$", "in", "ha", "lf", "lc", "tr", "sk", "ru", "rq", "fo", "le", "qb", "me", "ni", "qa", "ra", "pa", "ss", "wa", "wt", "pv", "pf", "na",
+    "ar", "rp", "ia", "sc",
 ];
 
 /// The result opcodes (table 0x5a0750), in the engine's order.
 pub const EFFECT_OPCODES: [&str; 35] = [
-    "$$", "re", "qu", "fl", "co", "gv", "gf", "mm", "al", "in", "lf", "lc", "tr", "ru", "rq", "jo",
-    "wa", "lv", "ss", "sc", "so", "uw", "pv", "pf", "xp", "nk", "rp", "np", "ce", "fp", "su", "or",
-    "ii", "ri", "et",
+    "$$", "re", "qu", "fl", "co", "gv", "gf", "mm", "al", "in", "lf", "lc", "tr", "ru", "rq", "jo", "wa", "lv", "ss", "sc", "so", "uw", "pv", "pf", "xp", "nk", "rp", "np", "ce", "fp", "su", "or", "ii", "ri",
+    "et",
 ];
 
 /// Test opcodes that read two numbers.
 const TWO_NUMBER_TESTS: [&str; 10] = ["gv", "gf", "qu", "lf", "lc", "tr", "sk", "qb", "qa", "sc"];
 /// Result opcodes that read two numbers.
-const TWO_NUMBER_EFFECTS: [&str; 11] = [
-    "qu", "gv", "gf", "lf", "lc", "tr", "jo", "uw", "pv", "pf", "np",
-];
+const TWO_NUMBER_EFFECTS: [&str; 11] = ["qu", "gv", "gf", "lf", "lc", "tr", "jo", "uw", "pv", "pf", "np"];
 /// Test opcodes that read two numbers but are not in [`TWO_NUMBER_TESTS`]: PC vars and flags.
 const TWO_NUMBER_PC: [&str; 2] = ["pv", "pf"];
 
@@ -172,30 +152,15 @@ pub struct UnknownOpcode {
 
 /// A test's tokens (0x4150d0). An unknown opcode makes the whole test false: `Err`.
 pub fn tests(text: &str) -> Result<Vec<Token>, UnknownOpcode> {
-    scan(
-        text,
-        &TEST_OPCODES,
-        |op| TWO_NUMBER_TESTS.contains(&op) || TWO_NUMBER_PC.contains(&op),
-        false,
-    )
+    scan(text, &TEST_OPCODES, |op| TWO_NUMBER_TESTS.contains(&op) || TWO_NUMBER_PC.contains(&op), false)
 }
 
 /// A result's tokens (0x415ba0). An unknown opcode stops it: `Err` holds what ran before.
 pub fn effects(text: &str) -> Result<Vec<Token>, UnknownOpcode> {
-    scan(
-        text,
-        &EFFECT_OPCODES,
-        |op| TWO_NUMBER_EFFECTS.contains(&op),
-        true,
-    )
+    scan(text, &EFFECT_OPCODES, |op| TWO_NUMBER_EFFECTS.contains(&op), true)
 }
 
-fn scan(
-    text: &str,
-    known: &[&str],
-    two: impl Fn(&str) -> bool,
-    changes: bool,
-) -> Result<Vec<Token>, UnknownOpcode> {
+fn scan(text: &str, known: &[&str], two: impl Fn(&str) -> bool, changes: bool) -> Result<Vec<Token>, UnknownOpcode> {
     let b = text.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -204,25 +169,16 @@ fn scan(
             i += 1;
             continue;
         }
-        let op = [
-            b[i].to_ascii_lowercase(),
-            b.get(i + 1).map_or(0, u8::to_ascii_lowercase),
-        ];
+        let op = [b[i].to_ascii_lowercase(), b.get(i + 1).map_or(0, u8::to_ascii_lowercase)];
         let name = std::str::from_utf8(&op).unwrap_or("");
         if !known.contains(&name) {
-            return Err(UnknownOpcode {
-                before: out,
-                op: String::from_utf8_lossy(&op).into_owned(),
-            });
+            return Err(UnknownOpcode { before: out, op: String::from_utf8_lossy(&op).into_owned() });
         }
         let rest = &b[(i + 2).min(b.len())..];
         let mut change = Change::Set;
         let mut number = rest;
         if changes && (name == "re" || name == "al") {
-            let at = rest
-                .iter()
-                .position(|c| !c.is_ascii_whitespace())
-                .unwrap_or(rest.len());
+            let at = rest.iter().position(|c| !c.is_ascii_whitespace()).unwrap_or(rest.len());
             match rest.get(at) {
                 Some(b'+') | Some(b'-') => change = Change::Add,
                 Some(b'>') => (change, number) = (Change::AtLeast, &rest[at + 1..]),
@@ -232,12 +188,7 @@ fn scan(
         }
         let a = atoi(number);
         let b2 = if two(name) { second(rest) } else { a };
-        out.push(Token {
-            op,
-            a,
-            b: b2,
-            change,
-        });
+        out.push(Token { op, a, b: b2, change });
         i += 2;
     }
     Ok(out)
@@ -245,10 +196,7 @@ fn scan(
 
 /// C's `atoi`: spaces, a sign, digits.
 pub fn atoi(b: &[u8]) -> i32 {
-    let mut i = b
-        .iter()
-        .position(|c| !c.is_ascii_whitespace())
-        .unwrap_or(b.len());
+    let mut i = b.iter().position(|c| !c.is_ascii_whitespace()).unwrap_or(b.len());
     let negative = b.get(i) == Some(&b'-');
     if matches!(b.get(i), Some(b'-') | Some(b'+')) {
         i += 1;
@@ -263,10 +211,7 @@ pub fn atoi(b: &[u8]) -> i32 {
 
 /// The second number (0x4167c0): skip spaces, skip the first number's digits, `atoi`.
 fn second(b: &[u8]) -> i32 {
-    let mut i = b
-        .iter()
-        .position(|c| !c.is_ascii_whitespace())
-        .unwrap_or(b.len());
+    let mut i = b.iter().position(|c| !c.is_ascii_whitespace()).unwrap_or(b.len());
     while b.get(i).is_some_and(u8::is_ascii_digit) {
         i += 1;
     }
@@ -287,24 +232,12 @@ fn groups(data: &[u8]) -> Vec<String> {
     while i < data.len() {
         match data[i] {
             b'{' => {
-                let end = data[i + 1..]
-                    .iter()
-                    .position(|&b| b == b'}')
-                    .map_or(data.len(), |p| i + 1 + p);
-                out.push(
-                    data[i + 1..end]
-                        .iter()
-                        .map(|&b| crate::cp1252::decode_byte(b))
-                        .collect::<String>()
-                        .replace("\r\n", "\n"),
-                );
+                let end = data[i + 1..].iter().position(|&b| b == b'}').map_or(data.len(), |p| i + 1 + p);
+                out.push(data[i + 1..end].iter().map(|&b| crate::cp1252::decode_byte(b)).collect::<String>().replace("\r\n", "\n"));
                 i = end + 1;
             }
             b'/' if data.get(i + 1) == Some(&b'/') => {
-                i = data[i..]
-                    .iter()
-                    .position(|&b| b == b'\n')
-                    .map_or(data.len(), |p| i + p + 1);
+                i = data[i..].iter().position(|&b| b == b'\n').map_or(data.len(), |p| i + p + 1);
             }
             _ => i += 1,
         }
@@ -323,11 +256,7 @@ mod tests {
         assert_eq!(file.lines.len(), 2);
         assert_eq!(file.text(1, false), Some("You must pay again."));
         assert_eq!(file.text(1, true), Some("You must pay again, madam."));
-        assert_eq!(
-            file.text(2, true),
-            Some("You must pay."),
-            "no female text: the male one"
-        );
+        assert_eq!(file.text(2, true), Some("You must pay."), "no female text: the male one");
         assert_eq!(file.text(3, false), None);
     }
 
@@ -339,60 +268,35 @@ mod tests {
         assert_eq!(npc.voice(), 3);
         let hi = &file.lines[&11];
         assert!(!hi.is_npc());
-        assert_eq!(
-            (hi.for_males(), hi.intelligence(), hi.response()),
-            (Some(true), 5, 20)
-        );
+        assert_eq!((hi.for_males(), hi.intelligence(), hi.response()), (Some(true), 5, 20));
         let dumb = &file.lines[&12];
-        assert_eq!(
-            (dumb.for_males(), dumb.intelligence(), dumb.response()),
-            (None, -4, 0)
-        );
+        assert_eq!((dumb.for_males(), dumb.intelligence(), dumb.response()), (None, -4, 0));
     }
 
     #[test]
     fn tests_and_results_are_two_letter_opcodes_with_numbers() {
         let t = tests("gf 12 1, $$ 50, re -3").unwrap();
-        assert_eq!(
-            t.iter().map(|t| (t.op(), t.a, t.b)).collect::<Vec<_>>(),
-            [("gf", 12, 1), ("$$", 50, 50), ("re", -3, -3)]
-        );
+        assert_eq!(t.iter().map(|t| (t.op(), t.a, t.b)).collect::<Vec<_>>(), [("gf", 12, 1), ("$$", 50, 50), ("re", -3, -3)]);
         assert!(tests("").unwrap().is_empty());
-        assert_eq!(
-            tests("gf 1 1 mm 4").unwrap_err().op,
-            "mm",
-            "an unknown opcode: the test fails"
-        );
+        assert_eq!(tests("gf 1 1 mm 4").unwrap_err().op, "mm", "an unknown opcode: the test fails");
         assert_eq!(tests("$2750").unwrap_err().op, "$2");
         // A negative first number: the second is read from the same place (0x4167c0).
         assert_eq!(tests("qu -5 2").unwrap()[0].b, -5);
         let e = effects("$$ -50, re +3, re >10, al <-2, lf 6 1").unwrap();
-        assert_eq!(
-            e.iter()
-                .map(|t| (t.op(), t.a, t.b, t.change))
-                .collect::<Vec<_>>(),
-            [
-                ("$$", -50, -50, Change::Set),
-                ("re", 3, 3, Change::Add),
-                ("re", 10, 10, Change::AtLeast),
-                ("al", -2, -2, Change::AtMost),
-                ("lf", 6, 1, Change::Set),
-            ]
-        );
+        assert_eq!(e.iter().map(|t| (t.op(), t.a, t.b, t.change)).collect::<Vec<_>>(), [
+            ("$$", -50, -50, Change::Set),
+            ("re", 3, 3, Change::Add),
+            ("re", 10, 10, Change::AtLeast),
+            ("al", -2, -2, Change::AtMost),
+            ("lf", 6, 1, Change::Set),
+        ]);
         let stopped = effects("lf 1 1, ADD BLESSING").unwrap_err();
-        assert_eq!(
-            (stopped.before.len(), stopped.op.as_str()),
-            (1, "ad"),
-            "stops at the unknown opcode"
-        );
+        assert_eq!((stopped.before.len(), stopped.op.as_str()), (1, "ad"), "stops at the unknown opcode");
     }
 
     #[test]
     fn the_dialogue_sits_beside_its_script() {
-        assert_eq!(
-            dialog_path("scr/01990Inn_Bed_Use.scr").as_deref(),
-            Some("dlg/01990Inn_Bed_Use.dlg")
-        );
+        assert_eq!(dialog_path("scr/01990Inn_Bed_Use.scr").as_deref(), Some("dlg/01990Inn_Bed_Use.dlg"));
         assert_eq!(dialog_path("sc"), None);
     }
 }

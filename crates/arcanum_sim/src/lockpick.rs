@@ -33,10 +33,7 @@ use arcanum_formats::object::{Object, Prototypes, TYPE_CONTAINER, TYPE_GENERIC, 
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    GroundItemId, HostRng, Inventory, LedgerDelta, LoadedMap, MapObjectId, NetId, Outbox,
-    PlayerControlled, PlayerId, Position, Session, Sheet, SimRules, WorldState,
-};
+use crate::{GroundItemId, HostRng, Inventory, LedgerDelta, LoadedMap, MapObjectId, NetId, Outbox, PlayerControlled, PlayerId, Position, Session, Sheet, SimRules, WorldState};
 
 /// The Pick Locks skill (`mes/skill.mes` order).
 pub const SKILL_PICK_LOCKS: usize = 14;
@@ -68,11 +65,7 @@ pub fn pick_chance(level: i32, intelligence: i32) -> i32 {
 /// The difficulty of a lock of `lock` difficulty, for a picker of `training` rank with a tool
 /// of `tool` bonus.
 pub fn pick_difficulty(lock: i32, training: u8, tool: i32) -> i32 {
-    let lock = if lock > 0 && training >= MASTER {
-        lock / 2
-    } else {
-        lock.max(0)
-    };
+    let lock = if lock > 0 && training >= MASTER { lock / 2 } else { lock.max(0) };
     lock - tool
 }
 
@@ -90,41 +83,26 @@ pub fn roll_pick(chance: i32, difficulty: i32, rng: &mut HostRng) -> PickOutcome
     if rng.range(1, 100) + difficulty <= chance {
         return PickOutcome::Success;
     }
-    if rng.range(1, 100) <= ((100 - chance) / 2).max(2) {
-        PickOutcome::Jammed
-    } else {
-        PickOutcome::Failure
-    }
+    if rng.range(1, 100) <= ((100 - chance) / 2).max(2) { PickOutcome::Jammed } else { PickOutcome::Failure }
 }
 
 /// Whether items of `prototype` are lockpicks.
 pub fn is_lockpick(prototype: u32, prototypes: &Prototypes) -> bool {
-    prototypes.get(prototype).is_some_and(|p| {
-        p.object_type == TYPE_GENERIC && p.int("generic_flags").unwrap_or(0) & OGF_IS_LOCKPICK != 0
-    })
+    prototypes.get(prototype).is_some_and(|p| p.object_type == TYPE_GENERIC && p.int("generic_flags").unwrap_or(0) & OGF_IS_LOCKPICK != 0)
 }
 
 /// The bonus of the lockpick at location `tool` of `inventory`, 0 for none or not a lockpick.
 pub fn lockpick_bonus(inventory: &Inventory, tool: Option<i32>, prototypes: &Prototypes) -> i32 {
-    let Some(item) = tool.and_then(|t| inventory.items.iter().find(|i| i.location == t)) else {
-        return 0;
-    };
+    let Some(item) = tool.and_then(|t| inventory.items.iter().find(|i| i.location == t)) else { return 0 };
     if !is_lockpick(item.prototype, prototypes) {
         return 0;
     }
-    prototypes
-        .get(item.prototype)
-        .and_then(|p| p.int("generic_usage_bonus"))
-        .unwrap_or(0)
+    prototypes.get(item.prototype).and_then(|p| p.int("generic_usage_bonus")).unwrap_or(0)
 }
 
 /// The flag field of a lock target's kind.
 fn flags_field(kind: u32) -> &'static str {
-    if kind == TYPE_PORTAL {
-        "portal_flags"
-    } else {
-        "container_flags"
-    }
+    if kind == TYPE_PORTAL { "portal_flags" } else { "container_flags" }
 }
 
 impl LoadedMap {
@@ -132,33 +110,24 @@ impl LoadedMap {
     pub fn lock_object(&self, target: LockTarget) -> Option<&Object> {
         match target {
             LockTarget::Door(id) => self.map_object(id).filter(|o| o.object_type == TYPE_PORTAL),
-            LockTarget::Container(id) => self
-                .container_object(id)
-                .filter(|o| o.object_type == TYPE_CONTAINER),
+            LockTarget::Container(id) => self.container_object(id).filter(|o| o.object_type == TYPE_CONTAINER),
         }
     }
 
     /// A lock target's flags (`portal_flags` or `container_flags`).
     pub fn lock_flags(&self, target: LockTarget) -> Option<i32> {
         let object = self.lock_object(target)?;
-        Some(
-            self.prototypes
-                .int(object, flags_field(object.object_type))
-                .unwrap_or(0),
-        )
+        Some(self.prototypes.int(object, flags_field(object.object_type)).unwrap_or(0))
     }
 
     /// Sets a lock target's flags, in [`LoadedMap::changes`] too.
     pub fn set_lock_flags(&mut self, target: LockTarget, flags: i32) {
         let (sector, index) = match target {
             LockTarget::Door(id) => (id.sector, id.index),
-            LockTarget::Container(id) => (
-                id.sector(),
-                match id {
-                    GroundItemId::Container { index, .. } => index,
-                    _ => return,
-                },
-            ),
+            LockTarget::Container(id) => (id.sector(), match id {
+                GroundItemId::Container { index, .. } => index,
+                _ => return,
+            }),
         };
         let changes = self.changes.entry(sector).or_default();
         match target {
@@ -171,18 +140,8 @@ impl LoadedMap {
     /// Writes a lock target's flags onto its object and works out its sector's blocking again.
     pub(crate) fn apply_lock_flags(&mut self, target: LockTarget, flags: i32) {
         let (sector, object) = match target {
-            LockTarget::Door(id) => (
-                id.sector,
-                self.sectors
-                    .get_mut(&id.sector)
-                    .and_then(|s| s.objects.get_mut(id.index as usize)),
-            ),
-            LockTarget::Container(GroundItemId::Container { sector, index }) => (
-                sector,
-                self.mobiles
-                    .get_mut(&sector)
-                    .and_then(|m| m.get_mut(index as usize)),
-            ),
+            LockTarget::Door(id) => (id.sector, self.sectors.get_mut(&id.sector).and_then(|s| s.objects.get_mut(id.index as usize))),
+            LockTarget::Container(GroundItemId::Container { sector, index }) => (sector, self.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize))),
             LockTarget::Container(_) => return,
         };
         let Some(object) = object else { return };
@@ -193,14 +152,8 @@ impl LoadedMap {
 
     /// The lock difficulty of a target.
     pub fn lock_difficulty(&self, target: LockTarget) -> i32 {
-        let Some(object) = self.lock_object(target) else {
-            return 0;
-        };
-        let field = if object.object_type == TYPE_PORTAL {
-            "portal_lock_difficulty"
-        } else {
-            "container_lock_difficulty"
-        };
+        let Some(object) = self.lock_object(target) else { return 0 };
+        let field = if object.object_type == TYPE_PORTAL { "portal_lock_difficulty" } else { "container_lock_difficulty" };
         self.prototypes.int(object, field).unwrap_or(0)
     }
 
@@ -232,16 +185,7 @@ pub struct PendingPick {
     pub seq: u32,
 }
 
-type PickerQuery<'a> = (
-    Entity,
-    &'a NetId,
-    &'a PlayerControlled,
-    &'a Position,
-    Option<&'a crate::Walking>,
-    Option<&'a PendingPick>,
-    &'a Sheet,
-    &'a Inventory,
-);
+type PickerQuery<'a> = (Entity, &'a NetId, &'a PlayerControlled, &'a Position, Option<&'a crate::Walking>, Option<&'a PendingPick>, &'a Sheet, &'a Inventory);
 
 /// Takes pick requests (each becomes the PC's [`PendingPick`]), then picks the locks whose PC
 /// is within [`crate::USE_RANGE`]; a request whose PC stopped out of range is dropped.
@@ -264,9 +208,7 @@ pub fn pick_locks(
         }
     }
     for (entity, _, controlled, position, walking, pending, sheet, inventory) in &pcs {
-        let Some(want) = fresh.get(&entity).copied().or(pending.copied()) else {
-            continue;
-        };
+        let Some(want) = fresh.get(&entity).copied().or(pending.copied()) else { continue };
         let Some(location) = map.lock_location(want.target) else {
             commands.entity(entity).remove::<PendingPick>();
             continue;
@@ -280,16 +222,10 @@ pub fn pick_locks(
             continue;
         }
         commands.entity(entity).remove::<PendingPick>();
-        let Some(flags) = map.lock_flags(want.target) else {
-            continue;
-        };
+        let Some(flags) = map.lock_flags(want.target) else { continue };
         let sheet = &sheet.0;
         let chance = pick_chance(rules.0.skill_level(sheet, SKILL_PICK_LOCKS), sheet.base[4]);
-        let difficulty = pick_difficulty(
-            map.lock_difficulty(want.target),
-            sheet.training[SKILL_PICK_LOCKS],
-            lockpick_bonus(inventory, want.tool, &map.prototypes),
-        );
+        let difficulty = pick_difficulty(map.lock_difficulty(want.target), sheet.training[SKILL_PICK_LOCKS], lockpick_bonus(inventory, want.tool, &map.prototypes));
         let outcome = roll_pick(chance, difficulty, &mut rng);
         let changed = picked_flags(flags, outcome, map.lock_day);
         if changed != flags {
@@ -299,23 +235,10 @@ pub fn pick_locks(
                 LockTarget::Container(id) => id.sector(),
             };
             crate::ground::save_change(&mut world, &map, sector);
-            crate::ground::broadcast(
-                &session,
-                &mut outbox,
-                LedgerDelta::LockChanged {
-                    target: want.target,
-                    flags: changed,
-                },
-            );
+            crate::ground::broadcast(&session, &mut outbox, LedgerDelta::LockChanged { target: want.target, flags: changed });
         }
-        let message = if outcome == PickOutcome::Success {
-            PICK_SUCCEEDED
-        } else {
-            PICK_FAILED
-        };
-        outbox
-            .0
-            .push((controlled.0, LedgerDelta::SkillResult { message }));
+        let message = if outcome == PickOutcome::Success { PICK_SUCCEEDED } else { PICK_FAILED };
+        outbox.0.push((controlled.0, LedgerDelta::SkillResult { message }));
     }
 }
 
@@ -344,25 +267,12 @@ mod tests {
     fn a_pick_unlocks_a_locked_target_and_locks_an_unlocked_one() {
         use crate::{OPF_JAMMED, OPF_LOCKED, OPF_LOCKED_NIGHT};
         assert_eq!(picked_flags(OPF_LOCKED, PickOutcome::Success, true), 0);
-        assert_eq!(
-            picked_flags(0, PickOutcome::Success, true),
-            OPF_LOCKED,
-            "copied: it locks"
-        );
-        assert_eq!(
-            picked_flags(OPF_LOCKED, PickOutcome::Jammed, true),
-            OPF_LOCKED | OPF_JAMMED
-        );
-        assert_eq!(
-            picked_flags(OPF_LOCKED, PickOutcome::Failure, true),
-            OPF_LOCKED
-        );
+        assert_eq!(picked_flags(0, PickOutcome::Success, true), OPF_LOCKED, "copied: it locks");
+        assert_eq!(picked_flags(OPF_LOCKED, PickOutcome::Jammed, true), OPF_LOCKED | OPF_JAMMED);
+        assert_eq!(picked_flags(OPF_LOCKED, PickOutcome::Failure, true), OPF_LOCKED);
         // A night lock by night: the bit goes, the hour still locks it.
         let night = OPF_LOCKED | OPF_LOCKED_NIGHT;
-        assert_eq!(
-            picked_flags(night, PickOutcome::Success, false),
-            OPF_LOCKED_NIGHT
-        );
+        assert_eq!(picked_flags(night, PickOutcome::Success, false), OPF_LOCKED_NIGHT);
         assert!(crate::locked(OPF_LOCKED_NIGHT, false));
     }
 
@@ -372,12 +282,7 @@ mod tests {
         use arcanum_formats::test_util::{ObjectBuilder, prototype_id};
         let proto = |number: u32, kind: u32, flags: i32, bonus: i32| {
             let b = ObjectBuilder::new(kind);
-            let b = if kind == TYPE_GENERIC {
-                b.field("generic_flags", Value::Int32(flags))
-                    .field("generic_usage_bonus", Value::Int32(bonus))
-            } else {
-                b
-            };
+            let b = if kind == TYPE_GENERIC { b.field("generic_flags", Value::Int32(flags)).field("generic_usage_bonus", Value::Int32(bonus)) } else { b };
             let mut o = Object::parse_instance(&b.build()).unwrap();
             o.id = prototype_id(number);
             o
@@ -386,42 +291,15 @@ mod tests {
         prototypes.insert(proto(15101, TYPE_GENERIC, OGF_IS_LOCKPICK, 10));
         prototypes.insert(proto(15200, TYPE_GENERIC, 8, 20));
         prototypes.insert(proto(6049, TYPE_WEAPON, 0, 0));
-        let item = |prototype, location| crate::CarriedItem {
-            prototype,
-            location,
-            quantity: 0,
-            keys: vec![],
-        };
-        let inv = Inventory {
-            items: vec![item(15101, 0), item(15200, 1), item(6049, 2)],
-            ..Default::default()
-        };
-        assert_eq!(
-            lockpick_bonus(&inv, Some(0), &prototypes),
-            10,
-            "the auto skeleton key"
-        );
-        assert_eq!(
-            lockpick_bonus(&inv, Some(1), &prototypes),
-            0,
-            "a healing kit is no lockpick"
-        );
+        let item = |prototype, location| crate::CarriedItem { prototype, location, quantity: 0, keys: vec![] };
+        let inv = Inventory { items: vec![item(15101, 0), item(15200, 1), item(6049, 2)], ..Default::default() };
+        assert_eq!(lockpick_bonus(&inv, Some(0), &prototypes), 10, "the auto skeleton key");
+        assert_eq!(lockpick_bonus(&inv, Some(1), &prototypes), 0, "a healing kit is no lockpick");
         assert_eq!(lockpick_bonus(&inv, Some(2), &prototypes), 0);
-        assert_eq!(
-            lockpick_bonus(&inv, Some(5), &prototypes),
-            0,
-            "no longer carried"
-        );
+        assert_eq!(lockpick_bonus(&inv, Some(5), &prototypes), 0, "no longer carried");
         assert_eq!(lockpick_bonus(&inv, None, &prototypes), 0);
-        let barred = Inventory {
-            items: vec![item(15101, 2004)],
-            ..Default::default()
-        };
-        assert_eq!(
-            lockpick_bonus(&barred, Some(2004), &prototypes),
-            10,
-            "armed from the hotkey bar"
-        );
+        let barred = Inventory { items: vec![item(15101, 2004)], ..Default::default() };
+        assert_eq!(lockpick_bonus(&barred, Some(2004), &prototypes), 10, "armed from the hotkey bar");
         assert!(is_lockpick(15101, &prototypes) && !is_lockpick(15200, &prototypes));
     }
 
@@ -432,13 +310,7 @@ mod tests {
         let won = picks.iter().filter(|&&p| p == PickOutcome::Success).count();
         assert!((900..1100).contains(&won), "{won}");
         assert!(picks.contains(&PickOutcome::Jammed));
-        assert!(
-            (0..200).all(|_| roll_pick(95, 100, &mut rng) != PickOutcome::Success),
-            "too hard"
-        );
-        assert!(
-            (0..200).all(|_| roll_pick(0, -100, &mut rng) == PickOutcome::Success),
-            "a negative difficulty wins at 0 %"
-        );
+        assert!((0..200).all(|_| roll_pick(95, 100, &mut rng) != PickOutcome::Success), "too hard");
+        assert!((0..200).all(|_| roll_pick(0, -100, &mut rng) == PickOutcome::Success), "a negative difficulty wins at 0 %");
     }
 }

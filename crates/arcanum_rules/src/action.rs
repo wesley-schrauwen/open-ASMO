@@ -30,11 +30,7 @@ pub enum CharacterAction {
 }
 
 impl RulesData {
-    pub fn apply(
-        &self,
-        s: &CharacterSheet,
-        action: &CharacterAction,
-    ) -> Result<CharacterSheet, Refusal> {
+    pub fn apply(&self, s: &CharacterSheet, action: &CharacterAction) -> Result<CharacterSheet, Refusal> {
         match action {
             CharacterAction::StepRace(d) => Ok(self.step_race(s, *d)),
             CharacterAction::ToggleGender => self.toggle_gender(s),
@@ -43,25 +39,18 @@ impl RulesData {
             CharacterAction::SetName(name) => Ok(self.set_name(s, name)),
             CharacterAction::RaiseStat(i) if *i < PRIMARY_STATS => self.raise_stat(s, *i),
             CharacterAction::LowerStat(i) if *i < PRIMARY_STATS => self.lower_stat(s, *i),
-            CharacterAction::RaiseStat(_) | CharacterAction::LowerStat(_) => {
-                Err(Refusal::NotAllowed)
-            }
+            CharacterAction::RaiseStat(_) | CharacterAction::LowerStat(_) => Err(Refusal::NotAllowed),
             CharacterAction::AdjustPool(pool, d) => self.adjust_pool(s, *pool, *d),
             CharacterAction::RaiseSkill(k) if *k < SKILLS => self.raise_skill(s, *k),
             CharacterAction::LowerSkill(k) if *k < SKILLS => self.lower_skill(s, *k),
-            CharacterAction::RaiseSkill(_) | CharacterAction::LowerSkill(_) => {
-                Err(Refusal::NotAllowed)
-            }
+            CharacterAction::RaiseSkill(_) | CharacterAction::LowerSkill(_) => Err(Refusal::NotAllowed),
             CharacterAction::RaiseTech(d) => self.raise_tech(s, *d),
             CharacterAction::LowerTech(d) => self.lower_tech(s, *d),
             CharacterAction::RaiseSpell(c) => self.raise_spell(s, *c),
             CharacterAction::LowerSpell(c) => self.lower_spell(s, *c),
-            CharacterAction::PickPremade(p) => self
-                .premades
-                .iter()
-                .find(|x| x.prototype == *p)
-                .map(|x| x.sheet.clone())
-                .ok_or(Refusal::UnknownPremade),
+            CharacterAction::PickPremade(p) => {
+                self.premades.iter().find(|x| x.prototype == *p).map(|x| x.sheet.clone()).ok_or(Refusal::UnknownPremade)
+            }
             CharacterAction::Accept => Ok(self.accept(s)),
         }
     }

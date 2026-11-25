@@ -52,13 +52,7 @@ impl Draft {
     /// tech degree (0x5b5124) or spell (0x4b1650).
     pub fn spent(&self) -> i32 {
         let sum = |v: &[i32]| v.iter().sum::<i32>();
-        (sum(&self.stats)
-            + self.hit_points
-            + self.fatigue
-            + sum(&self.skills)
-            + sum(&self.tech)
-            + sum(&self.spells))
-            * STAT_COST
+        (sum(&self.stats) + self.hit_points + self.fatigue + sum(&self.skills) + sum(&self.tech) + sum(&self.spells)) * STAT_COST
     }
 }
 
@@ -144,9 +138,7 @@ impl CharacterSheet {
 
     /// Drops the oldest hold of effect `id` (0x4ea100); its cause does not matter.
     pub fn remove_effect(&mut self, id: u32) -> bool {
-        let Some(i) = self.effects.iter().position(|e| e.id == id) else {
-            return false;
-        };
+        let Some(i) = self.effects.iter().position(|e| e.id == id) else { return false };
         self.effects.remove(i);
         true
     }
@@ -250,9 +242,7 @@ impl Refusal {
             Self::BelowAccepted => Some(Message::Charedit(19)),
             Self::AtMinimum => Some(Message::Charedit(20)),
             Self::SkillAtMaximum => Some(Message::Charedit(21)),
-            Self::RaiseStatFirst(stat) => {
-                Some(Message::Charedit(raise_first_message(usize::from(stat))))
-            }
+            Self::RaiseStatFirst(stat) => Some(Message::Charedit(raise_first_message(usize::from(stat)))),
             Self::SkillBelowAccepted => Some(Message::Charedit(23)),
             Self::NoSkillPoints => Some(Message::Charedit(24)),
             Self::SkillPrerequisite => Some(Message::Charedit(28)),

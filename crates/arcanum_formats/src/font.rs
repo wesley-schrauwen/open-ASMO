@@ -76,10 +76,7 @@ impl BitmapFont {
             return Err(FontError::NotAFont("animated art".into()));
         }
         if art.frame_count != FONT_FRAMES {
-            return Err(FontError::NotAFont(format!(
-                "{} frames, expected {FONT_FRAMES}",
-                art.frame_count
-            )));
+            return Err(FontError::NotAFont(format!("{} frames, expected {FONT_FRAMES}", art.frame_count)));
         }
         let palette = art.default_palette()?;
         let line_height = art.frames[0][0].height;
@@ -94,28 +91,11 @@ impl BitmapFont {
             }
             // The palette is a grey ramp: any channel gives the coverage. Index 0 decodes with
             // alpha 0, which marks empty pixels.
-            let alpha = frame
-                .rgba
-                .chunks_exact(4)
-                .map(|p| {
-                    if p[3] == 0 {
-                        0
-                    } else {
-                        p[0].max(p[1]).max(p[2])
-                    }
-                })
-                .collect();
-            frames.push(Glyph {
-                width: frame.info.width,
-                alpha,
-            });
+            let alpha = frame.rgba.chunks_exact(4).map(|p| if p[3] == 0 { 0 } else { p[0].max(p[1]).max(p[2]) }).collect();
+            frames.push(Glyph { width: frame.info.width, alpha });
         }
         let cursor = frames.remove(0);
-        Ok(Self {
-            line_height,
-            cursor,
-            glyphs: frames,
-        })
+        Ok(Self { line_height, cursor, glyphs: frames })
     }
 
     /// The glyph for a Windows-1252 byte; `None` for control bytes below 0x20.
@@ -153,11 +133,7 @@ impl BitmapFont {
             }
             x += w;
         }
-        RenderedText {
-            width,
-            height,
-            alpha,
-        }
+        RenderedText { width, height, alpha }
     }
 }
 
@@ -182,9 +158,7 @@ pub struct Line {
 /// Turns the game's escaped `\n` and `\t` (two characters each, as some `.mes` texts write them)
 /// into real newlines and tabs, and drops carriage returns.
 pub fn unescape(text: &str) -> String {
-    text.replace("\\n", "\n")
-        .replace("\\t", "\t")
-        .replace('\r', "")
+    text.replace("\\n", "\n").replace("\\t", "\t").replace('\r', "")
 }
 
 /// The words of `text` (split at spaces and tabs), each with the number of spaces and tabs
@@ -228,10 +202,7 @@ impl BitmapFont {
             let indent = tabs * tab;
             let body = &paragraph[tabs as usize..];
             let Some(max) = max_width else {
-                lines.push(Line {
-                    indent,
-                    text: body.replace('\t', " "),
-                });
+                lines.push(Line { indent, text: body.replace('\t', " ") });
                 continue;
             };
             let mut current = String::new();
@@ -239,20 +210,13 @@ impl BitmapFont {
             let first = lines.len();
             // Each word with the run of spaces before it, kept inside a line ("   %s: %s").
             for (gap, word) in words_with_gaps(body) {
-                let candidate = if current.is_empty() {
-                    word.to_string()
-                } else {
-                    format!("{current}{}{word}", " ".repeat(gap))
-                };
+                let candidate = if current.is_empty() { word.to_string() } else { format!("{current}{}{word}", " ".repeat(gap)) };
                 if line_indent + self.measure(&candidate) <= max {
                     current = candidate;
                     continue;
                 }
                 if !current.is_empty() {
-                    lines.push(Line {
-                        indent: line_indent,
-                        text: std::mem::take(&mut current),
-                    });
+                    lines.push(Line { indent: line_indent, text: std::mem::take(&mut current) });
                     line_indent = 0;
                 }
                 // The word alone may still be too wide: break it between characters.
@@ -270,10 +234,7 @@ impl BitmapFont {
                         // Not even one character fits; place one anyway so layout always advances.
                         cut = rest.chars().next().map_or(rest.len(), char::len_utf8);
                     }
-                    lines.push(Line {
-                        indent: line_indent,
-                        text: rest[..cut].to_string(),
-                    });
+                    lines.push(Line { indent: line_indent, text: rest[..cut].to_string() });
                     line_indent = 0;
                     rest = &rest[cut..];
                     if rest.is_empty() {
@@ -285,10 +246,7 @@ impl BitmapFont {
             // A paragraph always gives at least one line (blank lines are kept), but a word that
             // was broken to the end leaves nothing further to add.
             if !current.is_empty() || lines.len() == first {
-                lines.push(Line {
-                    indent: line_indent,
-                    text: current,
-                });
+                lines.push(Line { indent: line_indent, text: current });
             }
         }
         lines
@@ -301,21 +259,12 @@ impl BitmapFont {
     }
 
     /// Like [`Self::render_block`], keeping at most `max_lines` lines (whole lines only).
-    pub fn render_block_limited(
-        &self,
-        text: &str,
-        max_width: Option<u32>,
-        align: Align,
-        max_lines: Option<usize>,
-    ) -> RenderedText {
+    pub fn render_block_limited(&self, text: &str, max_width: Option<u32>, align: Align, max_lines: Option<usize>) -> RenderedText {
         let mut lines = self.layout(text, max_width);
         if let Some(n) = max_lines {
             lines.truncate(n.max(1));
         }
-        let widths: Vec<u32> = lines
-            .iter()
-            .map(|l| l.indent + self.measure(&l.text))
-            .collect();
+        let widths: Vec<u32> = lines.iter().map(|l| l.indent + self.measure(&l.text)).collect();
         let width = max_width.unwrap_or_else(|| widths.iter().copied().max().unwrap_or(0));
         let height = self.line_height * lines.len() as u32;
         let mut alpha = vec![0u8; width as usize * height as usize];
@@ -332,16 +281,11 @@ impl BitmapFont {
                     if dx >= width as usize {
                         break;
                     }
-                    alpha[(y0 + y) * width as usize + dx] =
-                        rendered.alpha[y * rendered.width as usize + x];
+                    alpha[(y0 + y) * width as usize + dx] = rendered.alpha[y * rendered.width as usize + x];
                 }
             }
         }
-        RenderedText {
-            width,
-            height,
-            alpha,
-        }
+        RenderedText { width, height, alpha }
     }
 }
 
@@ -364,11 +308,7 @@ mod tests {
         let f = test_font();
         assert_eq!(texts(&f.layout("a\nb\\nc", None)), ["a", "b", "c"]);
         assert_eq!(texts(&f.layout("one\r\ntwo", None)), ["one", "two"]);
-        assert_eq!(
-            texts(&f.layout("a\n\nb", None)),
-            ["a", "", "b"],
-            "blank lines are kept"
-        );
+        assert_eq!(texts(&f.layout("a\n\nb", None)), ["a", "", "b"], "blank lines are kept");
     }
 
     #[test]
@@ -376,13 +316,7 @@ mod tests {
         let f = test_font();
         let space = f.glyph(' ').unwrap().width;
         let lines = f.layout("\tIndented\n\\t\\tTwice", None);
-        assert_eq!(
-            lines[0],
-            Line {
-                indent: space * TAB_SPACES,
-                text: "Indented".into()
-            }
-        );
+        assert_eq!(lines[0], Line { indent: space * TAB_SPACES, text: "Indented".into() });
         assert_eq!(lines[1].indent, 2 * space * TAB_SPACES);
     }
 
@@ -398,10 +332,7 @@ mod tests {
             // Greedy: the next line's first word would not have fitted on this one.
             if let Some(next) = lines.get(i + 1) {
                 let first = next.text.split(' ').next().unwrap();
-                assert!(
-                    f.measure(&format!("{} {first}", line.text)) > max,
-                    "{line:?} then {next:?}"
-                );
+                assert!(f.measure(&format!("{} {first}", line.text)) > max, "{line:?} then {next:?}");
             }
         }
         assert_eq!(texts(&lines).join(" "), text, "no words lost");
@@ -435,32 +366,18 @@ mod tests {
         let block = f.render_block("a\nbbb", None, Align::Left);
         assert_eq!((block.width, block.height), (f.measure("bbb"), 2 * h));
         // Left: the short line starts at x = 0.
-        let column =
-            |b: &RenderedText, x: u32| (0..h).any(|y| b.alpha[(y * b.width + x) as usize] > 0);
+        let column = |b: &RenderedText, x: u32| (0..h).any(|y| b.alpha[(y * b.width + x) as usize] > 0);
         assert!(column(&block, 0));
         let centred = f.render_block("a\nbbb", None, Align::Center);
         // Centred: the first line's glyph sits in the middle, not at the left edge.
-        let first_row_has_ink_at =
-            |b: &RenderedText, x: u32| (0..h).any(|y| b.alpha[(y * b.width + x) as usize] > 0);
+        let first_row_has_ink_at = |b: &RenderedText, x: u32| (0..h).any(|y| b.alpha[(y * b.width + x) as usize] > 0);
         assert!(!first_row_has_ink_at(&centred, 0) || f.measure("a") == f.measure("bbb"));
         // A fixed width is honoured.
         assert_eq!(f.render_block("a", Some(50), Align::Left).width, 50);
-        assert_eq!(
-            f.render_block("", None, Align::Left).height,
-            h,
-            "empty text is one blank line"
-        );
+        assert_eq!(f.render_block("", None, Align::Left).height, h, "empty text is one blank line");
         // A line limit keeps whole lines only.
-        assert_eq!(
-            f.render_block_limited("a\nb\nc", None, Align::Left, Some(2))
-                .height,
-            2 * h
-        );
-        assert_eq!(
-            f.render_block_limited("a\nb", None, Align::Left, Some(5))
-                .height,
-            2 * h
-        );
+        assert_eq!(f.render_block_limited("a\nb\nc", None, Align::Left, Some(2)).height, 2 * h);
+        assert_eq!(f.render_block_limited("a\nb", None, Align::Left, Some(5)).height, 2 * h);
     }
 
     #[test]
@@ -491,10 +408,7 @@ mod tests {
         let font = BitmapFont::parse(&font_art(4)).unwrap();
         let w = |c| font.glyph(c).unwrap().width;
         assert_eq!(font.measure("Ab c"), w('A') + w('b') + w(' ') + w('c'));
-        assert_eq!(
-            words_with_gaps("  a   bc\td "),
-            vec![(2, "a"), (3, "bc"), (1, "d")]
-        );
+        assert_eq!(words_with_gaps("  a   bc\td "), vec![(2, "a"), (3, "bc"), (1, "d")]);
         assert_eq!(font.measure(""), 0);
     }
 
@@ -505,12 +419,7 @@ mod tests {
         let g = font.glyph('A').unwrap();
         for row in 0..4usize {
             let expected = if row == 0 { 0 } else { row as u8 * 60 };
-            assert!(
-                g.alpha[row * g.width as usize..(row + 1) * g.width as usize]
-                    .iter()
-                    .all(|&a| a == expected),
-                "row {row}"
-            );
+            assert!(g.alpha[row * g.width as usize..(row + 1) * g.width as usize].iter().all(|&a| a == expected), "row {row}");
         }
     }
 
@@ -522,51 +431,23 @@ mod tests {
         assert_eq!((text.width, text.height), (a.width + b.width, 4));
         for row in 0..4usize {
             let line = &text.alpha[row * text.width as usize..(row + 1) * text.width as usize];
-            assert_eq!(
-                &line[..a.width as usize],
-                &a.alpha[row * a.width as usize..(row + 1) * a.width as usize]
-            );
-            assert_eq!(
-                &line[a.width as usize..],
-                &b.alpha[row * b.width as usize..(row + 1) * b.width as usize]
-            );
+            assert_eq!(&line[..a.width as usize], &a.alpha[row * a.width as usize..(row + 1) * a.width as usize]);
+            assert_eq!(&line[a.width as usize..], &b.alpha[row * b.width as usize..(row + 1) * b.width as usize]);
         }
-        assert_eq!(
-            font.render(""),
-            RenderedText {
-                width: 0,
-                height: 4,
-                alpha: vec![]
-            }
-        );
+        assert_eq!(font.render(""), RenderedText { width: 0, height: 4, alpha: vec![] });
     }
 
     #[test]
     fn rejects_art_that_is_not_a_font() {
         let sprite = ArtBuilder::single(TestFrame::raw(2, 2, &[1, 2, 3, 4])).build();
-        assert!(matches!(
-            BitmapFont::parse(&sprite),
-            Err(FontError::NotAFont(_))
-        ));
+        assert!(matches!(BitmapFont::parse(&sprite), Err(FontError::NotAFont(_))));
 
         let animated = ArtBuilder::animated(FONT_FRAMES, |_, _| TestFrame::raw(1, 1, &[1])).build();
-        assert!(matches!(
-            BitmapFont::parse(&animated),
-            Err(FontError::NotAFont(_))
-        ));
+        assert!(matches!(BitmapFont::parse(&animated), Err(FontError::NotAFont(_))));
 
         let mut uneven = ArtBuilder::single(TestFrame::raw(1, 3, &[1, 1, 1]));
-        uneven.rotations[0].extend((1..FONT_FRAMES).map(|i| {
-            TestFrame::raw(
-                1,
-                if i == 50 { 2 } else { 3 },
-                &vec![1; if i == 50 { 2 } else { 3 }],
-            )
-        }));
-        assert!(matches!(
-            BitmapFont::parse(&uneven.build()),
-            Err(FontError::NotAFont(_))
-        ));
+        uneven.rotations[0].extend((1..FONT_FRAMES).map(|i| TestFrame::raw(1, if i == 50 { 2 } else { 3 }, &vec![1; if i == 50 { 2 } else { 3 }])));
+        assert!(matches!(BitmapFont::parse(&uneven.build()), Err(FontError::NotAFont(_))));
 
         assert!(matches!(BitmapFont::parse(b"junk"), Err(FontError::Art(_))));
     }

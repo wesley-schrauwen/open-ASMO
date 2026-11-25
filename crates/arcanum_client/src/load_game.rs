@@ -29,9 +29,7 @@ use crate::fonts::{ArcanumFonts, UiFont};
 use crate::loading::LoadRequest;
 use crate::main_menu::{AppState, HOVER_COLOR};
 pub use crate::menu_window::{HoverHelp, HoverHelpText, INFO_COLOR};
-use crate::menu_window::{
-    MenuWindowPlugin, TOP_BAR_HEIGHT, WindowArt, at, image_button, rect, screen_root, spawn_frame,
-};
+use crate::menu_window::{MenuWindowPlugin, TOP_BAR_HEIGHT, WindowArt, at, image_button, rect, screen_root, spawn_frame};
 use crate::resource_pack::paths::interface;
 use crate::widgets::HoverText;
 
@@ -57,15 +55,8 @@ pub struct SaveGames(pub Vec<SaveSummary>);
 pub struct ExampleSaves;
 
 /// Fills [`SaveGames`] from the save folder, unless it holds examples or there is no folder.
-fn scan_saves(
-    mut saves: ResMut<SaveGames>,
-    settings: Option<Res<crate::sim_bridge::HostSettings>>,
-    examples: Option<Res<ExampleSaves>>,
-    player: Option<Res<crate::sim_bridge::LocalPlayer>>,
-) {
-    let Some(dir) = settings.and_then(|s| s.save_dir.clone()) else {
-        return;
-    };
+fn scan_saves(mut saves: ResMut<SaveGames>, settings: Option<Res<crate::sim_bridge::HostSettings>>, examples: Option<Res<ExampleSaves>>, player: Option<Res<crate::sim_bridge::LocalPlayer>>) {
+    let Some(dir) = settings.and_then(|s| s.save_dir.clone()) else { return };
     if examples.is_some() {
         return;
     }
@@ -77,9 +68,7 @@ fn scan_saves(
     saves.0 = found
         .into_iter()
         .map(|listing| {
-            let pc = me
-                .and_then(|p| listing.save.players.get(&p))
-                .or_else(|| listing.save.players.values().next());
+            let pc = me.and_then(|p| listing.save.players.get(&p)).or_else(|| listing.save.players.values().next());
             SaveSummary {
                 name: pc.map_or_else(|| "?".into(), |p| p.blueprint.sheet.name.clone()),
                 path: Some(listing.path),
@@ -93,9 +82,7 @@ fn scan_saves(
 
 /// `d Mon yyyy hh:mm` in UTC.
 fn format_time(t: std::time::SystemTime) -> String {
-    let secs = t
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs()) as i64;
+    let secs = t.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()) as i64;
     let (days, rest) = (secs.div_euclid(86_400), secs.rem_euclid(86_400));
     // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
     let z = days + 719_468;
@@ -107,15 +94,8 @@ fn format_time(t: std::time::SystemTime) -> String {
     let day = doy - (153 * mp + 2) / 5 + 1;
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + i64::from(month <= 2);
-    const MONTHS: [&str; 12] = [
-        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-    ];
-    format!(
-        "{day} {} {year} {:02}:{:02}",
-        MONTHS[(month - 1) as usize],
-        rest / 3600,
-        rest / 60 % 60
-    )
+    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    format!("{day} {} {year} {:02}:{:02}", MONTHS[(month - 1) as usize], rest / 3600, rest / 60 % 60)
 }
 
 /// Selection and the info toggle. Reset each time the screen opens.
@@ -156,18 +136,12 @@ pub const ROW_COLOR: Color = Color::srgb_u8(214, 186, 128);
 
 // Layout in original 800x600 pixels; everything is multiplied by ORIGINAL_SCALE.
 /// Inside the list box (background 33,111 - 209,343), offset to the screen.
-const LIST: Rect = Rect {
-    min: Vec2::new(38.0, 116.0 + TOP_BAR_HEIGHT),
-    max: Vec2::new(204.0, 338.0 + TOP_BAR_HEIGHT),
-};
+const LIST: Rect = Rect { min: Vec2::new(38.0, 116.0 + TOP_BAR_HEIGHT), max: Vec2::new(204.0, 338.0 + TOP_BAR_HEIGHT) };
 /// Portrait ring over the socket above the list.
 const LENS_AT: Vec2 = Vec2::new(84.0, 8.0 + TOP_BAR_HEIGHT);
 const LENS_SIZE: Vec2 = Vec2::new(89.0, 89.0);
 /// Screenshot frame over the oval window.
-const SHOT: Rect = Rect {
-    min: Vec2::new(281.0, 55.0 + TOP_BAR_HEIGHT),
-    max: Vec2::new(749.0, 355.0 + TOP_BAR_HEIGHT),
-};
+const SHOT: Rect = Rect { min: Vec2::new(281.0, 55.0 + TOP_BAR_HEIGHT), max: Vec2::new(749.0, 355.0 + TOP_BAR_HEIGHT) };
 /// Buttons: positions from the original's screen table.
 const DELETE_AT: Vec2 = Vec2::new(115.0, 396.0);
 const DELETE_SIZE: Vec2 = Vec2::new(38.0, 37.0);
@@ -228,10 +202,7 @@ fn load_art(mut commands: Commands, assets: Res<AssetServer>) {
 
 fn enter(mut commands: Commands, saves: Res<SaveGames>, mut state: ResMut<LoadGameState>) {
     // The newest save starts selected, as there is nothing else to show otherwise.
-    *state = LoadGameState {
-        selected: (!saves.0.is_empty()).then_some(0),
-        show_info: false,
-    };
+    *state = LoadGameState { selected: (!saves.0.is_empty()).then_some(0), show_info: false };
     commands.insert_resource(RebuildLoadGame);
 }
 
@@ -260,11 +231,7 @@ fn build_screen(
     let selected = state.selected.and_then(|i| saves.0.get(i).map(|s| (i, s)));
 
     commands
-        .spawn((
-            LoadGameScreen,
-            DespawnOnExit(AppState::LoadGame),
-            screen_root(),
-        ))
+        .spawn((LoadGameScreen, DespawnOnExit(AppState::LoadGame), screen_root()))
         .with_children(|screen| {
             spawn_frame(
                 screen,
@@ -275,21 +242,13 @@ fn build_screen(
                 (LoadGameAction::Load, HoverHelp(7020, "Load Game")),
             );
             // The portrait would go under the ring; saves have no portrait yet.
-            screen.spawn((
-                ImageNode::new(art.lens.clone()),
-                at(rect(LENS_AT, LENS_SIZE)),
-            ));
+            screen.spawn((ImageNode::new(art.lens.clone()), at(rect(LENS_AT, LENS_SIZE))));
             // The screenshot would go under the frame; saves have no screenshot yet.
             screen.spawn((ImageNode::new(art.shot_cover.clone()), at(SHOT)));
 
             // Save list.
             screen
-                .spawn(Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: crate::menu_window::px(2.0),
-                    overflow: Overflow::clip(),
-                    ..at(LIST)
-                })
+                .spawn(Node { flex_direction: FlexDirection::Column, row_gap: crate::menu_window::px(2.0), overflow: Overflow::clip(), ..at(LIST) })
                 .with_children(|list| {
                     if saves.0.is_empty() {
                         let mut empty = list.spawn(TextColor(ROW_COLOR));
@@ -304,10 +263,7 @@ fn build_screen(
                             Button,
                             ActivateOnPress,
                             Hovered::default(),
-                            HoverText {
-                                normal: colour,
-                                hover: HOVER_COLOR,
-                            },
+                            HoverText { normal: colour, hover: HOVER_COLOR },
                             TextColor(colour),
                         ));
                         fonts.insert_text(&mut row, &save.name, UiFont::Small);
@@ -332,24 +288,14 @@ fn build_screen(
                         },
                     ))
                     .with_children(|info| {
-                        for line in [
-                            save.name.clone(),
-                            format!("Level {}", save.level),
-                            save.location.clone(),
-                            save.saved_at.clone(),
-                        ] {
+                        for line in [save.name.clone(), format!("Level {}", save.level), save.location.clone(), save.saved_at.clone()] {
                             let mut text = info.spawn(TextColor(INFO_COLOR));
                             fonts.insert_text(&mut text, &line, UiFont::Small);
                         }
                     });
             }
 
-            screen.spawn(image_button(
-                LoadGameAction::Delete,
-                HoverHelp(7022, "Delete Save Game"),
-                &art.delete,
-                rect(DELETE_AT, DELETE_SIZE),
-            ));
+            screen.spawn(image_button(LoadGameAction::Delete, HoverHelp(7022, "Delete Save Game"), &art.delete, rect(DELETE_AT, DELETE_SIZE)));
             screen.spawn((
                 LoadGameAction::ToggleInfo,
                 HoverHelp(7025, "Toggle Info Display"),
@@ -369,9 +315,7 @@ fn show_toggle_frame(
     state: Res<LoadGameState>,
     mut toggles: Query<(&LoadGameAction, &mut ImageNode)>,
 ) {
-    let Some(set) = frames.get(&art.toggle) else {
-        return;
-    };
+    let Some(set) = frames.get(&art.toggle) else { return };
     for (action, mut image) in &mut toggles {
         if *action != LoadGameAction::ToggleInfo {
             continue;
@@ -393,9 +337,7 @@ fn on_activate(
     mut next_state: ResMut<NextState<AppState>>,
     sounds: Option<Res<MenuSounds>>,
 ) {
-    let Ok(&action) = actions.get(activate.entity) else {
-        return;
-    };
+    let Ok(&action) = actions.get(activate.entity) else { return };
     let selected = state.selected.filter(|i| *i < saves.0.len());
     // Load and Delete need a save; without one they do nothing (and stay silent).
     if matches!(action, LoadGameAction::Load | LoadGameAction::Delete) && selected.is_none() {
@@ -410,9 +352,7 @@ fn on_activate(
     match action {
         LoadGameAction::Back => next_state.set(AppState::SinglePlayer),
         LoadGameAction::Load => {
-            let Some(path) = selected.and_then(|i| saves.0[i].path.clone()) else {
-                return;
-            };
+            let Some(path) = selected.and_then(|i| saves.0[i].path.clone()) else { return };
             commands.queue(move |world: &mut World| crate::sim_bridge::boot_save(world, &path));
             commands.insert_resource(LoadRequest::new(AppState::InGame).after_save_boots());
             next_state.set(AppState::Loading);

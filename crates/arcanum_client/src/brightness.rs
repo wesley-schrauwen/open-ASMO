@@ -14,8 +14,8 @@ use bevy::core_pipeline::upscaling::upscaling;
 use bevy::ecs::schedule::ScheduleConfigs;
 use bevy::ecs::system::BoxedSystem;
 use bevy::prelude::*;
-use bevy::render::RenderApp;
 use bevy::render::extract_component::ExtractComponent;
+use bevy::render::RenderApp;
 use bevy::render::render_resource::ShaderType;
 use bevy::shader::ShaderRef;
 use bevy::ui_render::ui_pass;
@@ -27,11 +27,7 @@ pub const MAX_STOPS: f32 = 1.0;
 
 /// The gamma exponent for a Brightness value (`0.0..=1.0`, 0.5 neutral).
 pub fn brightness_exponent(brightness: f32) -> f32 {
-    let b = if brightness.is_finite() {
-        brightness.clamp(0.0, 1.0)
-    } else {
-        0.5
-    };
+    let b = if brightness.is_finite() { brightness.clamp(0.0, 1.0) } else { 0.5 };
     2f32.powf((0.5 - b) * 2.0 * MAX_STOPS)
 }
 
@@ -46,10 +42,7 @@ pub struct Brightness {
 
 impl Default for Brightness {
     fn default() -> Self {
-        Self {
-            exponent: 1.0,
-            _padding: Vec3::ZERO,
-        }
+        Self { exponent: 1.0, _padding: Vec3::ZERO }
     }
 }
 
@@ -92,10 +85,7 @@ fn sync_brightness(
             Some(mut b) if b.exponent != exponent => b.exponent = exponent,
             Some(_) => {}
             None => {
-                commands.entity(entity).insert(Brightness {
-                    exponent,
-                    ..default()
-                });
+                commands.entity(entity).insert(Brightness { exponent, ..default() });
             }
         }
     }
@@ -108,16 +98,8 @@ mod tests {
     #[test]
     fn half_is_neutral_and_the_ends_bend_both_ways() {
         assert_eq!(brightness_exponent(0.5), 1.0);
-        assert_eq!(
-            brightness_exponent(0.0),
-            2.0,
-            "darker: mid-grey 0.5 -> 0.25"
-        );
-        assert_eq!(
-            brightness_exponent(1.0),
-            0.5,
-            "lighter: mid-grey 0.5 -> 0.71"
-        );
+        assert_eq!(brightness_exponent(0.0), 2.0, "darker: mid-grey 0.5 -> 0.25");
+        assert_eq!(brightness_exponent(1.0), 0.5, "lighter: mid-grey 0.5 -> 0.71");
         assert!(brightness_exponent(0.25) > 1.0 && brightness_exponent(0.75) < 1.0);
         assert_eq!(brightness_exponent(9.0), 0.5, "clamped");
         assert_eq!(brightness_exponent(f32::NAN), 1.0);

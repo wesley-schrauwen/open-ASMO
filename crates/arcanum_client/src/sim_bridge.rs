@@ -17,12 +17,10 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use arcanum_formats::map::TileLoc;
-use arcanum_net::{ClientTransport, LanClient, LocalHost};
+use arcanum_net::{ClientTransport, LocalHost, LanClient};
 use arcanum_rules::RulesData;
-use arcanum_sim::{
-    EntityKind, LedgerDelta, NetId, PlayerId, SaveFile, SaveStatus, SimRules, SimVfs, StartMap,
-};
+use arcanum_formats::map::TileLoc;
+use arcanum_sim::{EntityKind, LedgerDelta, NetId, PlayerId, SaveFile, SaveStatus, SimRules, SimVfs, StartMap};
 use bevy::prelude::*;
 
 use crate::actors::ActorDeltas;
@@ -77,11 +75,7 @@ pub struct HostSettings {
 pub struct SimBridgePlugin;
 
 /// Screens that belong to a new game: entering any of them starts the host if none is running.
-const NEW_GAME_STATES: [AppState; 3] = [
-    AppState::NewGameChoice,
-    AppState::NewGame,
-    AppState::CreateCharacter,
-];
+const NEW_GAME_STATES: [AppState; 3] = [AppState::NewGameChoice, AppState::NewGame, AppState::CreateCharacter];
 
 impl Plugin for SimBridgePlugin {
     fn build(&self, app: &mut App) {
@@ -93,10 +87,7 @@ impl Plugin for SimBridgePlugin {
             .init_resource::<LocalMap>()
             .add_systems(OnEnter(AppState::MainMenu), stop_host)
             .add_systems(OnEnter(AppState::SinglePlayer), stop_host)
-            .add_systems(
-                PostUpdate,
-                (share_rules, send_intents, run_host, receive_deltas).chain(),
-            );
+            .add_systems(PostUpdate, (share_rules, send_intents, run_host, receive_deltas).chain());
         for state in NEW_GAME_STATES {
             app.add_systems(OnEnter(state), (load_creation_data, start_host).chain());
         }
@@ -109,15 +100,8 @@ pub fn start_host(world: &mut World) {
     if world.contains_resource::<HostLink>() {
         return;
     }
-    let player = world
-        .get_resource::<LocalPlayer>()
-        .copied()
-        .unwrap_or_default()
-        .0;
-    let settings = world
-        .get_resource::<HostSettings>()
-        .cloned()
-        .unwrap_or_default();
+    let player = world.get_resource::<LocalPlayer>().copied().unwrap_or_default().0;
+    let settings = world.get_resource::<HostSettings>().cloned().unwrap_or_default();
     let link: Box<dyn ClientTransport> = match settings.join {
         Some(addr) => match LanClient::connect(addr, player) {
             Ok(client) => {
@@ -142,21 +126,10 @@ pub fn start_host(world: &mut World) {
 }
 
 /// Starts a host in this process, listening on the LAN if asked, and connects `player` to it.
-fn local_host(
-    world: &mut World,
-    player: PlayerId,
-    settings: &HostSettings,
-) -> arcanum_net::LoopbackClient {
-    let rules = world
-        .get_resource::<CreationData>()
-        .map(|d| d.rules.clone())
-        .unwrap_or_default();
+fn local_host(world: &mut World, player: PlayerId, settings: &HostSettings) -> arcanum_net::LoopbackClient {
+    let rules = world.get_resource::<CreationData>().map(|d| d.rules.clone()).unwrap_or_default();
     let vfs = world.get_resource::<VfsResource>().map(|v| v.0.clone());
-    let start = vfs.as_ref().map(|v| {
-        v.read()
-            .map_err(|e| e.to_string())
-            .and_then(|vfs| StartMap::load(&vfs))
-    });
+    let start = vfs.as_ref().map(|v| v.read().map_err(|e| e.to_string()).and_then(|vfs| StartMap::load(&vfs)));
     let mut host = LocalHost::new(rules);
     match start {
         Some(Ok(mut start)) => {
@@ -172,9 +145,7 @@ fn local_host(
         host.sim.app.insert_resource(SimVfs(vfs));
     }
     if let Some(dir) = &settings.save_dir {
-        let session = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis() as u64);
+        let session = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
         host.sim.app.insert_resource(SaveFile::in_dir(dir, session));
     }
     if settings.manual_clock {
@@ -204,27 +175,13 @@ pub fn boot_save(world: &mut World, path: &std::path::Path) {
             return;
         }
     };
-    let player = world
-        .get_resource::<LocalPlayer>()
-        .copied()
-        .unwrap_or_default()
-        .0;
+    let player = world.get_resource::<LocalPlayer>().copied().unwrap_or_default().0;
     if !save.players.contains_key(&player) {
-        warn!(
-            "{} has no character for this player ({})",
-            path.display(),
-            player.0
-        );
+        warn!("{} has no character for this player ({})", path.display(), player.0);
         return;
     }
     // A loaded game is not a new one: no save folder for a new session; this file instead.
-    let settings = HostSettings {
-        save_dir: None,
-        ..world
-            .get_resource::<HostSettings>()
-            .cloned()
-            .unwrap_or_default()
-    };
+    let settings = HostSettings { save_dir: None, ..world.get_resource::<HostSettings>().cloned().unwrap_or_default() };
     let link = local_host(world, player, &settings);
     {
         let mut host = world.non_send_mut::<LocalHostRes>();
@@ -254,20 +211,10 @@ fn share_rules(data: Option<Res<CreationData>>, host: Option<NonSendMut<LocalHos
     }
 }
 
-fn send_intents(
-    mut character: ResMut<CharacterHost>,
-    mut sheet: ResMut<crate::pc_sheet::SheetHost>,
-    inventory: Option<ResMut<crate::inventory_screen::PcInventory>>,
-    link: Option<Res<HostLink>>,
-) {
+fn send_intents(mut character: ResMut<CharacterHost>, mut sheet: ResMut<crate::pc_sheet::SheetHost>, inventory: Option<ResMut<crate::inventory_screen::PcInventory>>, link: Option<Res<HostLink>>) {
     let Some(link) = link else { return };
     let items = inventory.map(|mut i| i.take_outgoing()).unwrap_or_default();
-    for intent in character
-        .take_outgoing()
-        .into_iter()
-        .chain(sheet.take_outgoing())
-        .chain(items)
-    {
+    for intent in character.take_outgoing().into_iter().chain(sheet.take_outgoing()).chain(items) {
         if let Err(e) = link.0.send_intent(intent) {
             warn!("cannot reach the host: {e}");
         }
@@ -299,10 +246,7 @@ fn receive_deltas(
     mut inventory: Option<ResMut<crate::inventory_screen::PcInventory>>,
     mut skill_results: Option<ResMut<crate::skill_use::SkillResults>>,
     mut rest: Option<ResMut<crate::rest_window::RestPanel>>,
-    (mut dialogue, mut floats): (
-        Option<ResMut<crate::dialogue_ui::DialogueState>>,
-        Option<ResMut<crate::dialogue_ui::Floats>>,
-    ),
+    (mut dialogue, mut floats): (Option<ResMut<crate::dialogue_ui::DialogueState>>, Option<ResMut<crate::dialogue_ui::Floats>>),
     mut votes: Option<ResMut<crate::vote_popup::Votes>>,
 ) {
     let Some(link) = link else { return };
@@ -321,15 +265,7 @@ fn receive_deltas(
     for delta in &deltas {
         character.receive(rules, delta);
         sheet.receive(rules, delta);
-        if let (
-            LedgerDelta::Inventory {
-                ack,
-                inventory: carried,
-                ..
-            },
-            Some(inv),
-        ) = (delta, inventory.as_mut())
-        {
+        if let (LedgerDelta::Inventory { ack, inventory: carried, .. }, Some(inv)) = (delta, inventory.as_mut()) {
             inv.receive(*ack, carried.clone());
         }
         if let (LedgerDelta::ItemRefused { message }, Some(inv)) = (delta, inventory.as_mut()) {
@@ -338,26 +274,16 @@ fn receive_deltas(
         if let (LedgerDelta::OpenRefused { message }, Some(inv)) = (delta, inventory.as_mut()) {
             inv.refuse_open(*message);
         }
-        if let (LedgerDelta::SkillResult { message }, Some(results)) =
-            (delta, skill_results.as_mut())
-        {
+        if let (LedgerDelta::SkillResult { message }, Some(results)) = (delta, skill_results.as_mut()) {
             results.0.push(crate::skill_use::UseResult::Skill(*message));
         }
-        if let (LedgerDelta::SpellResult { message }, Some(results)) =
-            (delta, skill_results.as_mut())
-        {
+        if let (LedgerDelta::SpellResult { message }, Some(results)) = (delta, skill_results.as_mut()) {
             results.0.push(crate::skill_use::UseResult::Spell(*message));
         }
-        if let (LedgerDelta::ScriptMessage { text }, Some(results)) =
-            (delta, skill_results.as_mut())
-        {
-            results
-                .0
-                .push(crate::skill_use::UseResult::Text(text.clone()));
+        if let (LedgerDelta::ScriptMessage { text }, Some(results)) = (delta, skill_results.as_mut()) {
+            results.0.push(crate::skill_use::UseResult::Text(text.clone()));
         }
-        if let (LedgerDelta::RestRefused { message }, Some(results)) =
-            (delta, skill_results.as_mut())
-        {
+        if let (LedgerDelta::RestRefused { message }, Some(results)) = (delta, skill_results.as_mut()) {
             results.0.push(crate::skill_use::UseResult::Rest(*message));
         }
         if let Some(rest) = rest.as_mut() {
@@ -369,19 +295,8 @@ fn receive_deltas(
         if let Some(votes) = votes.as_mut() {
             votes.receive(delta);
         }
-        if let (
-            LedgerDelta::FloatText {
-                speaker,
-                text,
-                colour,
-                voice,
-            },
-            Some(floats),
-        ) = (delta, floats.as_mut())
-        {
-            floats
-                .0
-                .push((*speaker, text.clone(), *colour, voice.clone()));
+        if let (LedgerDelta::FloatText { speaker, text, colour, voice }, Some(floats)) = (delta, floats.as_mut()) {
+            floats.0.push((*speaker, text.clone(), *colour, voice.clone()));
         }
         if let (LedgerDelta::PileOpened { pile }, Some(inv)) = (delta, inventory.as_mut()) {
             inv.open_pile(*pile);
@@ -406,12 +321,7 @@ fn receive_deltas(
         {
             pc.0 = Some((*net_id, *to));
         }
-        if let LedgerDelta::Spawn {
-            net_id,
-            kind: EntityKind::Pc { player },
-            position,
-            ..
-        } = delta
+        if let LedgerDelta::Spawn { net_id, kind: EntityKind::Pc { player }, position, .. } = delta
             && *player == link.0.player()
         {
             pc.0 = Some((*net_id, *position));
@@ -439,21 +349,13 @@ mod tests {
 
     fn app(settings: HostSettings) -> App {
         let mut app = App::new();
-        app.add_plugins((
-            MinimalPlugins,
-            bevy::state::app::StatesPlugin,
-            SimBridgePlugin,
-        ))
-        .init_state::<AppState>()
-        .insert_resource(settings);
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin, SimBridgePlugin)).init_state::<AppState>().insert_resource(settings);
         app.update();
         app
     }
 
     fn enter(app: &mut App, state: AppState) {
-        app.world_mut()
-            .resource_mut::<NextState<AppState>>()
-            .set(state);
+        app.world_mut().resource_mut::<NextState<AppState>>().set(state);
         app.update();
     }
 
@@ -461,21 +363,14 @@ mod tests {
         let rules = RulesData::default();
         let mut host = app.world_mut().resource_mut::<CharacterHost>();
         host.reset(&rules);
-        host.apply(&rules, CharacterAction::SetName("Virgil".into()))
-            .unwrap();
+        host.apply(&rules, CharacterAction::SetName("Virgil".into())).unwrap();
         host.finish(&rules).unwrap();
     }
 
     #[test]
     fn the_host_runs_only_during_a_new_game() {
-        let mut app = app(HostSettings {
-            manual_clock: true,
-            ..default()
-        });
-        assert!(
-            !app.world().contains_non_send::<LocalHostRes>(),
-            "not on the main menu"
-        );
+        let mut app = app(HostSettings { manual_clock: true, ..default() });
+        assert!(!app.world().contains_non_send::<LocalHostRes>(), "not on the main menu");
         enter(&mut app, AppState::NewGameChoice);
         assert!(app.world().contains_non_send::<LocalHostRes>());
         make_virgil(&mut app);
@@ -484,157 +379,76 @@ mod tests {
         assert!(app.world().resource::<CharacterHost>().accepted);
         let host = app.world().non_send::<LocalHostRes>();
         let session = host.0.sim.app.world().resource::<Session>();
-        assert!(
-            matches!(&session.players[&LOCAL_PLAYER], SessionPlayer::Ready(b) if b.sheet.name == "Virgil")
-        );
+        assert!(matches!(&session.players[&LOCAL_PLAYER], SessionPlayer::Ready(b) if b.sheet.name == "Virgil"));
 
         enter(&mut app, AppState::NewGame);
-        assert!(
-            app.world().resource::<CharacterHost>().accepted,
-            "moving between new-game screens keeps the host"
-        );
+        assert!(app.world().resource::<CharacterHost>().accepted, "moving between new-game screens keeps the host");
         enter(&mut app, AppState::MainMenu);
         assert!(!app.world().contains_non_send::<LocalHostRes>());
         assert!(!app.world().contains_resource::<HostLink>());
         enter(&mut app, AppState::CreateCharacter);
-        assert!(
-            !app.world().resource::<CharacterHost>().accepted,
-            "a new host, a new character"
-        );
+        assert!(!app.world().resource::<CharacterHost>().accepted, "a new host, a new character");
         assert_eq!(app.world().resource::<LocalPc>().0, None);
     }
 
     #[test]
     fn the_accepted_character_is_saved() {
         let dir = tempfile::tempdir().unwrap();
-        let mut app = app(HostSettings {
-            save_dir: Some(dir.path().to_path_buf()),
-            manual_clock: true,
-            ..default()
-        });
+        let mut app = app(HostSettings { save_dir: Some(dir.path().to_path_buf()), manual_clock: true, ..default() });
         enter(&mut app, AppState::NewGameChoice);
-        let start = StartMap {
-            map: "Arcanum1-024-fixed".into(),
-            position: TileLoc { x: 92958, y: 82592 },
-            clock: Default::default(),
-        };
-        app.world_mut()
-            .non_send_mut::<LocalHostRes>()
-            .0
-            .sim
-            .app
-            .insert_resource(start.clone());
+        let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 }, clock: Default::default() };
+        app.world_mut().non_send_mut::<LocalHostRes>().0.sim.app.insert_resource(start.clone());
         make_virgil(&mut app);
         app.update();
         app.update();
-        assert_eq!(
-            app.world().resource::<LocalPc>().0,
-            Some((NetId(0), start.position)),
-            "the PC is in the world"
-        );
-        assert_eq!(
-            app.world().resource::<LocalMap>().0.as_deref(),
-            Some(start.map.as_str())
-        );
-        let files: Vec<_> = std::fs::read_dir(dir.path())
-            .unwrap()
-            .map(|e| e.unwrap().path())
-            .collect();
+        assert_eq!(app.world().resource::<LocalPc>().0, Some((NetId(0), start.position)), "the PC is in the world");
+        assert_eq!(app.world().resource::<LocalMap>().0.as_deref(), Some(start.map.as_str()));
+        let files: Vec<_> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().path()).collect();
         assert_eq!(files.len(), 1, "{files:?}");
         let save = WorldSave::read(&files[0]).unwrap();
-        assert_eq!(
-            (save.map.as_str(), save.players[&LOCAL_PLAYER].position),
-            (start.map.as_str(), start.position)
-        );
+        assert_eq!((save.map.as_str(), save.players[&LOCAL_PLAYER].position), (start.map.as_str(), start.position));
     }
 
     #[test]
     fn a_client_joins_a_host_on_the_lan() {
         // The host: another game's, listening on a free port, with someone already in the world.
-        let start = StartMap {
-            map: "Arcanum1-024-fixed".into(),
-            position: TileLoc { x: 92958, y: 82592 },
-            clock: Default::default(),
-        };
+        let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 }, clock: Default::default() };
         let rules = RulesData::default();
         let mut host = LocalHost::new(rules.clone());
         host.sim.app.insert_resource(start.clone());
         let addr = host.listen("127.0.0.1:0").unwrap();
         let first = host.connect(PlayerId(100));
-        first
-            .send_intent(arcanum_sim::PlayerIntent::Character {
-                seq: 1,
-                request: arcanum_sim::CharacterRequest::Action(CharacterAction::SetName(
-                    "Host".into(),
-                )),
-            })
-            .unwrap();
-        first
-            .send_intent(arcanum_sim::PlayerIntent::Character {
-                seq: 2,
-                request: arcanum_sim::CharacterRequest::Accept,
-            })
-            .unwrap();
+        first.send_intent(arcanum_sim::PlayerIntent::Character { seq: 1, request: arcanum_sim::CharacterRequest::Action(CharacterAction::SetName("Host".into())) }).unwrap();
+        first.send_intent(arcanum_sim::PlayerIntent::Character { seq: 2, request: arcanum_sim::CharacterRequest::Accept }).unwrap();
 
         let mut app = App::new();
-        app.add_plugins((
-            MinimalPlugins,
-            bevy::state::app::StatesPlugin,
-            SimBridgePlugin,
-        ))
-        .init_state::<AppState>()
-        .insert_resource(HostSettings {
-            join: Some(addr),
-            ..default()
-        })
-        .insert_resource(LocalPlayer(PlayerId(200)));
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin, SimBridgePlugin))
+            .init_state::<AppState>()
+            .insert_resource(HostSettings { join: Some(addr), ..default() })
+            .insert_resource(LocalPlayer(PlayerId(200)));
         app.update();
         enter(&mut app, AppState::NewGameChoice);
-        assert!(
-            !app.world().contains_non_send::<LocalHostRes>(),
-            "no host of its own"
-        );
+        assert!(!app.world().contains_non_send::<LocalHostRes>(), "no host of its own");
         assert!(app.world().contains_resource::<HostLink>());
         make_virgil(&mut app);
 
         let begun = std::time::Instant::now();
         while app.world().resource::<LocalPc>().0.is_none() {
-            assert!(
-                begun.elapsed() < std::time::Duration::from_secs(5),
-                "never joined the world"
-            );
+            assert!(begun.elapsed() < std::time::Duration::from_secs(5), "never joined the world");
             host.update();
             app.update();
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         assert!(app.world().resource::<CharacterHost>().accepted);
-        assert_eq!(
-            app.world().resource::<LocalMap>().0.as_deref(),
-            Some(start.map.as_str())
-        );
+        assert_eq!(app.world().resource::<LocalMap>().0.as_deref(), Some(start.map.as_str()));
         let session = host.sim.app.world().resource::<Session>();
-        assert!(matches!(
-            session.players[&PlayerId(200)],
-            SessionPlayer::InWorld(_)
-        ));
+        assert!(matches!(session.players[&PlayerId(200)], SessionPlayer::InWorld(_)));
         // The joiner heard about the PC already there, as well as its own.
-        let spawns: Vec<_> = app
-            .world()
-            .resource::<ActorDeltas>()
-            .0
-            .iter()
-            .filter_map(|d| match d {
-                LedgerDelta::Spawn {
-                    kind: EntityKind::Pc { player },
-                    ..
-                } => Some(*player),
-                _ => None,
-            })
-            .collect();
-        assert!(
-            spawns.contains(&PlayerId(100)) && spawns.contains(&PlayerId(200)),
-            "{spawns:?}"
-        );
+        let spawns: Vec<_> = app.world().resource::<ActorDeltas>().0.iter().filter_map(|d| match d {
+            LedgerDelta::Spawn { kind: EntityKind::Pc { player }, .. } => Some(*player),
+            _ => None,
+        }).collect();
+        assert!(spawns.contains(&PlayerId(100)) && spawns.contains(&PlayerId(200)), "{spawns:?}");
 
         // Leaving drops the connection.
         enter(&mut app, AppState::MainMenu);
@@ -646,66 +460,25 @@ mod tests {
         use arcanum_rules::{CharacterBlueprint, CharacterSheet};
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("1795000000000.save");
-        let start = StartMap {
-            map: "Arcanum1-024-fixed".into(),
-            position: TileLoc { x: 92958, y: 82592 },
-            clock: Default::default(),
-        };
+        let start = StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 }, clock: Default::default() };
         let mut state = arcanum_sim::WorldState::default();
-        let sheet = CharacterSheet {
-            name: "Virgil".into(),
-            ..Default::default()
-        };
-        state.add_player(
-            Some(&start),
-            LOCAL_PLAYER,
-            CharacterBlueprint {
-                sheet,
-                gold: 0,
-                items: vec![],
-                prototype: None,
-            },
-        );
+        let sheet = CharacterSheet { name: "Virgil".into(), ..Default::default() };
+        state.add_player(Some(&start), LOCAL_PLAYER, CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None });
         let mut save = state.0.unwrap();
         save.players.get_mut(&LOCAL_PLAYER).unwrap().position = TileLoc { x: 92950, y: 82590 };
-        save.time = arcanum_sim::GameTime {
-            days: 3,
-            ms: 5 * arcanum_sim::HOUR_MS,
-        };
+        save.time = arcanum_sim::GameTime { days: 3, ms: 5 * arcanum_sim::HOUR_MS };
         save.write(&path).unwrap();
 
-        let mut app = app(HostSettings {
-            manual_clock: true,
-            save_dir: Some(dir.path().to_path_buf()),
-            ..default()
-        });
+        let mut app = app(HostSettings { manual_clock: true, save_dir: Some(dir.path().to_path_buf()), ..default() });
         enter(&mut app, AppState::SinglePlayer);
         boot_save(app.world_mut(), &path);
         for _ in 0..3 {
             app.update();
         }
-        assert_eq!(
-            app.world().resource::<LocalPc>().0.map(|(_, at)| at),
-            Some(TileLoc { x: 92950, y: 82590 }),
-            "where it was saved"
-        );
+        assert_eq!(app.world().resource::<LocalPc>().0.map(|(_, at)| at), Some(TileLoc { x: 92950, y: 82590 }), "where it was saved");
         let host = app.world().non_send::<LocalHostRes>();
-        assert_eq!(
-            host.0
-                .sim
-                .app
-                .world()
-                .resource::<arcanum_sim::GameClock>()
-                .now
-                .days,
-            3,
-            "the clock goes on from the save"
-        );
-        assert_eq!(
-            host.0.sim.app.world().resource::<SaveFile>().0,
-            path,
-            "the same file"
-        );
+        assert_eq!(host.0.sim.app.world().resource::<arcanum_sim::GameClock>().now.days, 3, "the clock goes on from the save");
+        assert_eq!(host.0.sim.app.world().resource::<SaveFile>().0, path, "the same file");
         // No other save file appeared.
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
 

@@ -22,31 +22,11 @@ const STAT_KEYS: [&str; PRIMARY_STATS] = ["st", "dx", "cn", "be", "in", "pe", "w
 pub const RACE_EFFECT_BASE: u32 = 64;
 /// Resistance kinds, in the character editor's order.
 pub const RESISTANCES: usize = 5;
-pub const RESIST_KEYS: [&str; RESISTANCES] = [
-    "resistdamage",
-    "resistmagic",
-    "resistfire",
-    "resistpoison",
-    "resistelectrical",
-];
+pub const RESIST_KEYS: [&str; RESISTANCES] = ["resistdamage", "resistmagic", "resistfire", "resistpoison", "resistelectrical"];
 /// Skill keys in `rules/effect.mes`, in `mes/skill.mes` order.
 const SKILL_KEYS: [&str; SKILLS] = [
-    "bow",
-    "dodge",
-    "melee",
-    "throwing",
-    "backstab",
-    "pickpocket",
-    "prowling",
-    "spottrap",
-    "gambling",
-    "haggle",
-    "heal",
-    "persuasion",
-    "repair",
-    "firearms",
-    "picklock",
-    "armtrap",
+    "bow", "dodge", "melee", "throwing", "backstab", "pickpocket", "prowling", "spottrap", "gambling", "haggle", "heal", "persuasion", "repair",
+    "firearms", "picklock", "armtrap",
 ];
 
 /// One background block.
@@ -70,22 +50,13 @@ pub struct Background {
 
 impl Background {
     pub fn allows(&self, race: u8, gender: u8) -> bool {
-        !self.npc
-            && (self.codes.is_empty()
-                || self
-                    .codes
-                    .iter()
-                    .any(|c| c == "ANY" || *c == race_gender_code(race, gender)))
+        !self.npc && (self.codes.is_empty() || self.codes.iter().any(|c| c == "ANY" || *c == race_gender_code(race, gender)))
     }
 }
 
 /// `DWM`, `HUF`, ...
 pub fn race_gender_code(race: u8, gender: u8) -> String {
-    format!(
-        "{}{}",
-        RACE_CODES[race as usize % RACE_COUNT],
-        if gender == FEMALE { 'F' } else { 'M' }
-    )
+    format!("{}{}", RACE_CODES[race as usize % RACE_COUNT], if gender == FEMALE { 'F' } else { 'M' })
 }
 
 /// What an effect line does to the primary stats and resistances.
@@ -168,41 +139,13 @@ impl RulesData {
     pub fn from_files(backgrounds: &MesFile, effects: &MesFile, portraits: &MesFile) -> Self {
         let mut list = Vec::new();
         for id in 0..1000u32 {
-            let Some(description) = backgrounds
-                .get(id * 10)
-                .and_then(|s| s.trim().parse::<u32>().ok())
-            else {
-                continue;
-            };
-            let effect = backgrounds
-                .get(id * 10 + 1)
-                .and_then(|s| s.trim().parse().ok());
-            let codes: Vec<String> = backgrounds
-                .get(id * 10 + 2)
-                .unwrap_or("")
-                .split_whitespace()
-                .map(str::to_ascii_uppercase)
-                .collect();
+            let Some(description) = backgrounds.get(id * 10).and_then(|s| s.trim().parse::<u32>().ok()) else { continue };
+            let effect = backgrounds.get(id * 10 + 1).and_then(|s| s.trim().parse().ok());
+            let codes: Vec<String> = backgrounds.get(id * 10 + 2).unwrap_or("").split_whitespace().map(str::to_ascii_uppercase).collect();
             let npc = codes.iter().any(|c| c == "NPC");
-            let money = backgrounds
-                .get(id * 10 + 3)
-                .and_then(|s| s.trim().parse().ok())
-                .unwrap_or(0);
-            let items = backgrounds
-                .get(id * 10 + 4)
-                .unwrap_or("")
-                .split_whitespace()
-                .filter_map(|t| t.parse().ok())
-                .collect();
-            list.push(Background {
-                id,
-                description,
-                effect,
-                codes,
-                npc,
-                money,
-                items,
-            });
+            let money = backgrounds.get(id * 10 + 3).and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+            let items = backgrounds.get(id * 10 + 4).unwrap_or("").split_whitespace().filter_map(|t| t.parse().ok()).collect();
+            list.push(Background { id, description, effect, codes, npc, money, items });
         }
         let mut stat_effects = Vec::new();
         let mut changes = std::collections::BTreeMap::new();
@@ -224,21 +167,11 @@ impl RulesData {
                 portrait_list.push((id, stem.trim().to_string()));
             }
         }
-        Self {
-            backgrounds: list,
-            portraits: portrait_list,
-            effects: stat_effects,
-            changes,
-            ..Self::default()
-        }
+        Self { backgrounds: list, portraits: portrait_list, effects: stat_effects, changes, ..Self::default() }
     }
 
     pub(crate) fn effect(&self, id: u32) -> Effect {
-        self.effects
-            .iter()
-            .find(|(e, _)| *e == id)
-            .map(|(_, m)| *m)
-            .unwrap_or_default()
+        self.effects.iter().find(|(e, _)| *e == id).map(|(_, m)| *m).unwrap_or_default()
     }
 
     /// `value` after the effects `ids` (0x4ea6c0): over every change aimed at `target`, the
@@ -248,24 +181,13 @@ impl RulesData {
     pub fn apply_effects(&self, target: EffectTarget, value: i32, ids: &[u32]) -> i32 {
         let (mut add, mut multiply, mut divide, mut percent) = (0, 1, 1, 0);
         let (mut floor, mut cap) = (-1, -1);
-        for change in ids
-            .iter()
-            .filter_map(|id| self.changes.get(id))
-            .flatten()
-            .filter(|c| c.target == target)
-        {
+        for change in ids.iter().filter_map(|id| self.changes.get(id)).flatten().filter(|c| c.target == target) {
             match change.kind {
                 ChangeKind::Add => add += change.value,
                 ChangeKind::Multiply => multiply *= change.value,
                 ChangeKind::Divide => divide *= change.value,
                 ChangeKind::AtLeast => floor = floor.max(change.value),
-                ChangeKind::AtMost => {
-                    cap = if cap == -1 {
-                        change.value
-                    } else {
-                        cap.min(change.value)
-                    }
-                }
+                ChangeKind::AtMost => cap = if cap == -1 { change.value } else { cap.min(change.value) },
                 ChangeKind::Percent => percent += change.value,
             }
         }
@@ -293,9 +215,7 @@ impl RulesData {
 /// The experience table from `Rules/xp_level.mes`: 51 entries, entry i line i + 1, entry 0
 /// always 0.
 pub fn parse_xp_levels(mes: &MesFile) -> Vec<i32> {
-    let mut out: Vec<i32> = (1..=crate::LEVEL_LIMIT as u32)
-        .map(|id| mes.get(id).and_then(|t| t.trim().parse().ok()).unwrap_or(0))
-        .collect();
+    let mut out: Vec<i32> = (1..=crate::LEVEL_LIMIT as u32).map(|id| mes.get(id).and_then(|t| t.trim().parse().ok()).unwrap_or(0)).collect();
     out[0] = 0;
     out
 }
@@ -342,69 +262,23 @@ pub struct Change {
 
 /// The stat keys, by stat id (table 0x5b9ba8).
 pub const STAT_NAMES: [&str; 28] = [
-    "st",
-    "dx",
-    "cn",
-    "be",
-    "in",
-    "pe",
-    "wp",
-    "ch",
-    "carry",
-    "damage",
-    "ac",
-    "speed",
-    "healrate",
-    "poisonrate",
-    "beautyreaction",
-    "maxfollowers",
-    "aptitude",
-    "level",
-    "xpsUNUSED",
-    "alignment",
-    "fateUNUSED",
-    "unspentUNUSED",
-    "magicpts",
-    "techpts",
-    "poisonlevel",
-    "age",
-    "gender",
-    "race",
+    "st", "dx", "cn", "be", "in", "pe", "wp", "ch", "carry", "damage", "ac", "speed", "healrate", "poisonrate", "beautyreaction", "maxfollowers",
+    "aptitude", "level", "xpsUNUSED", "alignment", "fateUNUSED", "unspentUNUSED", "magicpts", "techpts", "poisonlevel", "age", "gender", "race",
 ];
 /// The expertise keys (table 0x5b9c6c).
 const EXPERTISE_KEYS: [&str; 8] = [
-    "expertiseanatomical",
-    "expertisechemistry",
-    "expertiseelectric",
-    "expertiseexplosives",
-    "expertisegun_smithy",
-    "expertisemechanical",
-    "expertisesmithy",
-    "expertisetherapeutics",
+    "expertiseanatomical", "expertisechemistry", "expertiseelectric", "expertiseexplosives", "expertisegun_smithy", "expertisemechanical",
+    "expertisesmithy", "expertisetherapeutics",
 ];
 /// The other keys (table 0x5b9c8c).
-pub const OTHER_KEYS: [&str; 10] = [
-    "maxhps",
-    "maxfatigue",
-    "reaction",
-    "crithitchance",
-    "crithiteffect",
-    "critfailchance",
-    "critfaileffect",
-    "badreactionadj",
-    "goodreactionadj",
-    "xpgain",
-];
+pub const OTHER_KEYS: [&str; 10] =
+    ["maxhps", "maxfatigue", "reaction", "crithitchance", "crithiteffect", "critfailchance", "critfaileffect", "badreactionadj", "goodreactionadj", "xpgain"];
 /// `maxhps` and `maxfatigue` in [`OTHER_KEYS`].
 pub const MAX_HIT_POINTS: EffectTarget = EffectTarget::Other(0);
 pub const MAX_FATIGUE: EffectTarget = EffectTarget::Other(1);
 
 fn effect_target(key: &str) -> Option<EffectTarget> {
-    let find = |keys: &[&str]| {
-        keys.iter()
-            .position(|k| k.eq_ignore_ascii_case(key))
-            .map(|i| i as u8)
-    };
+    let find = |keys: &[&str]| keys.iter().position(|k| k.eq_ignore_ascii_case(key)).map(|i| i as u8);
     find(&STAT_NAMES)
         .map(EffectTarget::Stat)
         .or_else(|| find(&SKILL_KEYS).map(EffectTarget::Skill))
@@ -420,40 +294,24 @@ fn effect_target(key: &str) -> Option<EffectTarget> {
 pub fn parse_changes(text: &str) -> Vec<Change> {
     let atoi = |t: &str| {
         let t = t.trim_start_matches('+');
-        let end = t
-            .char_indices()
-            .find(|&(i, c)| !(c.is_ascii_digit() || (i == 0 && c == '-')))
-            .map_or(t.len(), |(i, _)| i);
+        let end = t.char_indices().find(|&(i, c)| !(c.is_ascii_digit() || (i == 0 && c == '-'))).map_or(t.len(), |(i, _)| i);
         t[..end].parse::<i32>().unwrap_or(0)
     };
     let text = text.split("//").next().unwrap_or("");
     let mut tokens = text.split([' ', ',', '\t']).filter(|t| !t.is_empty());
     let mut out = Vec::new();
     while let Some(key) = tokens.next() {
-        let Some(target) = effect_target(key) else {
-            break;
-        };
+        let Some(target) = effect_target(key) else { break };
         let Some(value) = tokens.next() else { break };
         let (kind, v) = match value.to_ascii_lowercase().as_str() {
             "min" => (ChangeKind::AtLeast, tokens.next().map_or(0, atoi)),
             "max" => (ChangeKind::AtMost, tokens.next().map_or(0, atoi)),
-            _ if value.starts_with(['+', '-']) => (
-                if value.ends_with('%') {
-                    ChangeKind::Percent
-                } else {
-                    ChangeKind::Add
-                },
-                atoi(value),
-            ),
+            _ if value.starts_with(['+', '-']) => (if value.ends_with('%') { ChangeKind::Percent } else { ChangeKind::Add }, atoi(value)),
             _ if value.starts_with('*') => (ChangeKind::Multiply, atoi(&value[1..])),
             _ if value.starts_with('/') => (ChangeKind::Divide, atoi(&value[1..])),
             _ => continue,
         };
-        out.push(Change {
-            target,
-            kind,
-            value: v,
-        });
+        out.push(Change { target, kind, value: v });
     }
     out
 }
@@ -468,12 +326,8 @@ pub fn parse_effect(text: &str) -> Effect {
     let mut out = Effect::default();
     for part in text.split(',') {
         let mut words = part.split_whitespace();
-        let (Some(key), Some(value)) = (words.next(), words.next()) else {
-            continue;
-        };
-        let Ok(v) = value.trim_start_matches('+').parse::<i32>() else {
-            continue;
-        };
+        let (Some(key), Some(value)) = (words.next(), words.next()) else { continue };
+        let Ok(v) = value.trim_start_matches('+').parse::<i32>() else { continue };
         if let Some(i) = STAT_KEYS.iter().position(|k| key.eq_ignore_ascii_case(k)) {
             out.stats[i] += v;
         } else if let Some(i) = RESIST_KEYS.iter().position(|k| key.eq_ignore_ascii_case(k)) {
@@ -511,48 +365,22 @@ mod tests {
         }
         let mut vfs = Vfs::new();
         vfs.mount_dir(dir.path());
-        let data =
-            RulesData::load(&vfs).expect("skill/tech/spell/schematic tables are optional for now");
+        let data = RulesData::load(&vfs).expect("skill/tech/spell/schematic tables are optional for now");
         assert_eq!((data.backgrounds.len(), data.portraits.len()), (1, 1));
-        assert!(
-            data.skills.skills.is_empty() && data.schematics.is_empty() && data.premades.is_empty()
-        );
+        assert!(data.skills.skills.is_empty() && data.schematics.is_empty() && data.premades.is_empty());
     }
 
     #[test]
     fn effect_lines_read_every_form_of_change() {
         use ChangeKind::*;
         use EffectTarget::*;
-        let c = |target, kind, value| Change {
-            target,
-            kind,
-            value,
-        };
+        let c = |target, kind, value| Change { target, kind, value };
         assert_eq!(
-            parse_changes(
-                "speed +10, damage max 0, resistdamage min 95, ST -6, Melee +1, maxfatigue +5%, wp *2, cn /3"
-            ),
-            [
-                c(Stat(11), Add, 10),
-                c(Stat(9), AtMost, 0),
-                c(Resist(0), AtLeast, 95),
-                c(Stat(0), Add, -6),
-                c(Skill(2), Add, 1),
-                c(Other(1), Percent, 5),
-                c(Stat(6), Multiply, 2),
-                c(Stat(2), Divide, 3)
-            ]
+            parse_changes("speed +10, damage max 0, resistdamage min 95, ST -6, Melee +1, maxfatigue +5%, wp *2, cn /3"),
+            [c(Stat(11), Add, 10), c(Stat(9), AtMost, 0), c(Resist(0), AtLeast, 95), c(Stat(0), Add, -6), c(Skill(2), Add, 1), c(Other(1), Percent, 5), c(Stat(6), Multiply, 2), c(Stat(2), Divide, 3)]
         );
-        assert_eq!(
-            parse_changes("BE -4, CN +2 DX +1"),
-            [c(Stat(3), Add, -4), c(Stat(2), Add, 2), c(Stat(1), Add, 1)],
-            "a missing comma"
-        );
-        assert_eq!(
-            parse_changes("st +1, nonsense +2, dx +1"),
-            [c(Stat(0), Add, 1)],
-            "an unknown key ends the line"
-        );
+        assert_eq!(parse_changes("BE -4, CN +2 DX +1"), [c(Stat(3), Add, -4), c(Stat(2), Add, 2), c(Stat(1), Add, 1)], "a missing comma");
+        assert_eq!(parse_changes("st +1, nonsense +2, dx +1"), [c(Stat(0), Add, 1)], "an unknown key ends the line");
     }
 
     #[test]
@@ -565,11 +393,7 @@ mod tests {
         assert_eq!(speed(20, &[2, 3]), 9, "the cap comes last");
         assert_eq!(speed(10, &[4, 3]), 9, "floor 30, then cap 9");
         assert_eq!(speed(11, &[5]), 16, "x3 then /2");
-        assert_eq!(
-            r.apply_effects(EffectTarget::Stat(0), 10, &[1, 2]),
-            10,
-            "another stat"
-        );
+        assert_eq!(r.apply_effects(EffectTarget::Stat(0), 10, &[1, 2]), 10, "another stat");
     }
 
     #[test]

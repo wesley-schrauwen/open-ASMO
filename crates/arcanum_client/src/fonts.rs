@@ -58,10 +58,7 @@ impl ArcanumFonts {
     /// A [`TextFont`] using the override TTF (or Bevy's default) at `size` logical pixels on
     /// the 1080 baseline; `UiScale` scales it to the window.
     pub fn serif(&self, size: f32) -> TextFont {
-        let font = TextFont {
-            font_size: FontSize::Px(size),
-            ..default()
-        };
+        let font = TextFont { font_size: FontSize::Px(size), ..default() };
         match &self.serif {
             Some(handle) => font.with_font(handle.clone()),
             None => font,
@@ -90,33 +87,17 @@ impl ArcanumFonts {
 
     /// Adds a block of `text` that wraps to `width` logical pixels (and breaks at newlines, with
     /// tab indents), like [`Self::insert_text`].
-    pub fn insert_paragraph(
-        &self,
-        entity: &mut EntityCommands,
-        text: &str,
-        font: UiFont,
-        width: f32,
-        align: Align,
-    ) {
+    pub fn insert_paragraph(&self, entity: &mut EntityCommands, text: &str, font: UiFont, width: f32, align: Align) {
         self.insert_block(entity, text, font, width, None, align);
     }
 
     /// Like [`Self::insert_paragraph`], showing only the whole lines that fit `height` logical
     /// pixels when given.
-    pub fn insert_block(
-        &self,
-        entity: &mut EntityCommands,
-        text: &str,
-        font: UiFont,
-        width: f32,
-        height: Option<f32>,
-        align: Align,
-    ) {
+    pub fn insert_block(&self, entity: &mut EntityCommands, text: &str, font: UiFont, width: f32, height: Option<f32>, align: Align) {
         if self.serif.is_none()
             && let Some(bitmap) = self.bitmap(font)
         {
-            let mut block =
-                BitmapText::new(text, bitmap.clone(), ORIGINAL_SCALE).wrapped(width, align);
+            let mut block = BitmapText::new(text, bitmap.clone(), ORIGINAL_SCALE).wrapped(width, align);
             block.max_height = height;
             entity.insert(block);
         } else {
@@ -130,10 +111,7 @@ impl ArcanumFonts {
                 Text::new(text),
                 self.serif(font.ttf_size()),
                 TextLayout::justify(justify),
-                Node {
-                    width: Val::Px(width),
-                    ..default()
-                },
+                Node { width: Val::Px(width), ..default() },
             ));
         }
     }
@@ -143,20 +121,12 @@ pub struct FontsPlugin;
 
 impl Plugin for FontsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ArcanumFonts>()
-            .add_systems(PreStartup, load_fonts);
+        app.init_resource::<ArcanumFonts>().add_systems(PreStartup, load_fonts);
     }
 }
 
-fn load_fonts(
-    mut fonts: ResMut<ArcanumFonts>,
-    vfs: Option<Res<VfsResource>>,
-    assets: Res<AssetServer>,
-) {
-    let exists = |path: &str| {
-        vfs.as_ref()
-            .is_some_and(|vfs| vfs.0.read().is_ok_and(|v| v.exists(path)))
-    };
+fn load_fonts(mut fonts: ResMut<ArcanumFonts>, vfs: Option<Res<VfsResource>>, assets: Res<AssetServer>) {
+    let exists = |path: &str| vfs.as_ref().is_some_and(|vfs| vfs.0.read().is_ok_and(|v| v.exists(path)));
     if exists(paths::fonts::SERIF) {
         fonts.serif = Some(assets.load(paths::fonts::SERIF));
         info!("using override font {}", paths::fonts::SERIF);

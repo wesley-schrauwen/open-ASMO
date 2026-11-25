@@ -46,10 +46,7 @@ pub struct TextField {
 impl TextField {
     /// Adds `c` if it fits and the game fonts can show it.
     pub fn insert(&mut self, c: char) -> bool {
-        if self.value.chars().count() >= self.max_chars
-            || c.is_control()
-            || arcanum_formats::cp1252::encode_char(c).is_none()
-        {
+        if self.value.chars().count() >= self.max_chars || c.is_control() || arcanum_formats::cp1252::encode_char(c).is_none() {
             return false;
         }
         self.value.push(c);
@@ -60,11 +57,7 @@ impl TextField {
     /// when focused and the blink is on.
     pub fn display(&self, focused: bool, caret_on: bool) -> String {
         if focused {
-            if caret_on {
-                format!("{}{CARET}", self.value)
-            } else {
-                self.value.clone()
-            }
+            if caret_on { format!("{}{CARET}", self.value) } else { self.value.clone() }
         } else if self.value.is_empty() {
             self.placeholder.clone()
         } else {
@@ -105,10 +98,7 @@ impl Plugin for TextFieldPlugin {
                     focus.escape_consumed = false;
                 }
             })
-            .add_systems(
-                Update,
-                (drop_lost_focus, type_into_field, show_fields).chain(),
-            )
+            .add_systems(Update, (drop_lost_focus, type_into_field, show_fields).chain())
             .add_observer(focus_on_activate)
             .add_observer(blur_on_press_elsewhere);
     }
@@ -134,30 +124,15 @@ pub fn spawn_text_field(
             Button,
             ActivateOnPress,
             Hovered::default(),
-            Node {
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                overflow: Overflow::clip(),
-                ..node
-            },
+            Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, overflow: Overflow::clip(), ..node },
         ))
         .with_children(|cell| {
-            let mut text = cell.spawn((
-                TextFieldText,
-                TextColor(color),
-                bevy::picking::Pickable::IGNORE,
-                text_extra,
-            ));
+            let mut text = cell.spawn((TextFieldText, TextColor(color), bevy::picking::Pickable::IGNORE, text_extra));
             fonts.insert_text(&mut text, &display, font);
         });
 }
 
-fn focus_on_activate(
-    activate: On<Activate>,
-    fields: Query<(), With<TextField>>,
-    time: Res<Time<Real>>,
-    mut focus: ResMut<FocusedTextField>,
-) {
+fn focus_on_activate(activate: On<Activate>, fields: Query<(), With<TextField>>, time: Res<Time<Real>>, mut focus: ResMut<FocusedTextField>) {
     if fields.contains(activate.entity) {
         focus.entity = Some(activate.entity);
         focus.blink_start = time.elapsed_secs();
@@ -165,20 +140,14 @@ fn focus_on_activate(
 }
 
 /// A press anywhere outside the focused field (or its children) unfocuses it.
-fn blur_on_press_elsewhere(
-    press: On<PointerPress>,
-    parents: Query<&ChildOf>,
-    mut focus: ResMut<FocusedTextField>,
-) {
+fn blur_on_press_elsewhere(press: On<PointerPress>, parents: Query<&ChildOf>, mut focus: ResMut<FocusedTextField>) {
     let Some(field) = focus.entity else { return };
     let target = press.original_event_target();
     // Propagation calls this once per ancestor; only the first (original) call matters.
     if press.entity != target {
         return;
     }
-    let inside = std::iter::once(target)
-        .chain(parents.iter_ancestors(target))
-        .any(|e| e == field);
+    let inside = std::iter::once(target).chain(parents.iter_ancestors(target)).any(|e| e == field);
     if !inside {
         focus.entity = None;
     }
@@ -204,9 +173,7 @@ fn type_into_field(
         keys.clear();
         return;
     };
-    let Ok(mut field) = fields.get_mut(entity) else {
-        return;
-    };
+    let Ok(mut field) = fields.get_mut(entity) else { return };
     for key in keys.read() {
         if key.state != ButtonState::Pressed {
             continue;
@@ -243,13 +210,9 @@ fn show_fields(
     time: Res<Time<Real>>,
     focus: Res<FocusedTextField>,
     fields: Query<(Entity, &TextField, &Hovered, &Children)>,
-    mut texts: Query<
-        (Option<&mut BitmapText>, Option<&mut Text>, &mut TextColor),
-        With<TextFieldText>,
-    >,
+    mut texts: Query<(Option<&mut BitmapText>, Option<&mut Text>, &mut TextColor), With<TextFieldText>>,
 ) {
-    let caret_on =
-        ((time.elapsed_secs() - focus.blink_start) / CARET_BLINK_SECS).floor() as i64 % 2 == 0;
+    let caret_on = ((time.elapsed_secs() - focus.blink_start) / CARET_BLINK_SECS).floor() as i64 % 2 == 0;
     for (entity, field, hovered, children) in &fields {
         let focused = focus.entity == Some(entity);
         let wanted = field.display(focused, caret_on);
@@ -261,9 +224,7 @@ fn show_fields(
             field.colors.normal
         };
         for child in children {
-            let Ok((bitmap, text, mut text_color)) = texts.get_mut(*child) else {
-                continue;
-            };
+            let Ok((bitmap, text, mut text_color)) = texts.get_mut(*child) else { continue };
             if let Some(mut bitmap) = bitmap {
                 if bitmap.text != wanted {
                     bitmap.text = wanted.clone();
@@ -286,27 +247,14 @@ mod tests {
 
     fn field() -> TextField {
         let c = Color::WHITE;
-        TextField {
-            value: String::new(),
-            placeholder: "Choose Name".into(),
-            max_chars: 5,
-            colors: TextFieldColors {
-                normal: c,
-                hover: c,
-                focused: c,
-            },
-        }
+        TextField { value: String::new(), placeholder: "Choose Name".into(), max_chars: 5, colors: TextFieldColors { normal: c, hover: c, focused: c } }
     }
 
     #[test]
     fn placeholder_only_when_empty_and_unfocused() {
         let mut f = field();
         assert_eq!(f.display(false, true), "Choose Name");
-        assert_eq!(
-            f.display(true, true),
-            "|",
-            "focused: the placeholder clears, the caret shows"
-        );
+        assert_eq!(f.display(true, true), "|", "focused: the placeholder clears, the caret shows");
         assert_eq!(f.display(true, false), "", "and blinks off");
         f.value = "Vir".into();
         assert_eq!(f.display(false, true), "Vir");

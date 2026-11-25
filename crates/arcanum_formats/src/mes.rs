@@ -47,10 +47,7 @@ impl MesFile {
             let id = id_text
                 .trim()
                 .parse::<u32>()
-                .map_err(|_| MesError::InvalidId {
-                    line: id_line,
-                    text: id_text.clone(),
-                })?;
+                .map_err(|_| MesError::InvalidId { line: id_line, text: id_text.clone() })?;
             let (text, _) = next_group(data, &mut pos, &mut line)?
                 .ok_or(MesError::MissingText { line: id_line })?;
             messages.insert(id, text);
@@ -112,15 +109,8 @@ fn next_group(
 }
 
 fn decode_cp1252(bytes: &[u8]) -> String {
-    let s: String = bytes
-        .iter()
-        .map(|&b| crate::cp1252::decode_byte(b))
-        .collect();
-    if s.contains('\r') {
-        s.replace("\r\n", "\n")
-    } else {
-        s
-    }
+    let s: String = bytes.iter().map(|&b| crate::cp1252::decode_byte(b)).collect();
+    if s.contains('\r') { s.replace("\r\n", "\n") } else { s }
 }
 
 #[cfg(test)]
@@ -158,11 +148,7 @@ mod tests {
     #[test]
     fn empty_and_comment_only_files() {
         assert!(MesFile::parse(b"").unwrap().is_empty());
-        assert!(
-            MesFile::parse(b"// nothing\r\n//{1}{commented out}\r\n\r\n")
-                .unwrap()
-                .is_empty()
-        );
+        assert!(MesFile::parse(b"// nothing\r\n//{1}{commented out}\r\n\r\n").unwrap().is_empty());
     }
 
     #[test]
@@ -204,26 +190,14 @@ mod tests {
     fn large_ids() {
         let m = MesFile::parse(b"{4294967295}{max}").unwrap();
         assert_eq!(m.get(u32::MAX), Some("max"));
-        assert!(matches!(
-            MesFile::parse(b"{4294967296}{too big}"),
-            Err(MesError::InvalidId { .. })
-        ));
-        assert!(matches!(
-            MesFile::parse(b"{-1}{neg}"),
-            Err(MesError::InvalidId { .. })
-        ));
+        assert!(matches!(MesFile::parse(b"{4294967296}{too big}"), Err(MesError::InvalidId { .. })));
+        assert!(matches!(MesFile::parse(b"{-1}{neg}"), Err(MesError::InvalidId { .. })));
     }
 
     #[test]
     fn windows_1252_table() {
-        let m = MesFile::parse(
-            b"{1}{\x80\x85\x93\x94\x96\x97\x99}{2}{\x81\x8d\x8f\x90\x9d}{3}{\xa0\xe9\xff}",
-        )
-        .unwrap();
-        assert_eq!(
-            m.get(1),
-            Some("\u{20AC}\u{2026}\u{201C}\u{201D}\u{2013}\u{2014}\u{2122}")
-        );
+        let m = MesFile::parse(b"{1}{\x80\x85\x93\x94\x96\x97\x99}{2}{\x81\x8d\x8f\x90\x9d}{3}{\xa0\xe9\xff}").unwrap();
+        assert_eq!(m.get(1), Some("\u{20AC}\u{2026}\u{201C}\u{201D}\u{2013}\u{2014}\u{2122}"));
         // Bytes undefined in Windows-1252 pass through as the matching C1 control.
         assert_eq!(m.get(2), Some("\u{81}\u{8D}\u{8F}\u{90}\u{9D}"));
         assert_eq!(m.get(3), Some("\u{A0}\u{E9}\u{FF}"));
@@ -241,14 +215,8 @@ mod tests {
             MesFile::parse(b"{1}{line one\nline two\nline three}\n{oops}{x}"),
             Err(MesError::InvalidId { line: 4, .. })
         ));
-        assert_eq!(
-            MesFile::parse(b"\n\n{1}{a}\n{2}"),
-            Err(MesError::MissingText { line: 4 })
-        );
-        assert_eq!(
-            MesFile::parse(b"{1}{a}\n\n{2}{unterminated\n"),
-            Err(MesError::UnterminatedBrace { line: 3 })
-        );
+        assert_eq!(MesFile::parse(b"\n\n{1}{a}\n{2}"), Err(MesError::MissingText { line: 4 }));
+        assert_eq!(MesFile::parse(b"{1}{a}\n\n{2}{unterminated\n"), Err(MesError::UnterminatedBrace { line: 3 }));
     }
 
     #[test]
@@ -259,17 +227,8 @@ mod tests {
 
     #[test]
     fn errors() {
-        assert_eq!(
-            MesFile::parse(b"{1}{abc"),
-            Err(MesError::UnterminatedBrace { line: 1 })
-        );
-        assert!(matches!(
-            MesFile::parse(b"\n{x}{y}"),
-            Err(MesError::InvalidId { line: 2, .. })
-        ));
-        assert_eq!(
-            MesFile::parse(b"{1}"),
-            Err(MesError::MissingText { line: 1 })
-        );
+        assert_eq!(MesFile::parse(b"{1}{abc"), Err(MesError::UnterminatedBrace { line: 1 }));
+        assert!(matches!(MesFile::parse(b"\n{x}{y}"), Err(MesError::InvalidId { line: 2, .. })));
+        assert_eq!(MesFile::parse(b"{1}"), Err(MesError::MissingText { line: 1 }));
     }
 }

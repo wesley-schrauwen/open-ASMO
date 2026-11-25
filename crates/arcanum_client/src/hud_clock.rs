@@ -26,10 +26,7 @@ use crate::menu_window::{at, px, rect};
 use crate::resource_pack::paths::interface;
 
 /// The clock window in the top bar.
-pub const CLOCK: Rect = Rect {
-    min: Vec2::new(648.0, 5.0),
-    max: Vec2::new(776.0, 35.0),
-};
+pub const CLOCK: Rect = Rect { min: Vec2::new(648.0, 5.0), max: Vec2::new(776.0, 35.0) };
 pub const STRIP_WIDTH: u32 = 384;
 pub const MOON_WIDTH: u32 = 128;
 const RING: u32 = STRIP_WIDTH + MOON_WIDTH;
@@ -57,10 +54,7 @@ pub fn ring_offset(t: GameTime) -> u32 {
 /// Which moon picture (0 for `Clk_Moon1` to 7) shows at `t`.
 pub fn moon_picture(t: GameTime) -> usize {
     let phase = (seconds(t) + 43_200) / 86_400 % 28;
-    MOON_PHASES
-        .iter()
-        .position(|&last| phase <= last)
-        .unwrap_or(7)
+    MOON_PHASES.iter().position(|&last| phase <= last).unwrap_or(7)
 }
 
 /// `%02d:%02d:%02d`, 24-hour (0x45ac20).
@@ -76,11 +70,7 @@ pub fn date_text(t: GameTime, first_year: u32) -> String {
 
 /// The clock's hover help: `"%s: %s"` then `"   %s: %s"` with `intgame.mes` 22 and 23.
 pub fn clock_help(t: GameTime, first_year: u32, time_label: &str, date_label: &str) -> String {
-    format!(
-        "{time_label}: {}   {date_label}: {}",
-        time_text(t),
-        date_text(t, first_year)
-    )
+    format!("{time_label}: {}   {date_label}: {}", time_text(t), date_text(t, first_year))
 }
 
 /// The ring's pictures inside the clock window, in the window's pixels.
@@ -116,57 +106,21 @@ pub struct Moons(Vec<Handle<Image>>);
 /// Spawns the clock into the top bar.
 pub fn spawn_clock(top: &mut ChildSpawnerCommands, assets: &AssetServer) {
     let strip: Handle<Image> = assets.load(interface::CLOCK_STRIP);
-    let moons: Vec<Handle<Image>> = (1..=8)
-        .map(|n| assets.load(format!("{}/Clk_Moon{n}.ART", interface::DIR)))
-        .collect();
+    let moons: Vec<Handle<Image>> = (1..=8).map(|n| assets.load(format!("{}/Clk_Moon{n}.ART", interface::DIR))).collect();
     let height = 29.0;
-    top.spawn((
-        ClockFace::default(),
-        Moons(moons.clone()),
-        BackgroundColor(Color::BLACK),
-        Node {
-            overflow: Overflow::clip(),
-            ..at(CLOCK)
-        },
-    ))
-    .with_children(|face| {
-        for (part, image) in [
-            (RingPart::Strip, strip.clone()),
-            (RingPart::Moon, moons[0].clone()),
-            (RingPart::StripAgain, strip),
-        ] {
-            let width = if part == RingPart::Moon {
-                MOON_WIDTH
-            } else {
-                STRIP_WIDTH
-            };
-            face.spawn((
-                part,
-                ImageNode::new(image),
-                at(rect(
-                    Vec2::new(part.left(0), 0.0),
-                    Vec2::new(width as f32, height),
-                )),
-            ));
+    top.spawn((ClockFace::default(), Moons(moons.clone()), BackgroundColor(Color::BLACK), Node { overflow: Overflow::clip(), ..at(CLOCK) })).with_children(|face| {
+        for (part, image) in [(RingPart::Strip, strip.clone()), (RingPart::Moon, moons[0].clone()), (RingPart::StripAgain, strip)] {
+            let width = if part == RingPart::Moon { MOON_WIDTH } else { STRIP_WIDTH };
+            face.spawn((part, ImageNode::new(image), at(rect(Vec2::new(part.left(0), 0.0), Vec2::new(width as f32, height)))));
         }
     });
-    top.spawn(crate::message_box::help_area(
-        crate::message_box::BoxHelp::Clock,
-        CLOCK,
-    ));
-    top.spawn((
-        ImageNode::new(assets.load(interface::CLOCK_POINTER)),
-        at(rect(Vec2::new(708.0, 6.0), Vec2::new(5.0, 29.0))),
-    ));
+    top.spawn(crate::message_box::help_area(crate::message_box::BoxHelp::Clock, CLOCK));
+    top.spawn((ImageNode::new(assets.load(interface::CLOCK_POINTER)), at(rect(Vec2::new(708.0, 6.0), Vec2::new(5.0, 29.0)))));
 }
 
 /// Redraws the clock for the world's time when it is first known and a game hour after each
 /// redraw, as the original does.
-pub fn show_clock(
-    clock: Res<WorldClock>,
-    mut faces: Query<(&mut ClockFace, &Moons, &Children)>,
-    mut parts: Query<(&RingPart, &mut Node, &mut ImageNode)>,
-) {
+pub fn show_clock(clock: Res<WorldClock>, mut faces: Query<(&mut ClockFace, &Moons, &Children)>, mut parts: Query<(&RingPart, &mut Node, &mut ImageNode)>) {
     let Some(now) = clock.now else { return };
     for (mut face, moons, children) in &mut faces {
         let due = match face.drawn {
@@ -181,9 +135,7 @@ pub fn show_clock(
         let offset = ring_offset(now);
         let moon = &moons.0[moon_picture(now)];
         for &child in children {
-            let Ok((&part, mut node, mut image)) = parts.get_mut(child) else {
-                continue;
-            };
+            let Ok((&part, mut node, mut image)) = parts.get_mut(child) else { continue };
             node.left = px(part.left(offset));
             if part == RingPart::Moon && image.image != *moon {
                 image.image = moon.clone();
@@ -197,10 +149,7 @@ mod tests {
     use super::*;
 
     fn at_time(days: u32, hour: u32, minute: u32) -> GameTime {
-        GameTime {
-            days,
-            ms: (hour * 60 + minute) * 60_000,
-        }
+        GameTime { days, ms: (hour * 60 + minute) * 60_000 }
     }
 
     /// The ring position at the window's centre.
@@ -210,29 +159,15 @@ mod tests {
 
     #[test]
     fn the_clock_help_gives_the_time_and_date() {
-        let t = GameTime {
-            days: 365,
-            ms: ((15 * 60 + 4) * 60 + 9) * 1000 + 999,
-        };
-        assert_eq!(
-            clock_help(t, 1885, "Current Time", "Current Date"),
-            "Current Time: 15:04:09   Current Date: 1/6/1886"
-        );
+        let t = GameTime { days: 365, ms: ((15 * 60 + 4) * 60 + 9) * 1000 + 999 };
+        assert_eq!(clock_help(t, 1885, "Current Time", "Current Date"), "Current Time: 15:04:09   Current Date: 1/6/1886");
         assert_eq!(date_text(GameTime::default(), 1885), "1/1/1885");
     }
 
     #[test]
     fn the_ring_turns_once_a_day() {
-        assert_eq!(
-            centre(at_time(0, 3, 30)),
-            0,
-            "the strip's left edge at 3:30"
-        );
-        assert_eq!(
-            ring_offset(at_time(0, 3, 30)),
-            448,
-            "the moon's right half shows to its left"
-        );
+        assert_eq!(centre(at_time(0, 3, 30)), 0, "the strip's left edge at 3:30");
+        assert_eq!(ring_offset(at_time(0, 3, 30)), 448, "the moon's right half shows to its left");
         assert_eq!(centre(at_time(0, 0, 30)), 448, "the moon's middle at 0:30");
         assert_eq!(centre(at_time(0, 12, 0)), 181, "the sun near noon");
         assert_eq!(centre(at_time(5, 12, 0)), 181, "the same every day");
@@ -245,11 +180,7 @@ mod tests {
         assert_eq!(moon_picture(at_time(0, 11, 59)), 0);
         assert_eq!(moon_picture(at_time(0, 12, 0)), 1, "day 1 from noon");
         assert_eq!(moon_picture(at_time(4, 0, 0)), 1);
-        assert_eq!(
-            moon_picture(at_time(13, 23, 0)),
-            4,
-            "day 14: the full moon alone"
-        );
+        assert_eq!(moon_picture(at_time(13, 23, 0)), 4, "day 14: the full moon alone");
         assert_eq!(moon_picture(at_time(27, 13, 0)), 0, "day 28: new again");
         assert_eq!(moon_picture(at_time(26, 13, 0)), 7);
     }
@@ -257,15 +188,7 @@ mod tests {
     #[test]
     fn ring_parts_sit_end_to_end() {
         assert_eq!(RingPart::Strip.left(300), -300.0);
-        assert_eq!(
-            RingPart::Moon.left(300),
-            84.0,
-            "the moon follows the strip's last 84 pixels"
-        );
-        assert_eq!(
-            RingPart::StripAgain.left(450),
-            62.0,
-            "past the moon the strip starts over"
-        );
+        assert_eq!(RingPart::Moon.left(300), 84.0, "the moon follows the strip's last 84 pixels");
+        assert_eq!(RingPart::StripAgain.left(450), 62.0, "past the moon the strip starts over");
     }
 }

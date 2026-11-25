@@ -29,10 +29,7 @@ pub struct Creation {
 impl Creation {
     /// A fresh "create your own" character.
     pub fn new(rules: &RulesData) -> Self {
-        Self {
-            sheet: rules.new_sheet(),
-            premade: None,
-        }
+        Self { sheet: rules.new_sheet(), premade: None }
     }
 
     /// Applies one action; on refusal nothing changes.
@@ -57,11 +54,7 @@ impl Creation {
     }
 
     /// Applies one request. `Accept` returns the blueprint.
-    pub fn request(
-        &mut self,
-        rules: &RulesData,
-        request: &CharacterRequest,
-    ) -> Result<Option<CharacterBlueprint>, Refusal> {
+    pub fn request(&mut self, rules: &RulesData, request: &CharacterRequest) -> Result<Option<CharacterBlueprint>, Refusal> {
         match request {
             CharacterRequest::New => {
                 *self = Self::new(rules);
@@ -84,10 +77,7 @@ mod tests {
         let rules = RulesData::default();
         let mut c = Creation::new(&rules);
         let before = c.clone();
-        assert_eq!(
-            c.apply(&rules, &CharacterAction::LowerStat(0)),
-            Err(Refusal::BelowAccepted)
-        );
+        assert_eq!(c.apply(&rules, &CharacterAction::LowerStat(0)), Err(Refusal::BelowAccepted));
         assert_eq!(c.finish(&rules).err(), Some(Refusal::NoName));
         assert_eq!(c, before);
     }
@@ -95,35 +85,20 @@ mod tests {
     #[test]
     fn a_picked_premade_finishes_as_itself_until_changed() {
         let mut rules = RulesData::default();
-        let sheet = CharacterSheet {
-            name: "Lugard".into(),
-            race: 1,
-            ..CharacterSheet::default()
-        };
-        rules.premades.push(Premade {
-            prototype: 16094,
-            sheet,
-            gold: 7,
-            items: vec![1],
-        });
+        let sheet = CharacterSheet { name: "Lugard".into(), race: 1, ..CharacterSheet::default() };
+        rules.premades.push(Premade { prototype: 16094, sheet, gold: 7, items: vec![1] });
         let mut c = Creation::new(&rules);
-        c.apply(&rules, &CharacterAction::PickPremade(16094))
-            .unwrap();
+        c.apply(&rules, &CharacterAction::PickPremade(16094)).unwrap();
         assert_eq!(c.finish(&rules).unwrap().prototype, Some(16094));
         c.apply(&rules, &CharacterAction::RaiseStat(0)).unwrap();
-        assert_eq!(
-            c.finish(&rules).unwrap().prototype,
-            None,
-            "a changed pre-made is the player's own"
-        );
+        assert_eq!(c.finish(&rules).unwrap().prototype, None, "a changed pre-made is the player's own");
     }
 
     #[test]
     fn new_resets() {
         let rules = RulesData::default();
         let mut c = Creation::new(&rules);
-        c.apply(&rules, &CharacterAction::SetName("Virgil".into()))
-            .unwrap();
+        c.apply(&rules, &CharacterAction::SetName("Virgil".into())).unwrap();
         c.request(&rules, &CharacterRequest::New).unwrap();
         assert_eq!(c, Creation::new(&rules));
     }

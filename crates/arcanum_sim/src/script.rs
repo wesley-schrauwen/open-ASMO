@@ -82,17 +82,11 @@ pub struct ScriptGlobals {
 
 impl ScriptGlobals {
     pub fn var(&self, index: i32) -> i32 {
-        u32::try_from(index)
-            .ok()
-            .and_then(|i| self.vars.get(&i))
-            .copied()
-            .unwrap_or(0)
+        u32::try_from(index).ok().and_then(|i| self.vars.get(&i)).copied().unwrap_or(0)
     }
 
     pub fn set_var(&mut self, index: i32, value: i32) {
-        let Some(i) = u32::try_from(index).ok().filter(|&i| i < GLOBAL_VARS) else {
-            return;
-        };
+        let Some(i) = u32::try_from(index).ok().filter(|&i| i < GLOBAL_VARS) else { return };
         if value == 0 {
             self.vars.remove(&i);
         } else {
@@ -106,11 +100,7 @@ impl ScriptGlobals {
 
     /// Quest `n`'s global state (0 when never set).
     pub fn quest(&self, n: i32) -> i32 {
-        u32::try_from(n)
-            .ok()
-            .and_then(|n| self.quests.get(&n))
-            .copied()
-            .unwrap_or(0)
+        u32::try_from(n).ok().and_then(|n| self.quests.get(&n)).copied().unwrap_or(0)
     }
 
     /// Sets quest `n`'s global state (0x4c51c0): only completed (4) and botched (6) are kept,
@@ -123,9 +113,7 @@ impl ScriptGlobals {
     }
 
     pub fn set_flag(&mut self, index: i32, on: bool) {
-        let Some(i) = u32::try_from(index).ok().filter(|&i| i < GLOBAL_FLAGS) else {
-            return;
-        };
+        let Some(i) = u32::try_from(index).ok().filter(|&i| i < GLOBAL_FLAGS) else { return };
         if on {
             self.flags.insert(i);
         } else {
@@ -194,11 +182,7 @@ pub struct Attachment {
 impl Attachment {
     /// From the object file's `{flags, counters, number}`.
     pub fn new(flags: u32, counters: u32, number: u32) -> Self {
-        Self {
-            flags,
-            counters: counters.to_le_bytes(),
-            number,
-        }
+        Self { flags, counters: counters.to_le_bytes(), number }
     }
 }
 
@@ -214,22 +198,11 @@ pub enum HookResult {
 /// What the runner could not do: the line and the condition or action type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unsupported {
-    Condition {
-        line: usize,
-        kind: u32,
-    },
-    Action {
-        line: usize,
-        kind: u32,
-    },
-    ObjectSet {
-        line: usize,
-        kind: i8,
-    },
+    Condition { line: usize, kind: u32 },
+    Action { line: usize, kind: u32 },
+    ObjectSet { line: usize, kind: i8 },
     /// A trap script ([`TRAP_SCRIPTS`]), sprung before any line runs (0x4bcb70).
-    Trap {
-        number: u32,
-    },
+    Trap { number: u32 },
 }
 
 /// The trap scripts (30000-30007): 0x4bcb70 springs the trap instead of running lines, and the
@@ -274,14 +247,7 @@ pub trait ScriptContext {
     fn show_message(&mut self, to: Self::Object, text: String);
     /// Starts a conversation between `attachee` and `triggerer` in dialogue file `dialog` at
     /// line `line` (action 4, 0x567460).
-    fn start_dialog(
-        &mut self,
-        _attachee: Self::Object,
-        _triggerer: Self::Object,
-        _dialog: u32,
-        _line: i32,
-    ) {
-    }
+    fn start_dialog(&mut self, _attachee: Self::Object, _triggerer: Self::Object, _dialog: u32, _line: i32) {}
     /// Field `field` of `object`'s data (its own or its prototype's); `None` for PCs and objects
     /// without it.
     fn object_int(&mut self, _object: Self::Object, _field: &str) -> Option<i32> {
@@ -355,15 +321,7 @@ pub trait ScriptContext {
     }
     /// Runs script `script` from `line` for `triggerer` and `attachee` in `delay_ms` game
     /// milliseconds (action 0x36, time event type 4).
-    fn schedule(
-        &mut self,
-        _script: u32,
-        _line: i32,
-        _triggerer: Self::Object,
-        _attachee: Self::Object,
-        _delay_ms: u64,
-    ) {
-    }
+    fn schedule(&mut self, _script: u32, _line: i32, _triggerer: Self::Object, _attachee: Self::Object, _delay_ms: u64) {}
     /// Cancels the runs of script `script` scheduled with `object` (action 0x7d, 0x45bff0 type 4).
     fn cancel_scheduled(&mut self, _script: u32, _object: Self::Object) {}
     /// The area `object` is in (0x4cb6a0); 0 for none.
@@ -512,52 +470,23 @@ pub struct ScriptLibrary {
 impl ScriptLibrary {
     /// Indexes the scripts in the game data.
     pub fn new(vfs: &arcanum_vfs::Vfs) -> Self {
-        let names = vfs
-            .list_dir(arcanum_formats::script::DIR)
-            .unwrap_or_default();
-        let index = ScriptIndex::new(
-            names
-                .iter()
-                .map(|p| p.rsplit(['/', '\\']).next().unwrap_or(p)),
-        );
-        Self {
-            index,
-            loaded: Default::default(),
-            dialogs: Default::default(),
-        }
+        let names = vfs.list_dir(arcanum_formats::script::DIR).unwrap_or_default();
+        let index = ScriptIndex::new(names.iter().map(|p| p.rsplit(['/', '\\']).next().unwrap_or(p)));
+        Self { index, loaded: Default::default(), dialogs: Default::default() }
     }
 
     /// Script `number`, read on first use; `None` if it is not there or does not parse.
     pub fn get(&mut self, vfs: &arcanum_vfs::Vfs, number: u32) -> Option<Arc<Script>> {
         let index = &self.index;
-        self.loaded
-            .entry(number)
-            .or_insert_with(|| {
-                index
-                    .path(number)
-                    .and_then(|p| vfs.read(&p).ok())
-                    .and_then(|d| Script::parse(&d).ok())
-                    .map(Arc::new)
-            })
-            .clone()
+        self.loaded.entry(number).or_insert_with(|| index.path(number).and_then(|p| vfs.read(&p).ok()).and_then(|d| Script::parse(&d).ok()).map(Arc::new)).clone()
     }
 
     /// Script `number`'s dialogue file (`dlg/` beside `scr/`), read on first use.
-    pub fn dialog(
-        &mut self,
-        vfs: &arcanum_vfs::Vfs,
-        number: u32,
-    ) -> Option<Arc<arcanum_formats::dialog::DialogFile>> {
+    pub fn dialog(&mut self, vfs: &arcanum_vfs::Vfs, number: u32) -> Option<Arc<arcanum_formats::dialog::DialogFile>> {
         let index = &self.index;
         self.dialogs
             .entry(number)
-            .or_insert_with(|| {
-                index
-                    .path(number)
-                    .and_then(|p| arcanum_formats::dialog::dialog_path(&p))
-                    .and_then(|p| vfs.read(&p).ok())
-                    .map(|d| Arc::new(arcanum_formats::dialog::DialogFile::parse(&d)))
-            })
+            .or_insert_with(|| index.path(number).and_then(|p| arcanum_formats::dialog::dialog_path(&p)).and_then(|p| vfs.read(&p).ok()).map(|d| Arc::new(arcanum_formats::dialog::DialogFile::parse(&d))))
             .clone()
     }
 
@@ -574,17 +503,10 @@ impl ScriptLibrary {
 
 /// Runs the script `attachment` holds for `invocation` (0x441980 / 0x4449b0). No script: the
 /// default runs.
-pub fn run_hook<C: ScriptContext>(
-    ctx: &mut C,
-    attachment: &mut Attachment,
-    invocation: Invocation<C::Object>,
-) -> ScriptRun {
+pub fn run_hook<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, invocation: Invocation<C::Object>) -> ScriptRun {
     let mut unsupported = Vec::new();
     let result = run(ctx, attachment, invocation, 0, &mut unsupported);
-    ScriptRun {
-        result,
-        unsupported,
-    }
+    ScriptRun { result, unsupported }
 }
 
 /// How a line ended.
@@ -616,32 +538,16 @@ struct Run<O> {
     groups: BTreeMap<i8, Vec<O>>,
 }
 
-fn run<C: ScriptContext>(
-    ctx: &mut C,
-    attachment: &mut Attachment,
-    invocation: Invocation<C::Object>,
-    depth: usize,
-    unsupported: &mut Vec<Unsupported>,
-) -> HookResult {
+fn run<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, invocation: Invocation<C::Object>, depth: usize, unsupported: &mut Vec<Unsupported>) -> HookResult {
     if attachment.number == 0 || depth > MAX_DEPTH {
         return HookResult::RunDefault;
     }
     if TRAP_SCRIPTS.contains(&attachment.number) {
-        unsupported.push(Unsupported::Trap {
-            number: attachment.number,
-        });
+        unsupported.push(Unsupported::Trap { number: attachment.number });
         return HookResult::RunDefault;
     }
-    let Some(script) = ctx.script(attachment.number) else {
-        return HookResult::RunDefault;
-    };
-    let names = |tags: &[i8]| {
-        script
-            .lines
-            .iter()
-            .flat_map(|l| [&l.condition, &l.then, &l.otherwise])
-            .any(|b| b.operands.iter().any(|o| tags.contains(&o.tag)))
-    };
+    let Some(script) = ctx.script(attachment.number) else { return HookResult::RunDefault };
+    let names = |tags: &[i8]| script.lines.iter().flat_map(|l| [&l.condition, &l.then, &l.otherwise]).any(|b| b.operands.iter().any(|o| tags.contains(&o.tag)));
     let mut near = BTreeMap::new();
     for set in [8, 0xf, 0x11, 0x13, 0x16] {
         let kind = NearKind::of_set(set).expect("a vicinity set");
@@ -669,33 +575,13 @@ fn run<C: ScriptContext>(
         groups.insert(set, members.clone());
         groups.insert(set + 1, members);
     }
-    let mut run = Run {
-        invocation,
-        locals: [0; LOCAL_VARS],
-        objects: [None; LOCAL_VARS],
-        looping: None,
-        replace: None,
-        depth,
-        near,
-        player,
-        groups,
-    };
+    let mut run = Run { invocation, locals: [0; LOCAL_VARS], objects: [None; LOCAL_VARS], looping: None, replace: None, depth, near, player, groups };
     let mut line = invocation.start_line;
     let mut result = HookResult::SkipDefault;
     let mut ended_by_action = false;
     for _ in 0..MAX_STEPS {
-        let Some(current) = script.lines.get(line) else {
-            break;
-        };
-        match step(
-            ctx,
-            attachment,
-            &mut run,
-            &script,
-            line,
-            current,
-            unsupported,
-        ) {
+        let Some(current) = script.lines.get(line) else { break };
+        match step(ctx, attachment, &mut run, &script, line, current, unsupported) {
             Step::Next if line + 1 < script.lines.len() => line += 1,
             Step::Next | Step::SkipDefault => {
                 ended_by_action = true;
@@ -734,83 +620,43 @@ fn party_and_followers<C: ScriptContext>(ctx: &mut C, of: C::Object) -> Vec<C::O
     out
 }
 
-fn step<C: ScriptContext>(
-    ctx: &mut C,
-    attachment: &mut Attachment,
-    run: &mut Run<C::Object>,
-    script: &Script,
-    line: usize,
-    current: &Line,
-    unsupported: &mut Vec<Unsupported>,
-) -> Step {
+fn step<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut Run<C::Object>, script: &Script, line: usize, current: &Line, unsupported: &mut Vec<Unsupported>) -> Step {
     let holds = match condition(ctx, attachment, run, &current.condition, line, unsupported) {
         Some(holds) => holds,
         None => {
-            unsupported.push(Unsupported::Condition {
-                line,
-                kind: current.condition.kind,
-            });
+            unsupported.push(Unsupported::Condition { line, kind: current.condition.kind });
             return Step::Stop;
         }
     };
-    let block = if holds {
-        &current.then
-    } else {
-        &current.otherwise
-    };
+    let block = if holds { &current.then } else { &current.otherwise };
     match action(ctx, attachment, run, script, line, block, unsupported) {
         Some(step) => step,
         None => {
-            unsupported.push(Unsupported::Action {
-                line,
-                kind: block.kind,
-            });
+            unsupported.push(Unsupported::Action { line, kind: block.kind });
             Step::Stop
         }
     }
 }
 
 /// A condition's truth (0x4451b0); `None` when it is not built.
-fn condition<C: ScriptContext>(
-    ctx: &mut C,
-    attachment: &mut Attachment,
-    run: &mut Run<C::Object>,
-    block: &Block,
-    line: usize,
-    unsupported: &mut Vec<Unsupported>,
-) -> Option<bool> {
+fn condition<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut Run<C::Object>, block: &Block, line: usize, unsupported: &mut Vec<Unsupported>) -> Option<bool> {
     // Tests on the members of the set in operand 0: all must pass, or any for the "any" kinds.
-    let over_set = |ctx: &mut C,
-                    run: &Run<C::Object>,
-                    unsupported: &mut Vec<Unsupported>,
-                    test: &mut dyn FnMut(&mut C, C::Object) -> bool|
-     -> Option<bool> {
+    let over_set = |ctx: &mut C, run: &Run<C::Object>, unsupported: &mut Vec<Unsupported>, test: &mut dyn FnMut(&mut C, C::Object) -> bool| -> Option<bool> {
         let set = block.operands[0];
         let members = objects(run, set, line, unsupported)?;
         let passed = members.iter().filter(|&&o| test(ctx, o)).count();
-        Some(if ANY_SET_KINDS.contains(&set.tag) {
-            passed > 0
-        } else {
-            passed == members.len() && passed > 0
-        })
+        Some(if ANY_SET_KINDS.contains(&set.tag) { passed > 0 } else { passed == members.len() && passed > 0 })
     };
     if let Some(&(_, field, bits, npc_only)) = FLAG_CONDITIONS.iter().find(|c| c.0 == block.kind) {
-        return over_set(ctx, run, unsupported, &mut |ctx, o| {
-            (!npc_only || ctx.is_npc(o)) && ctx.object_int(o, field).is_some_and(|v| v & bits != 0)
-        });
+        return over_set(ctx, run, unsupported, &mut |ctx, o| (!npc_only || ctx.is_npc(o)) && ctx.object_int(o, field).is_some_and(|v| v & bits != 0));
     }
     if block.kind == 0x12 {
         // The set's leader is the object in operand 1 (0x45de00).
-        let other = objects(run, block.operands[1], line, unsupported)?
-            .first()
-            .copied();
-        return over_set(ctx, run, unsupported, &mut |ctx, o| {
-            other.is_some() && ctx.leader(o) == other
-        });
+        let other = objects(run, block.operands[1], line, unsupported)?.first().copied();
+        return over_set(ctx, run, unsupported, &mut |ctx, o| other.is_some() && ctx.leader(o) == other);
     }
     // Tests on each member of the set in operand 0 (0x4451b0).
-    let number =
-        |ctx: &mut C, run: &Run<C::Object>, i: usize| get(ctx, attachment, run, block.operands[i]);
+    let number = |ctx: &mut C, run: &Run<C::Object>, i: usize| get(ctx, attachment, run, block.operands[i]);
     match block.kind {
         2 => {
             let n = number(ctx, run, 1);
@@ -829,120 +675,69 @@ fn condition<C: ScriptContext>(
             let id = number(ctx, run, 1);
             let curse = block.kind == 9;
             return over_set(ctx, run, unsupported, &mut |ctx, o| {
-                u32::try_from(id).is_ok_and(|id| {
-                    ctx.pc_state(o).is_some_and(|s| {
-                        if curse {
-                            s.curses.contains(&id)
-                        } else {
-                            s.blessings.contains(&id)
-                        }
-                    })
-                })
+                u32::try_from(id).is_ok_and(|id| ctx.pc_state(o).is_some_and(|s| if curse { s.curses.contains(&id) } else { s.blessings.contains(&id) }))
             });
         }
         // Surrendered (0x4af210: an NPC with `critter_flags` 0x4000).
-        0x19 => {
-            return over_set(ctx, run, unsupported, &mut |ctx, o| {
-                ctx.is_npc(o) && ctx.object_int(o, "critter_flags").unwrap_or(0) & 0x4000 != 0
-            });
-        }
+        0x19 => return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.is_npc(o) && ctx.object_int(o, "critter_flags").unwrap_or(0) & 0x4000 != 0),
         0x1a => return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.in_dialog(o)),
         // Sees the object in operand 1 (0x4af260).
         0x1c => {
-            let target = objects(run, block.operands[1], line, unsupported)?
-                .first()
-                .copied();
-            return over_set(ctx, run, unsupported, &mut |ctx, o| {
-                target.is_some_and(|t| ctx.can_see(o, t))
-            });
+            let target = objects(run, block.operands[1], line, unsupported)?.first().copied();
+            return over_set(ctx, run, unsupported, &mut |ctx, o| target.is_some_and(|t| ctx.can_see(o, t)));
         }
         // Within N tiles of X, Y (0x4b96f0: the larger of the two distances).
         0x22 => {
-            let (n, x, y) = (
-                number(ctx, run, 1),
-                number(ctx, run, 2),
-                number(ctx, run, 3),
-            );
+            let (n, x, y) = (number(ctx, run, 1), number(ctx, run, 2), number(ctx, run, 3));
             return over_set(ctx, run, unsupported, &mut |ctx, o| {
-                ctx.location(o).is_some_and(|at| {
-                    (i64::from(at.x) - i64::from(x))
-                        .abs()
-                        .max((i64::from(at.y) - i64::from(y)).abs())
-                        <= i64::from(n)
-                })
+                ctx.location(o).is_some_and(|at| (i64::from(at.x) - i64::from(x)).abs().max((i64::from(at.y) - i64::from(y)).abs()) <= i64::from(n))
             });
         }
         0x23 => {
             let spell = number(ctx, run, 1);
-            return over_set(ctx, run, unsupported, &mut |ctx, o| {
-                ctx.under_spell(o, spell)
-            });
+            return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.under_spell(o, spell));
         }
         0x11 => {
             let name = number(ctx, run, 1);
-            return over_set(ctx, run, unsupported, &mut |ctx, o| {
-                ctx.has_item_named(o, name)
-            });
+            return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.has_item_named(o, name));
         }
         // Wears an item named N (0x445d77: slots 1000-1008).
         0x15 => {
             let name = number(ctx, run, 1);
-            return over_set(ctx, run, unsupported, &mut |ctx, o| {
-                ctx.wears_item_named(o, name)
-            });
+            return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.wears_item_named(o, name));
         }
         // A critter with `critter_flags` 0x40000 (0x4b3d50; meaning not traced).
-        0x1f => {
-            return over_set(ctx, run, unsupported, &mut |ctx, o| {
-                matches!(ctx.object_type(o), 15 | 16)
-                    && ctx.object_int(o, "critter_flags").unwrap_or(0) & 0x4_0000 != 0
-            });
-        }
+        0x1f => return over_set(ctx, run, unsupported, &mut |ctx, o| matches!(ctx.object_type(o), 15 | 16) && ctx.object_int(o, "critter_flags").unwrap_or(0) & 0x4_0000 != 0),
         // Named, and not flagged 0x8000000 (`flags`; probably destroyed).
         0x14 => {
             let name = number(ctx, run, 1);
-            return over_set(ctx, run, unsupported, &mut |ctx, o| {
-                ctx.object_int(o, "name") == Some(name)
-                    && ctx.object_int(o, "flags").unwrap_or(0) & 0x800_0000 == 0
-            });
+            return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.object_int(o, "name") == Some(name) && ctx.object_int(o, "flags").unwrap_or(0) & 0x800_0000 == 0);
         }
         0x16 => return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.is_dead(o)),
         // Identified (0x464370): an item with no complexity, or flagged identified.
         0x2f => {
             return over_set(ctx, run, unsupported, &mut |ctx, o| {
                 let kind = ctx.object_type(o);
-                (5..=14).contains(&kind)
-                    && (ctx.object_int(o, "item_magic_tech_complexity").unwrap_or(0) < 1
-                        || ctx.object_int(o, "item_flags").unwrap_or(0) & 1 != 0)
+                (5..=14).contains(&kind) && (ctx.object_int(o, "item_magic_tech_complexity").unwrap_or(0) < 1 || ctx.object_int(o, "item_flags").unwrap_or(0) & 1 != 0)
             });
         }
         // Items being rewielded (0x4655c0): never, here.
         0x32 => return Some(false),
         // NPC (operand 0) has met PC (operand 1) (0x4c0c40).
         0xa => {
-            let npc = objects(run, block.operands[0], line, unsupported)?
-                .first()
-                .copied();
-            let pc = objects(run, block.operands[1], line, unsupported)?
-                .first()
-                .copied();
+            let npc = objects(run, block.operands[0], line, unsupported)?.first().copied();
+            let pc = objects(run, block.operands[1], line, unsupported)?.first().copied();
             return Some(matches!((npc, pc), (Some(n), Some(p)) if ctx.has_met(n, p)));
         }
         // Has reputation N (0x4c1cb0: a PC's list).
         0x21 => {
             let rep = number(ctx, run, 1);
-            return over_set(ctx, run, unsupported, &mut |ctx, o| {
-                u32::try_from(rep)
-                    .is_ok_and(|r| ctx.pc_state(o).is_some_and(|s| s.reputations.contains(&r)))
-            });
+            return over_set(ctx, run, unsupported, &mut |ctx, o| u32::try_from(rep).is_ok_and(|r| ctx.pc_state(o).is_some_and(|s| s.reputations.contains(&r))));
         }
         // Has heard rumour N (0x4c58d0) / rumour N is quelled (0x4c5650).
         0x28 => {
             let rumour = number(ctx, run, 1);
-            return over_set(ctx, run, unsupported, &mut |ctx, o| {
-                u32::try_from(rumour)
-                    .is_ok_and(|r| ctx.pc_state(o).is_some_and(|s| s.rumours.contains(&r)))
-            });
+            return over_set(ctx, run, unsupported, &mut |ctx, o| u32::try_from(rumour).is_ok_and(|r| ctx.pc_state(o).is_some_and(|s| s.rumours.contains(&r))));
         }
         0x29 => {
             let rumour = number(ctx, run, 0);
@@ -951,17 +746,13 @@ fn condition<C: ScriptContext>(
         // Mastered college N: all five of its spells.
         0x31 => {
             let college = number(ctx, run, 1);
-            return over_set(ctx, run, unsupported, &mut |ctx, o| {
-                ctx.knows_spell(o, college * 5 + 4)
-            });
+            return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.knows_spell(o, college * 5 + 4));
         }
         // Bad associates: not built (false).
         0xb => return Some(false),
         0x30 => {
             let spell = number(ctx, run, 1);
-            return over_set(ctx, run, unsupported, &mut |ctx, o| {
-                ctx.knows_spell(o, spell)
-            });
+            return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.knows_spell(o, spell));
         }
         _ => {}
     }
@@ -997,20 +788,10 @@ fn condition<C: ScriptContext>(
 }
 
 /// An action (0x447220); `None` when it is not built.
-fn action<C: ScriptContext>(
-    ctx: &mut C,
-    attachment: &mut Attachment,
-    run: &mut Run<C::Object>,
-    script: &Script,
-    line: usize,
-    block: &Block,
-    unsupported: &mut Vec<Unsupported>,
-) -> Option<Step> {
+fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut Run<C::Object>, script: &Script, line: usize, block: &Block, unsupported: &mut Vec<Unsupported>) -> Option<Step> {
     let ops = block.operands;
     let depth = run.depth;
-    let value = |ctx: &mut C, attachment: &mut Attachment, run: &mut Run<C::Object>, i: usize| {
-        get(ctx, attachment, run, ops[i])
-    };
+    let value = |ctx: &mut C, attachment: &mut Attachment, run: &mut Run<C::Object>, i: usize| get(ctx, attachment, run, ops[i]);
     let arithmetic = |a: i32, b: i32, kind: u32| match kind {
         0xb => Some(a.wrapping_add(b)),
         0xc => Some(a.wrapping_sub(b)),
@@ -1026,12 +807,7 @@ fn action<C: ScriptContext>(
             // Dialogue in the running script's own file, at line operand 0; the script ends,
             // skipping the default (0x447282).
             let line = value(ctx, attachment, run, 0);
-            ctx.start_dialog(
-                run.invocation.attachee,
-                run.invocation.triggerer,
-                attachment.number,
-                line,
-            );
+            ctx.start_dialog(run.invocation.attachee, run.invocation.triggerer, attachment.number, line);
             Step::SkipDefault
         }
         5 => {
@@ -1050,14 +826,8 @@ fn action<C: ScriptContext>(
             let first = if block.kind == 0x2c { 0 } else { 3 };
             let who = objects(run, ops[first], line, unsupported)?;
             let map = value(ctx, attachment, run, first + 1);
-            let (x, y) = (
-                value(ctx, attachment, run, first + 2),
-                value(ctx, attachment, run, first + 3),
-            );
-            let to = arcanum_formats::map::TileLoc {
-                x: x.max(0) as u32,
-                y: y.max(0) as u32,
-            };
+            let (x, y) = (value(ctx, attachment, run, first + 2), value(ctx, attachment, run, first + 3));
+            let to = arcanum_formats::map::TileLoc { x: x.max(0) as u32, y: y.max(0) as u32 };
             for object in who {
                 ctx.teleport(object, map, to);
             }
@@ -1066,11 +836,7 @@ fn action<C: ScriptContext>(
         0x67 => Step::Next,
         8 | 9 => {
             let bit = 1 << (value(ctx, attachment, run, 0) & 31);
-            attachment.flags = if block.kind == 8 {
-                attachment.flags | bit
-            } else {
-                attachment.flags & !bit
-            };
+            attachment.flags = if block.kind == 8 { attachment.flags | bit } else { attachment.flags & !bit };
             Step::Next
         }
         0xa => {
@@ -1079,10 +845,7 @@ fn action<C: ScriptContext>(
             Step::Next
         }
         0xb..=0xe => {
-            let (a, b) = (
-                value(ctx, attachment, run, 1),
-                value(ctx, attachment, run, 2),
-            );
+            let (a, b) = (value(ctx, attachment, run, 1), value(ctx, attachment, run, 2));
             if let Some(v) = arithmetic(a, b, block.kind) {
                 set(ctx, attachment, run, ops[0], v);
             }
@@ -1091,9 +854,7 @@ fn action<C: ScriptContext>(
         0xf => {
             let object = objects(run, ops[1], line, unsupported)?.first().copied();
             if ops[0].tag == 0xb
-                && let Some(slot) = usize::try_from(ops[0].value)
-                    .ok()
-                    .and_then(|i| run.objects.get_mut(i))
+                && let Some(slot) = usize::try_from(ops[0].value).ok().and_then(|i| run.objects.get_mut(i))
             {
                 *slot = object;
             }
@@ -1111,9 +872,7 @@ fn action<C: ScriptContext>(
             Step::Next
         }
         0x13 => {
-            let Some((set, at, start)) = run.looping.as_mut() else {
-                return Some(Step::Next);
-            };
+            let Some((set, at, start)) = run.looping.as_mut() else { return Some(Step::Next) };
             *at += 1;
             if *at < set.len() {
                 Step::Jump(*start)
@@ -1123,9 +882,7 @@ fn action<C: ScriptContext>(
             }
         }
         0x14 => {
-            let Some((_, _, start)) = run.looping.take() else {
-                return Some(Step::Next);
-            };
+            let Some((_, _, start)) = run.looping.take() else { return Some(Step::Next) };
             loop_exit(script, start)
         }
         0x18 => {
@@ -1140,29 +897,14 @@ fn action<C: ScriptContext>(
         // Call script N from line L for each triggerer and attachee (0x44b030): a record of its
         // own (not kept), the caller's point, no "other".
         0x7 => {
-            let (number, start) = (
-                value(ctx, attachment, run, 0),
-                value(ctx, attachment, run, 1),
-            );
+            let (number, start) = (value(ctx, attachment, run, 0), value(ctx, attachment, run, 1));
             let triggerers = objects(run, ops[2], line, unsupported)?;
             let attachees = objects(run, ops[3], line, unsupported)?;
             if number > 0 && depth < MAX_DEPTH {
                 for &t in &triggerers {
                     for &a in &attachees {
-                        let invocation = Invocation {
-                            attachee: a,
-                            triggerer: t,
-                            other: None,
-                            event: run.invocation.event,
-                            start_line: start.max(0) as usize,
-                        };
-                        self::run(
-                            ctx,
-                            &mut Attachment::new(0, 0, number as u32),
-                            invocation,
-                            depth + 1,
-                            unsupported,
-                        );
+                        let invocation = Invocation { attachee: a, triggerer: t, other: None, event: run.invocation.event, start_line: start.max(0) as usize };
+                        self::run(ctx, &mut Attachment::new(0, 0, number as u32), invocation, depth + 1, unsupported);
                     }
                 }
             }
@@ -1170,21 +912,11 @@ fn action<C: ScriptContext>(
         }
         // The same in N seconds: a time event on the game clock, 8 game seconds a second.
         0x36 => {
-            let (number, start, seconds) = (
-                value(ctx, attachment, run, 0),
-                value(ctx, attachment, run, 1),
-                value(ctx, attachment, run, 4),
-            );
+            let (number, start, seconds) = (value(ctx, attachment, run, 0), value(ctx, attachment, run, 1), value(ctx, attachment, run, 4));
             let t = objects(run, ops[2], line, unsupported)?.first().copied();
             let a = objects(run, ops[3], line, unsupported)?.first().copied();
             if let (Some(t), Some(a), Ok(number)) = (t, a, u32::try_from(number)) {
-                ctx.schedule(
-                    number,
-                    start,
-                    t,
-                    a,
-                    u64::try_from(seconds).unwrap_or(0) * 8000,
-                );
+                ctx.schedule(number, start, t, a, u64::try_from(seconds).unwrap_or(0) * 8000);
             }
             Step::Next
         }
@@ -1244,11 +976,7 @@ fn action<C: ScriptContext>(
             let pc = objects(run, ops[1], line, unsupported)?.first().copied();
             let v = value(ctx, attachment, run, 2);
             if let (Some(n), Some(p)) = (npc, pc) {
-                let delta = if block.kind == 0x1e {
-                    v - ctx.reaction(n, p)
-                } else {
-                    v
-                };
+                let delta = if block.kind == 0x1e { v - ctx.reaction(n, p) } else { v };
                 ctx.change_reaction(n, p, delta);
             }
             Step::Next
@@ -1282,10 +1010,7 @@ fn action<C: ScriptContext>(
         // Damage (0x4489f9): each object takes N of kind K (0, 2, 3 hit points, 1 poison, 4
         // fatigue); no attacker.
         0x3c => {
-            let (amount, kind) = (
-                value(ctx, attachment, run, 1),
-                value(ctx, attachment, run, 2),
-            );
+            let (amount, kind) = (value(ctx, attachment, run, 1), value(ctx, attachment, run, 2));
             for o in objects(run, ops[0], line, unsupported)? {
                 ctx.damage(o, amount, kind);
             }
@@ -1348,10 +1073,7 @@ fn action<C: ScriptContext>(
         // record names that script and object, 0x44aff0).
         0x7d => {
             let script = value(ctx, attachment, run, 0);
-            if let (Ok(script), Some(o)) = (
-                u32::try_from(script),
-                objects(run, ops[1], line, unsupported)?.first().copied(),
-            ) {
+            if let (Ok(script), Some(o)) = (u32::try_from(script), objects(run, ops[1], line, unsupported)?.first().copied()) {
                 ctx.cancel_scheduled(script, o);
             }
             Step::Next
@@ -1382,14 +1104,8 @@ fn action<C: ScriptContext>(
             let user = objects(run, ops[2], line, unsupported)?.first().copied();
             let target = objects(run, ops[3], line, unsupported)?.first().copied();
             let r = match (item, user, target) {
-                (Some(item), Some(user), Some(target))
-                    if [user, target]
-                        .into_iter()
-                        .all(|o| matches!(ctx.object_type(o), 15 | 16)) =>
-                {
-                    let k = ctx
-                        .object_int(item, "item_magic_tech_complexity")
-                        .unwrap_or(0);
+                (Some(item), Some(user), Some(target)) if [user, target].into_iter().all(|o| matches!(ctx.object_type(o), 15 | 16)) => {
+                    let k = ctx.object_int(item, "item_magic_tech_complexity").unwrap_or(0);
                     magic_tech_resistance(k, ctx.stat(user, 0x10), ctx.stat(target, 0x10))
                 }
                 _ => 0,
@@ -1419,9 +1135,7 @@ fn action<C: ScriptContext>(
             let n = value(ctx, attachment, run, 0);
             let item = objects(run, ops[1], line, unsupported)?.first().copied();
             let user = objects(run, ops[2], line, unsupported)?.first().copied();
-            let complexity = item
-                .and_then(|i| ctx.object_int(i, "item_magic_tech_complexity"))
-                .unwrap_or(0);
+            let complexity = item.and_then(|i| ctx.object_int(i, "item_magic_tech_complexity")).unwrap_or(0);
             let aptitude = user.map_or(0, |u| ctx.stat(u, 0x10));
             let critter = user.is_some_and(|u| matches!(ctx.object_type(u), 15 | 16));
             let v = (magic_tech_factor(complexity, aptitude, critter) * n + 50) / 100;
@@ -1432,17 +1146,11 @@ fn action<C: ScriptContext>(
         // botched (6).
         0x10 => {
             let who = objects(run, ops[0], line, unsupported)?;
-            let (quest, state) = (
-                value(ctx, attachment, run, 1),
-                value(ctx, attachment, run, 2),
-            );
+            let (quest, state) = (value(ctx, attachment, run, 1), value(ctx, attachment, run, 2));
             for o in who {
                 if let Some(pc) = ctx.pc_state(o) {
                     let now = pc.quest(quest);
-                    if !(4..=6).contains(&now)
-                        && now < state
-                        && let Ok(q) = u32::try_from(quest)
-                    {
+                    if !(4..=6).contains(&now) && now < state && let Ok(q) = u32::try_from(quest) {
                         pc.quests.insert(q, state);
                     }
                 }
@@ -1453,9 +1161,7 @@ fn action<C: ScriptContext>(
         0x17 => {
             let number = value(ctx, attachment, run, 0);
             for o in objects(run, ops[1], line, unsupported)? {
-                if let Some(text) =
-                    ctx.dialog_text(attachment.number, number, run.invocation.triggerer)
-                {
+                if let Some(text) = ctx.dialog_text(attachment.number, number, run.invocation.triggerer) {
                     ctx.float_text(o, text);
                 }
             }
@@ -1494,23 +1200,12 @@ fn action<C: ScriptContext>(
         // triggerer T; its result is ignored, its attachment kept.
         0x51 => {
             let owner = objects(run, ops[0], line, unsupported)?.first().copied();
-            let (point, start) = (
-                value(ctx, attachment, run, 1),
-                value(ctx, attachment, run, 2),
-            );
+            let (point, start) = (value(ctx, attachment, run, 1), value(ctx, attachment, run, 2));
             let triggerer = objects(run, ops[3], line, unsupported)?.first().copied();
-            if let (Some(owner), Some(triggerer), Ok(point)) =
-                (owner, triggerer, u32::try_from(point))
-            {
+            if let (Some(owner), Some(triggerer), Ok(point)) = (owner, triggerer, u32::try_from(point)) {
                 let mut called = ctx.attachment(owner, point);
                 if called.number != 0 && depth < MAX_DEPTH {
-                    let invocation = Invocation {
-                        attachee: owner,
-                        triggerer,
-                        other: None,
-                        event: point,
-                        start_line: start.max(0) as usize,
-                    };
+                    let invocation = Invocation { attachee: owner, triggerer, other: None, event: point, start_line: start.max(0) as usize };
                     self::run(ctx, &mut called, invocation, depth + 1, unsupported);
                     ctx.set_attachment(owner, point, called);
                 }
@@ -1520,10 +1215,7 @@ fn action<C: ScriptContext>(
         // Change a script (0x63): the running one's when it is this object and point.
         0x63 => {
             let owner = objects(run, ops[0], line, unsupported)?.first().copied();
-            let (point, number) = (
-                value(ctx, attachment, run, 1),
-                value(ctx, attachment, run, 2),
-            );
+            let (point, number) = (value(ctx, attachment, run, 1), value(ctx, attachment, run, 2));
             if let (Some(owner), Ok(point)) = (owner, u32::try_from(point)) {
                 let number = number.max(0) as u32;
                 if owner == run.invocation.attachee && point == run.invocation.event {
@@ -1551,10 +1243,7 @@ fn action<C: ScriptContext>(
         }
         // Set quest N's global state (0x4c51c0: completed or botched only).
         0x11 => {
-            let (quest, state) = (
-                value(ctx, attachment, run, 0),
-                value(ctx, attachment, run, 1),
-            );
+            let (quest, state) = (value(ctx, attachment, run, 0), value(ctx, attachment, run, 1));
             ctx.globals().set_quest(quest, state);
             Step::Next
         }
@@ -1583,34 +1272,14 @@ fn action<C: ScriptContext>(
             let id = value(ctx, attachment, run, 0);
             let curse = block.kind >= 0x1b;
             let adding = block.kind % 2 == 1;
-            let Ok(n) = u32::try_from(id) else {
-                return Some(Step::Next);
-            };
+            let Ok(n) = u32::try_from(id) else { return Some(Step::Next) };
             for o in objects(run, ops[1], line, unsupported)? {
-                let Some(state) = ctx.pc_state(o) else {
-                    continue;
-                };
-                let list = if curse {
-                    &mut state.curses
-                } else {
-                    &mut state.blessings
-                };
-                let changed = if adding {
-                    list.insert(n)
-                } else {
-                    list.remove(&n)
-                };
+                let Some(state) = ctx.pc_state(o) else { continue };
+                let list = if curse { &mut state.curses } else { &mut state.blessings };
+                let changed = if adding { list.insert(n) } else { list.remove(&n) };
                 if let (true, Some(effect)) = (changed, ctx.blessing_effect(curse, id)) {
                     if adding {
-                        ctx.give_effect(
-                            o,
-                            effect,
-                            if curse {
-                                EFFECT_CAUSE_CURSE
-                            } else {
-                                EFFECT_CAUSE_BLESSING
-                            },
-                        );
+                        ctx.give_effect(o, effect, if curse { EFFECT_CAUSE_CURSE } else { EFFECT_CAUSE_BLESSING });
                     } else {
                         ctx.remove_effect(o, effect);
                     }
@@ -1622,9 +1291,7 @@ fn action<C: ScriptContext>(
         // type 0xc bits 20-22, else 0.
         0x20 => {
             let o = objects(run, ops[0], line, unsupported)?.first().copied();
-            let art = o
-                .and_then(|o| ctx.object_int(o, "current_aid"))
-                .unwrap_or(0) as u32;
+            let art = o.and_then(|o| ctx.object_int(o, "current_aid")).unwrap_or(0) as u32;
             let v = match art >> 28 {
                 2 => art >> 20 & 0xf,
                 0xc => art >> 20 & 7,
@@ -1635,19 +1302,10 @@ fn action<C: ScriptContext>(
         }
         // An NPC's day standpoint (0x44825b: field 0x121).
         0x2d => {
-            let (x, y) = (
-                value(ctx, attachment, run, 1),
-                value(ctx, attachment, run, 2),
-            );
+            let (x, y) = (value(ctx, attachment, run, 1), value(ctx, attachment, run, 2));
             for o in objects(run, ops[0], line, unsupported)? {
                 if ctx.is_npc(o) {
-                    ctx.set_day_standpoint(
-                        o,
-                        arcanum_formats::map::TileLoc {
-                            x: x as u32,
-                            y: y as u32,
-                        },
-                    );
+                    ctx.set_day_standpoint(o, arcanum_formats::map::TileLoc { x: x as u32, y: y as u32 });
                 }
             }
             Step::Next
@@ -1696,20 +1354,14 @@ fn action<C: ScriptContext>(
         0x7b => Step::Next,
         // Adjust stat N by D (0x4b0980).
         0x89 => {
-            let (stat, delta) = (
-                value(ctx, attachment, run, 0),
-                value(ctx, attachment, run, 2),
-            );
+            let (stat, delta) = (value(ctx, attachment, run, 0), value(ctx, attachment, run, 2));
             if let Some(o) = objects(run, ops[1], line, unsupported)?.first().copied() {
                 ctx.adjust_stat(o, stat, delta);
             }
             Step::Next
         }
         0x25 => {
-            let (a, b) = (
-                value(ctx, attachment, run, 0),
-                value(ctx, attachment, run, 1),
-            );
+            let (a, b) = (value(ctx, attachment, run, 0), value(ctx, attachment, run, 1));
             let v = ctx.random(a.min(b), a.max(b));
             set(ctx, attachment, run, ops[2], v);
             Step::Next
@@ -1737,8 +1389,7 @@ fn action<C: ScriptContext>(
 /// Where a loop's break goes (0x44bc60): past the first line from `from` that always ends the
 /// loop (condition 0, then action 0x13).
 fn loop_exit(script: &Script, from: usize) -> Step {
-    let end = (from..script.lines.len())
-        .find(|&i| script.lines[i].condition.kind == 0 && script.lines[i].then.kind == 0x13);
+    let end = (from..script.lines.len()).find(|&i| script.lines[i].condition.kind == 0 && script.lines[i].then.kind == 0x13);
     match end {
         Some(i) => Step::Jump(i + 1),
         None => Step::SkipDefault,
@@ -1746,12 +1397,7 @@ fn loop_exit(script: &Script, from: usize) -> Step {
 }
 
 /// The objects an object operand names (0x44b4e0): its tag is the set kind.
-fn objects<O: Copy>(
-    run: &Run<O>,
-    operand: Operand,
-    line: usize,
-    unsupported: &mut Vec<Unsupported>,
-) -> Option<Vec<O>> {
+fn objects<O: Copy>(run: &Run<O>, operand: Operand, line: usize, unsupported: &mut Vec<Unsupported>) -> Option<Vec<O>> {
     let inv = &run.invocation;
     Some(match operand.tag {
         // Set 0 is the hook's first object, the triggerer; 1 its second, the attachee whose
@@ -1759,25 +1405,11 @@ fn objects<O: Copy>(
         // fills with its first and second arguments; checked 2026-11-24).
         0 => vec![inv.triggerer],
         1 => vec![inv.attachee],
-        0xa => run
-            .looping
-            .as_ref()
-            .and_then(|(set, at, _)| set.get(*at))
-            .copied()
-            .into_iter()
-            .collect(),
-        0xb => usize::try_from(operand.value)
-            .ok()
-            .and_then(|i| run.objects.get(i).copied().flatten())
-            .into_iter()
-            .collect(),
+        0xa => run.looping.as_ref().and_then(|(set, at, _)| set.get(*at)).copied().into_iter().collect(),
+        0xb => usize::try_from(operand.value).ok().and_then(|i| run.objects.get(i).copied().flatten()).into_iter().collect(),
         0xc => inv.other.into_iter().collect(),
         // Everyone / anyone in the vicinity (0x44b4e0 cases 8/9): critters around the attachee.
-        kind if NearKind::of_set(kind).is_some() => run
-            .near
-            .get(&NearKind::of_set(kind)?)
-            .cloned()
-            .unwrap_or_default(),
+        kind if NearKind::of_set(kind).is_some() => run.near.get(&NearKind::of_set(kind)?).cloned().unwrap_or_default(),
         0x15 => run.player.into_iter().collect(),
         kind if run.groups.contains_key(&kind) => run.groups[&kind].clone(),
         2..=7 | 0xd | 0xe => Vec::new(),
@@ -1790,10 +1422,7 @@ fn objects<O: Copy>(
 
 /// The object a PC variable or flag operand names: the first of the set in its high 16 bits.
 fn pc_object<O: Copy>(run: &Run<O>, value: i32) -> Option<O> {
-    let set = Operand {
-        tag: (value >> 16) as i8,
-        value: 0,
-    };
+    let set = Operand { tag: (value >> 16) as i8, value: 0 };
     objects(run, set, 0, &mut Vec::new())?.first().copied()
 }
 
@@ -1805,18 +1434,10 @@ fn pc_object<O: Copy>(run: &Run<O>, value: i32) -> Option<O> {
 pub fn magic_tech_resistance(k: i32, user: i32, target: i32) -> i32 {
     match () {
         _ if k > 0 && target < 0 => {
-            if user < 0 {
-                -target
-            } else {
-                (100 - user) * target / -100
-            }
+            if user < 0 { -target } else { (100 - user) * target / -100 }
         }
         _ if k < 0 && target > 0 => {
-            if user > 0 {
-                target
-            } else {
-                (user + 100) * target / 100
-            }
+            if user > 0 { target } else { (user + 100) * target / 100 }
         }
         _ => 0,
     }
@@ -1834,65 +1455,34 @@ pub fn magic_tech_factor(complexity: i32, aptitude: i32, critter: bool) -> i32 {
         complexity
     } else {
         let m = (aptitude + complexity) / 2;
-        if complexity >= 0 {
-            m.clamp(0, complexity)
-        } else {
-            m.clamp(complexity, 0)
-        }
+        if complexity >= 0 { m.clamp(0, complexity) } else { m.clamp(complexity, 0) }
     };
     100 * effective / complexity
 }
 
 /// A scalar operand's value (0x44ba70).
-fn get<C: ScriptContext>(
-    ctx: &mut C,
-    attachment: &Attachment,
-    run: &Run<C::Object>,
-    operand: Operand,
-) -> i32 {
+fn get<C: ScriptContext>(ctx: &mut C, attachment: &Attachment, run: &Run<C::Object>, operand: Operand) -> i32 {
     let v = operand.value;
     match operand.kind() {
-        OperandKind::Counter => usize::try_from(v)
-            .ok()
-            .and_then(|i| attachment.counters.get(i))
-            .map_or(0, |&c| i32::from(c)),
+        OperandKind::Counter => usize::try_from(v).ok().and_then(|i| attachment.counters.get(i)).map_or(0, |&c| i32::from(c)),
         OperandKind::GlobalVar => ctx.globals().var(v),
-        OperandKind::Local => usize::try_from(v)
-            .ok()
-            .and_then(|i| run.locals.get(i))
-            .copied()
-            .unwrap_or(0),
+        OperandKind::Local => usize::try_from(v).ok().and_then(|i| run.locals.get(i)).copied().unwrap_or(0),
         OperandKind::GlobalFlag => i32::from(ctx.globals().flag(v)),
         OperandKind::PcVar | OperandKind::PcFlag => {
             let index = (v & 0xffff) as u32;
-            let Some(state) = pc_object(run, v).and_then(|o| ctx.pc_state(o)) else {
-                return 0;
-            };
-            if operand.kind() == OperandKind::PcVar {
-                state.vars.get(&index).copied().unwrap_or(0)
-            } else {
-                i32::from(state.flags.contains(&index))
-            }
+            let Some(state) = pc_object(run, v).and_then(|o| ctx.pc_state(o)) else { return 0 };
+            if operand.kind() == OperandKind::PcVar { state.vars.get(&index).copied().unwrap_or(0) } else { i32::from(state.flags.contains(&index)) }
         }
         OperandKind::Number | OperandKind::Other(_) => v,
     }
 }
 
 /// Writes a scalar operand (0x44bb55); numbers are not written.
-fn set<C: ScriptContext>(
-    ctx: &mut C,
-    attachment: &mut Attachment,
-    run: &mut Run<C::Object>,
-    operand: Operand,
-    value: i32,
-) {
+fn set<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut Run<C::Object>, operand: Operand, value: i32) {
     let v = operand.value;
     match operand.kind() {
         OperandKind::Counter => {
-            if let Some(c) = usize::try_from(v)
-                .ok()
-                .and_then(|i| attachment.counters.get_mut(i))
-            {
+            if let Some(c) = usize::try_from(v).ok().and_then(|i| attachment.counters.get_mut(i)) {
                 *c = value as u8;
             }
         }
@@ -1905,9 +1495,7 @@ fn set<C: ScriptContext>(
         OperandKind::GlobalFlag => ctx.globals().set_flag(v, value != 0),
         OperandKind::PcVar | OperandKind::PcFlag => {
             let index = (v & 0xffff) as u32;
-            let Some(state) = pc_object(run, v).and_then(|o| ctx.pc_state(o)) else {
-                return;
-            };
+            let Some(state) = pc_object(run, v).and_then(|o| ctx.pc_state(o)) else { return };
             match (operand.kind(), value) {
                 (OperandKind::PcVar, 0) => {
                     state.vars.remove(&index);
@@ -1973,10 +1561,7 @@ pub(crate) mod tests {
             self.messages.push((to, text));
         }
         fn attachment(&mut self, object: u32, event: u32) -> Attachment {
-            self.attachments
-                .get(&(object, event))
-                .copied()
-                .unwrap_or_default()
+            self.attachments.get(&(object, event)).copied().unwrap_or_default()
         }
         fn set_attachment(&mut self, object: u32, event: u32, attachment: Attachment) {
             self.attachments.insert((object, event), attachment);
@@ -2006,19 +1591,12 @@ pub(crate) mod tests {
     pub fn block(kind: u32, operands: &[Operand]) -> Block {
         let mut ops = [Operand::default(); OPERANDS];
         ops[..operands.len()].copy_from_slice(operands);
-        Block {
-            kind,
-            operands: ops,
-        }
+        Block { kind, operands: ops }
     }
 
     /// "If `condition` then `then` else `otherwise`".
     pub fn line(condition: Block, then: Block, otherwise: Block) -> Line {
-        Line {
-            condition,
-            then,
-            otherwise,
-        }
+        Line { condition, then, otherwise }
     }
 
     /// An unconditional line.
@@ -2027,102 +1605,52 @@ pub(crate) mod tests {
     }
 
     fn world(lines: Vec<Line>, flags: u32) -> TestWorld {
-        let mut w = TestWorld {
-            pcs: BTreeMap::from([(1, PcScriptState::default()), (2, PcScriptState::default())]),
-            ..Default::default()
-        };
-        w.scripts.insert(
-            100,
-            Arc::new(Script {
-                description: String::new(),
-                flags,
-                lines,
-            }),
-        );
+        let mut w = TestWorld { pcs: BTreeMap::from([(1, PcScriptState::default()), (2, PcScriptState::default())]), ..Default::default() };
+        w.scripts.insert(100, Arc::new(Script { description: String::new(), flags, lines }));
         w
     }
 
     fn invoke(w: &mut TestWorld, attachment: &mut Attachment) -> ScriptRun {
-        run_hook(
-            w,
-            attachment,
-            Invocation {
-                attachee: 50,
-                triggerer: 1,
-                other: Some(2),
-                event: 1,
-                start_line: 0,
-            },
-        )
+        run_hook(w, attachment, Invocation { attachee: 50, triggerer: 1, other: Some(2), event: 1, start_line: 0 })
     }
 
     #[test]
     fn no_script_runs_the_default_and_the_end_of_the_lines_skips_it() {
         let mut w = world(vec![always(block(0, &[]))], 0);
-        assert_eq!(
-            invoke(&mut w, &mut Attachment::default()).result,
-            HookResult::RunDefault
-        );
-        assert_eq!(
-            invoke(&mut w, &mut Attachment::new(0, 0, 999)).result,
-            HookResult::RunDefault,
-            "missing script"
-        );
-        assert_eq!(
-            invoke(&mut w, &mut Attachment::new(0, 0, 100)).result,
-            HookResult::SkipDefault
-        );
+        assert_eq!(invoke(&mut w, &mut Attachment::default()).result, HookResult::RunDefault);
+        assert_eq!(invoke(&mut w, &mut Attachment::new(0, 0, 999)).result, HookResult::RunDefault, "missing script");
+        assert_eq!(invoke(&mut w, &mut Attachment::new(0, 0, 100)).result, HookResult::SkipDefault);
     }
 
     #[test]
     fn conditions_choose_then_or_else() {
         // As 01621Open_Bed_CM.scr: global flag 2273 set runs the default, else skips it.
-        let lines = vec![line(
-            block(4, &[op(4, 2273), n(1)]),
-            block(2, &[]),
-            block(1, &[]),
-        )];
+        let lines = vec![line(block(4, &[op(4, 2273), n(1)]), block(2, &[]), block(1, &[]))];
         let mut w = world(lines, 0);
-        assert_eq!(
-            invoke(&mut w, &mut Attachment::new(0, 0, 100)).result,
-            HookResult::SkipDefault
-        );
+        assert_eq!(invoke(&mut w, &mut Attachment::new(0, 0, 100)).result, HookResult::SkipDefault);
         w.globals.set_flag(2273, true);
-        assert_eq!(
-            invoke(&mut w, &mut Attachment::new(0, 0, 100)).result,
-            HookResult::RunDefault
-        );
+        assert_eq!(invoke(&mut w, &mut Attachment::new(0, 0, 100)).result, HookResult::RunDefault);
     }
 
     #[test]
     fn goto_arithmetic_and_every_kind_of_variable() {
         let lines = vec![
-            always(block(0xa, &[op(2, 0), n(7)])),           // local 0 = 7
-            always(block(0xb, &[op(1, 5), op(2, 0), n(3)])), // global var 5 = 10
-            always(block(0xe, &[op(0, 2), op(1, 5), n(0)])), // divide by 0: nothing
-            always(block(0xd, &[op(0, 2), op(1, 5), n(2)])), // counter 2 = 20
-            always(block(0xa, &[op(5, 9), n(4)])),           // the triggerer's (set 0) PC var 9 = 4
-            always(block(0xa, &[op(6, (0xc << 16) | 3), n(1)])), // the other's PC flag 3
-            always(block(0xa, &[op(6, (1 << 16) | 40), n(1)])), // the attachee (set 1) is no PC: ignored
-            always(block(8, &[n(6)])),                          // local flag 6
-            line(
-                block(5, &[op(0, 2), n(19)]),
-                block(1, &[]),
-                block(3, &[n(10)]),
-            ),
+            always(block(0xa, &[op(2, 0), n(7)])),                 // local 0 = 7
+            always(block(0xb, &[op(1, 5), op(2, 0), n(3)])),       // global var 5 = 10
+            always(block(0xe, &[op(0, 2), op(1, 5), n(0)])),       // divide by 0: nothing
+            always(block(0xd, &[op(0, 2), op(1, 5), n(2)])),       // counter 2 = 20
+            always(block(0xa, &[op(5, 9), n(4)])),                 // the triggerer's (set 0) PC var 9 = 4
+            always(block(0xa, &[op(6, (0xc << 16) | 3), n(1)])),   // the other's PC flag 3
+            always(block(0xa, &[op(6, (1 << 16) | 40), n(1)])),    // the attachee (set 1) is no PC: ignored
+            always(block(8, &[n(6)])),                             // local flag 6
+            line(block(5, &[op(0, 2), n(19)]), block(1, &[]), block(3, &[n(10)])),
             always(block(1, &[])),
-            always(block(0x64, &[n(77)])), // line 10
+            always(block(0x64, &[n(77)])),                         // line 10
         ];
         let mut w = world(lines, 0);
         let mut attachment = Attachment::new(0, 0, 100);
         let run = invoke(&mut w, &mut attachment);
-        assert_eq!(
-            run,
-            ScriptRun {
-                result: HookResult::SkipDefault,
-                unsupported: vec![]
-            }
-        );
+        assert_eq!(run, ScriptRun { result: HookResult::SkipDefault, unsupported: vec![] });
         assert_eq!(w.globals.var(5), 10);
         assert_eq!(attachment.counters, [0, 0, 20, 0]);
         assert_eq!(attachment.flags, 1 << 6);
@@ -2133,15 +1661,9 @@ pub(crate) mod tests {
 
     #[test]
     fn run_once_scripts_detach_and_scripts_can_replace_themselves() {
-        let mut w = world(
-            vec![always(block(2, &[]))],
-            arcanum_formats::script::RUN_ONCE,
-        );
+        let mut w = world(vec![always(block(2, &[]))], arcanum_formats::script::RUN_ONCE);
         let mut attachment = Attachment::new(0, 0, 100);
-        assert_eq!(
-            invoke(&mut w, &mut attachment).result,
-            HookResult::RunDefault
-        );
+        assert_eq!(invoke(&mut w, &mut attachment).result, HookResult::RunDefault);
         assert_eq!(attachment.number, 0);
         let mut w = world(vec![always(block(6, &[n(321)])), always(block(1, &[]))], 0);
         let mut attachment = Attachment::new(0, 0, 100);
@@ -2152,32 +1674,23 @@ pub(crate) mod tests {
     #[test]
     fn endless_scripts_stop_and_unknown_types_run_the_default() {
         let mut w = world(vec![always(block(3, &[n(0)]))], 0);
-        assert_eq!(
-            invoke(&mut w, &mut Attachment::new(0, 0, 100)).result,
-            HookResult::SkipDefault
-        );
+        assert_eq!(invoke(&mut w, &mut Attachment::new(0, 0, 100)).result, HookResult::SkipDefault);
         let mut w = world(vec![always(block(0x8d, &[]))], 0);
         let run = invoke(&mut w, &mut Attachment::new(0, 0, 100));
         assert_eq!(run.result, HookResult::RunDefault);
-        assert_eq!(
-            run.unsupported,
-            vec![Unsupported::Action {
-                line: 0,
-                kind: 0x8d
-            }]
-        );
+        assert_eq!(run.unsupported, vec![Unsupported::Action { line: 0, kind: 0x8d }]);
     }
 
     #[test]
     fn loops_visit_each_object_and_break_past_their_end() {
         // For the triggerer and the other (set 0xc is one object; loop over a local list).
         let lines = vec![
-            always(block(0xf, &[op(0xb, 0), op(1, 0)])), // local object 0 = triggerer
-            always(block(0x12, &[op(0xb, 0)])),          // for each in it
-            always(block(0xb, &[op(2, 1), op(2, 1), n(1)])), // local 1 += 1
+            always(block(0xf, &[op(0xb, 0), op(1, 0)])),            // local object 0 = triggerer
+            always(block(0x12, &[op(0xb, 0)])),                     // for each in it
+            always(block(0xb, &[op(2, 1), op(2, 1), n(1)])),        // local 1 += 1
             line(block(5, &[n(1), op(2, 1)]), block(0x14, &[]), block(0, &[])), // break at once
-            always(block(0x13, &[])),                    // end
-            always(block(0xa, &[op(1, 1), op(2, 1)])),   // global var 1 = local 1
+            always(block(0x13, &[])),                               // end
+            always(block(0xa, &[op(1, 1), op(2, 1)])),              // global var 1 = local 1
             always(block(0x2b, &[n(3)])),
             always(block(0x2b, &[n(2)])),
             always(block(0x2a, &[op(1, 2)])),
@@ -2185,11 +1698,7 @@ pub(crate) mod tests {
         let mut w = world(lines, 0);
         invoke(&mut w, &mut Attachment::new(0, 0, 100));
         assert_eq!(w.globals.var(1), 1, "one object: once round");
-        assert_eq!(
-            (w.globals.story_state, w.globals.var(2)),
-            (3, 3),
-            "the story state only rises"
-        );
+        assert_eq!((w.globals.story_state, w.globals.var(2)), (3, 3), "the story state only rises");
     }
 
     #[test]
@@ -2199,34 +1708,16 @@ pub(crate) mod tests {
         let lines = vec![
             always(block(0xa, &[op(2, 1), op(1, 1043)])),
             always(block(0x69, &[op(2, 0)])),
-            line(
-                block(5, &[op(2, 0), op(2, 1)]),
-                block(1, &[]),
-                block(0, &[]),
-            ),
+            line(block(5, &[op(2, 0), op(2, 1)]), block(1, &[]), block(0, &[])),
             always(block(0x18, &[n(2), n(6)])),
             always(block(2, &[])),
         ];
         let mut w = world(lines, 0);
-        w.now = crate::GameTime {
-            days: 2,
-            ms: 5 * crate::HOUR_MS,
-        };
-        assert_eq!(
-            invoke(&mut w, &mut Attachment::new(0, 0, 100)).result,
-            HookResult::RunDefault
-        );
-        assert_eq!(
-            w.messages,
-            vec![(1, "100:2".to_string())],
-            "to the triggerer"
-        );
+        w.now = crate::GameTime { days: 2, ms: 5 * crate::HOUR_MS };
+        assert_eq!(invoke(&mut w, &mut Attachment::new(0, 0, 100)).result, HookResult::RunDefault);
+        assert_eq!(w.messages, vec![(1, "100:2".to_string())], "to the triggerer");
         w.globals.set_var(1043, 2 * 24 + 5);
-        assert_eq!(
-            invoke(&mut w, &mut Attachment::new(0, 0, 100)).result,
-            HookResult::SkipDefault,
-            "paid until this hour"
-        );
+        assert_eq!(invoke(&mut w, &mut Attachment::new(0, 0, 100)).result, HookResult::SkipDefault, "paid until this hour");
     }
 
     #[test]
@@ -2236,11 +1727,7 @@ pub(crate) mod tests {
         let lines = vec![
             always(block(0x51, &[op(0xc, 0), n(3), n(1), op(0x15, 0)])),
             always(block(0x63, &[op(0xc, 0), n(4), n(300)])),
-            line(
-                block(0x2b, &[n(9)]),
-                block(0, &[]),
-                block(0x12, &[op(8, 0)]),
-            ),
+            line(block(0x2b, &[n(9)]), block(0, &[]), block(0x12, &[op(8, 0)])),
             always(block(0xb, &[op(2, 0), op(2, 0), n(1)])),
             always(block(0x13, &[])),
             always(block(0xa, &[op(1, 6), op(2, 0)])),
@@ -2248,42 +1735,18 @@ pub(crate) mod tests {
         ];
         let mut w = world(lines, 0);
         // Script 200: line 0 sets global flag 1 (skipped by starting at 1); line 1 the triggerer's PC flag 7.
-        let called = vec![
-            always(block(0x64, &[n(1)])),
-            always(block(0xa, &[op(6, 7), n(1)])),
-            always(block(5, &[])),
-        ];
-        w.scripts.insert(
-            200,
-            Arc::new(Script {
-                description: String::new(),
-                flags: 0,
-                lines: called,
-            }),
-        );
+        let called = vec![always(block(0x64, &[n(1)])), always(block(0xa, &[op(6, 7), n(1)])), always(block(5, &[]))];
+        w.scripts.insert(200, Arc::new(Script { description: String::new(), flags: 0, lines: called }));
         w.attachments.insert((50, 3), Attachment::new(0, 0, 200));
         w.attachments.insert((50, 4), Attachment::new(0, 0, 250));
         w.near.insert(40, vec![40, 1, 2]);
         let mut attachment = Attachment::new(0, 0, 100);
-        let invocation = Invocation {
-            attachee: 40,
-            triggerer: 2,
-            other: Some(50),
-            event: 1,
-            start_line: 0,
-        };
+        let invocation = Invocation { attachee: 40, triggerer: 2, other: Some(50), event: 1, start_line: 0 };
         let run = run_hook(&mut w, &mut attachment, invocation);
         assert!(run.unsupported.is_empty(), "{run:?}");
         assert!(!w.globals.flag(1), "called from line 1");
-        assert!(
-            w.pcs[&1].flags.contains(&7),
-            "the player (set 0x15) was its triggerer"
-        );
-        assert_eq!(
-            w.attachments[&(50, 3)].number,
-            0,
-            "the called script removed itself (action 5)"
-        );
+        assert!(w.pcs[&1].flags.contains(&7), "the player (set 0x15) was its triggerer");
+        assert_eq!(w.attachments[&(50, 3)].number, 0, "the called script removed itself (action 5)");
         assert_eq!(w.attachments[&(50, 4)].number, 300);
         assert_eq!(w.globals.var(6), 3, "three in the vicinity");
     }
@@ -2291,46 +1754,18 @@ pub(crate) mod tests {
     #[test]
     fn magic_tech_and_calls_by_number_and_rumours() {
         assert_eq!(magic_tech_factor(0, -50, true), 100, "no complexity");
-        assert_eq!(
-            magic_tech_factor(40, 40, true),
-            100,
-            "aptitude at the complexity"
-        );
+        assert_eq!(magic_tech_factor(40, 40, true), 100, "aptitude at the complexity");
         assert_eq!(magic_tech_factor(40, 0, true), 50, "half without aptitude");
         assert_eq!(magic_tech_factor(40, -60, true), 0, "tech against magic");
         assert_eq!(magic_tech_factor(-40, -40, true), 100, "tech with tech");
-        assert_eq!(
-            magic_tech_factor(40, -60, false),
-            100,
-            "not a critter: all of it"
-        );
+        assert_eq!(magic_tech_factor(40, -60, false), 100, "not a critter: all of it");
         // 0x461620: magick on a technologist, tech on a mage.
-        assert_eq!(
-            magic_tech_resistance(40, 0, -50),
-            50,
-            "a neutral user: (100 - 0) x 50 / 100"
-        );
-        assert_eq!(
-            magic_tech_resistance(40, 60, -50),
-            20,
-            "a mage user: (100 - 60) x 50 / 100"
-        );
-        assert_eq!(
-            magic_tech_resistance(40, -10, -50),
-            50,
-            "a technologist user: the target's whole aptitude"
-        );
-        assert_eq!(
-            magic_tech_resistance(-40, -60, 50),
-            20,
-            "tech: (100 - 60) x 50 / 100"
-        );
+        assert_eq!(magic_tech_resistance(40, 0, -50), 50, "a neutral user: (100 - 0) x 50 / 100");
+        assert_eq!(magic_tech_resistance(40, 60, -50), 20, "a mage user: (100 - 60) x 50 / 100");
+        assert_eq!(magic_tech_resistance(40, -10, -50), 50, "a technologist user: the target's whole aptitude");
+        assert_eq!(magic_tech_resistance(-40, -60, 50), 20, "tech: (100 - 60) x 50 / 100");
         assert_eq!(magic_tech_resistance(-40, 30, 50), 50);
-        assert_eq!(
-            magic_tech_resistance(40, 0, 50),
-            0,
-            "magick on a mage: nothing lost"
-        );
+        assert_eq!(magic_tech_resistance(40, 0, 50), 0, "magick on a mage: nothing lost");
         assert_eq!(magic_tech_resistance(0, 0, -50), 0, "no adjustment");
         // Script 100: calls 200 from line 1 for triggerer 1 on attachee 50, adjusts 10 by item
         // 60 (no complexity here) into global 3, sets rumour 1040 for PC 1, quells 1041, tests
@@ -2340,46 +1775,18 @@ pub(crate) mod tests {
             always(block(0x5b, &[n(10), op(0xc, 0), op(0, 0), op(1, 3)])),
             always(block(0x32, &[n(1040), op(0, 0)])),
             always(block(0x33, &[n(1041)])),
-            line(
-                block(0x28, &[op(0, 0), n(1040)]),
-                block(0x64, &[n(11)]),
-                block(0, &[]),
-            ),
-            line(
-                block(0x29, &[n(1041)]),
-                block(0x64, &[n(12)]),
-                block(0, &[]),
-            ),
-            line(
-                block(0x21, &[op(0, 0), n(9)]),
-                block(0x64, &[n(13)]),
-                block(0, &[]),
-            ),
+            line(block(0x28, &[op(0, 0), n(1040)]), block(0x64, &[n(11)]), block(0, &[])),
+            line(block(0x29, &[n(1041)]), block(0x64, &[n(12)]), block(0, &[])),
+            line(block(0x21, &[op(0, 0), n(9)]), block(0x64, &[n(13)]), block(0, &[])),
             always(block(1, &[])),
         ];
         let mut w = world(lines, 0);
-        w.scripts.insert(
-            200,
-            Arc::new(Script {
-                description: String::new(),
-                flags: 0,
-                lines: vec![always(block(0x64, &[n(1)])), always(block(0x64, &[n(2)]))],
-            }),
-        );
+        w.scripts.insert(200, Arc::new(Script { description: String::new(), flags: 0, lines: vec![always(block(0x64, &[n(1)])), always(block(0x64, &[n(2)]))] }));
         let mut attachment = Attachment::new(0, 0, 100);
-        let invocation = Invocation {
-            attachee: 40,
-            triggerer: 1,
-            other: Some(50),
-            event: 1,
-            start_line: 0,
-        };
+        let invocation = Invocation { attachee: 40, triggerer: 1, other: Some(50), event: 1, start_line: 0 };
         let run = run_hook(&mut w, &mut attachment, invocation);
         assert!(run.unsupported.is_empty(), "{run:?}");
-        assert!(
-            !w.globals.flag(1) && w.globals.flag(2),
-            "script 200 from line 1"
-        );
+        assert!(!w.globals.flag(1) && w.globals.flag(2), "script 200 from line 1");
         assert_eq!(w.globals.var(3), 10);
         assert!(w.pcs[&1].rumours.contains(&1040));
         assert!(w.globals.flag(11) && w.globals.flag(12) && !w.globals.flag(13));
@@ -2394,20 +1801,13 @@ pub(crate) mod tests {
             always(block(0x52, &[n(4000)])),
             always(block(0x78, &[n(7), op(1, 0)])),
             always(block(0x4e, &[op(0, 0), n(3)])),
-            line(
-                block(8, &[op(0, 0), n(1)]),
-                block(0x64, &[n(1)]),
-                block(0, &[]),
-            ),
+            line(block(8, &[op(0, 0), n(1)]), block(0x64, &[n(1)]), block(0, &[])),
             always(block(1, &[])),
         ];
         let mut w = world(lines, 0);
         let run = invoke(&mut w, &mut Attachment::new(0, 0, 100));
         assert!(run.unsupported.is_empty(), "{run:?}");
-        assert_eq!(
-            w.pcs[&1].reputations.iter().copied().collect::<Vec<_>>(),
-            [1004]
-        );
+        assert_eq!(w.pcs[&1].reputations.iter().copied().collect::<Vec<_>>(), [1004]);
         assert!(!w.globals.flag(1), "no blessings yet");
     }
 
@@ -2415,11 +1815,7 @@ pub(crate) mod tests {
     fn global_quests_keep_only_completed_and_botched_and_unbotch_to_two() {
         let lines = vec![
             always(block(0x11, &[n(1005), n(2)])), // ignored
-            line(
-                block(7, &[n(1005), n(0)]),
-                block(0x11, &[n(1005), n(6)]),
-                block(1, &[]),
-            ),
+            line(block(7, &[n(1005), n(0)]), block(0x11, &[n(1005), n(6)]), block(1, &[])),
             always(block(0x11, &[n(1005), n(4)])), // not over botched
         ];
         let mut w = world(lines, 0);
@@ -2429,20 +1825,9 @@ pub(crate) mod tests {
         assert_eq!(w.globals.quest(1005), 6);
         assert_eq!(w.pcs[&1].quest(1005), 6, "the PC's record is botched");
         // 0x77 on the triggerer; the other PC's record stays botched.
-        w.scripts.insert(
-            101,
-            Arc::new(Script {
-                description: String::new(),
-                flags: 0,
-                lines: vec![always(block(0x77, &[op(0, 0), n(1005)]))],
-            }),
-        );
+        w.scripts.insert(101, Arc::new(Script { description: String::new(), flags: 0, lines: vec![always(block(0x77, &[op(0, 0), n(1005)]))] }));
         invoke(&mut w, &mut Attachment::new(0, 0, 101));
-        assert_eq!(
-            (w.globals.quest(1005), w.pcs[&1].quest(1005)),
-            (2, 3),
-            "global 2, the PC's state under the botch"
-        );
+        assert_eq!((w.globals.quest(1005), w.pcs[&1].quest(1005)), (2, 3), "global 2, the PC's state under the botch");
         // Not globally botched: nothing.
         w.pcs.get_mut(&1).unwrap().botched.insert(1005);
         invoke(&mut w, &mut Attachment::new(0, 0, 101));
@@ -2461,35 +1846,15 @@ pub(crate) mod tests {
             always(block(0xb, &[op(1, 2), op(1, 2), n(1)])),
             always(block(0x13, &[])),
             // Within 3 tiles of (10, 10): global 3.
-            line(
-                block(0x22, &[op(0xd, 0), n(3), n(10), n(10)]),
-                block(0xa, &[op(1, 3), n(1)]),
-                block(0, &[]),
-            ),
-            line(
-                block(0x22, &[op(0xe, 0), n(3), n(10), n(10)]),
-                block(0xa, &[op(1, 4), n(1)]),
-                block(0, &[]),
-            ),
+            line(block(0x22, &[op(0xd, 0), n(3), n(10), n(10)]), block(0xa, &[op(1, 3), n(1)]), block(0, &[])),
+            line(block(0x22, &[op(0xe, 0), n(3), n(10), n(10)]), block(0xa, &[op(1, 4), n(1)]), block(0, &[])),
         ];
         let mut w = world(lines, 0);
         w.followers.insert(1, vec![60, 61]);
-        w.at = BTreeMap::from([
-            (1, TileLoc { x: 12, y: 7 }),
-            (60, TileLoc { x: 13, y: 10 }),
-            (61, TileLoc { x: 14, y: 10 }),
-        ]);
-        assert!(
-            invoke(&mut w, &mut Attachment::new(0, 0, 100))
-                .unsupported
-                .is_empty()
-        );
+        w.at = BTreeMap::from([(1, TileLoc { x: 12, y: 7 }), (60, TileLoc { x: 13, y: 10 }), (61, TileLoc { x: 14, y: 10 })]);
+        assert!(invoke(&mut w, &mut Attachment::new(0, 0, 100)).unsupported.is_empty());
         assert_eq!((w.globals.var(1), w.globals.var(2)), (2, 3));
-        assert_eq!(
-            (w.globals.var(3), w.globals.var(4)),
-            (0, 1),
-            "0xd needs all (61 is 4 away), 0xe anyone"
-        );
+        assert_eq!((w.globals.var(3), w.globals.var(4)), (0, 1), "0xd needs all (61 is 4 away), 0xe anyone");
     }
 
     #[test]
@@ -2497,17 +1862,9 @@ pub(crate) mod tests {
         let lines = vec![
             always(block(0x19, &[n(52), op(0, 0)])),
             always(block(0x1b, &[n(60), op(1, 0)])), // the attachee is no PC
-            line(
-                block(8, &[op(0, 0), n(52)]),
-                block(0xa, &[op(1, 1), n(1)]),
-                block(0, &[]),
-            ),
+            line(block(8, &[op(0, 0), n(52)]), block(0xa, &[op(1, 1), n(1)]), block(0, &[])),
             always(block(0x1a, &[n(52), op(0, 0)])),
-            line(
-                block(8, &[op(0, 0), n(52)]),
-                block(0xa, &[op(1, 2), n(1)]),
-                block(0, &[]),
-            ),
+            line(block(8, &[op(0, 0), n(52)]), block(0xa, &[op(1, 2), n(1)]), block(0, &[])),
         ];
         let mut w = world(lines, 0);
         invoke(&mut w, &mut Attachment::new(0, 0, 100));

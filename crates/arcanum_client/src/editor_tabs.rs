@@ -33,8 +33,7 @@ use bevy::prelude::*;
 use bevy::ui_widgets::{ActivateOnPress, Button};
 
 use arcanum_rules::{
-    COLLEGES, CharacterSheet, DISCIPLINES, MAX_DEGREE, MAX_SKILL_LEVEL, SKILL_GROUP_SIZE,
-    SPELLS_PER_COLLEGE, SchematicSource, spells_known, tech_degree,
+    CharacterSheet, COLLEGES, DISCIPLINES, MAX_DEGREE, MAX_SKILL_LEVEL, SKILL_GROUP_SIZE, SPELLS_PER_COLLEGE, SchematicSource, spells_known, tech_degree,
 };
 
 use crate::art_loader::ArtFrames;
@@ -42,8 +41,8 @@ use crate::bitmap_text::{BitmapFontAsset, BitmapText};
 use crate::character_editor::EditorAction;
 use crate::create_character::CreationData;
 use crate::fonts::{ArcanumFonts, ORIGINAL_SCALE, UiFont};
-use crate::menu_window::{SCREEN_WHITE, TOP_BAR_HEIGHT, at, rect};
 use crate::message_box::{BoxHelp, help_area};
+use crate::menu_window::{SCREEN_WHITE, TOP_BAR_HEIGHT, at, rect};
 use crate::resource_pack::paths::interface;
 use crate::widgets::FrameButton;
 
@@ -106,22 +105,10 @@ const SKILL_ROW: f32 = 66.0;
 const GAUGE_WIDTH: f32 = 120.0;
 const GAUGE_HEIGHT: f32 = 27.0;
 /// Discipline buttons, window coordinates (0x5c87d8).
-const DISCIPLINE_AT: [(f32, f32); DISCIPLINES] = [
-    (8.0, 7.0),
-    (34.0, 29.0),
-    (61.0, 7.0),
-    (88.0, 28.0),
-    (116.0, 7.0),
-    (142.0, 29.0),
-    (171.0, 7.0),
-    (198.0, 29.0),
-];
+const DISCIPLINE_AT: [(f32, f32); DISCIPLINES] = [(8.0, 7.0), (34.0, 29.0), (61.0, 7.0), (88.0, 28.0), (116.0, 7.0), (142.0, 29.0), (171.0, 7.0), (198.0, 29.0)];
 const DEGREE_ROW: f32 = 33.0;
 /// College buttons (0x5c8630): two rows of eight.
-const COLLEGE_X: [[f32; 8]; 2] = [
-    [516.0, 541.0, 566.0, 591.0, 616.0, 641.0, 665.0, 690.0],
-    [528.0, 553.0, 578.0, 603.0, 627.0, 652.0, 677.0, 702.0],
-];
+const COLLEGE_X: [[f32; 8]; 2] = [[516.0, 541.0, 566.0, 591.0, 616.0, 641.0, 665.0, 690.0], [528.0, 553.0, 578.0, 603.0, 627.0, 652.0, 677.0, 702.0]];
 const COLLEGE_Y: [f32; 2] = [78.0, 103.0];
 const SPELL_ICON_Y: [f32; SPELLS_PER_COLLEGE] = [145.0, 193.0, 240.0, 288.0, 335.0];
 const SPELL_NAME_Y: [f32; SPELLS_PER_COLLEGE] = [139.0, 187.0, 234.0, 282.0, 329.0];
@@ -148,57 +135,14 @@ fn win(x: f32, y: f32, w: f32, h: f32) -> Rect {
 
 /// The art stems of the colleges, in `mes/spell.mes` order: `s_<stem>.art` is the college's
 /// button, `s_<stem>1.art` to `5` its spells' icons (force's button is `s_forc.art`).
-pub const COLLEGE_STEMS: [&str; COLLEGES] = [
-    "conveyance",
-    "divination",
-    "air",
-    "earth",
-    "fire",
-    "water",
-    "force",
-    "mental",
-    "meta",
-    "morph",
-    "nature",
-    "evilnecro",
-    "goodnecro",
-    "phantasm",
-    "summoning",
-    "temporal",
-];
-const DISCIPLINE_BUTTONS: [&str; DISCIPLINES] = [
-    "Anatomical",
-    "Chemistry",
-    "Electrical",
-    "Explosives",
-    "GunSmithy",
-    "Mechanical",
-    "Smithy",
-    "Therapeutics",
-];
-const DISCIPLINE_ICONS: [&str; DISCIPLINES] = [
-    "Herb",
-    "Chem",
-    "Electric",
-    "Explosives",
-    "Gun",
-    "Mechanical",
-    "Smithy",
-    "Theru",
-];
+pub const COLLEGE_STEMS: [&str; COLLEGES] =
+    ["conveyance", "divination", "air", "earth", "fire", "water", "force", "mental", "meta", "morph", "nature", "evilnecro", "goodnecro", "phantasm", "summoning", "temporal"];
+const DISCIPLINE_BUTTONS: [&str; DISCIPLINES] = ["Anatomical", "Chemistry", "Electrical", "Explosives", "GunSmithy", "Mechanical", "Smithy", "Therapeutics"];
+const DISCIPLINE_ICONS: [&str; DISCIPLINES] = ["Herb", "Chem", "Electric", "Explosives", "Gun", "Mechanical", "Smithy", "Theru"];
 
 /// The college buttons' art paths, in `mes/spell.mes` order.
 pub fn college_buttons() -> Vec<String> {
-    COLLEGE_STEMS
-        .iter()
-        .map(|s| {
-            format!(
-                "{}/s_{}.art",
-                interface::DIR,
-                if *s == "force" { "forc" } else { s }
-            )
-        })
-        .collect()
+    COLLEGE_STEMS.iter().map(|s| format!("{}/s_{}.art", interface::DIR, if *s == "force" { "forc" } else { s })).collect()
 }
 
 #[derive(Resource)]
@@ -237,17 +181,8 @@ impl TabArt {
             add: assets.load(interface::SPELL_TECH_ADD),
             remove: assets.load(interface::SPELL_TECH_MINUS),
             spells_window: assets.load(interface::SPELLS_WINDOW),
-            colleges: COLLEGE_STEMS.map(|s| {
-                assets.load(format!(
-                    "{dir}/s_{}.art",
-                    if s == "force" { "forc" } else { s }
-                ))
-            }),
-            spell_icons: COLLEGE_STEMS
-                .iter()
-                .flat_map(|s| (1..=SPELLS_PER_COLLEGE).map(move |i| format!("{dir}/s_{s}{i}.art")))
-                .map(|p| assets.load(p))
-                .collect(),
+            colleges: COLLEGE_STEMS.map(|s| assets.load(format!("{dir}/s_{}.art", if s == "force" { "forc" } else { s }))),
+            spell_icons: COLLEGE_STEMS.iter().flat_map(|s| (1..=SPELLS_PER_COLLEGE).map(move |i| format!("{dir}/s_{s}{i}.art"))).map(|p| assets.load(p)).collect(),
             glyphs: assets.load(crate::resource_pack::paths::fonts::ICONS),
             title: assets.load(crate::resource_pack::paths::fonts::TITLE),
         }
@@ -255,120 +190,55 @@ impl TabArt {
 }
 
 fn button(action: EditorAction, frames: &Handle<ArtFrames>, r: Rect) -> impl Bundle {
-    (
-        action,
-        Button,
-        ActivateOnPress,
-        Hovered::default(),
-        FrameButton::arrow(frames.clone()),
-        ImageNode::default(),
-        at(r),
-    )
+    (action, Button, ActivateOnPress, Hovered::default(), FrameButton::arrow(frames.clone()), ImageNode::default(), at(r))
 }
 
 fn page(tab: usize) -> impl Bundle {
-    let shown = if tab == SKILLS_TAB {
-        Visibility::Inherited
-    } else {
-        Visibility::Hidden
-    };
-    (
-        TabPage(tab),
-        shown,
-        Pickable::IGNORE,
-        Node {
-            position_type: PositionType::Absolute,
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
-            ..default()
-        },
-    )
+    let shown = if tab == SKILLS_TAB { Visibility::Inherited } else { Visibility::Hidden };
+    (TabPage(tab), shown, Pickable::IGNORE, Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() })
 }
 
 /// The tabs, and each tab's window and fixed buttons.
 pub fn spawn_tabs(screen: &mut ChildSpawnerCommands, art: &TabArt) {
     for (t, (&x, frames)) in TAB_X.iter().zip(&art.tabs).enumerate() {
-        screen.spawn((
-            BoxHelp::Editor(132 + t as u32),
-            button(EditorAction::Tab(t), frames, win(x, 11.0, 39.0, 39.0)),
-        ));
+        screen.spawn((BoxHelp::Editor(132 + t as u32), button(EditorAction::Tab(t), frames, win(x, 11.0, 39.0, 39.0))));
     }
-    let window = |image: &Handle<Image>| {
-        (
-            Pickable::IGNORE,
-            ImageNode::new(image.clone()),
-            at(win(WINDOW.x, WINDOW.y, WINDOW_SIZE.x, WINDOW_SIZE.y)),
-        )
-    };
+    let window = |image: &Handle<Image>| (Pickable::IGNORE, ImageNode::new(image.clone()), at(win(WINDOW.x, WINDOW.y, WINDOW_SIZE.x, WINDOW_SIZE.y)));
     screen.spawn(page(SKILLS_TAB)).with_children(|p| {
         p.spawn(window(&art.skills_window));
         for (g, (&x, frames)) in GROUP_X.iter().zip(&art.groups).enumerate() {
             let (w, h) = GROUP_SIZE[g];
-            p.spawn((
-                BoxHelp::Editor(135 + g as u32),
-                button(EditorAction::SkillGroup(g), frames, win(x, 80.0, w, h)),
-            ));
+            p.spawn((BoxHelp::Editor(135 + g as u32), button(EditorAction::SkillGroup(g), frames, win(x, 80.0, w, h))));
         }
         for row in 0..SKILL_GROUP_SIZE {
             let y = 147.0 + SKILL_ROW * row as f32;
-            p.spawn(button(
-                EditorAction::SkillRow(row, -1),
-                &art.skill_minus,
-                win(521.0, y, 29.0, 30.0),
-            ));
-            p.spawn(button(
-                EditorAction::SkillRow(row, 1),
-                &art.skill_plus,
-                win(695.0, y, 29.0, 30.0),
-            ));
+            p.spawn(button(EditorAction::SkillRow(row, -1), &art.skill_minus, win(521.0, y, 29.0, 30.0)));
+            p.spawn(button(EditorAction::SkillRow(row, 1), &art.skill_plus, win(695.0, y, 29.0, 30.0)));
         }
     });
     screen.spawn(page(TECH_TAB)).with_children(|p| {
         p.spawn(window(&art.disciplines_window));
         for (d, &(x, y)) in DISCIPLINE_AT.iter().enumerate() {
-            p.spawn((
-                BoxHelp::Editor(4000 + d as u32),
-                button(
-                    EditorAction::Discipline(d),
-                    &art.disciplines[d],
-                    win(WINDOW.x + x, WINDOW.y + y, 32.0, 31.0),
-                ),
-            ));
+            p.spawn((BoxHelp::Editor(4000 + d as u32), button(EditorAction::Discipline(d), &art.disciplines[d], win(WINDOW.x + x, WINDOW.y + y, 32.0, 31.0))));
         }
     });
     screen.spawn(page(SPELLS_TAB)).with_children(|p| {
         p.spawn(window(&art.spells_window));
         for (c, frames) in art.colleges.iter().enumerate() {
             let (row, i) = (c / 8, c % 8);
-            p.spawn((
-                BoxHelp::Editor(3000 + c as u32),
-                button(
-                    EditorAction::College(c),
-                    frames,
-                    win(COLLEGE_X[row][i], COLLEGE_Y[row], 24.0, 24.0),
-                ),
-            ));
+            p.spawn((BoxHelp::Editor(3000 + c as u32), button(EditorAction::College(c), frames, win(COLLEGE_X[row][i], COLLEGE_Y[row], 24.0, 24.0))));
         }
     });
 }
 
 /// Shows the shown tab's page, and keeps the picked tab, group, discipline and college buttons
 /// in their pressed frame.
-pub fn show_view(
-    view: Res<EditorView>,
-    mut pages: Query<(&TabPage, &mut Visibility)>,
-    mut buttons: Query<(&EditorAction, &mut FrameButton)>,
-    added: Query<(), Added<EditorAction>>,
-) {
+pub fn show_view(view: Res<EditorView>, mut pages: Query<(&TabPage, &mut Visibility)>, mut buttons: Query<(&EditorAction, &mut FrameButton)>, added: Query<(), Added<EditorAction>>) {
     if !view.is_changed() && added.is_empty() {
         return;
     }
     for (page, mut shown) in &mut pages {
-        let wanted = if page.0 == view.tab {
-            Visibility::Inherited
-        } else {
-            Visibility::Hidden
-        };
+        let wanted = if page.0 == view.tab { Visibility::Inherited } else { Visibility::Hidden };
         shown.set_if_neq(wanted);
     }
     for (action, mut look) in &mut buttons {
@@ -387,65 +257,19 @@ pub fn show_view(
 }
 
 /// Draws the shown tab's values under `p`.
-pub fn draw_tab(
-    p: &mut ChildSpawnerCommands,
-    c: &CharacterSheet,
-    data: &CreationData,
-    fonts: &ArcanumFonts,
-    art: &TabArt,
-    view: EditorView,
-) {
+pub fn draw_tab(p: &mut ChildSpawnerCommands, c: &CharacterSheet, data: &CreationData, fonts: &ArcanumFonts, art: &TabArt, view: EditorView) {
     let rules = &data.rules;
-    let text = |p: &mut ChildSpawnerCommands,
-                r: Rect,
-                s: &str,
-                which: TabText,
-                font: UiFont,
-                colour: Color,
-                centre: bool| {
-        let justify = if centre {
-            JustifyContent::Center
-        } else {
-            JustifyContent::FlexStart
-        };
-        p.spawn((
-            Pickable::IGNORE,
-            Node {
-                justify_content: justify,
-                align_items: AlignItems::Center,
-                ..at(r)
-            },
-        ))
-        .with_children(|cell| {
+    let text = |p: &mut ChildSpawnerCommands, r: Rect, s: &str, which: TabText, font: UiFont, colour: Color, centre: bool| {
+        let justify = if centre { JustifyContent::Center } else { JustifyContent::FlexStart };
+        p.spawn((Pickable::IGNORE, Node { justify_content: justify, align_items: AlignItems::Center, ..at(r) })).with_children(|cell| {
             let mut t = cell.spawn((which, TextColor(colour)));
             fonts.insert_text(&mut t, s, font);
         });
     };
-    let bitmap = |p: &mut ChildSpawnerCommands,
-                  r: Rect,
-                  s: &str,
-                  which: TabText,
-                  font: &Handle<BitmapFontAsset>,
-                  centre: bool| {
-        let justify = if centre {
-            JustifyContent::Center
-        } else {
-            JustifyContent::FlexStart
-        };
-        p.spawn((
-            Pickable::IGNORE,
-            Node {
-                justify_content: justify,
-                align_items: AlignItems::Center,
-                ..at(r)
-            },
-        ))
-        .with_children(|cell| {
-            cell.spawn((
-                which,
-                TextColor(SCREEN_WHITE),
-                BitmapText::new(s, font.clone(), ORIGINAL_SCALE),
-            ));
+    let bitmap = |p: &mut ChildSpawnerCommands, r: Rect, s: &str, which: TabText, font: &Handle<BitmapFontAsset>, centre: bool| {
+        let justify = if centre { JustifyContent::Center } else { JustifyContent::FlexStart };
+        p.spawn((Pickable::IGNORE, Node { justify_content: justify, align_items: AlignItems::Center, ..at(r) })).with_children(|cell| {
+            cell.spawn((which, TextColor(SCREEN_WHITE), BitmapText::new(s, font.clone(), ORIGINAL_SCALE)));
         });
     };
     let colour = |n: i32, known: i32| match n {
@@ -458,42 +282,17 @@ pub fn draw_tab(
             for row in 0..SKILL_GROUP_SIZE {
                 let skill = view.group * SKILL_GROUP_SIZE + row;
                 let dy = SKILL_ROW * row as f32;
-                let name = rules
-                    .skills
-                    .skills
-                    .get(skill)
-                    .map_or("", |k| k.name.as_str());
+                let name = rules.skills.skills.get(skill).map_or("", |k| k.name.as_str());
                 let label = match c.training[skill] {
-                    rank @ 1..=3 => {
-                        format!("{name} ({})", rules.skills.ranks[usize::from(rank) - 1])
-                    }
+                    rank @ 1..=3 => format!("{name} ({})", rules.skills.ranks[usize::from(rank) - 1]),
                     _ => name.to_string(),
                 };
-                text(
-                    p,
-                    win(520.0, 126.0 + dy, 200.0, 19.0),
-                    &label,
-                    TabText::SkillName(skill),
-                    UiFont::Small,
-                    SCREEN_WHITE,
-                    false,
-                );
+                text(p, win(520.0, 126.0 + dy, 200.0, 19.0), &label, TabText::SkillName(skill), UiFont::Small, SCREEN_WHITE, false);
                 // The row's hover area (0x5c8ca8) lets clicks through to the static buttons.
-                p.spawn(help_area(
-                    BoxHelp::Editor(1000 + skill as u32),
-                    win(520.0, 126.0 + dy, 200.0, 60.0),
-                ));
+                p.spawn(help_area(BoxHelp::Editor(1000 + skill as u32), win(520.0, 126.0 + dy, 200.0, 60.0)));
                 let width = gauge_width(rules.skill_level(c, skill));
-                let fill = ImageNode {
-                    rect: Some(Rect::new(0.0, 0.0, width as f32, GAUGE_HEIGHT)),
-                    ..ImageNode::new(art.gauge.clone())
-                };
-                let mut gauge = p.spawn((
-                    Pickable::IGNORE,
-                    SkillGauge { skill, width },
-                    fill,
-                    at(win(562.0, 150.0 + dy, width as f32, GAUGE_HEIGHT)),
-                ));
+                let fill = ImageNode { rect: Some(Rect::new(0.0, 0.0, width as f32, GAUGE_HEIGHT)), ..ImageNode::new(art.gauge.clone()) };
+                let mut gauge = p.spawn((Pickable::IGNORE, SkillGauge { skill, width }, fill, at(win(562.0, 150.0 + dy, width as f32, GAUGE_HEIGHT))));
                 if width == 0 {
                     gauge.insert(Visibility::Hidden);
                 }
@@ -502,95 +301,31 @@ pub fn draw_tab(
         TECH_TAB => {
             let d = view.discipline;
             let degree = tech_degree(c, d);
-            let discipline = rules
-                .tech
-                .disciplines
-                .get(d)
-                .map_or("", |x| x.name.as_str());
+            let discipline = rules.tech.disciplines.get(d).map_or("", |x| x.name.as_str());
             let degree_name = &rules.tech.degrees[degree.clamp(0, MAX_DEGREE) as usize];
-            p.spawn(help_area(
-                BoxHelp::Editor(139),
-                win(512.0, 129.0, 219.0, 27.0),
-            ));
-            bitmap(
-                p,
-                win(520.0, 133.0, 20.0, 19.0),
-                &char::from(b'1' + d as u8).to_string(),
-                TabText::TechTitle,
-                &art.glyphs,
-                false,
-            );
-            bitmap(
-                p,
-                win(546.0, 132.0, 150.0, 19.0),
-                &format!("{discipline} {degree_name}"),
-                TabText::TechTitle,
-                &art.title,
-                true,
-            );
-            text(
-                p,
-                win(692.0, 135.0, 30.0, 16.0),
-                &degree.to_string(),
-                TabText::TechDegree,
-                UiFont::Body,
-                SCREEN_WHITE,
-                true,
-            );
+            p.spawn(help_area(BoxHelp::Editor(139), win(512.0, 129.0, 219.0, 27.0)));
+            bitmap(p, win(520.0, 133.0, 20.0, 19.0), &char::from(b'1' + d as u8).to_string(), TabText::TechTitle, &art.glyphs, false);
+            bitmap(p, win(546.0, 132.0, 150.0, 19.0), &format!("{discipline} {degree_name}"), TabText::TechTitle, &art.title, true);
+            text(p, win(692.0, 135.0, 30.0, 16.0), &degree.to_string(), TabText::TechDegree, UiFont::Body, SCREEN_WHITE, true);
             for k in 1..=MAX_DEGREE {
                 let dy = DEGREE_ROW * (k - 1) as f32;
                 let name = rules
                     .schematics
                     .iter()
-                    .find(|s| {
-                        s.source
-                            == SchematicSource::Learned {
-                                discipline: d,
-                                degree: k as usize,
-                            }
-                    })
+                    .find(|s| s.source == SchematicSource::Learned { discipline: d, degree: k as usize })
                     .and_then(|s| data.schematic_text.get(s.name))
                     .unwrap_or("");
-                p.spawn(help_area(
-                    BoxHelp::Editor(degree_help(d, k)),
-                    win(535.0, 162.0 + 32.0 * (k - 1) as f32, 177.0, 27.0),
-                ));
-                text(
-                    p,
-                    win(549.0, 157.0 + dy, 170.0, 16.0),
-                    name,
-                    TabText::DegreeRow(k as usize),
-                    UiFont::Small,
-                    colour(k - 1, degree),
-                    false,
-                );
+                p.spawn(help_area(BoxHelp::Editor(degree_help(d, k)), win(535.0, 162.0 + 32.0 * (k - 1) as f32, 177.0, 27.0)));
+                text(p, win(549.0, 157.0 + dy, 170.0, 16.0), name, TabText::DegreeRow(k as usize), UiFont::Small, colour(k - 1, degree), false);
                 if k <= degree {
-                    p.spawn((
-                        Pickable::IGNORE,
-                        ImageNode::new(art.degree_icons[d].clone()),
-                        at(win(511.0, 159.0 + dy, 32.0, 32.0)),
-                    ));
+                    p.spawn((Pickable::IGNORE, ImageNode::new(art.degree_icons[d].clone()), at(win(511.0, 159.0 + dy, 32.0, 32.0))));
                 }
             }
             if degree < MAX_DEGREE {
-                p.spawn((
-                    BoxHelp::Editor(degree_help(d, degree + 1)),
-                    button(
-                        EditorAction::TechStep(1),
-                        &art.add,
-                        win(511.0, 159.0 + DEGREE_ROW * degree as f32, 32.0, 32.0),
-                    ),
-                ));
+                p.spawn((BoxHelp::Editor(degree_help(d, degree + 1)), button(EditorAction::TechStep(1), &art.add, win(511.0, 159.0 + DEGREE_ROW * degree as f32, 32.0, 32.0))));
             }
             if c.draft.tech[d] > 0 {
-                p.spawn((
-                    BoxHelp::Editor(degree_help(d, degree)),
-                    button(
-                        EditorAction::TechStep(-1),
-                        &art.remove,
-                        win(511.0, 159.0 + DEGREE_ROW * (degree - 1) as f32, 32.0, 32.0),
-                    ),
-                ));
+                p.spawn((BoxHelp::Editor(degree_help(d, degree)), button(EditorAction::TechStep(-1), &art.remove, win(511.0, 159.0 + DEGREE_ROW * (degree - 1) as f32, 32.0, 32.0))));
             }
         }
         _ => {
@@ -600,83 +335,33 @@ pub fn draw_tab(
             for i in 0..SPELLS_PER_COLLEGE {
                 let spell = college * SPELLS_PER_COLLEGE + i;
                 let is_known = (i as i32) < known;
-                let tint = if is_known {
-                    Color::WHITE
-                } else {
-                    Color::srgb(0.45, 0.45, 0.45)
-                };
+                let tint = if is_known { Color::WHITE } else { Color::srgb(0.45, 0.45, 0.45) };
                 p.spawn((
                     Pickable::IGNORE,
-                    SpellIcon {
-                        spell,
-                        known: is_known,
-                    },
-                    ImageNode {
-                        color: tint,
-                        ..ImageNode::new(art.spell_icons[spell].clone())
-                    },
+                    SpellIcon { spell, known: is_known },
+                    ImageNode { color: tint, ..ImageNode::new(art.spell_icons[spell].clone()) },
                     at(win(521.0, SPELL_ICON_Y[i], 32.0, 32.0)),
                 ));
-                p.spawn(help_area(
-                    BoxHelp::Editor(2000 + spell as u32),
-                    win(521.0, SPELL_ROW_Y[i], 196.0, 35.0),
-                ));
-                let name = rules
-                    .spells
-                    .spells
-                    .get(spell)
-                    .map_or("", |s| s.name.as_str());
+                p.spawn(help_area(BoxHelp::Editor(2000 + spell as u32), win(521.0, SPELL_ROW_Y[i], 196.0, 35.0)));
+                let name = rules.spells.spells.get(spell).map_or("", |s| s.name.as_str());
                 let shade = colour(i as i32, known);
-                text(
-                    p,
-                    win(562.0, SPELL_NAME_Y[i], 160.0, 19.0),
-                    name,
-                    TabText::SpellName(i),
-                    UiFont::Small,
-                    shade,
-                    false,
-                );
-                text(
-                    p,
-                    win(562.0, SPELL_LEVEL_Y[i], 160.0, 16.0),
-                    &format!("{level_label}: {}", SPELL_LEVEL[i]),
-                    TabText::SpellLevel(i),
-                    UiFont::Body,
-                    shade,
-                    false,
-                );
+                text(p, win(562.0, SPELL_NAME_Y[i], 160.0, 19.0), name, TabText::SpellName(i), UiFont::Small, shade, false);
+                text(p, win(562.0, SPELL_LEVEL_Y[i], 160.0, 16.0), &format!("{level_label}: {}", SPELL_LEVEL[i]), TabText::SpellLevel(i), UiFont::Body, shade, false);
             }
             if (known as usize) < SPELLS_PER_COLLEGE {
                 let next = (college * SPELLS_PER_COLLEGE) as u32 + known as u32;
-                p.spawn((
-                    BoxHelp::Editor(2000 + next),
-                    button(
-                        EditorAction::SpellStep(1),
-                        &art.add,
-                        win(521.0, SPELL_ICON_Y[known as usize], 32.0, 32.0),
-                    ),
-                ));
+                p.spawn((BoxHelp::Editor(2000 + next), button(EditorAction::SpellStep(1), &art.add, win(521.0, SPELL_ICON_Y[known as usize], 32.0, 32.0))));
             }
             if c.draft.spells[college] > 0 {
                 let last = (college * SPELLS_PER_COLLEGE) as u32 + known as u32 - 1;
-                p.spawn((
-                    BoxHelp::Editor(2000 + last),
-                    button(
-                        EditorAction::SpellStep(-1),
-                        &art.remove,
-                        win(521.0, SPELL_ICON_Y[known as usize - 1], 32.0, 32.0),
-                    ),
-                ));
+                p.spawn((BoxHelp::Editor(2000 + last), button(EditorAction::SpellStep(-1), &art.remove, win(521.0, SPELL_ICON_Y[known as usize - 1], 32.0, 32.0))));
             }
         }
     }
 }
 
 /// The rules action for a tab button, or `None` when it only changes the view.
-pub fn tab_change(
-    view: &mut EditorView,
-    action: EditorAction,
-) -> Option<arcanum_rules::CharacterAction> {
+pub fn tab_change(view: &mut EditorView, action: EditorAction) -> Option<arcanum_rules::CharacterAction> {
     use arcanum_rules::CharacterAction as A;
     let step = |d: i32, up: A, down: A| Some(if d > 0 { up } else { down });
     match action {
@@ -688,16 +373,8 @@ pub fn tab_change(
             let skill = view.group * SKILL_GROUP_SIZE + row;
             return step(d, A::RaiseSkill(skill), A::LowerSkill(skill));
         }
-        EditorAction::TechStep(d) => {
-            return step(
-                d,
-                A::RaiseTech(view.discipline),
-                A::LowerTech(view.discipline),
-            );
-        }
-        EditorAction::SpellStep(d) => {
-            return step(d, A::RaiseSpell(view.college), A::LowerSpell(view.college));
-        }
+        EditorAction::TechStep(d) => return step(d, A::RaiseTech(view.discipline), A::LowerTech(view.discipline)),
+        EditorAction::SpellStep(d) => return step(d, A::RaiseSpell(view.college), A::LowerSpell(view.college)),
         _ => {}
     }
     None
@@ -709,10 +386,7 @@ mod tests {
 
     #[test]
     fn gauges_fill_six_pixels_a_level() {
-        assert_eq!(
-            [0, 1, 4, 19, 20, 25].map(gauge_width),
-            [0, 6, 24, 114, 120, 120]
-        );
+        assert_eq!([0, 1, 4, 19, 20, 25].map(gauge_width), [0, 6, 24, 114, 120, 120]);
     }
 
     #[test]
@@ -720,28 +394,11 @@ mod tests {
         use arcanum_rules::CharacterAction as A;
         let mut view = EditorView::default();
         assert_eq!(tab_change(&mut view, EditorAction::SkillGroup(2)), None);
-        assert_eq!(
-            tab_change(&mut view, EditorAction::SkillRow(3, 1)),
-            Some(A::RaiseSkill(11))
-        );
+        assert_eq!(tab_change(&mut view, EditorAction::SkillRow(3, 1)), Some(A::RaiseSkill(11)));
         tab_change(&mut view, EditorAction::Discipline(5));
-        assert_eq!(
-            tab_change(&mut view, EditorAction::TechStep(-1)),
-            Some(A::LowerTech(5))
-        );
+        assert_eq!(tab_change(&mut view, EditorAction::TechStep(-1)), Some(A::LowerTech(5)));
         tab_change(&mut view, EditorAction::College(15));
-        assert_eq!(
-            tab_change(&mut view, EditorAction::SpellStep(1)),
-            Some(A::RaiseSpell(15))
-        );
-        assert_eq!(
-            view,
-            EditorView {
-                tab: 0,
-                group: 2,
-                discipline: 5,
-                college: 15
-            }
-        );
+        assert_eq!(tab_change(&mut view, EditorAction::SpellStep(1)), Some(A::RaiseSpell(15)));
+        assert_eq!(view, EditorView { tab: 0, group: 2, discipline: 5, college: 15 });
     }
 }

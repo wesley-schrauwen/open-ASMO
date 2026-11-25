@@ -22,10 +22,7 @@ use arcanum_formats::script::Script;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
 
-use crate::{
-    Attachment, GroundItemId, HookResult, Invocation, LoadedMap, MapObjectId, PcScriptState,
-    PlayerId, ScriptContext, ScriptGlobals, ScriptLibrary, WorldState,
-};
+use crate::{Attachment, GroundItemId, HookResult, Invocation, LoadedMap, MapObjectId, PcScriptState, PlayerId, ScriptContext, ScriptGlobals, ScriptLibrary, WorldState};
 
 /// The "use" event (attach point 1).
 pub const EVENT_USE: u32 = 1;
@@ -40,10 +37,7 @@ pub enum ScriptObject {
     /// An object of a sector file (doors, scenery).
     Map(MapObjectId),
     /// One of the map's mobile objects (containers, items on the ground, NPCs).
-    Mobile {
-        sector: arcanum_formats::map::SectorId,
-        index: u32,
-    },
+    Mobile { sector: arcanum_formats::map::SectorId, index: u32 },
     /// An item a PC carries, by its prototype (its scripts are the prototype's).
     Carried { holder: PlayerId, prototype: u32 },
 }
@@ -52,9 +46,7 @@ impl ScriptObject {
     /// A container or a map item on the ground.
     pub fn ground(id: GroundItemId) -> Option<Self> {
         match id {
-            GroundItemId::Container { sector, index } | GroundItemId::Mobile { sector, index } => {
-                Some(Self::Mobile { sector, index })
-            }
+            GroundItemId::Container { sector, index } | GroundItemId::Mobile { sector, index } => Some(Self::Mobile { sector, index }),
             _ => None,
         }
     }
@@ -66,17 +58,11 @@ pub fn attachments(object: &Object, prototypes: &Prototypes) -> BTreeMap<u32, At
         Some(Value::Array(Some(a))) => Some(a.clone()),
         _ => None,
     };
-    let Some(array) = array(object).or_else(|| prototypes.of(object).and_then(array)) else {
-        return BTreeMap::new();
-    };
+    let Some(array) = array(object).or_else(|| prototypes.of(object).and_then(array)) else { return BTreeMap::new() };
     if array.elem_size != 12 {
         return BTreeMap::new();
     }
-    let events = array.bitset.iter().enumerate().flat_map(|(w, &word)| {
-        (0..32)
-            .filter(move |b| word >> b & 1 != 0)
-            .map(move |b| w as u32 * 32 + b)
-    });
+    let events = array.bitset.iter().enumerate().flat_map(|(w, &word)| (0..32).filter(move |b| word >> b & 1 != 0).map(move |b| w as u32 * 32 + b));
     let entries = array.data.as_chunks::<12>().0.iter();
     events
         .zip(entries)
@@ -93,13 +79,7 @@ impl LoadedMap {
         let (sector, index, data) = match object {
             ScriptObject::Pc(_) | ScriptObject::Carried { .. } => return Attachment::default(),
             ScriptObject::Map(id) => (id.sector, id.index, self.map_object(id)),
-            ScriptObject::Mobile { sector, index } => (
-                sector,
-                index,
-                self.mobiles
-                    .get(&sector)
-                    .and_then(|m| m.get(index as usize)),
-            ),
+            ScriptObject::Mobile { sector, index } => (sector, index, self.mobiles.get(&sector).and_then(|m| m.get(index as usize))),
         };
         let changed = self.changes.get(&sector).and_then(|c| match object {
             ScriptObject::Map(_) => c.object_scripts.get(&index),
@@ -108,8 +88,7 @@ impl LoadedMap {
         if let Some(a) = changed.and_then(|c| c.get(&event)) {
             return *a;
         }
-        data.and_then(|o| attachments(o, &self.prototypes).get(&event).copied())
-            .unwrap_or_default()
+        data.and_then(|o| attachments(o, &self.prototypes).get(&event).copied()).unwrap_or_default()
     }
 
     /// Keeps a changed attachment in the sector's changes.
@@ -124,10 +103,7 @@ impl LoadedMap {
             ScriptObject::Map(_) => &mut changes.object_scripts,
             _ => &mut changes.mobile_scripts,
         };
-        by_object
-            .entry(index)
-            .or_default()
-            .insert(event, attachment);
+        by_object.entry(index).or_default().insert(event, attachment);
     }
 }
 
@@ -145,14 +121,7 @@ pub struct ScriptHost<'w, 's> {
     scripts: ResMut<'w, Scripts>,
     started: ResMut<'w, crate::StartedDialogues>,
     critters: Query<'w, 's, CritterQuery<'static>>,
-    talks: Query<
-        'w,
-        's,
-        (
-            &'static crate::PlayerControlled,
-            &'static crate::Conversation,
-        ),
-    >,
+    talks: Query<'w, 's, (&'static crate::PlayerControlled, &'static crate::Conversation)>,
     rules: Res<'w, crate::SimRules>,
     reputations: ResMut<'w, crate::ReputationTable>,
     timed: ResMut<'w, TimedScripts>,
@@ -172,13 +141,7 @@ pub struct ScriptHost<'w, 's> {
 pub const VICINITY: u32 = 10;
 
 /// What the script host needs of the critters: their ids, tiles, and who they are.
-type CritterQuery<'a> = (
-    &'a crate::NetId,
-    &'a crate::Position,
-    Option<&'a crate::PlayerControlled>,
-    Option<&'a crate::NpcSource>,
-    Option<&'a crate::follow::Following>,
-);
+type CritterQuery<'a> = (&'a crate::NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::follow::Following>);
 
 /// The world as a running script sees it.
 struct HostWorld<'a> {
@@ -238,9 +201,7 @@ impl ScriptContext for HostWorld<'_> {
     }
 
     fn pc_state(&mut self, object: ScriptObject) -> Option<&mut PcScriptState> {
-        let ScriptObject::Pc(player) = object else {
-            return None;
-        };
+        let ScriptObject::Pc(player) = object else { return None };
         self.players.get_mut(&player).map(|p| &mut p.script_state)
     }
 
@@ -254,10 +215,7 @@ impl ScriptContext for HostWorld<'_> {
 
     fn dialog_text(&mut self, script: u32, line: i32, reader: ScriptObject) -> Option<String> {
         let female = match reader {
-            ScriptObject::Pc(player) => self
-                .players
-                .get(&player)
-                .is_some_and(|p| p.blueprint.sheet.gender == arcanum_rules::FEMALE),
+            ScriptObject::Pc(player) => self.players.get(&player).is_some_and(|p| p.blueprint.sheet.gender == arcanum_rules::FEMALE),
             _ => false,
         };
         let dialog = self.library.dialog(self.vfs?, script)?;
@@ -273,15 +231,9 @@ impl ScriptContext for HostWorld<'_> {
     fn object_int(&mut self, object: ScriptObject, field: &str) -> Option<i32> {
         let data = match object {
             ScriptObject::Pc(_) => None,
-            ScriptObject::Carried { prototype, .. } => {
-                return self.map.prototypes.get(prototype)?.int(field);
-            }
+            ScriptObject::Carried { prototype, .. } => return self.map.prototypes.get(prototype)?.int(field),
             ScriptObject::Map(id) => self.map.map_object(id),
-            ScriptObject::Mobile { sector, index } => self
-                .map
-                .mobiles
-                .get(&sector)
-                .and_then(|m| m.get(index as usize)),
+            ScriptObject::Mobile { sector, index } => self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)),
         }?;
         self.map.prototypes.int(data, field)
     }
@@ -290,25 +242,14 @@ impl ScriptContext for HostWorld<'_> {
         matches!(object, ScriptObject::Mobile { sector, index } if self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).is_some_and(|o| o.object_type == arcanum_formats::object::TYPE_NPC))
     }
 
-    fn start_dialog(
-        &mut self,
-        attachee: ScriptObject,
-        triggerer: ScriptObject,
-        dialog: u32,
-        line: i32,
-    ) {
+    fn start_dialog(&mut self, attachee: ScriptObject, triggerer: ScriptObject, dialog: u32, line: i32) {
         // A PC talks to the other party.
         let (pc, npc) = match (attachee, triggerer) {
             (_, ScriptObject::Pc(p)) => (p, attachee),
             (ScriptObject::Pc(p), _) => (p, triggerer),
             _ => return,
         };
-        self.dialogs.push(crate::StartedDialogue {
-            player: pc,
-            npc,
-            dialog,
-            line,
-        });
+        self.dialogs.push(crate::StartedDialogue { player: pc, npc, dialog, line });
     }
 
     fn teleport(&mut self, object: ScriptObject, map: i32, to: arcanum_formats::map::TileLoc) {
@@ -320,9 +261,7 @@ impl ScriptContext for HostWorld<'_> {
     }
 
     fn change_gold(&mut self, object: ScriptObject, n: i32) {
-        let Some(mut inventory) = self.inventory(object) else {
-            return;
-        };
+        let Some(mut inventory) = self.inventory(object) else { return };
         if n < 0 && inventory.gold() < -n {
             return;
         }
@@ -331,42 +270,16 @@ impl ScriptContext for HostWorld<'_> {
     }
 
     fn has_item_named(&mut self, object: ScriptObject, name: i32) -> bool {
-        let Some(inventory) = self.inventory(object) else {
-            return false;
-        };
-        inventory
-            .items
-            .iter()
-            .any(|i| self.item_name(i.prototype) == Some(name))
+        let Some(inventory) = self.inventory(object) else { return false };
+        inventory.items.iter().any(|i| self.item_name(i.prototype) == Some(name))
     }
 
     fn transfer_item_named(&mut self, name: i32, from: ScriptObject, to: ScriptObject) {
-        let (Some(source), Some(target)) = (self.inventory(from), self.inventory(to)) else {
-            return;
-        };
-        let Some(item) = source
-            .items
-            .iter()
-            .find(|i| self.item_name(i.prototype) == Some(name))
-            .cloned()
-        else {
-            return;
-        };
-        let Some((rest, item)) = source.take_out(item.location) else {
-            return;
-        };
+        let (Some(source), Some(target)) = (self.inventory(from), self.inventory(to)) else { return };
+        let Some(item) = source.items.iter().find(|i| self.item_name(i.prototype) == Some(name)).cloned() else { return };
+        let Some((rest, item)) = source.take_out(item.location) else { return };
         let mut target = target;
-        let placed = target
-            .insert_item(
-                crate::CarriedItem {
-                    location: 0,
-                    ..item
-                },
-                self.item_facts(),
-                i32::MAX,
-                0,
-            )
-            .is_ok();
+        let placed = target.insert_item(crate::CarriedItem { location: 0, ..item }, self.item_facts(), i32::MAX, 0).is_ok();
         if !placed {
             return;
         }
@@ -375,21 +288,9 @@ impl ScriptContext for HostWorld<'_> {
     }
 
     fn create_item(&mut self, basic: i32, into: ScriptObject) {
-        let Some(mut target) = self.inventory(into) else {
-            return;
-        };
-        let Ok(basic) = u32::try_from(basic) else {
-            return;
-        };
-        let placed = target
-            .insert(
-                basic + crate::BASIC_TO_PROTOTYPE,
-                1,
-                self.item_facts(),
-                i32::MAX,
-                0,
-            )
-            .is_ok();
+        let Some(mut target) = self.inventory(into) else { return };
+        let Ok(basic) = u32::try_from(basic) else { return };
+        let placed = target.insert(basic + crate::BASIC_TO_PROTOTYPE, 1, self.item_facts(), i32::MAX, 0).is_ok();
         if placed {
             self.set_inventory(into, target);
         }
@@ -398,18 +299,9 @@ impl ScriptContext for HostWorld<'_> {
     fn object_type(&mut self, object: ScriptObject) -> i32 {
         match object {
             ScriptObject::Pc(_) => arcanum_formats::object::TYPE_PC as i32,
-            ScriptObject::Carried { prototype, .. } => self
-                .map
-                .prototypes
-                .get(prototype)
-                .map_or(0, |p| p.object_type as i32),
+            ScriptObject::Carried { prototype, .. } => self.map.prototypes.get(prototype).map_or(0, |p| p.object_type as i32),
             ScriptObject::Map(id) => self.map.map_object(id).map_or(0, |o| o.object_type as i32),
-            ScriptObject::Mobile { sector, index } => self
-                .map
-                .mobiles
-                .get(&sector)
-                .and_then(|m| m.get(index as usize))
-                .map_or(0, |o| o.object_type as i32),
+            ScriptObject::Mobile { sector, index } => self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).map_or(0, |o| o.object_type as i32),
         }
     }
 
@@ -441,53 +333,30 @@ impl ScriptContext for HostWorld<'_> {
 
     fn near(&mut self, centre: ScriptObject, kind: crate::NearKind) -> Vec<ScriptObject> {
         use arcanum_formats::object::{TYPE_CONTAINER, TYPE_PORTAL, TYPE_SCENERY};
-        let Some(at) = self.tile_of(centre) else {
-            return Vec::new();
-        };
-        let close = |there: Option<arcanum_formats::map::TileLoc>| {
-            there.is_some_and(|t| crate::within_radius(at, t, VICINITY))
-        };
+        let Some(at) = self.tile_of(centre) else { return Vec::new() };
+        let close = |there: Option<arcanum_formats::map::TileLoc>| there.is_some_and(|t| crate::within_radius(at, t, VICINITY));
         match kind {
-            crate::NearKind::Critters => self
-                .critters
-                .iter()
-                .filter(|c| close(Some(c.1)))
-                .map(|c| c.0)
-                .collect(),
+            crate::NearKind::Critters => self.critters.iter().filter(|c| close(Some(c.1))).map(|c| c.0).collect(),
             crate::NearKind::Containers | crate::NearKind::Items => {
                 let item = |t: u32| (5..=14).contains(&t);
                 let mut out = Vec::new();
                 for (&sector, objects) in &self.map.mobiles {
                     for (index, o) in objects.iter().enumerate() {
-                        let wanted = if kind == crate::NearKind::Containers {
-                            o.object_type == TYPE_CONTAINER
-                        } else {
-                            item(o.object_type)
-                        };
+                        let wanted = if kind == crate::NearKind::Containers { o.object_type == TYPE_CONTAINER } else { item(o.object_type) };
                         if wanted && close(crate::object_location(o)) {
-                            out.push(ScriptObject::Mobile {
-                                sector,
-                                index: index as u32,
-                            });
+                            out.push(ScriptObject::Mobile { sector, index: index as u32 });
                         }
                     }
                 }
                 out
             }
             crate::NearKind::Scenery | crate::NearKind::Portals => {
-                let wanted = if kind == crate::NearKind::Scenery {
-                    TYPE_SCENERY
-                } else {
-                    TYPE_PORTAL
-                };
+                let wanted = if kind == crate::NearKind::Scenery { TYPE_SCENERY } else { TYPE_PORTAL };
                 let mut out = Vec::new();
                 for (&sector, loaded) in &self.map.sectors {
                     for (index, o) in loaded.objects.iter().enumerate() {
                         if o.object_type == wanted && close(crate::object_location(o)) {
-                            out.push(ScriptObject::Map(MapObjectId {
-                                sector,
-                                index: index as u32,
-                            }));
+                            out.push(ScriptObject::Map(MapObjectId { sector, index: index as u32 }));
                         }
                     }
                 }
@@ -501,9 +370,7 @@ impl ScriptContext for HostWorld<'_> {
     /// are not applied.
     fn damage(&mut self, object: ScriptObject, amount: i32, kind: i32) {
         let ScriptObject::Pc(p) = object else { return };
-        let Some(saved) = self.players.get_mut(&p) else {
-            return;
-        };
+        let Some(saved) = self.players.get_mut(&p) else { return };
         let sheet = &mut saved.blueprint.sheet;
         let amount = amount.max(0);
         match kind {
@@ -522,15 +389,11 @@ impl ScriptContext for HostWorld<'_> {
     /// on).
     fn cast_on(&mut self, spell: i32, target: ScriptObject) {
         let ScriptObject::Pc(p) = target else { return };
-        let Some(saved) = self.players.get_mut(&p) else {
-            return;
-        };
+        let Some(saved) = self.players.get_mut(&p) else { return };
         let sheet = &mut saved.blueprint.sheet;
         match u32::try_from(spell).unwrap_or(u32::MAX) {
             crate::HALT_POISON => sheet.poison = (sheet.poison - 50).max(0),
-            s @ (crate::MINOR_HEALING | crate::MAJOR_HEALING) => {
-                sheet.hp_damage = (sheet.hp_damage - crate::spell_heal(s, 0)).max(0)
-            }
+            s @ (crate::MINOR_HEALING | crate::MAJOR_HEALING) => sheet.hp_damage = (sheet.hp_damage - crate::spell_heal(s, 0)).max(0),
             _ => return,
         }
         self.sheets.insert(p);
@@ -539,20 +402,10 @@ impl ScriptContext for HostWorld<'_> {
     /// Objects of the map only: kept in the sector's changes, sent to every player; an NPC is
     /// spawned again as the new prototype, unhurt (its damage is not kept).
     fn transform(&mut self, object: ScriptObject, prototype: i32) {
-        let (Some((sector, index, mobile)), Ok(prototype)) =
-            (map_place(object), u32::try_from(prototype))
-        else {
-            return;
-        };
+        let (Some((sector, index, mobile)), Ok(prototype)) = (map_place(object), u32::try_from(prototype)) else { return };
         if self.map.transform_object(sector, index, mobile, prototype) {
             self.sectors.insert(sector);
-            self.flag_changes
-                .push(crate::LedgerDelta::ObjectTransformed {
-                    sector,
-                    index,
-                    mobile,
-                    prototype,
-                });
+            self.flag_changes.push(crate::LedgerDelta::ObjectTransformed { sector, index, mobile, prototype });
             if mobile {
                 self.npcs_toggled.push((sector, index));
             }
@@ -565,27 +418,13 @@ impl ScriptContext for HostWorld<'_> {
     /// first gap. Each entry starts with a font number and a justification letter, left out.
     fn show_text(&mut self, kind: i32, line: i32, to: ScriptObject) {
         let ScriptObject::Pc(p) = to else { return };
-        let (file, most) = if kind == 6 {
-            ("mes/gameplaque.mes", 1)
-        } else {
-            ("mes/gamebook.mes", 50)
-        };
-        let Some(mes) = self
-            .vfs
-            .and_then(|v| v.read(file).ok())
-            .and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok())
-        else {
-            return;
-        };
-        let Ok(first) = u32::try_from(line) else {
-            return;
-        };
+        let (file, most) = if kind == 6 { ("mes/gameplaque.mes", 1) } else { ("mes/gamebook.mes", 50) };
+        let Some(mes) = self.vfs.and_then(|v| v.read(file).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()) else { return };
+        let Ok(first) = u32::try_from(line) else { return };
         for id in first..first + most {
             let Some(text) = mes.get(id) else { break };
             let text = text.trim_start();
-            let body = text
-                .split_once(|c: char| c.is_whitespace())
-                .map_or("", |(_, rest)| rest);
+            let body = text.split_once(|c: char| c.is_whitespace()).map_or("", |(_, rest)| rest);
             for paragraph in body.lines().map(str::trim).filter(|l| !l.is_empty()) {
                 self.messages.push((p, paragraph.to_string()));
             }
@@ -595,37 +434,17 @@ impl ScriptContext for HostWorld<'_> {
     /// Objects of the map: the number field of the art id by its type (0x502780), frame 0
     /// (0x502c40); kept only when that art exists (0x502220), and sent to every player.
     fn set_art_number(&mut self, object: ScriptObject, number: i32) {
-        let Some((sector, index, mobile)) = map_place(object) else {
-            return;
-        };
-        let Some(old) = self
-            .map
-            .object_at(sector, index, mobile)
-            .and_then(|o| self.map.prototypes.art_id(o))
-        else {
-            return;
-        };
-        let Some(art) = with_art_number(old, number) else {
-            return;
-        };
+        let Some((sector, index, mobile)) = map_place(object) else { return };
+        let Some(old) = self.map.object_at(sector, index, mobile).and_then(|o| self.map.prototypes.art_id(o)) else { return };
+        let Some(art) = with_art_number(old, number) else { return };
         let art = crate::with_frame(art, 0);
-        let exists = self
-            .map
-            .art
-            .as_deref()
-            .and_then(|a| a.path(art))
-            .is_some_and(|p| self.vfs.is_some_and(|v| v.exists(&p)));
+        let exists = self.map.art.as_deref().and_then(|a| a.path(art)).is_some_and(|p| self.vfs.is_some_and(|v| v.exists(&p)));
         if !exists {
             return;
         }
         self.map.set_object_art(sector, index, mobile, art.0);
         self.sectors.insert(sector);
-        self.flag_changes.push(crate::LedgerDelta::ObjectArt {
-            sector,
-            index,
-            mobile,
-            art: art.0,
-        });
+        self.flag_changes.push(crate::LedgerDelta::ObjectArt { sector, index, mobile, art: art.0 });
         if mobile {
             self.npcs_toggled.push((sector, index));
         }
@@ -638,29 +457,11 @@ impl ScriptContext for HostWorld<'_> {
             return 0;
         }
         match object {
-            ScriptObject::Pc(p) => self
-                .players
-                .get(&p)
-                .map_or(0, |s| self.rules.skill_level(&s.blueprint.sheet, k)),
+            ScriptObject::Pc(p) => self.players.get(&p).map_or(0, |s| self.rules.skill_level(&s.blueprint.sheet, k)),
             ScriptObject::Mobile { sector, index } => {
-                let Some(o) = self
-                    .map
-                    .mobiles
-                    .get(&sector)
-                    .and_then(|m| m.get(index as usize))
-                else {
-                    return 0;
-                };
-                let (field, i) = if k < 12 {
-                    ("critter_basic_skill_idx", k)
-                } else {
-                    ("critter_tech_skill_idx", k - 12)
-                };
-                let raw = o
-                    .ints(field)
-                    .or_else(|| self.map.prototypes.of(o)?.ints(field))
-                    .and_then(|v| v.get(i).copied())
-                    .unwrap_or(0);
+                let Some(o) = self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)) else { return 0 };
+                let (field, i) = if k < 12 { ("critter_basic_skill_idx", k) } else { ("critter_tech_skill_idx", k - 12) };
+                let raw = o.ints(field).or_else(|| self.map.prototypes.of(o)?.ints(field)).and_then(|v| v.get(i).copied()).unwrap_or(0);
                 ((raw & 0x3f) * arcanum_rules::LEVELS_PER_POINT).min(arcanum_rules::MAX_SKILL_LEVEL)
             }
             ScriptObject::Map(_) | ScriptObject::Carried { .. } => 0,
@@ -670,9 +471,7 @@ impl ScriptContext for HostWorld<'_> {
     /// A PC with no hit points left; an NPC killed.
     fn is_dead(&mut self, object: ScriptObject) -> bool {
         match object {
-            ScriptObject::Pc(p) => self.players.get(&p).is_some_and(|s| {
-                s.blueprint.sheet.hp_damage >= self.rules.derived(&s.blueprint.sheet).hit_points
-            }),
+            ScriptObject::Pc(p) => self.players.get(&p).is_some_and(|s| s.blueprint.sheet.hp_damage >= self.rules.derived(&s.blueprint.sheet).hit_points),
             ScriptObject::Mobile { sector, index } => self.map.is_dead(sector, index),
             _ => false,
         }
@@ -694,17 +493,8 @@ impl ScriptContext for HostWorld<'_> {
                 if self.map.is_dead(sector, index) {
                     return;
                 }
-                self.map
-                    .changes
-                    .entry(sector)
-                    .or_default()
-                    .dead
-                    .insert(index);
-                if let Some(art) = self
-                    .map
-                    .object_at(sector, index, true)
-                    .and_then(|o| self.map.prototypes.art_id(o))
-                {
+                self.map.changes.entry(sector).or_default().dead.insert(index);
+                if let Some(art) = self.map.object_at(sector, index, true).and_then(|o| self.map.prototypes.art_id(o)) {
                     let dying = death_frame(self.vfs, self.map.art.as_deref(), art);
                     self.map.set_object_art(sector, index, true, dying.0);
                 }
@@ -718,23 +508,14 @@ impl ScriptContext for HostWorld<'_> {
     /// Objects of the map: flagged destroyed (0x1), so hidden, not blocking, NPCs gone. The
     /// destroy event (2) is not run.
     fn destroy(&mut self, object: ScriptObject) {
-        let Some((sector, index, mobile)) = map_place(object) else {
-            return;
-        };
-        let Some(flags) = self.map.object_flags(sector, index, mobile) else {
-            return;
-        };
+        let Some((sector, index, mobile)) = map_place(object) else { return };
+        let Some(flags) = self.map.object_flags(sector, index, mobile) else { return };
         self.toggle_flags(object, !flags & crate::OF_DESTROYED);
     }
 
     fn wears_item_named(&mut self, object: ScriptObject, name: i32) -> bool {
-        let Some(inventory) = self.inventory(object) else {
-            return false;
-        };
-        inventory.items.iter().any(|i| {
-            (crate::FIRST_SLOT..=crate::LAST_SLOT).contains(&i.location)
-                && self.item_name(i.prototype) == Some(name)
-        })
+        let Some(inventory) = self.inventory(object) else { return false };
+        inventory.items.iter().any(|i| (crate::FIRST_SLOT..=crate::LAST_SLOT).contains(&i.location) && self.item_name(i.prototype) == Some(name))
     }
 
     /// Objects of the map: kept in the sector's changes and sent to every player; NPCs go or
@@ -745,18 +526,11 @@ impl ScriptContext for HostWorld<'_> {
             ScriptObject::Mobile { sector, index } => (sector, index, true),
             ScriptObject::Pc(_) | ScriptObject::Carried { .. } => return,
         };
-        let Some(flags) = self.map.object_flags(sector, index, mobile) else {
-            return;
-        };
+        let Some(flags) = self.map.object_flags(sector, index, mobile) else { return };
         let flags = flags ^ mask;
         self.map.set_object_flags(sector, index, mobile, flags);
         self.sectors.insert(sector);
-        self.flag_changes.push(crate::LedgerDelta::ObjectFlags {
-            sector,
-            index,
-            mobile,
-            flags,
-        });
+        self.flag_changes.push(crate::LedgerDelta::ObjectFlags { sector, index, mobile, flags });
         if mobile {
             self.npcs_toggled.push((sector, index));
         }
@@ -768,31 +542,19 @@ impl ScriptContext for HostWorld<'_> {
         if let (ScriptObject::Pc(p), Ok(id)) = (object, u32::try_from(id))
             && let Some(saved) = self.players.get_mut(&p)
         {
-            saved
-                .blueprint
-                .sheet
-                .add_effect(id, u32::try_from(cause).unwrap_or(0));
+            saved.blueprint.sheet.add_effect(id, u32::try_from(cause).unwrap_or(0));
             self.sheets.insert(p);
         }
     }
 
     fn leader(&mut self, object: ScriptObject) -> Option<ScriptObject> {
-        self.following
-            .iter()
-            .find(|f| f.0 == object)
-            .map(|f| ScriptObject::Pc(f.1))
+        self.following.iter().find(|f| f.0 == object).map(|f| ScriptObject::Pc(f.1))
     }
 
     /// The NPCs on this map following the PC now.
     fn followers(&mut self, leader: ScriptObject) -> Vec<ScriptObject> {
-        let ScriptObject::Pc(p) = leader else {
-            return Vec::new();
-        };
-        self.following
-            .iter()
-            .filter(|f| f.1 == p)
-            .map(|f| f.0)
-            .collect()
+        let ScriptObject::Pc(p) = leader else { return Vec::new() };
+        self.following.iter().filter(|f| f.1 == p).map(|f| f.0).collect()
     }
 
     /// A PC's party is every PC in the world (owner's rule: the players are one team; the
@@ -805,9 +567,7 @@ impl ScriptContext for HostWorld<'_> {
     }
 
     fn set_leader(&mut self, npc: ScriptObject, leader: Option<ScriptObject>) {
-        let ScriptObject::Mobile { sector, index } = npc else {
-            return;
-        };
+        let ScriptObject::Mobile { sector, index } = npc else { return };
         let leader = match leader {
             Some(ScriptObject::Pc(p)) => Some(p),
             Some(_) => return,
@@ -824,30 +584,18 @@ impl ScriptContext for HostWorld<'_> {
     /// Line `id × 10 + 1` of `mes/gamebless.mes` or `mes/gamecurse.mes` (0x4c4170: ids from 50).
     fn blessing_effect(&mut self, curse: bool, id: i32) -> Option<i32> {
         let id = u32::try_from(id).ok().filter(|&id| id > 49)?;
-        let file = if curse {
-            "mes/gamecurse.mes"
-        } else {
-            "mes/gamebless.mes"
-        };
+        let file = if curse { "mes/gamecurse.mes" } else { "mes/gamebless.mes" };
         let mes = arcanum_formats::mes::MesFile::parse(&self.vfs?.read(file).ok()?).ok()?;
-        Some(arcanum_formats::dialog::atoi(
-            mes.get(id * 10 + 1)?.as_bytes(),
-        ))
+        Some(arcanum_formats::dialog::atoi(mes.get(id * 10 + 1)?.as_bytes()))
     }
 
     /// PCs: their sheet's damage goes down, to 0 (0x4b58c0 / 0x4ed720). NPCs' damage is not
     /// kept, so there is nothing to heal.
     fn heal(&mut self, object: ScriptObject, amount: i32, fatigue: bool) {
         let ScriptObject::Pc(p) = object else { return };
-        let Some(saved) = self.players.get_mut(&p) else {
-            return;
-        };
+        let Some(saved) = self.players.get_mut(&p) else { return };
         let sheet = &mut saved.blueprint.sheet;
-        let damage = if fatigue {
-            &mut sheet.fatigue_damage
-        } else {
-            &mut sheet.hp_damage
-        };
+        let damage = if fatigue { &mut sheet.fatigue_damage } else { &mut sheet.hp_damage };
         let healed = (*damage - amount.max(0)).max(0);
         if healed != *damage {
             *damage = healed;
@@ -861,29 +609,15 @@ impl ScriptContext for HostWorld<'_> {
     fn pool(&mut self, object: ScriptObject, fatigue: bool) -> (i32, i32) {
         match object {
             ScriptObject::Pc(p) => {
-                let Some(sheet) = self.players.get(&p).map(|s| &s.blueprint.sheet) else {
-                    return (0, 0);
-                };
+                let Some(sheet) = self.players.get(&p).map(|s| &s.blueprint.sheet) else { return (0, 0) };
                 let d = self.rules.derived(sheet);
-                if fatigue {
-                    (d.fatigue - sheet.fatigue_damage, d.fatigue)
-                } else {
-                    (d.hit_points - sheet.hp_damage, d.hit_points)
-                }
+                if fatigue { (d.fatigue - sheet.fatigue_damage, d.fatigue) } else { (d.hit_points - sheet.hp_damage, d.hit_points) }
             }
             ScriptObject::Mobile { .. } if matches!(self.object_type(object), 15 | 16) => {
                 let mut int = |f: &str| self.object_int(object, f).unwrap_or(0);
                 if fatigue {
-                    let (pts, adj, damage) = (
-                        int("critter_fatigue_pts"),
-                        int("critter_fatigue_adj"),
-                        int("critter_fatigue_damage"),
-                    );
-                    let most = pts * 4
-                        + adj
-                        + 4
-                        + (self.stat(object, 0x11) + self.stat(object, 2)) * 2
-                        + self.stat(object, 6);
+                    let (pts, adj, damage) = (int("critter_fatigue_pts"), int("critter_fatigue_adj"), int("critter_fatigue_damage"));
+                    let most = pts * 4 + adj + 4 + (self.stat(object, 0x11) + self.stat(object, 2)) * 2 + self.stat(object, 6);
                     (most - damage, most)
                 } else {
                     let most = int("hp_pts") + int("hp_adj");
@@ -899,9 +633,7 @@ impl ScriptContext for HostWorld<'_> {
     /// are not changed.
     fn adjust_stat(&mut self, object: ScriptObject, stat: i32, delta: i32) {
         let ScriptObject::Pc(p) = object else { return };
-        let Some(saved) = self.players.get_mut(&p) else {
-            return;
-        };
+        let Some(saved) = self.players.get_mut(&p) else { return };
         let sheet = &mut saved.blueprint.sheet;
         let (value, low, high) = match stat {
             0..=7 => (&mut sheet.base[stat as usize], 1, 20),
@@ -928,14 +660,9 @@ impl ScriptContext for HostWorld<'_> {
         if self.is_dead(viewer) {
             return false;
         }
-        let (Some(a), Some(b)) = (self.tile_of(viewer), self.tile_of(target)) else {
-            return false;
-        };
+        let (Some(a), Some(b)) = (self.tile_of(viewer), self.tile_of(target)) else { return false };
         let reach = i64::from(self.stat(viewer, 5).clamp(1, 10));
-        (i64::from(a.x) - i64::from(b.x))
-            .abs()
-            .max((i64::from(a.y) - i64::from(b.y)).abs())
-            <= reach
+        (i64::from(a.x) - i64::from(b.x)).abs().max((i64::from(a.y) - i64::from(b.y)).abs()) <= reach
     }
 
     fn in_dialog(&mut self, object: ScriptObject) -> bool {
@@ -949,9 +676,7 @@ impl ScriptContext for HostWorld<'_> {
 
     /// Kept in the sector's changes; the NPC is spawned again to take it up.
     fn set_day_standpoint(&mut self, npc: ScriptObject, to: arcanum_formats::map::TileLoc) {
-        let ScriptObject::Mobile { sector, index } = npc else {
-            return;
-        };
+        let ScriptObject::Mobile { sector, index } = npc else { return };
         if self.map.set_day_standpoint(sector, index, to) {
             self.sectors.insert(sector);
             self.npcs_toggled.push((sector, index));
@@ -970,93 +695,41 @@ impl ScriptContext for HostWorld<'_> {
     fn stat(&mut self, object: ScriptObject, stat: i32) -> i32 {
         match object {
             ScriptObject::Pc(p) => {
-                let Some(sheet) = self.players.get(&p).map(|s| s.blueprint.sheet.clone()) else {
-                    return 0;
-                };
+                let Some(sheet) = self.players.get(&p).map(|s| s.blueprint.sheet.clone()) else { return 0 };
                 pc_stat(self.rules, &sheet, stat)
             }
             ScriptObject::Mobile { sector, index } => {
-                let Some(o) = self
-                    .map
-                    .mobiles
-                    .get(&sector)
-                    .and_then(|m| m.get(index as usize))
-                else {
-                    return 0;
-                };
-                let stats = o
-                    .ints("critter_stat_base_idx")
-                    .or_else(|| self.map.prototypes.of(o)?.ints("critter_stat_base_idx"));
-                usize::try_from(stat)
-                    .ok()
-                    .and_then(|i| stats?.get(i).copied())
-                    .unwrap_or(0)
+                let Some(o) = self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)) else { return 0 };
+                let stats = o.ints("critter_stat_base_idx").or_else(|| self.map.prototypes.of(o)?.ints("critter_stat_base_idx"));
+                usize::try_from(stat).ok().and_then(|i| stats?.get(i).copied()).unwrap_or(0)
             }
             ScriptObject::Map(_) | ScriptObject::Carried { .. } => 0,
         }
     }
 
     fn reaction(&mut self, npc: ScriptObject, pc: ScriptObject) -> i32 {
-        let (ScriptObject::Mobile { sector, index }, ScriptObject::Pc(p)) = (npc, pc) else {
-            return 50;
-        };
-        let Some(o) = self
-            .map
-            .mobiles
-            .get(&sector)
-            .and_then(|m| m.get(index as usize))
-            .filter(|o| o.object_type == arcanum_formats::object::TYPE_NPC)
-        else {
-            return 50;
-        };
-        let Some(saved) = self.players.get(&p) else {
-            return 50;
-        };
-        crate::reaction_to(
-            &saved.script_state,
-            &crate::met_key(npc),
-            &crate::NpcReaction::of(o, &self.map.prototypes),
-            self.rules,
-            &saved.blueprint.sheet,
-            self.reputations,
-        )
+        let (ScriptObject::Mobile { sector, index }, ScriptObject::Pc(p)) = (npc, pc) else { return 50 };
+        let Some(o) = self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).filter(|o| o.object_type == arcanum_formats::object::TYPE_NPC) else { return 50 };
+        let Some(saved) = self.players.get(&p) else { return 50 };
+        crate::reaction_to(&saved.script_state, &crate::met_key(npc), &crate::NpcReaction::of(o, &self.map.prototypes), self.rules, &saved.blueprint.sheet, self.reputations)
     }
 
     fn change_reaction(&mut self, npc: ScriptObject, pc: ScriptObject, delta: i32) {
-        let (ScriptObject::Mobile { .. }, ScriptObject::Pc(p)) = (npc, pc) else {
-            return;
-        };
+        let (ScriptObject::Mobile { .. }, ScriptObject::Pc(p)) = (npc, pc) else { return };
         if delta == 0 || !self.is_npc(npc) {
             return;
         }
-        let ScriptObject::Mobile { sector, index } = npc else {
-            return;
-        };
-        let Some(base) = self
-            .map
-            .mobiles
-            .get(&sector)
-            .and_then(|m| m.get(index as usize))
-            .map(|o| crate::NpcReaction::of(o, &self.map.prototypes).base)
-        else {
-            return;
-        };
+        let ScriptObject::Mobile { sector, index } = npc else { return };
+        let Some(base) = self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).map(|o| crate::NpcReaction::of(o, &self.map.prototypes).base) else { return };
         let key = crate::met_key(npc);
         if let Some(saved) = self.players.get_mut(&p) {
-            let stored = saved
-                .script_state
-                .reactions
-                .get(&key)
-                .copied()
-                .unwrap_or(base);
+            let stored = saved.script_state.reactions.get(&key).copied().unwrap_or(base);
             saved.script_state.reactions.insert(key, stored + delta);
         }
     }
 
     fn distance(&mut self, a: ScriptObject, b: ScriptObject) -> i32 {
-        let (Some(a), Some(b)) = (self.tile_of(a), self.tile_of(b)) else {
-            return 0;
-        };
+        let (Some(a), Some(b)) = (self.tile_of(a), self.tile_of(b)) else { return 0 };
         (f64::from(a.x) - f64::from(b.x)).hypot(f64::from(a.y) - f64::from(b.y)) as i32
     }
 
@@ -1064,59 +737,31 @@ impl ScriptContext for HostWorld<'_> {
         if npc == pc {
             return true;
         }
-        let ScriptObject::Pc(p) = pc else {
-            return false;
-        };
+        let ScriptObject::Pc(p) = pc else { return false };
         let key = crate::met_key(npc);
-        self.players.get(&p).is_some_and(|s| {
-            s.script_state.met.contains(&key) || s.script_state.reactions.contains_key(&key)
-        })
+        self.players.get(&p).is_some_and(|s| s.script_state.met.contains(&key) || s.script_state.reactions.contains_key(&key))
     }
 
     fn knows_spell(&mut self, object: ScriptObject, spell: i32) -> bool {
-        let ScriptObject::Pc(p) = object else {
-            return false;
-        };
-        let Some(sheet) = self.players.get(&p).map(|s| &s.blueprint.sheet) else {
-            return false;
-        };
-        (0..80).contains(&spell)
-            && sheet
-                .spells
-                .get(spell as usize / 5)
-                .is_some_and(|&level| level > spell % 5)
+        let ScriptObject::Pc(p) = object else { return false };
+        let Some(sheet) = self.players.get(&p).map(|s| &s.blueprint.sheet) else { return false };
+        (0..80).contains(&spell) && sheet.spells.get(spell as usize / 5).is_some_and(|&level| level > spell % 5)
     }
 
-    fn schedule(
-        &mut self,
-        script: u32,
-        line: i32,
-        triggerer: ScriptObject,
-        attachee: ScriptObject,
-        delay_ms: u64,
-    ) {
-        self.scheduled.push(TimedScript {
-            at: self.now.plus_ms(delay_ms),
-            script,
-            line,
-            triggerer,
-            attachee,
-        });
+    fn schedule(&mut self, script: u32, line: i32, triggerer: ScriptObject, attachee: ScriptObject, delay_ms: u64) {
+        self.scheduled.push(TimedScript { at: self.now.plus_ms(delay_ms), script, line, triggerer, attachee });
     }
 
     /// Which of the record's objects the original compares was not read (0x44aff0): here
     /// either (builder's call). Runs scheduled in this same run are dropped too.
     fn cancel_scheduled(&mut self, script: u32, object: ScriptObject) {
-        let matches =
-            |t: &TimedScript| t.script == script && (t.triggerer == object || t.attachee == object);
+        let matches = |t: &TimedScript| t.script == script && (t.triggerer == object || t.attachee == object);
         self.scheduled.retain(|t| !matches(t));
         self.cancelled.push((script, object));
     }
 
     fn area_of(&mut self, object: ScriptObject) -> i32 {
-        let (Some(at), Some(map)) = (self.tile_of(object), self.map.name.clone()) else {
-            return 0;
-        };
+        let (Some(at), Some(map)) = (self.tile_of(object), self.map.name.clone()) else { return 0 };
         self.areas.area_at(&map, at) as i32
     }
 
@@ -1130,24 +775,13 @@ pub const ANIM_DEATH: u32 = 7;
 
 /// `art` on the last frame of its death animation (critters, monsters, unique NPCs share the
 /// animation bits 6-10 and frame bits 14-18); other art as it is.
-pub fn death_frame(
-    vfs: Option<&arcanum_vfs::Vfs>,
-    index: Option<&arcanum_formats::art_id::ArtIndex>,
-    art: arcanum_formats::art_id::ArtId,
-) -> arcanum_formats::art_id::ArtId {
+pub fn death_frame(vfs: Option<&arcanum_vfs::Vfs>, index: Option<&arcanum_formats::art_id::ArtIndex>, art: arcanum_formats::art_id::ArtId) -> arcanum_formats::art_id::ArtId {
     use arcanum_formats::art_id::{ArtId, ArtKind};
-    if !matches!(
-        art.kind(),
-        ArtKind::Critter | ArtKind::Monster | ArtKind::UniqueNpc
-    ) {
+    if !matches!(art.kind(), ArtKind::Critter | ArtKind::Monster | ArtKind::UniqueNpc) {
         return art;
     }
     let dying = ArtId((art.0 & !(0x1f << 6 | 0x1f << 14)) | ANIM_DEATH << 6);
-    let frames = index
-        .and_then(|i| i.path(dying))
-        .and_then(|p| vfs?.read(&p).ok())
-        .and_then(|d| arcanum_formats::art::ArtFile::parse(&d).ok())
-        .map_or(1, |f| f.frame_count);
+    let frames = index.and_then(|i| i.path(dying)).and_then(|p| vfs?.read(&p).ok()).and_then(|d| arcanum_formats::art::ArtFile::parse(&d).ok()).map_or(1, |f| f.frame_count);
     ArtId(dying.0 | ((frames.saturating_sub(1) as u32 & 0x1f) << 14))
 }
 
@@ -1163,10 +797,7 @@ fn map_place(object: ScriptObject) -> Option<(arcanum_formats::map::SectorId, u3
 /// `art` with its number set to `n` by the art's type (0x502780): unique NPCs 8 bits at 20,
 /// items 11 at 17, interface 12 at 16, the others 9 at 19; tiles, walls, critters and monsters
 /// have none. Out of range: no change.
-pub fn with_art_number(
-    art: arcanum_formats::art_id::ArtId,
-    n: i32,
-) -> Option<arcanum_formats::art_id::ArtId> {
+pub fn with_art_number(art: arcanum_formats::art_id::ArtId, n: i32) -> Option<arcanum_formats::art_id::ArtId> {
     let (limit, mask, shift) = match art.art_type() {
         0 | 1 | 2 | 0xc => return None,
         0xd => (0x100, 0x0ff0_0000u32, 20),
@@ -1175,9 +806,7 @@ pub fn with_art_number(
         _ => (0x200, 0x0ff8_0000, 19),
     };
     let n = u32::try_from(n).ok().filter(|&n| n < limit)?;
-    Some(arcanum_formats::art_id::ArtId(
-        (art.0 & !mask) | (n << shift),
-    ))
+    Some(arcanum_formats::art_id::ArtId((art.0 & !mask) | (n << shift)))
 }
 
 impl HostWorld<'_> {
@@ -1188,9 +817,7 @@ impl HostWorld<'_> {
         }
         match object {
             ScriptObject::Map(id) => crate::object_location(self.map.map_object(id)?),
-            ScriptObject::Mobile { sector, index } => {
-                crate::object_location(self.map.mobiles.get(&sector)?.get(index as usize)?)
-            }
+            ScriptObject::Mobile { sector, index } => crate::object_location(self.map.mobiles.get(&sector)?.get(index as usize)?),
             ScriptObject::Pc(_) | ScriptObject::Carried { .. } => None,
         }
     }
@@ -1203,10 +830,7 @@ impl HostWorld<'_> {
                 let o = self.map.mobiles.get(&sector)?.get(index as usize)?;
                 match o.object_type {
                     arcanum_formats::object::TYPE_NPC => self.map.npc_inventory(sector, index),
-                    arcanum_formats::object::TYPE_CONTAINER => self
-                        .map
-                        .pile(GroundItemId::Container { sector, index })
-                        .map(|p| p.inventory),
+                    arcanum_formats::object::TYPE_CONTAINER => self.map.pile(GroundItemId::Container { sector, index }).map(|p| p.inventory),
                     _ => None,
                 }
             }
@@ -1223,20 +847,12 @@ impl HostWorld<'_> {
                 }
             }
             ScriptObject::Mobile { sector, index } => {
-                let kind = self
-                    .map
-                    .mobiles
-                    .get(&sector)
-                    .and_then(|m| m.get(index as usize))
-                    .map(|o| o.object_type);
+                let kind = self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).map(|o| o.object_type);
                 if kind == Some(arcanum_formats::object::TYPE_NPC) {
                     self.map.set_npc_inventory(sector, index, inventory);
-                } else if let Some(mut pile) =
-                    self.map.pile(GroundItemId::Container { sector, index })
-                {
+                } else if let Some(mut pile) = self.map.pile(GroundItemId::Container { sector, index }) {
                     pile.inventory = inventory;
-                    self.map
-                        .set_pile(GroundItemId::Container { sector, index }, Some(pile));
+                    self.map.set_pile(GroundItemId::Container { sector, index }, Some(pile));
                 }
                 self.sectors.insert(sector);
             }
@@ -1253,22 +869,14 @@ impl HostWorld<'_> {
     fn item_facts(&self) -> impl Fn(u32) -> Option<crate::ItemInfo> + '_ {
         let (prototypes, art) = (self.map.prototypes.clone(), self.map.art.clone());
         let vfs = self.vfs;
-        move |n| {
-            prototypes.get(n).map(|p| {
-                crate::ItemInfo::of(p, |id| crate::world::art_size(vfs, art.as_deref(), id))
-            })
-        }
+        move |n| prototypes.get(n).map(|p| crate::ItemInfo::of(p, |id| crate::world::art_size(vfs, art.as_deref(), id)))
     }
 }
 
 /// A PC's effective stat (0x4b0490 order): 0-7 primary, 8-15 derived, 0x10 the aptitude, 0x11
 /// the level, 0x12 experience, 0x13 alignment, 0x14 fate points, 0x15 unspent points, 0x18
 /// poison, 0x19 age, 0x1a gender, 0x1b race; magick and tech points are 0.
-pub fn pc_stat(
-    rules: &arcanum_rules::RulesData,
-    sheet: &arcanum_rules::CharacterSheet,
-    stat: i32,
-) -> i32 {
+pub fn pc_stat(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::CharacterSheet, stat: i32) -> i32 {
     match stat {
         0..=7 => rules.stats(sheet)[stat as usize],
         8..=15 => rules.derived(sheet).by_stat_id()[stat as usize - 8],
@@ -1301,12 +909,7 @@ pub struct TimedScript {
 pub struct TimedScripts(pub Vec<TimedScript>);
 
 /// Runs the scripts whose time has come ([`ScriptHost::run_due`]).
-pub fn run_timed_scripts(
-    mut scripts: ScriptHost,
-    mut world: ResMut<WorldState>,
-    mut map: ResMut<LoadedMap>,
-    mut outbox: ResMut<crate::Outbox>,
-) {
+pub fn run_timed_scripts(mut scripts: ScriptHost, mut world: ResMut<WorldState>, mut map: ResMut<LoadedMap>, mut outbox: ResMut<crate::Outbox>) {
     if scripts.timed.0.is_empty() {
         return;
     }
@@ -1318,42 +921,16 @@ pub fn run_timed_scripts(
 pub struct ScriptInventories(pub std::collections::BTreeSet<PlayerId>);
 
 /// Copies inventories scripts changed from the save to the PCs and their players.
-pub fn sync_script_inventories(
-    mut changed: ResMut<ScriptInventories>,
-    world: Res<WorldState>,
-    acks: Res<crate::InventoryAcks>,
-    mut outbox: ResMut<crate::Outbox>,
-    mut pcs: Query<(
-        &crate::NetId,
-        &crate::PlayerControlled,
-        &mut crate::Inventory,
-    )>,
-) {
+pub fn sync_script_inventories(mut changed: ResMut<ScriptInventories>, world: Res<WorldState>, acks: Res<crate::InventoryAcks>, mut outbox: ResMut<crate::Outbox>, mut pcs: Query<(&crate::NetId, &crate::PlayerControlled, &mut crate::Inventory)>) {
     if changed.0.is_empty() {
         return;
     }
     for player in std::mem::take(&mut changed.0) {
-        let Some(saved) = world
-            .0
-            .as_ref()
-            .and_then(|w| w.players.get(&player))
-            .and_then(|p| p.inventory.clone())
-        else {
-            continue;
-        };
-        let Some((&net_id, _, mut inventory)) = pcs.iter_mut().find(|pc| pc.1.0 == player) else {
-            continue;
-        };
+        let Some(saved) = world.0.as_ref().and_then(|w| w.players.get(&player)).and_then(|p| p.inventory.clone()) else { continue };
+        let Some((&net_id, _, mut inventory)) = pcs.iter_mut().find(|pc| pc.1.0 == player) else { continue };
         *inventory = saved.clone();
         let ack = acks.0.get(&player).copied().unwrap_or(0);
-        outbox.0.push((
-            player,
-            crate::LedgerDelta::Inventory {
-                net_id,
-                ack,
-                inventory: saved,
-            },
-        ));
+        outbox.0.push((player, crate::LedgerDelta::Inventory { net_id, ack, inventory: saved }));
     }
 }
 
@@ -1366,28 +943,15 @@ pub const EVENT_WIELD_OFF: u32 = 25;
 /// in the save, [`crate::PlayerSave::worn`]). Taken off first, then put on. A PC seen for the
 /// first time (a new character) puts its starting gear on; loading a game runs nothing, as in
 /// the original.
-pub fn run_wield_scripts(
-    mut host: ScriptHost,
-    mut world: ResMut<WorldState>,
-    mut map: ResMut<LoadedMap>,
-    mut outbox: ResMut<crate::Outbox>,
-    pcs: Query<(&crate::PlayerControlled, &crate::Inventory)>,
-) {
+pub fn run_wield_scripts(mut host: ScriptHost, mut world: ResMut<WorldState>, mut map: ResMut<LoadedMap>, mut outbox: ResMut<crate::Outbox>, pcs: Query<(&crate::PlayerControlled, &crate::Inventory)>) {
     // Read first: the save is only touched when something changed.
     let mut changes = Vec::new();
     let mut now_worn = Vec::new();
     {
         let Some(save) = world.0.as_ref() else { return };
         for (controlled, inventory) in &pcs {
-            let Some(saved) = save.players.get(&controlled.0) else {
-                continue;
-            };
-            let now: BTreeMap<i32, u32> = inventory
-                .items
-                .iter()
-                .filter(|i| (crate::FIRST_SLOT..=crate::LAST_SLOT).contains(&i.location))
-                .map(|i| (i.location, i.prototype))
-                .collect();
+            let Some(saved) = save.players.get(&controlled.0) else { continue };
+            let now: BTreeMap<i32, u32> = inventory.items.iter().filter(|i| (crate::FIRST_SLOT..=crate::LAST_SLOT).contains(&i.location)).map(|i| (i.location, i.prototype)).collect();
             let before = saved.worn.clone().unwrap_or_default();
             if before == now {
                 continue;
@@ -1435,32 +999,12 @@ pub fn sync_script_sheets(
     mut pcs: Query<(&crate::NetId, &crate::PlayerControlled, &mut crate::Sheet)>,
 ) {
     for player in std::mem::take(&mut changed.0) {
-        let Some(saved) = world
-            .0
-            .as_ref()
-            .and_then(|w| w.players.get(&player))
-            .map(|p| p.blueprint.sheet.clone())
-        else {
-            continue;
-        };
+        let Some(saved) = world.0.as_ref().and_then(|w| w.players.get(&player)).map(|p| p.blueprint.sheet.clone()) else { continue };
         if let Some((&net_id, _, mut sheet)) = pcs.iter_mut().find(|pc| pc.1.0 == player) {
             sheet.0 = saved.clone();
-            crate::ground::broadcast(
-                &session,
-                &mut outbox,
-                crate::LedgerDelta::PcStatus {
-                    net_id,
-                    status: crate::pc_status(&rules.0, &saved),
-                },
-            );
+            crate::ground::broadcast(&session, &mut outbox, crate::LedgerDelta::PcStatus { net_id, status: crate::pc_status(&rules.0, &saved) });
         }
-        outbox.0.push((
-            player,
-            crate::LedgerDelta::SheetUpdate {
-                ack: 0,
-                sheet: saved,
-            },
-        ));
+        outbox.0.push((player, crate::LedgerDelta::SheetUpdate { ack: 0, sheet: saved }));
     }
 }
 
@@ -1468,54 +1012,20 @@ impl ScriptHost<'_, '_> {
     /// Runs `object`'s script for `event`, triggered by `player`'s PC (0x441980). A changed
     /// attachment is kept and saved; the answer says whether the default still happens.
     /// Lines it shows go to their players through `outbox`.
-    pub fn hook(
-        &mut self,
-        world: &mut WorldState,
-        map: &mut LoadedMap,
-        outbox: &mut crate::Outbox,
-        object: ScriptObject,
-        event: u32,
-        player: PlayerId,
-    ) -> HookResult {
-        self.hook_by(
-            world,
-            map,
-            outbox,
-            object,
-            event,
-            player,
-            ScriptObject::Pc(player),
-        )
+    pub fn hook(&mut self, world: &mut WorldState, map: &mut LoadedMap, outbox: &mut crate::Outbox, object: ScriptObject, event: u32, player: PlayerId) -> HookResult {
+        self.hook_by(world, map, outbox, object, event, player, ScriptObject::Pc(player))
     }
 
     /// The same with another triggerer (a heartbeat's is the NPC itself, 0x4ad200).
     #[allow(clippy::too_many_arguments)]
-    pub fn hook_by(
-        &mut self,
-        world: &mut WorldState,
-        map: &mut LoadedMap,
-        outbox: &mut crate::Outbox,
-        object: ScriptObject,
-        event: u32,
-        player: PlayerId,
-        triggerer: ScriptObject,
-    ) -> HookResult {
+    pub fn hook_by(&mut self, world: &mut WorldState, map: &mut LoadedMap, outbox: &mut crate::Outbox, object: ScriptObject, event: u32, player: PlayerId, triggerer: ScriptObject) -> HookResult {
         let mut attachment = map.attachment(object, event);
         if attachment.number == 0 {
             return HookResult::RunDefault;
         }
         let before = attachment;
-        let invocation = Invocation {
-            attachee: object,
-            triggerer,
-            other: None,
-            event,
-            start_line: 0,
-        };
-        let Some(result) = self.execute(world, map, outbox, &mut attachment, invocation, player)
-        else {
-            return HookResult::RunDefault;
-        };
+        let invocation = Invocation { attachee: object, triggerer, other: None, event, start_line: 0 };
+        let Some(result) = self.execute(world, map, outbox, &mut attachment, invocation, player) else { return HookResult::RunDefault };
         if attachment != before {
             map.set_attachment(object, event, attachment);
             let sector = match object {
@@ -1531,109 +1041,43 @@ impl ScriptHost<'_, '_> {
     /// Runs the script of an item `player`'s PC carries, for `event` (wield 24, unwield 25):
     /// the item is the script's own object, the PC the triggerer (0x4677b0 / 0x467cb0). The
     /// answer is ignored, as the original's is; the item's script counters are not kept.
-    pub fn item_hook(
-        &mut self,
-        world: &mut WorldState,
-        map: &mut LoadedMap,
-        outbox: &mut crate::Outbox,
-        player: PlayerId,
-        prototype: u32,
-        event: u32,
-    ) {
-        let Some(mut attachment) = map
-            .prototypes
-            .get(prototype)
-            .and_then(|p| attachments(p, &map.prototypes).get(&event).copied())
-        else {
-            return;
-        };
+    pub fn item_hook(&mut self, world: &mut WorldState, map: &mut LoadedMap, outbox: &mut crate::Outbox, player: PlayerId, prototype: u32, event: u32) {
+        let Some(mut attachment) = map.prototypes.get(prototype).and_then(|p| attachments(p, &map.prototypes).get(&event).copied()) else { return };
         if attachment.number == 0 {
             return;
         }
-        let item = ScriptObject::Carried {
-            holder: player,
-            prototype,
-        };
-        let invocation = Invocation {
-            attachee: item,
-            triggerer: ScriptObject::Pc(player),
-            other: None,
-            event,
-            start_line: 0,
-        };
+        let item = ScriptObject::Carried { holder: player, prototype };
+        let invocation = Invocation { attachee: item, triggerer: ScriptObject::Pc(player), other: None, event, start_line: 0 };
         self.execute(world, map, outbox, &mut attachment, invocation, player);
     }
 
     /// Runs the scripts whose time has come (action 0x36): each with a record of its own, for
     /// its triggerer's player (or the first player when the triggerer is no PC).
-    pub fn run_due(
-        &mut self,
-        world: &mut WorldState,
-        map: &mut LoadedMap,
-        outbox: &mut crate::Outbox,
-    ) {
+    pub fn run_due(&mut self, world: &mut WorldState, map: &mut LoadedMap, outbox: &mut crate::Outbox) {
         let now = self.clock.now;
-        let (due, waiting): (Vec<TimedScript>, Vec<TimedScript>) =
-            std::mem::take(&mut self.timed.0)
-                .into_iter()
-                .partition(|t| t.at <= now);
+        let (due, waiting): (Vec<TimedScript>, Vec<TimedScript>) = std::mem::take(&mut self.timed.0).into_iter().partition(|t| t.at <= now);
         self.timed.0 = waiting;
         for timed in due {
             let player = match timed.triggerer {
                 ScriptObject::Pc(p) => Some(p),
-                _ => world
-                    .0
-                    .as_ref()
-                    .and_then(|w| w.players.keys().next().copied()),
+                _ => world.0.as_ref().and_then(|w| w.players.keys().next().copied()),
             };
             let Some(player) = player else { continue };
-            let invocation = Invocation {
-                attachee: timed.attachee,
-                triggerer: timed.triggerer,
-                other: None,
-                event: 0,
-                start_line: timed.line.max(0) as usize,
-            };
-            self.execute(
-                world,
-                map,
-                outbox,
-                &mut crate::Attachment::new(0, 0, timed.script),
-                invocation,
-                player,
-            );
+            let invocation = Invocation { attachee: timed.attachee, triggerer: timed.triggerer, other: None, event: 0, start_line: timed.line.max(0) as usize };
+            self.execute(world, map, outbox, &mut crate::Attachment::new(0, 0, timed.script), invocation, player);
         }
     }
 
     /// Runs `attachment`'s script for `invocation` with `player` acting, and delivers what it
     /// did. `None` without a world.
-    fn execute(
-        &mut self,
-        world: &mut WorldState,
-        map: &mut LoadedMap,
-        outbox: &mut crate::Outbox,
-        attachment: &mut crate::Attachment,
-        invocation: Invocation<ScriptObject>,
-        player: PlayerId,
-    ) -> Option<HookResult> {
+    fn execute(&mut self, world: &mut WorldState, map: &mut LoadedMap, outbox: &mut crate::Outbox, attachment: &mut crate::Attachment, invocation: Invocation<ScriptObject>, player: PlayerId) -> Option<HookResult> {
         let save = world.0.as_mut()?;
         let vfs_guard = self.vfs.as_ref().and_then(|v| v.0.read().ok());
         let vfs = vfs_guard.as_deref();
-        let library = self
-            .scripts
-            .0
-            .get_or_insert_with(|| vfs.map(ScriptLibrary::new).unwrap_or_default());
+        let library = self.scripts.0.get_or_insert_with(|| vfs.map(ScriptLibrary::new).unwrap_or_default());
         let number = attachment.number;
-        let following = self
-            .critters
-            .iter()
-            .filter_map(|(_, _, _, npc, f)| Some((npc?.object(), f?.leader)))
-            .collect();
-        let talking = self
-            .talks
-            .iter()
-            .flat_map(|(pc, talk)| [ScriptObject::Pc(pc.0), talk.npc_object])
-            .collect();
+        let following = self.critters.iter().filter_map(|(_, _, _, npc, f)| Some((npc?.object(), f?.leader))).collect();
+        let talking = self.talks.iter().flat_map(|(pc, talk)| [ScriptObject::Pc(pc.0), talk.npc_object]).collect();
         let critters = self
             .critters
             .iter()
@@ -1647,10 +1091,7 @@ impl ScriptHost<'_, '_> {
             })
             .collect();
         let reputations = &*self.reputations.0.get_or_insert_with(|| {
-            vfs.and_then(|v| v.read(crate::GAME_REP).ok())
-                .and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok())
-                .map(|m| crate::ReputationEffects::parse(&m))
-                .unwrap_or_default()
+            vfs.and_then(|v| v.read(crate::GAME_REP).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).map(|m| crate::ReputationEffects::parse(&m)).unwrap_or_default()
         });
         let areas = self.areas.load(vfs);
         let mut ctx = HostWorld {
@@ -1683,24 +1124,14 @@ impl ScriptHost<'_, '_> {
         };
         let run = crate::run_hook(&mut ctx, attachment, invocation);
         for (to, text) in std::mem::take(&mut ctx.messages) {
-            outbox
-                .0
-                .push((to, crate::LedgerDelta::ScriptMessage { text }));
+            outbox.0.push((to, crate::LedgerDelta::ScriptMessage { text }));
         }
         self.started.0.append(&mut ctx.dialogs);
         // Floats go to everyone in the world (the original to those who can see it).
         let players: Vec<PlayerId> = ctx.players.keys().copied().collect();
         for (speaker, text) in std::mem::take(&mut ctx.floats) {
             for &to in &players {
-                outbox.0.push((
-                    to,
-                    crate::LedgerDelta::FloatText {
-                        speaker,
-                        text: text.clone(),
-                        colour: crate::FloatColour::White,
-                        voice: None,
-                    },
-                ));
+                outbox.0.push((to, crate::LedgerDelta::FloatText { speaker, text: text.clone(), colour: crate::FloatColour::White, voice: None }));
             }
         }
         self.changed_inventories.0.append(&mut ctx.inventories);
@@ -1712,20 +1143,13 @@ impl ScriptHost<'_, '_> {
         }
         self.toggled_npcs.0.append(&mut ctx.npcs_toggled);
         for (script, object) in std::mem::take(&mut ctx.cancelled) {
-            self.timed.0.retain(|t| {
-                !(t.script == script && (t.triggerer == object || t.attachee == object))
-            });
+            self.timed.0.retain(|t| !(t.script == script && (t.triggerer == object || t.attachee == object)));
         }
         self.timed.0.append(&mut ctx.scheduled);
         let mut touched = std::mem::take(&mut ctx.sectors);
         let follow_changes = std::mem::take(&mut ctx.follow_changes);
         for (object, map, to) in std::mem::take(&mut ctx.teleports) {
-            self.teleports.0.push(crate::big_move::ScriptTeleport {
-                causer: player,
-                object,
-                map,
-                to,
-            });
+            self.teleports.0.push(crate::big_move::ScriptTeleport { causer: player, object, map, to });
         }
         for unsupported in run.unsupported {
             self.reports.0.push((number, unsupported));
@@ -1738,20 +1162,8 @@ impl ScriptHost<'_, '_> {
             for ((sector, index), leader) in follow_changes {
                 use crate::follow::{FORCED, LEFT, WAITING};
                 let flags = map.npc_flags(sector, index).unwrap_or(0);
-                let flags = if leader.is_some() {
-                    (flags & !(LEFT | WAITING)) | FORCED
-                } else {
-                    flags & !(FORCED | WAITING)
-                };
-                touched.extend(crate::follow::set_follower(
-                    &mut save.followers,
-                    map,
-                    (sector, index),
-                    leader,
-                    flags,
-                    None,
-                    self.clock.now,
-                ));
+                let flags = if leader.is_some() { (flags & !(LEFT | WAITING)) | FORCED } else { flags & !(FORCED | WAITING) };
+                touched.extend(crate::follow::set_follower(&mut save.followers, map, (sector, index), leader, flags, None, self.clock.now));
             }
         }
         for sector in touched {
@@ -1767,10 +1179,7 @@ impl ScriptHost<'_, '_> {
 
     /// Puts a script in the library by hand (tests).
     pub fn insert(&mut self, number: u32, script: Script) {
-        self.scripts
-            .0
-            .get_or_insert_with(ScriptLibrary::default)
-            .insert(number, script);
+        self.scripts.0.get_or_insert_with(ScriptLibrary::default).insert(number, script);
     }
 }
 
@@ -1794,22 +1203,10 @@ mod tests {
     fn art_numbers_sit_where_the_art_type_keeps_them() {
         use arcanum_formats::art_id::ArtId;
         let scenery = ArtId(0x4000_0000 | 5 << 19 | 3 << 11);
-        assert_eq!(
-            with_art_number(scenery, 73),
-            Some(ArtId(0x4000_0000 | 73 << 19 | 3 << 11)),
-            "rotation kept"
-        );
+        assert_eq!(with_art_number(scenery, 73), Some(ArtId(0x4000_0000 | 73 << 19 | 3 << 11)), "rotation kept");
         assert_eq!(with_art_number(scenery, 512), None, "9 bits");
-        assert_eq!(
-            with_art_number(ArtId(0x6000_0000), 1500),
-            Some(ArtId(0x6000_0000 | 1500 << 17)),
-            "items: 11 bits at 17"
-        );
-        assert_eq!(
-            with_art_number(ArtId(0x2000_0000), 1),
-            None,
-            "critters have no number"
-        );
+        assert_eq!(with_art_number(ArtId(0x6000_0000), 1500), Some(ArtId(0x6000_0000 | 1500 << 17)), "items: 11 bits at 17");
+        assert_eq!(with_art_number(ArtId(0x2000_0000), 1), None, "critters have no number");
     }
 
     #[test]
@@ -1819,32 +1216,12 @@ mod tests {
         for v in [3u32, 0x0201, 1274, 0, 0, 1823] {
             data.extend(v.to_le_bytes());
         }
-        let array = Array {
-            elem_size: 12,
-            id: 1,
-            data,
-            bitset: vec![1 << 1 | 1 << 9, 0],
-        };
-        let object = ObjectBuilder::new(TYPE_PORTAL)
-            .field("scripts_idx", Value::Array(Some(array)))
-            .build_instance();
+        let array = Array { elem_size: 12, id: 1, data, bitset: vec![1 << 1 | 1 << 9, 0] };
+        let object = ObjectBuilder::new(TYPE_PORTAL).field("scripts_idx", Value::Array(Some(array))).build_instance();
         let found = attachments(&object, &Prototypes::default());
         assert_eq!(found.len(), 2);
-        assert_eq!(
-            found[&1],
-            Attachment {
-                flags: 3,
-                counters: [1, 2, 0, 0],
-                number: 1274
-            }
-        );
+        assert_eq!(found[&1], Attachment { flags: 3, counters: [1, 2, 0, 0], number: 1274 });
         assert_eq!(found[&9].number, 1823);
-        assert!(
-            attachments(
-                &ObjectBuilder::new(TYPE_PORTAL).build_instance(),
-                &Prototypes::default()
-            )
-            .is_empty()
-        );
+        assert!(attachments(&ObjectBuilder::new(TYPE_PORTAL).build_instance(), &Prototypes::default()).is_empty());
     }
 }

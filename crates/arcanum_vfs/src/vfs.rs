@@ -75,18 +75,14 @@ impl Vfs {
 
     /// Mount a `.dat` archive.
     pub fn mount_archive(&mut self, path: impl AsRef<Path>) -> io::Result<()> {
-        self.layers
-            .push(Layer::Archive(ArcanumArchive::open(path)?));
+        self.layers.push(Layer::Archive(ArcanumArchive::open(path)?));
         Ok(())
     }
 
     /// Mount the usual stack: `override_dir` first (if given), then every `.dat`
     /// in `game_dir`, highest file name first. Later patch archives
     /// (`Arcanum4.dat`) therefore shadow earlier ones (`arcanum1.dat`).
-    pub fn from_game_dir(
-        game_dir: impl AsRef<Path>,
-        override_dir: Option<&Path>,
-    ) -> io::Result<Self> {
+    pub fn from_game_dir(game_dir: impl AsRef<Path>, override_dir: Option<&Path>) -> io::Result<Self> {
         let mut vfs = Self::new();
         if let Some(dir) = override_dir {
             vfs.mount_dir(dir);
@@ -132,9 +128,7 @@ impl Vfs {
     }
 
     pub fn exists(&self, path: &str) -> bool {
-        let Some(parts) = components(path) else {
-            return false;
-        };
+        let Some(parts) = components(path) else { return false };
         self.layers.iter().any(|l| match l {
             Layer::Dir(root) => resolve(root, &parts).is_some_and(|p| p.is_file()),
             Layer::Archive(a) => a.find(&parts.join("/")).is_some_and(|e| !e.is_dir()),
@@ -142,9 +136,7 @@ impl Vfs {
     }
 
     pub fn is_dir(&self, path: &str) -> bool {
-        let Some(parts) = components(path) else {
-            return false;
-        };
+        let Some(parts) = components(path) else { return false };
         self.layers.iter().any(|l| match l {
             Layer::Dir(root) => resolve(root, &parts).is_some_and(|p| p.is_dir()),
             Layer::Archive(a) => a.is_dir(&parts.join("/")),
@@ -162,39 +154,24 @@ impl Vfs {
         for layer in &self.layers {
             match layer {
                 Layer::Dir(root) => {
-                    let Some(p) = resolve(root, &parts).filter(|p| p.is_dir()) else {
-                        continue;
-                    };
+                    let Some(p) = resolve(root, &parts).filter(|p| p.is_dir()) else { continue };
                     found = true;
                     // Use the on-disk spelling of the directory, not the caller's.
                     let on_disk = p
                         .strip_prefix(root)
-                        .map(|r| {
-                            r.components()
-                                .map(|c| c.as_os_str().to_string_lossy())
-                                .collect::<Vec<_>>()
-                                .join("/")
-                        })
+                        .map(|r| r.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"))
                         .unwrap_or_else(|_| dir.clone());
                     for e in fs::read_dir(&p).into_iter().flatten().flatten() {
                         let name = e.file_name().to_string_lossy().into_owned();
-                        let child = if on_disk.is_empty() {
-                            name
-                        } else {
-                            format!("{on_disk}/{name}")
-                        };
+                        let child = if on_disk.is_empty() { name } else { format!("{on_disk}/{name}") };
                         merged.entry(normalize(&child)).or_insert(child);
                     }
                 }
                 Layer::Archive(a) => {
-                    let Some(children) = a.list_dir(&dir) else {
-                        continue;
-                    };
+                    let Some(children) = a.list_dir(&dir) else { continue };
                     found = true;
                     for child in children {
-                        merged
-                            .entry(normalize(child))
-                            .or_insert_with(|| child.to_string());
+                        merged.entry(normalize(child)).or_insert_with(|| child.to_string());
                     }
                 }
             }
@@ -226,10 +203,7 @@ mod tests {
         assert!(vfs.is_dir("art"));
         assert!(vfs.is_dir(""));
         assert!(!vfs.exists("art")); // directories are not files
-        assert_eq!(
-            vfs.list_dir("art/interface").unwrap(),
-            vec!["Art/Interface/Foo.art"]
-        );
+        assert_eq!(vfs.list_dir("art/interface").unwrap(), vec!["Art/Interface/Foo.art"]);
     }
 
     #[test]
@@ -242,19 +216,8 @@ mod tests {
         vfs.mount_dir(&root);
 
         assert_eq!(vfs.read("inside.txt").unwrap(), b"ok");
-        for bad in [
-            "../secret.txt",
-            "..\\secret.txt",
-            "a/../../secret.txt",
-            "./../secret.txt",
-            "C:/secret.txt",
-            "x\0y",
-        ] {
-            assert_eq!(
-                vfs.read(bad).unwrap_err().kind(),
-                io::ErrorKind::NotFound,
-                "{bad:?}"
-            );
+        for bad in ["../secret.txt", "..\\secret.txt", "a/../../secret.txt", "./../secret.txt", "C:/secret.txt", "x\0y"] {
+            assert_eq!(vfs.read(bad).unwrap_err().kind(), io::ErrorKind::NotFound, "{bad:?}");
             assert!(!vfs.exists(bad));
             assert!(!vfs.is_dir(bad));
             assert!(vfs.list_dir(bad).is_none());
@@ -270,10 +233,7 @@ mod tests {
         let first = tmp.path().join("first.dat");
         let second = tmp.path().join("second.dat");
         DatBuilder::new().raw("a.txt", b"first").write(&first);
-        DatBuilder::new()
-            .raw("A.TXT", b"second")
-            .raw("b.txt", b"only second")
-            .write(&second);
+        DatBuilder::new().raw("A.TXT", b"second").raw("b.txt", b"only second").write(&second);
         let over = tmp.path().join("override");
         write(&over, "b.txt", b"override");
 
@@ -290,10 +250,7 @@ mod tests {
     fn archive_directory_entries_are_not_files() {
         let tmp = tempfile::tempdir().unwrap();
         let dat = tmp.path().join("a.dat");
-        DatBuilder::new()
-            .dir("art")
-            .raw("art/x.art", b"x")
-            .write(&dat);
+        DatBuilder::new().dir("art").raw("art/x.art", b"x").write(&dat);
         let mut vfs = Vfs::new();
         vfs.mount_archive(&dat).unwrap();
         assert_eq!(vfs.read("art").unwrap_err().kind(), io::ErrorKind::NotFound);
@@ -305,11 +262,7 @@ mod tests {
     fn list_dir_merges_layers() {
         let tmp = tempfile::tempdir().unwrap();
         let dat = tmp.path().join("a.dat");
-        DatBuilder::new()
-            .raw("mes/A.mes", b"")
-            .raw("mes/b.mes", b"")
-            .raw("other/c", b"")
-            .write(&dat);
+        DatBuilder::new().raw("mes/A.mes", b"").raw("mes/b.mes", b"").raw("other/c", b"").write(&dat);
         let over = tmp.path().join("override");
         write(&over, "mes/a.MES", b"");
         write(&over, "mes/new.mes", b"");
@@ -319,10 +272,7 @@ mod tests {
         vfs.mount_archive(&dat).unwrap();
 
         // Sorted by normalised path, de-duplicated, stored spelling kept (first layer wins).
-        assert_eq!(
-            vfs.list_dir("MES").unwrap(),
-            vec!["mes/a.MES", "mes/b.mes", "mes/new.mes"]
-        );
+        assert_eq!(vfs.list_dir("MES").unwrap(), vec!["mes/a.MES", "mes/b.mes", "mes/new.mes"]);
         assert_eq!(vfs.list_dir("").unwrap(), vec!["mes", "other"]);
         assert_eq!(vfs.list_dir("other").unwrap(), vec!["other/c"]);
         assert!(vfs.list_dir("missing").is_none());
@@ -331,16 +281,9 @@ mod tests {
     #[test]
     fn from_game_dir_orders_patches_first() {
         let tmp = tempfile::tempdir().unwrap();
-        DatBuilder::new()
-            .raw("x.mes", b"base")
-            .raw("base_only", b"1")
-            .write(tmp.path().join("arcanum1.dat"));
-        DatBuilder::new()
-            .raw("x.mes", b"mid")
-            .write(tmp.path().join("arcanum3.dat"));
-        DatBuilder::new()
-            .raw("X.MES", b"patch")
-            .write(tmp.path().join("Arcanum4.dat"));
+        DatBuilder::new().raw("x.mes", b"base").raw("base_only", b"1").write(tmp.path().join("arcanum1.dat"));
+        DatBuilder::new().raw("x.mes", b"mid").write(tmp.path().join("arcanum3.dat"));
+        DatBuilder::new().raw("X.MES", b"patch").write(tmp.path().join("Arcanum4.dat"));
         fs::write(tmp.path().join("readme.txt"), b"not an archive").unwrap();
 
         let vfs = Vfs::from_game_dir(tmp.path(), None).unwrap();
@@ -366,9 +309,7 @@ mod tests {
     fn game_dir() -> PathBuf {
         std::env::var_os("ARCANUM_DIR")
             .map(PathBuf::from)
-            .unwrap_or_else(|| {
-                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/Arcanum")
-            })
+            .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/Arcanum"))
     }
 
     #[test]

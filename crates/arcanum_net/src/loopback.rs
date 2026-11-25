@@ -28,11 +28,7 @@ pub struct LoopbackClient {
 impl LoopbackHost {
     pub fn new() -> Self {
         let (intents_tx, intents_rx) = unbounded();
-        Self {
-            intents_tx,
-            intents_rx,
-            clients: RwLock::default(),
-        }
+        Self { intents_tx, intents_rx, clients: RwLock::default() }
     }
 
     /// A client end for `player`. Connecting the same player again replaces the old end, which
@@ -40,11 +36,7 @@ impl LoopbackHost {
     pub fn connect(&self, player: PlayerId) -> LoopbackClient {
         let (deltas_tx, deltas_rx) = unbounded();
         self.clients.write().unwrap().insert(player, deltas_tx);
-        LoopbackClient {
-            player,
-            intents: self.intents_tx.clone(),
-            deltas: deltas_rx,
-        }
+        LoopbackClient { player, intents: self.intents_tx.clone(), deltas: deltas_rx }
     }
 
     /// Whether `player` has a client end (dropped or not).
@@ -62,9 +54,7 @@ impl Default for LoopbackHost {
 impl HostTransport for LoopbackHost {
     fn send_delta(&self, player: PlayerId, delta: LedgerDelta) -> Result<(), TransportError> {
         let clients = self.clients.read().unwrap();
-        let tx = clients
-            .get(&player)
-            .ok_or(TransportError::UnknownPlayer(player))?;
+        let tx = clients.get(&player).ok_or(TransportError::UnknownPlayer(player))?;
         tx.send(delta).map_err(|_| TransportError::Disconnected)
     }
 
@@ -79,9 +69,7 @@ impl ClientTransport for LoopbackClient {
     }
 
     fn send_intent(&self, intent: PlayerIntent) -> Result<(), TransportError> {
-        self.intents
-            .send((self.player, intent))
-            .map_err(|_| TransportError::Disconnected)
+        self.intents.send((self.player, intent)).map_err(|_| TransportError::Disconnected)
     }
 
     fn recv_deltas(&self) -> Vec<LedgerDelta> {
@@ -104,22 +92,11 @@ mod tests {
     fn intent_reaches_the_host_tagged_with_the_player() {
         let host = LoopbackHost::new();
         let client = host.connect(PlayerId(7));
-        let name = character(
-            1,
-            CharacterRequest::Action(CharacterAction::SetName("Virgil".into())),
-        );
+        let name = character(1, CharacterRequest::Action(CharacterAction::SetName("Virgil".into())));
         client.send_intent(name.clone()).unwrap();
-        client
-            .send_intent(character(2, CharacterRequest::Accept))
-            .unwrap();
+        client.send_intent(character(2, CharacterRequest::Accept)).unwrap();
         let got = host.recv_intents();
-        assert_eq!(
-            got,
-            vec![
-                (PlayerId(7), name),
-                (PlayerId(7), character(2, CharacterRequest::Accept))
-            ]
-        );
+        assert_eq!(got, vec![(PlayerId(7), name), (PlayerId(7), character(2, CharacterRequest::Accept))]);
         assert!(host.recv_intents().is_empty(), "drained");
     }
 
@@ -128,11 +105,7 @@ mod tests {
         let host = LoopbackHost::new();
         let a = host.connect(PlayerId(1));
         let b = host.connect(PlayerId(2));
-        let delta = LedgerDelta::CharacterUpdate {
-            player: PlayerId(1),
-            ack: 1,
-            creation: Creation::default(),
-        };
+        let delta = LedgerDelta::CharacterUpdate { player: PlayerId(1), ack: 1, creation: Creation::default() };
         host.send_delta(PlayerId(1), delta.clone()).unwrap();
         assert_eq!(a.recv_deltas(), vec![delta]);
         assert!(b.recv_deltas().is_empty());
@@ -141,15 +114,9 @@ mod tests {
     #[test]
     fn unknown_and_dropped_clients_are_errors() {
         let host = LoopbackHost::new();
-        assert_eq!(
-            host.send_delta(PlayerId(9), LedgerDelta::Tick(1)),
-            Err(TransportError::UnknownPlayer(PlayerId(9)))
-        );
+        assert_eq!(host.send_delta(PlayerId(9), LedgerDelta::Tick(1)), Err(TransportError::UnknownPlayer(PlayerId(9))));
         drop(host.connect(PlayerId(3)));
-        assert_eq!(
-            host.send_delta(PlayerId(3), LedgerDelta::Tick(1)),
-            Err(TransportError::Disconnected)
-        );
+        assert_eq!(host.send_delta(PlayerId(3), LedgerDelta::Tick(1)), Err(TransportError::Disconnected));
     }
 
     #[test]
@@ -158,11 +125,6 @@ mod tests {
         let client = host.connect(PlayerId(1));
         drop(host);
         // The client holds a sender clone, but the receiver went with the host.
-        assert_eq!(
-            client
-                .send_intent(character(1, CharacterRequest::Accept))
-                .unwrap_err(),
-            TransportError::Disconnected
-        );
+        assert_eq!(client.send_intent(character(1, CharacterRequest::Accept)).unwrap_err(), TransportError::Disconnected);
     }
 }

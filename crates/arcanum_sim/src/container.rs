@@ -93,12 +93,7 @@ pub fn roll_seed(at: TileLoc) -> u32 {
 
 /// Adds what `source` rolls to `contents` (0x463e20): gold, then each item by its chance, as
 /// object numbers ([`crate::BASIC_TO_PROTOTYPE`] added to the file's basic numbers).
-pub fn roll_source(
-    contents: &mut Inventory,
-    source: &InventorySource,
-    rng: &mut Rng,
-    info: impl Fn(u32) -> Option<ItemInfo>,
-) {
+pub fn roll_source(contents: &mut Inventory, source: &InventorySource, rng: &mut Rng, info: impl Fn(u32) -> Option<ItemInfo>) {
     let gold = rng.range(source.gold.0, source.gold.1);
     if gold > 0 {
         let _ = contents.insert(crate::GOLD, gold, &info, i32::MAX, 0);
@@ -147,28 +142,12 @@ mod tests {
     #[test]
     fn jammed_and_held_come_before_the_lock() {
         assert_eq!(open_check(0, true, false), Ok(()));
-        assert_eq!(
-            open_check(OCOF_LOCKED, true, false),
-            Err(OpenRefusal::Locked)
-        );
-        assert_eq!(
-            open_check(OCOF_LOCKED, true, true),
-            Ok(()),
-            "the key opens it"
-        );
-        assert_eq!(
-            open_check(OCOF_LOCKED | OCOF_JAMMED, true, true),
-            Err(OpenRefusal::Jammed)
-        );
-        assert_eq!(
-            open_check(OCOF_LOCKED | OCOF_MAGICALLY_HELD, true, true),
-            Err(OpenRefusal::MagicallyHeld)
-        );
+        assert_eq!(open_check(OCOF_LOCKED, true, false), Err(OpenRefusal::Locked));
+        assert_eq!(open_check(OCOF_LOCKED, true, true), Ok(()), "the key opens it");
+        assert_eq!(open_check(OCOF_LOCKED | OCOF_JAMMED, true, true), Err(OpenRefusal::Jammed));
+        assert_eq!(open_check(OCOF_LOCKED | OCOF_MAGICALLY_HELD, true, true), Err(OpenRefusal::MagicallyHeld));
         // Never-locked and busted containers open; the real data's 0x9 is never locked.
-        assert_eq!(
-            open_check(OCOF_LOCKED | OCOF_NEVER_LOCKED, true, false),
-            Ok(())
-        );
+        assert_eq!(open_check(OCOF_LOCKED | OCOF_NEVER_LOCKED, true, false), Ok(()));
         assert_eq!(open_check(OCOF_LOCKED | OCOF_BUSTED, true, false), Ok(()));
         assert_eq!(OpenRefusal::Locked.message(), 1);
         assert_eq!(OpenRefusal::MagicallyHeld.message(), 3);
@@ -199,36 +178,13 @@ mod tests {
     fn a_source_gives_gold_and_items_by_chance() {
         use arcanum_formats::object::{TYPE_GENERIC, TYPE_GOLD};
         let info = |n: u32| {
-            let kind = if n == crate::GOLD {
-                TYPE_GOLD
-            } else {
-                TYPE_GENERIC
-            };
-            Some(ItemInfo {
-                kind,
-                inventory_art: 0,
-                cells: (1, 1),
-                weight: 1,
-                magic_weight_adj: 0,
-                complexity: 0,
-                generic_flags: 0,
-                weapon_flags: 0,
-                armor_flags: 0,
-                item_flags: 0,
-                worth: 0,
-            })
+            let kind = if n == crate::GOLD { TYPE_GOLD } else { TYPE_GENERIC };
+            Some(ItemInfo { kind, inventory_art: 0, cells: (1, 1), weight: 1, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 0, item_flags: 0, worth: 0 })
         };
-        let source = InventorySource {
-            gold: (10, 10),
-            items: vec![(100, 1), (0, 2), (100, 3)],
-        };
+        let source = InventorySource { gold: (10, 10), items: vec![(100, 1), (0, 2), (100, 3)] };
         let mut contents = Inventory::container();
         roll_source(&mut contents, &source, &mut Rng(1), info);
-        let held: Vec<(u32, i32)> = contents
-            .items
-            .iter()
-            .map(|i| (i.prototype, i.quantity))
-            .collect();
+        let held: Vec<(u32, i32)> = contents.items.iter().map(|i| (i.prototype, i.quantity)).collect();
         assert_eq!(held, [(crate::GOLD, 10), (21, 0), (23, 0)]);
     }
 }

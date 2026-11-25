@@ -32,12 +32,7 @@ pub struct FrameButton {
 impl FrameButton {
     /// The frame layout of the options arrow buttons: normal, pressed, hover.
     pub fn arrow(frames: Handle<ArtFrames>) -> Self {
-        Self {
-            frames,
-            normal: 0,
-            pressed: 1,
-            hover: 2,
-        }
+        Self { frames, normal: 0, pressed: 1, hover: 2 }
     }
 
     fn frame_for(&self, hovered: bool, pressed: bool) -> usize {
@@ -55,20 +50,13 @@ pub struct WidgetsPlugin;
 
 impl Plugin for WidgetsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (colour_hover_text, play_hover_sound, show_button_frame),
-        );
+        app.add_systems(Update, (colour_hover_text, play_hover_sound, show_button_frame));
     }
 }
 
 fn colour_hover_text(mut texts: Query<(&HoverText, &Hovered, Has<Selected>, &mut TextColor)>) {
     for (colours, hovered, selected, mut text_color) in &mut texts {
-        let wanted = if hovered.get() || selected {
-            colours.hover
-        } else {
-            colours.normal
-        };
+        let wanted = if hovered.get() || selected { colours.hover } else { colours.normal };
         if text_color.0 != wanted {
             text_color.0 = wanted;
         }
@@ -93,12 +81,8 @@ fn show_button_frame(
     mut buttons: Query<(&FrameButton, &Hovered, Has<Pressed>, &mut ImageNode)>,
 ) {
     for (button, hovered, pressed, mut image) in &mut buttons {
-        let Some(set) = frames.get(&button.frames) else {
-            continue;
-        };
-        let Some(frame) = set.frame(button.frame_for(hovered.get(), pressed)) else {
-            continue;
-        };
+        let Some(set) = frames.get(&button.frames) else { continue };
+        let Some(frame) = set.frame(button.frame_for(hovered.get(), pressed)) else { continue };
         if image.image != *frame {
             image.image = frame.clone();
         }

@@ -42,11 +42,7 @@ pub fn tile_distance(a: TileLoc, b: TileLoc) -> u32 {
 
 /// Whether `a` and `b` are within `radius` tiles of each other: `dx^2 + dy^2 <= radius^2`.
 pub fn within_radius(a: TileLoc, b: TileLoc, radius: u32) -> bool {
-    let (dx, dy, r) = (
-        u64::from(a.x.abs_diff(b.x)),
-        u64::from(a.y.abs_diff(b.y)),
-        u64::from(radius),
-    );
+    let (dx, dy, r) = (u64::from(a.x.abs_diff(b.x)), u64::from(a.y.abs_diff(b.y)), u64::from(radius));
     dx * dx + dy * dy <= r * r
 }
 
@@ -98,15 +94,8 @@ mod tests {
     #[test]
     fn distances_are_a_radius() {
         assert_eq!(tile_distance(t(10, 10), t(13, 40)), 30);
-        assert_eq!(
-            tile_distance(t(10, 10), t(40, 40)),
-            42,
-            "a diagonal is longer than its sides"
-        );
-        assert!(
-            !within_radius(t(10, 10), t(13, 40), 30),
-            "3 and 30: just over 30"
-        );
+        assert_eq!(tile_distance(t(10, 10), t(40, 40)), 42, "a diagonal is longer than its sides");
+        assert!(!within_radius(t(10, 10), t(13, 40), 30), "3 and 30: just over 30");
         assert!(within_radius(t(10, 10), t(10, 40), 30));
         assert!(within_radius(t(10, 10), t(31, 31), 30), "21, 21: 29.7");
         assert!(!within_radius(t(10, 10), t(32, 32), 30), "22, 22: 31.1");

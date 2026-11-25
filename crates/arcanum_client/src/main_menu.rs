@@ -192,13 +192,7 @@ impl Plugin for MainMenuPlugin {
             .add_systems(OnEnter(AppState::MainMenu), request_menu)
             .add_systems(OnEnter(AppState::SinglePlayer), request_menu)
             .add_systems(OnEnter(AppState::NewGameChoice), request_menu)
-            .add_systems(
-                Update,
-                (
-                    fit_background,
-                    spawn_menu.run_if(resource_exists::<PendingMenu>),
-                ),
-            )
+            .add_systems(Update, (fit_background, spawn_menu.run_if(resource_exists::<PendingMenu>)))
             .add_observer(on_activate);
         if !app.is_plugin_added::<WidgetsPlugin>() {
             app.add_plugins(WidgetsPlugin);
@@ -212,17 +206,11 @@ fn setup_menu(mut commands: Commands, assets: Res<AssetServer>) {
         Camera2d,
         // Always BASELINE_HEIGHT world units tall; the width follows the window's aspect ratio.
         Projection::Orthographic(OrthographicProjection {
-            scaling_mode: ScalingMode::FixedVertical {
-                viewport_height: BASELINE_HEIGHT,
-            },
+            scaling_mode: ScalingMode::FixedVertical { viewport_height: BASELINE_HEIGHT },
             ..OrthographicProjection::default_2d()
         }),
     ));
-    commands.spawn((
-        Sprite::from_image(assets.load(backgrounds::MAIN_MENU)),
-        FitToBaseline,
-        MenuBackground,
-    ));
+    commands.spawn((Sprite::from_image(assets.load(backgrounds::MAIN_MENU)), FitToBaseline, MenuBackground));
     commands.insert_resource(MenuText(assets.load(text::MAIN_MENU)));
 }
 
@@ -233,19 +221,14 @@ fn fit_background(
     mut sprites: Query<(Entity, &Sprite, &mut Transform), With<FitToBaseline>>,
 ) {
     for (entity, sprite, mut transform) in &mut sprites {
-        let Some(image) = images.get(&sprite.image) else {
-            continue;
-        };
+        let Some(image) = images.get(&sprite.image) else { continue };
         transform.scale = Vec3::splat(BASELINE_HEIGHT / image.height() as f32);
         commands.entity(entity).remove::<FitToBaseline>();
     }
 }
 
 /// True once the menu labels exist and the background has been fitted.
-pub fn menu_ready(
-    labels: Query<(), With<MenuLabel>>,
-    pending: Query<(), With<FitToBaseline>>,
-) -> bool {
+pub fn menu_ready(labels: Query<(), With<MenuLabel>>, pending: Query<(), With<FitToBaseline>>) -> bool {
     !labels.is_empty() && pending.is_empty()
 }
 
@@ -299,11 +282,7 @@ fn spawn_menu(
                 // The row only spaces the entries out. The button is the text itself, so hover and
                 // clicks only register over the words, not across the whole panel width.
                 // The last entry (Exit Game / Cancel) sits at the bottom of the panel.
-                let gap = if index == last {
-                    (BOTTOM_ROW - index as f32).max(0.0) * ROW_HEIGHT
-                } else {
-                    0.0
-                };
+                let gap = if index == last { (BOTTOM_ROW - index as f32).max(0.0) * ROW_HEIGHT } else { 0.0 };
                 column
                     .spawn(Node {
                         height: Val::Px(ROW_HEIGHT),
@@ -319,10 +298,7 @@ fn spawn_menu(
                                 Button,
                                 ActivateOnPress,
                                 Hovered::default(),
-                                HoverText {
-                                    normal: TEXT_COLOR,
-                                    hover: HOVER_COLOR,
-                                },
+                                HoverText { normal: TEXT_COLOR, hover: HOVER_COLOR },
                                 TextColor(TEXT_COLOR),
                             ));
                         } else {
@@ -347,9 +323,7 @@ fn on_activate(
     mut host: Option<ResMut<crate::character_host::CharacterHost>>,
     creation: Option<Res<crate::create_character::CreationData>>,
 ) {
-    let Ok(&action) = actions.get(activate.entity) else {
-        return;
-    };
+    let Ok(&action) = actions.get(activate.entity) else { return };
     if !action.is_available() {
         return;
     }
@@ -368,10 +342,7 @@ fn on_activate(
         MenuAction::BackToSinglePlayer => next_state.set(AppState::SinglePlayer),
         MenuAction::CreateCharacter => {
             // A fresh character each time New Character is chosen, here and on the host.
-            let rules = creation
-                .as_ref()
-                .map(|d| d.rules.clone())
-                .unwrap_or_default();
+            let rules = creation.as_ref().map(|d| d.rules.clone()).unwrap_or_default();
             match host.as_mut() {
                 Some(host) => host.reset(&rules),
                 None => commands.insert_resource(crate::character_host::CharacterHost::new(&rules)),
