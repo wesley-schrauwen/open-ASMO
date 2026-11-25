@@ -387,6 +387,8 @@ pub fn passes(value: i32, n: i32) -> bool {
 
 /// What tests and results read and change for one PC talking to one NPC.
 pub struct Talk<'a> {
+    /// Result `co`: the NPC attacks the PC; the talk ends ([`crate::combat`]).
+    pub attack: bool,
     pub rules: &'a RulesData,
     pub sheet: &'a CharacterSheet,
     pub inventory: &'a mut Inventory,
@@ -779,6 +781,11 @@ impl Talk<'_> {
                     self.npc_flags = flags;
                 }
                 "re" => self.change_reaction(a, t.change),
+                // Combat (0x415ba0 `co`): the NPC fights the PC; the talk is over.
+                "co" => {
+                    self.attack = true;
+                    return Some(0);
+                }
                 op => self.unbuilt.push(format!("result {op}")),
             }
         }
@@ -999,7 +1006,7 @@ pub fn talk_to_npcs(
 
 /// What a conversation step writes to besides the world: the outbox, barters, areas, the
 /// experience earned, and the game clock it reads.
-type ConversationOut<'w> = (ResMut<'w, Outbox>, ResMut<'w, crate::barter::BarterStarts>, ResMut<'w, crate::areas::AreaTable>, ResMut<'w, crate::ExperienceAwards>, Res<'w, crate::GameClock>);
+type ConversationOut<'w> = (ResMut<'w, Outbox>, ResMut<'w, crate::barter::BarterStarts>, ResMut<'w, crate::areas::AreaTable>, ResMut<'w, crate::ExperienceAwards>, Res<'w, crate::GameClock>, ResMut<'w, crate::combat::CombatStarts>);
 
 /// Starts, steps and ends conversations: see the module docs.
 #[allow(clippy::too_many_arguments)]
@@ -1014,7 +1021,7 @@ pub fn run_conversations(
     mut reports: ResMut<DialogueReports>,
     (session, rules, vfs, acks): (Res<Session>, Res<SimRules>, Option<Res<crate::SimVfs>>, Res<crate::InventoryAcks>),
     (mut rng, mut reputations): (ResMut<crate::HostRng>, ResMut<ReputationTable>),
-    (mut outbox, mut barters, mut areas, mut awards, clock): ConversationOut,
+    (mut outbox, mut barters, mut areas, mut awards, clock, mut fights): ConversationOut,
     mut pcs: Query<TalkerQuery>,
     npcs: Query<(&NetId, &NpcSource)>,
 ) {
@@ -1116,6 +1123,7 @@ pub fn run_conversations(
             _ => Default::default(),
         };
         let mut talk = Talk {
+            attack: false,
             follow,
             rules: &rules.0,
             sheet: &sheet.0,
@@ -1179,6 +1187,8 @@ pub fn run_conversations(
                 Shown::Stay
             }
         };
+        let attack = std::mem::take(&mut talk.attack);
+        let next = if attack { Shown::End } else { next };
         let gold_changed = talk.gold_changed;
         let follow_change = talk.follow.changed.then_some((talk.follow.mine, talk.npc_flags));
         let follow_waits = talk.follow.waits;
@@ -1205,6 +1215,9 @@ pub fn run_conversations(
                 barters.0.push((player, npc_net, npc_object));
             }
             Shown::Stay => {}
+        }
+        if attack {
+            fights.0.push((npc_net, pc_net));
         }
         if ended {
             commands.entity(entity).remove::<Conversation>();
@@ -2074,6 +2087,7 @@ mod tests {
     fn talk_with<'a>(rules: &'a RulesData, sheet: &'a CharacterSheet, inventory: &'a mut Inventory, pc: &'a mut PcScriptState, globals: &'a mut ScriptGlobals, npc: &'a mut Attachment) -> Talk<'a> {
         let npc_reaction = crate::NpcReaction { base: 50, race: 0, origin: 0, faction: 0, only_reputation: false };
         Talk {
+            attack: false,
             follow: Default::default(),
             rules,
             sheet,

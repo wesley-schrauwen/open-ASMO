@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-3 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`); the rest planned.
+Status: steps 1-4 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`); step 5 planned.
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -136,6 +136,15 @@ of `combat_design.md` come after the original's rules work.
      the walk to the half-ogre guard.
    - Not built: the orange and red lights of a planned move, the battle cursor and
      `hoverattack.art`, the attack / hit / death animations, the button's pressed look.
-4. **Hooks:** script events 12-14 and hit / miss, action 0x24, dialogue `co`, PC death and the
-   fate points that wait on attacks.
+4. **Hooks** (built, `feat/combat-hooks`).
+   - Action 0x24: each NPC of the set fights the object (0x447d2f; the original skips the ally
+     pull and reaction there too). Dialogue result `co`: the NPC fights the PC and the talk ends.
+     Both go through `CombatStarts`: a fight starts round the target if none runs.
+   - Script events on the NPC, the PC the triggerer: 13 entering a fight (attacked or set on),
+     14 leaving it (fleeing), 12 dying (after the kill: builder's call, the original runs it
+     first and a script may stop the death).
+   - A PC at 0 hit points lies down as an unconscious one does until healed (builder's call:
+     the original's PC dies and the game ends; the owner decides what death is in co-op).
+   - Real data: all 2399 scripts run to an end.
+   - Not built: hit / miss events (7 / 8 not traced), the fate points that wait on attacks.
 5. **Noticing:** kill-on-sight NPCs and monsters starting fights; the hover's to-hit panel.

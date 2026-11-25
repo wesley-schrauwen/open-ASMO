@@ -909,7 +909,7 @@ fn ack_syncs(time: Res<Time>, mut sync: ResMut<SyncState>, link: Option<Res<Host
 /// Whether the party member `net_id` is unconscious: its fatigue below 1
 /// ([`arcanum_sim::is_unconscious`]).
 pub fn unconscious(party: &Party, net_id: NetId) -> bool {
-    party.status.get(&net_id).is_some_and(|s| arcanum_sim::is_unconscious(s.fatigue.current))
+    party.status.get(&net_id).is_some_and(arcanum_sim::is_down)
 }
 
 /// The next posture of an actor in `posture` that is `down` or not, its fall or get-up art

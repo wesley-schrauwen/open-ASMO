@@ -359,6 +359,27 @@ pub struct CombatRequests {
     pub end_turn: Vec<PlayerId>,
 }
 
+/// Fights started elsewhere (dialogue `co`, script action 0x24): the NPC and whom it attacks.
+#[derive(Resource, Debug, Default)]
+pub struct CombatStarts(pub Vec<(NetId, NetId)>);
+
+/// Script events the fight raises (0x4aabe0, 0x45da20): the NPC, the event and the player whose
+/// PC triggers it.
+#[derive(Resource, Debug, Default)]
+pub struct CombatEvents(pub Vec<(crate::ScriptObject, u32, PlayerId)>);
+
+/// Script events: an NPC dying (killer the triggerer), starting and stopping a fight.
+pub const EVENT_DYING: u32 = 12;
+pub const EVENT_ENTER_COMBAT: u32 = 13;
+pub const EVENT_EXIT_COMBAT: u32 = 14;
+
+/// Runs the fight's script events with the host.
+pub fn run_combat_events(mut events: ResMut<CombatEvents>, mut host: crate::ScriptHost, mut world: ResMut<crate::WorldState>, mut map: ResMut<crate::LoadedMap>, mut outbox: ResMut<crate::Outbox>) {
+    for (object, event, player) in std::mem::take(&mut events.0) {
+        host.hook(&mut world, &mut map, &mut outbox, object, event, player);
+    }
+}
+
 /// A PC's attack waiting for its walk to end next to the target.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PendingAttack {
@@ -423,6 +444,8 @@ pub struct CombatWorld<'w> {
     pub vfs: Option<Res<'w, crate::SimVfs>>,
     pub sheets: ResMut<'w, crate::ScriptSheets>,
     pub ai: ResMut<'w, AiParams>,
+    pub starts: ResMut<'w, CombatStarts>,
+    pub events: ResMut<'w, CombatEvents>,
 }
 
 /// A critter as the combat systems see it.
@@ -554,6 +577,38 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
     let mut changed = false;
     // NPCs made to fight this tick (their `Fighting` lands after the system).
     let mut joined: Vec<NetId> = Vec::new();
+    // Fights started by dialogue or scripts: the NPC fights its target (0x4a9650).
+    for (npc, target) in std::mem::take(&mut w.starts.0) {
+        let (Some(attacker), Some(victim)) = (find(npc), find(target)) else { continue };
+        let Some(source) = attacker.npc else { continue };
+        if w.map.is_dead(source.sector, source.index) {
+            continue;
+        }
+        commands.entity(attacker.entity).insert(Fighting { target });
+        joined.push(npc);
+        if !attacker.fighting && let Some(player) = victim.player {
+            w.events.0.push((source.object(), EVENT_ENTER_COMBAT, player));
+        }
+        match w.combat.0.as_mut() {
+            None => {
+                let mut order = gather(&all, victim.at, None);
+                for id in [target, npc] {
+                    if !order.contains(&id) {
+                        order.push(id);
+                    }
+                }
+                let first = order.first().and_then(|id| find(*id));
+                let ap = first.map_or(MIN_AP, |c| w.turn_ap(&c));
+                w.combat.0 = Some(Encounter { order, turn: 0, ap, round: 1, fresh: true });
+            }
+            Some(e) => {
+                if !e.order.contains(&npc) {
+                    e.order.push(npc);
+                }
+            }
+        }
+        changed = true;
+    }
     // Attacks asked for: the first starts the fight (0x4b3f20 → 0x4b71e0).
     for (player, target, _seq) in std::mem::take(&mut w.requests.attacks) {
         let (Some(pc), Some(victim)) = (all.iter().find(|c| c.player == Some(player)).cloned(), find(target)) else { continue };
@@ -564,6 +619,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
         if !victim.fighting {
             commands.entity(victim.entity).insert(Fighting { target: pc.net_id });
             joined.push(target);
+            w.events.0.push((source.object(), EVENT_ENTER_COMBAT, player));
         }
         if w.combat.0.is_none() {
             let mut order = gather(&all, pc.at, Some(pc.net_id));
@@ -758,8 +814,12 @@ fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[See
         if let Some(row) = row
             && should_flee(percent, &row, flags)
         {
-            let from = npc.target.and_then(|t| all.iter().find(|c| c.net_id == t)).map_or(npc.at, |c| c.at);
+            let from_critter = npc.target.and_then(|t| all.iter().find(|c| c.net_id == t));
+            let from = from_critter.map_or(npc.at, |c| c.at);
             commands.entity(npc.entity).remove::<Fighting>();
+            if let Some(player) = from_critter.and_then(|c| c.player) {
+                w.events.0.push((source.object(), EVENT_EXIT_COMBAT, player));
+            }
             let away = flee_goal(npc.at, from, FLEE_TILES);
             if let Ok(mut path) = crate::find_path(&*w.map, npc.at, away) {
                 let ap = w.combat.0.as_ref().map_or(0, |e| e.ap);
@@ -849,6 +909,9 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, attacker: &Seen, victim:
         w.map.kill_npc(guard.as_deref(), source.sector, source.index);
         commands.entity(victim.entity).remove::<Fighting>();
         w.toggled.0.push((source.sector, source.index));
+        if let Some(player) = attacker.player {
+            w.events.0.push((source.object(), EVENT_DYING, player));
+        }
         if attacker.player.is_some() {
             xp += worth * 20 / 100;
         }

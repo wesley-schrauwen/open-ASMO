@@ -209,6 +209,8 @@ pub struct ScriptOrders {
     pub walks: Vec<(crate::NetId, arcanum_formats::map::TileLoc)>,
     /// PCs to pick a lock (action 0x4f with Pick Locks), with the tool's prototype.
     pub picks: Vec<(PlayerId, crate::LockTarget, Option<u32>)>,
+    /// NPCs to fight a critter (action 0x24).
+    pub fights: Vec<(crate::NetId, crate::NetId)>,
 }
 
 type OrderedQuery<'a> = (Entity, &'a crate::NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::Inventory>);
@@ -221,8 +223,10 @@ pub fn apply_script_orders(
     mut orders: ResMut<ScriptOrders>,
     map: Res<LoadedMap>,
     mut picks: ResMut<crate::PickLockRequests>,
+    mut fights: ResMut<crate::combat::CombatStarts>,
     critters: Query<OrderedQuery>,
 ) {
+    fights.0.append(&mut orders.fights);
     for (net_id, to) in std::mem::take(&mut orders.walks) {
         let Some((entity, _, position, ..)) = critters.iter().find(|c| *c.1 == net_id) else { continue };
         match crate::find_path(&*map, position.0, to) {
@@ -818,6 +822,14 @@ impl ScriptContext for HostWorld<'_> {
         mes.get(line).map(str::to_string)
     }
 
+    /// NPCs only; the fight starts at the next combat step.
+    fn start_fight(&mut self, npc: ScriptObject, target: ScriptObject) {
+        let net = |o: ScriptObject| self.critters.iter().find(|c| c.0 == o).map(|c| c.2);
+        if let (ScriptObject::Mobile { .. }, Some(a), Some(b)) = (npc, net(npc), net(target)) {
+            self.orders.fights.push((a, b));
+        }
+    }
+
     /// Critters only (PCs as well as NPCs); the path is found when it starts.
     fn walk_to(&mut self, object: ScriptObject, to: arcanum_formats::map::TileLoc) {
         if let Some(c) = self.critters.iter().find(|c| c.0 == object) {
@@ -1386,6 +1398,7 @@ impl ScriptHost<'_, '_> {
         }
         self.orders.walks.append(&mut ctx.orders.walks);
         self.orders.picks.append(&mut ctx.orders.picks);
+        self.orders.fights.append(&mut ctx.orders.fights);
         for unsupported in run.unsupported {
             self.reports.0.push((number, unsupported));
         }
