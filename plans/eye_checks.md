@@ -143,3 +143,10 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 - [ ] A book opens on two pages; the arrows turn two pages; text runs on across the pages.
 - [ ] Art 494 leaves a round hole at the top left that shows the world: check whether the
       original shows the same.
+
+## Hover names
+
+- [ ] Resting the cursor on a door, chest, item or NPC shows its name in the message box; moving
+      off clears it.
+- [ ] An NPC not yet talked to shows its unknown name ("Man", "Elf"…); after talking, its own.
+- [ ] Magick or tech items not identified show their unknown name.

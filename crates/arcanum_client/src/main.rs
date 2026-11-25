@@ -97,6 +97,7 @@ fn main() {
             arcanum_client::vote_popup::VotePopupPlugin,
             arcanum_client::cursor::CursorPlugin,
         ));
+    app.add_plugins(arcanum_client::world_hover::WorldHoverPlugin);
 
     // Debugging aid (screenshots take no clicks): `DEBUG_ARCANUM_WALK=x,y` walks the PC to that
     // tile once it is in the world.

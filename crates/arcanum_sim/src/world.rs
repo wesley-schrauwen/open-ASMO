@@ -1689,6 +1689,32 @@ mod tests {
     }
 
     #[test]
+    fn players_learn_which_npcs_their_pc_has_met() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]));
+        let sector = SectorId::new(1, 1);
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0 && s.sector == sector).unwrap().0
+        };
+        let known = |sim: &mut SimApp| {
+            (0..16).flat_map(|_| {
+                sim.update();
+                sim.take_deltas()
+            })
+            .filter_map(|(p, d)| match d { LedgerDelta::KnownNpcs { npcs } if p.0 == 7 => Some(npcs), _ => None })
+            .flatten()
+            .collect::<Vec<_>>()
+        };
+        assert!(known(&mut sim).is_empty(), "not met");
+        let key = crate::met_key(crate::ScriptObject::Mobile { sector, index: 0 });
+        sim.app.world_mut().resource_mut::<WorldState>().0.as_mut().unwrap().players.get_mut(&PlayerId(7)).unwrap().script_state.met.insert(key);
+        assert_eq!(known(&mut sim), [npc]);
+        assert!(known(&mut sim).is_empty(), "once");
+    }
+
+    #[test]
     fn quest_experience_from_a_script_is_shared_too() {
         use crate::script::tests::{always, block, n, op};
         let dir = tempfile::tempdir().unwrap();
