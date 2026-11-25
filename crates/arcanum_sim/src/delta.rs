@@ -140,6 +140,9 @@ pub enum LedgerDelta {
     DialogueEnded,
     /// A line a script shows in the player's message box ([`crate::script`], action 0x18).
     ScriptMessage { text: String },
+    /// NPCs this player's PC has met, newly in sight ([`crate::dialogue::send_known_npcs`]):
+    /// their real names show on hover.
+    KnownNpcs { npcs: Vec<NetId> },
     /// Open the written window (0x56bc00) on `kind` ([`crate::WRITTEN_BOOK`] and the rest) from
     /// `line` of its `.mes` (an image: `line` is its interface art).
     Written { kind: u8, line: i32 },

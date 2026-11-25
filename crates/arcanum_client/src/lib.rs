@@ -18,6 +18,7 @@ pub mod dialogue_ui;
 pub mod vote_popup;
 pub mod fate_window;
 pub mod written_window;
+pub mod world_hover;
 pub mod fonts;
 pub mod hotkey_bar;
 pub mod hud;

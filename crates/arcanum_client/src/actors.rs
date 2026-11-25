@@ -509,6 +509,7 @@ fn apply_actor_deltas(
                         bevy::sprite::Anchor::CENTER,
                         Transform::default(),
                         DespawnOnExit(AppState::InGame),
+                        crate::world_hover::ActorKind(kind),
                     ))
                     .id();
                 by_id.insert(net_id, entity);

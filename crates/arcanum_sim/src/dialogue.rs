@@ -1286,6 +1286,36 @@ pub struct NpcInfo {
     pub healer: Healer,
 }
 
+/// NPCs each player has been told it knows, by net id.
+#[derive(Resource, Debug, Default)]
+pub struct KnownSent(pub BTreeMap<PlayerId, std::collections::BTreeSet<NetId>>);
+
+/// Tells each player which NPCs in the world its PC has met (talked to, or holding a reaction),
+/// once each ([`LedgerDelta::KnownNpcs`]): the client shows their names (0x45f970: met NPCs
+/// by `description`, others by `critter_description_unknown`). Every 15 ticks.
+pub fn send_known_npcs(world: Res<crate::WorldState>, tick: Res<crate::SimTick>, npcs: Query<(&NetId, &crate::NpcSource)>, mut sent: ResMut<KnownSent>, mut outbox: ResMut<crate::Outbox>) {
+    if !tick.0.is_multiple_of(15) {
+        return;
+    }
+    let Some(save) = world.0.as_ref() else { return };
+    for (&player, saved) in &save.players {
+        let state = &saved.script_state;
+        let told = sent.0.entry(player).or_default();
+        let new: Vec<NetId> = npcs
+            .iter()
+            .filter(|(id, source)| !told.contains(id) && {
+                let key = met_key(source.object());
+                state.met.contains(&key) || state.reactions.contains_key(&key)
+            })
+            .map(|(&id, _)| id)
+            .collect();
+        if !new.is_empty() {
+            told.extend(new.iter().copied());
+            outbox.0.push((player, LedgerDelta::KnownNpcs { npcs: new }));
+        }
+    }
+}
+
 /// The NPC's key in a PC's stored reactions and NPCs met.
 pub fn met_key(npc: ScriptObject) -> String {
     match npc {

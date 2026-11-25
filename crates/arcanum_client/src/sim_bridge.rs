@@ -233,6 +233,9 @@ fn run_host(host: Option<NonSendMut<LocalHostRes>>, mut reported: Local<Option<S
     }
 }
 
+/// The vote popup, the written window and the known NPCs, as `receive_deltas` takes them.
+type LaterPanels<'w> = (Option<ResMut<'w, crate::vote_popup::Votes>>, Option<ResMut<'w, crate::written_window::WrittenPanel>>, Option<ResMut<'w, crate::world_hover::KnownNpcs>>);
+
 #[allow(clippy::too_many_arguments)]
 fn receive_deltas(
     link: Option<Res<HostLink>>,
@@ -247,7 +250,7 @@ fn receive_deltas(
     mut skill_results: Option<ResMut<crate::skill_use::SkillResults>>,
     mut rest: Option<ResMut<crate::rest_window::RestPanel>>,
     (mut dialogue, mut floats): (Option<ResMut<crate::dialogue_ui::DialogueState>>, Option<ResMut<crate::dialogue_ui::Floats>>),
-    (mut votes, mut written): (Option<ResMut<crate::vote_popup::Votes>>, Option<ResMut<crate::written_window::WrittenPanel>>),
+    (mut votes, mut written, mut known): LaterPanels,
 ) {
     let Some(link) = link else { return };
     let deltas = link.0.recv_deltas();
@@ -297,6 +300,9 @@ fn receive_deltas(
         }
         if let (LedgerDelta::Written { kind, line }, Some(written)) = (delta, written.as_mut()) {
             written.show(*kind, *line);
+        }
+        if let (LedgerDelta::KnownNpcs { npcs }, Some(known)) = (delta, known.as_mut()) {
+            known.0.extend(npcs.iter().copied());
         }
         if let (LedgerDelta::FloatText { speaker, text, colour, voice }, Some(floats)) = (delta, floats.as_mut()) {
             floats.0.push((*speaker, text.clone(), *colour, voice.clone()));
