@@ -206,6 +206,7 @@ lights after the walk.
   hotspot on the point clicked.
 - [ ] A killed NPC falls through its death animation (a big hit: by the head, body or legs) and
   stays on the last frame.
+- [ ] A knocked-out NPC falls and lies; when its fatigue is back it plays the get-up and stands.
 
 ## Repair
 

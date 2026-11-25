@@ -500,6 +500,7 @@ fn apply_actor_deltas(
     mut party: ResMut<Party>,
     mut actors: Query<(Entity, &mut Actor)>,
     mut dying: Option<ResMut<crate::combat_ui::Dying>>,
+    mut lying: Option<ResMut<crate::combat_ui::Lying>>,
 ) {
     if deltas.0.is_empty() {
         return;
@@ -521,7 +522,11 @@ fn apply_actor_deltas(
                 let rotation = CritterArt::from_id(art).rotation as usize;
                 let pc = matches!(kind, arcanum_sim::EntityKind::Pc { .. });
                 let prowling = pc && CritterArt::from_id(art).anim == arcanum_sim::prowl::ANIM_PROWL;
-                let actor = Actor { net_id, art, gait, own_gait: gait, pc, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling, action: dying.as_mut().is_some_and(|d| d.0.remove(&net_id)).then_some(((art.0 >> 6) & 0x1f, 0.0)), then: None };
+                let mut actor = Actor { net_id, art, gait, own_gait: gait, pc, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling, action: dying.as_mut().is_some_and(|d| d.0.remove(&net_id)).then_some(((art.0 >> 6) & 0x1f, 0.0)), then: None };
+                // An NPC spawned lying, then again standing, gets up.
+                if !pc && lying.as_mut().is_some_and(|l| l.gets_up(net_id, art)) {
+                    actor.action = Some((ANIM_GET_UP, 0.0));
+                }
                 // The art is set once the art index is in (`place_actors`).
                 let entity = commands
                     .spawn((
