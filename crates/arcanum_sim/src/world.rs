@@ -994,6 +994,39 @@ mod tests {
     }
 
     #[test]
+    fn a_cornered_npc_that_would_flee_surrenders() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        std::fs::create_dir_all(dir.path().join("rules")).unwrap();
+        std::fs::write(dir.path().join("rules").join("ai_params.mes"), "{0}{50 1000 1000 0 6 20 1001 1000 2 0 0 2001 100 50 20 1 1}").unwrap();
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        // 4 hit points (no stats), 2 lost: at 50 % it flees, west off the map: nowhere.
+        let mut foe = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(64, 70)).field("hp_damage", Value::Int32(2));
+        foe.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
+        std::fs::write(folder.join("G_0F.mob"), foe.build()).unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 65, y: 70 })]));
+        sim.update();
+        sim.update();
+        let npc = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::NpcSource)>().iter(world).next().unwrap().0 };
+        let pc = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::PlayerControlled)>().iter(world).next().unwrap().0 };
+        sim.app.world_mut().resource_mut::<crate::combat::CombatStarts>().0.push((npc, pc));
+        sim.update();
+        sim.receive([(PlayerId(1), crate::PlayerIntent::EndTurn)]);
+        sim.update();
+        sim.update();
+        let world = sim.app.world_mut();
+        let (fighting, surrendered) = world.query::<(&NetId, Has<crate::combat::Fighting>, Option<&crate::combat::Surrendered>)>().iter(world).find(|c| *c.0 == npc).map(|c| (c.1, c.2.copied())).unwrap();
+        assert_eq!((fighting, surrendered), (false, Some(crate::combat::Surrendered { to: pc })));
+        assert!(world.resource::<crate::combat::Combat>().0.is_none(), "no one left fighting: the fight is over");
+    }
+
+    #[test]
     fn prowling_switches_the_pcs_art_and_everyone_hears_of_it() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());

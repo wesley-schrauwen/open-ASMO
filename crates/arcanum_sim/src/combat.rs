@@ -9,9 +9,10 @@
 //!   A step costs [`STEP_AP`] (walking, 0x4b7ba0); an attack its weapon's cost
 //!   ([`attack_cost`], 0x4b7c30). Out of points, or `PlayerIntent::EndTurn` (0x4b7c90), the next
 //!   critter's turn starts. A fight with no NPC fighting or no PC standing ends at once.
-//! - **NPC turns** ([`npc_turn`]): at the start, flee when hurt to its `ai_params.mes` row's
-//!   percent ([`should_flee`]); else attack its target (or the nearest standing PC of the fight),
-//!   walking next to it first, until out of points.
+//! - **NPC turns** ([`npc_turn`]): at the start, flee by its `ai_params.mes` row
+//!   ([`should_flee`]), or give up ([`Surrendered`]) with nowhere to run; else, one turn in 20,
+//!   step back to its column 15 distance; else attack its target (or the nearest standing PC of
+//!   the fight), walking into reach first, until out of points.
 //! - **The attack** ([`resolve`], 0x4b3170): see the function. A hit makes an NPC victim fight
 //!   its attacker (0x4a9650) and join the encounter (0x4b7e00).
 //! - **Others join** ([`rally`], 0x4a9650 → 0x4a9b80 / 0x4a9e10): followers of either side;
@@ -24,8 +25,7 @@
 //! - **PCs hurt:** an NPC's hit goes on the PC's sheet (hit points, poison, fatigue) as script
 //!   damage does; a PC with no hit points left takes no turns.
 //!
-//! Not built yet: surrender, fleeing weighed against the target
-//! (columns 1-3), critical effects other than the multiplier, called shots, the light, range and
+//! Not built yet: critical effects other than the multiplier, called shots, the light, range and
 //! cover terms, ammunition, PC death.
 
 use arcanum_formats::map::TileLoc;
@@ -456,7 +456,7 @@ pub struct CombatWorld<'w, 's> {
 }
 
 /// A critter as the combat systems see it.
-type CombatantQuery<'a> = (Entity, &'a NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::Sheet>, Option<&'a crate::Inventory>, Option<&'a Fighting>, Has<crate::Walking>, Option<&'a PendingAttack>, Option<&'a crate::follow::Following>);
+type CombatantQuery<'a> = (Entity, &'a NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::Sheet>, Option<&'a crate::Inventory>, Option<&'a Fighting>, Has<crate::Walking>, Option<&'a PendingAttack>, Option<&'a crate::follow::Following>, Option<&'a Surrendered>);
 
 /// One critter of the query, copied out.
 #[derive(Clone)]
@@ -475,6 +475,8 @@ struct Seen {
     pending: Option<PendingAttack>,
     /// The PC it follows.
     leader: Option<PlayerId>,
+    /// Whom it gave up to.
+    surrendered: Option<NetId>,
 }
 
 impl Seen {
@@ -486,7 +488,8 @@ impl Seen {
 
 fn seen(q: &Query<CombatantQuery>) -> Vec<Seen> {
     q.iter()
-        .map(|(entity, &net_id, at, pc, npc, sheet, inventory, fighting, walking, pending, following)| Seen {
+        .map(|(entity, &net_id, at, pc, npc, sheet, inventory, fighting, walking, pending, following, surrendered)| Seen {
+            surrendered: surrendered.map(|s| s.to),
             leader: following.map(|f| f.leader),
             target: fighting.map(|f| f.target),
             entity,
@@ -577,6 +580,36 @@ impl CombatWorld<'_, '_> {
         }
         let row = self.npc_int(source, "npc_ai_data").max(0) as usize;
         self.ai.0.as_ref()?.get(row).copied()
+    }
+
+    /// A critter's hit points left in percent (0x4ab400).
+    fn hp_percent(&self, c: &Seen) -> i32 {
+        let (left, max) = match (c.player, c.npc) {
+            (Some(p), _) => {
+                let Some(saved) = self.world.0.as_ref().and_then(|w| w.players.get(&p)) else { return 100 };
+                let max = self.rules.0.derived(&saved.blueprint.sheet).hit_points;
+                (max - saved.blueprint.sheet.hp_damage, max)
+            }
+            (None, Some(n)) => self.map.npc_hp(n.sector, n.index).unwrap_or((1, 1)),
+            _ => return 100,
+        };
+        if max > 0 { left * 100 / max } else { 100 }
+    }
+
+    /// The side a critter stands with (0x4ae0a0): a PC and the NPCs following it; an NPC alone.
+    fn party(&self, c: &Seen, all: &[Seen]) -> Party {
+        let level = |m: &Seen| match (&m.sheet, m.npc) {
+            (Some(sheet), _) => sheet.level,
+            (None, Some(n)) => self.map.mobiles.get(&n.sector).and_then(|v| v.get(n.index as usize)).map_or(0, |o| npc_stat(o, &self.map.prototypes, STAT_LEVEL)),
+            _ => 0,
+        };
+        match c.player.or(c.leader) {
+            Some(p) => {
+                let members: Vec<&Seen> = all.iter().filter(|m| m.player == Some(p) || m.leader == Some(p)).collect();
+                Party { count: members.len() as i32, levels: members.iter().map(|m| level(m)).sum() }
+            }
+            None => Party { count: 1, levels: level(c) },
+        }
     }
 
     /// An NPC's field, its prototype's where it has none.
@@ -782,8 +815,9 @@ fn next_turn(w: &mut CombatWorld, all: &[Seen]) {
     }
 }
 
-/// The attacker strikes if the target is in reach and the points last; a melee attacker out of
-/// reach walks next to it first, as far as its points go (0x4b78d0). True if something changed.
+/// The attacker strikes if the target is in reach and the points last; out of reach it walks
+/// towards it first until in reach, as far as its points go (0x4b78d0). True if something
+/// changed.
 fn attack_or_approach(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen) -> bool {
     let fighter = w.fighter(attacker);
     let cost = fighter.attack_cost();
@@ -799,13 +833,14 @@ fn attack_or_approach(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen]
         strike(commands, w, all, attacker, victim, &fighter);
         return true;
     }
-    if fighter.reach() > 1 {
-        return false;
-    }
-    // A path to a tile next to the target, as many steps as the points pay for.
+    // A path towards the target, to the first tile in reach (next to it for melee), as many
+    // steps as the points pay for.
     let goals = neighbours(victim.at);
     let path = goals.into_iter().filter_map(|g| crate::find_path(&*w.map, attacker.at, g).ok()).min_by_key(Vec::len);
     let Some(mut path) = path else { return false };
+    if let Some(i) = path.iter().position(|&t| reach_between(t, victim.at) <= fighter.reach()) {
+        path.truncate(i + 1);
+    }
     let steps = (ap / STEP_AP).max(0) as usize;
     path.truncate(steps);
     if path.is_empty() {
@@ -841,12 +876,36 @@ pub const OCF_NO_FLEE: i32 = 0x0800_0000;
 /// How far a fleeing NPC runs in one turn at most, in tiles (builder's call).
 pub const FLEE_TILES: u32 = 8;
 
-/// Whether an NPC at `hp_percent` flees (0x4ab2f0): at or below its row's percent (column 0),
-/// unless it never flees. The original also weighs the target's hit points and the distances
-/// (columns 1-3); not built.
-pub fn should_flee(hp_percent: i32, row: &[i32; 17], critter_flags: i32) -> bool {
-    critter_flags & OCF_NO_FLEE == 0 && hp_percent <= row[0]
+/// A side's weight for fleeing (0x4ae0a0): how many, and their levels summed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Party {
+    pub count: i32,
+    pub levels: i32,
 }
+
+/// Whether an NPC flees its target (0x4ab2f0), never with `OCF_NO_FLEE`: not from a target below
+/// its row's column 3 hit point percent; at or below its own column 0 percent; else when the
+/// target's side is column 1 larger, or (when not) its levels column 2 higher.
+pub fn should_flee(hp_percent: i32, target_percent: i32, own: Party, theirs: Party, row: &[i32; 17], critter_flags: i32) -> bool {
+    if critter_flags & OCF_NO_FLEE != 0 || target_percent < row[3] {
+        return false;
+    }
+    if hp_percent <= row[0] {
+        return true;
+    }
+    if theirs.count - own.count < row[1] { row[2] <= theirs.levels - own.levels } else { true }
+}
+
+/// Fights no more: it gave up to `to` (`critter_flags` 0x4000, 0x4aabe0 state 3).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Surrendered {
+    pub to: NetId,
+}
+
+/// The hit point percent at which a surrendered NPC may take heart (0x4a945a), and the chance a
+/// tick (1 in 500).
+pub const RECOVER_PERCENT: i32 = 80;
+pub const RECOVER_ODDS: i32 = 500;
 
 /// A fighting NPC's turn: at its start, flee if hurt enough (it walks away and stops fighting);
 /// else attack its target, or a standing PC of the fight when that one is gone, walking next to
@@ -856,25 +915,35 @@ fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[See
     if !npc.fighting {
         return false;
     }
+    let row = w.ai_row(source);
     if fresh {
-        let row = w.ai_row(source);
         let flags = w.npc_int(source, "critter_flags");
-        let percent = w.map.npc_hp(source.sector, source.index).map_or(100, |(left, max)| if max > 0 { left * 100 / max } else { 100 });
-        if let Some(row) = row
-            && should_flee(percent, &row, flags)
-        {
-            let from_critter = npc.target.and_then(|t| all.iter().find(|c| c.net_id == t));
+        let from_critter = npc.target.and_then(|t| all.iter().find(|c| c.net_id == t));
+        let percent = w.hp_percent(npc);
+        let flees = match (row, from_critter) {
+            (Some(row), Some(t)) => should_flee(percent, w.hp_percent(t), w.party(npc, all), w.party(t, all), &row, flags),
+            (Some(row), None) => should_flee(percent, 100, Party::default(), Party::default(), &row, flags),
+            _ => false,
+        };
+        if flees {
             let from = from_critter.map_or(npc.at, |c| c.at);
             commands.entity(npc.entity).remove::<Fighting>();
             if let Some(player) = from_critter.and_then(|c| c.player) {
                 w.events.0.push((source.object(), EVENT_EXIT_COMBAT, player));
             }
             let away = flee_goal(npc.at, from, FLEE_TILES);
-            if let Ok(mut path) = crate::find_path(&*w.map, npc.at, away) {
-                let ap = w.combat.0.as_ref().map_or(0, |e| e.ap);
-                path.truncate((ap / STEP_AP).max(0) as usize);
-                if !path.is_empty() {
+            let ap = w.combat.0.as_ref().map_or(0, |e| e.ap);
+            let path = crate::find_path(&*w.map, npc.at, away).ok().map(|mut p| {
+                p.truncate((ap / STEP_AP).max(0) as usize);
+                p
+            });
+            match path.filter(|p| !p.is_empty()) {
+                Some(path) => {
                     commands.entity(npc.entity).insert(crate::Walking { steps: path.into(), progress: 0.0 });
+                }
+                // Nowhere to run: it gives up (0x4ac180 → 0x4ac620).
+                None => {
+                    commands.entity(npc.entity).insert(Surrendered { to: from_critter.map_or(npc.net_id, |c| c.net_id) });
                 }
             }
             if let Some(e) = w.combat.0.as_mut() {
@@ -897,6 +966,20 @@ fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[See
     let Some(target) = target else { return false };
     if npc.target != Some(target.net_id) {
         commands.entity(npc.entity).insert(Fighting { target: target.net_id });
+    }
+    // Keeping away (0x4ac6e0 → 0x4ac7b0): one in 20 turns, a fighter with a column 15 distance
+    // nearer than it steps back to it.
+    if fresh
+        && let Some(keep) = row.map(|r| r[15]).filter(|&k| k > 1)
+        && reach_between(npc.at, target.at) < keep as u32
+        && w.rng.range(1, 20) == 1
+        && let Some(path) = back_off(w, npc.at, target.at, keep as u32)
+    {
+        if let Some(e) = w.combat.0.as_mut() {
+            e.ap -= path.len() as i32 * STEP_AP;
+        }
+        commands.entity(npc.entity).insert(crate::Walking { steps: path.into(), progress: 0.0 });
+        return true;
     }
     attack_or_approach(commands, w, all, npc, &target)
 }
@@ -924,6 +1007,8 @@ pub fn notice_reach(pe: i32, prowler: Option<i32>) -> u32 {
 }
 
 type FoeQuery<'a> = (&'a NetId, &'a crate::Position, &'a crate::NpcSource);
+/// NPCs not fighting, following or surrendered.
+type AtPeace = (Without<Fighting>, Without<crate::follow::Following>, Without<Surrendered>);
 type QuarryQuery<'a> = (&'a NetId, &'a crate::Position, &'a crate::PlayerControlled, &'a crate::Sheet, Has<crate::Prowling>);
 
 /// NPCs that are not fighting look for PCs they are hostile to within reach (0x4aa0d0 →
@@ -937,7 +1022,7 @@ pub fn notice_foes(
     rules: Res<crate::SimRules>,
     (mut ai, mut reputations, vfs): (ResMut<AiParams>, ResMut<crate::ReputationTable>, Option<Res<crate::SimVfs>>),
     mut starts: ResMut<CombatStarts>,
-    npcs: Query<FoeQuery, (Without<Fighting>, Without<crate::follow::Following>)>,
+    npcs: Query<FoeQuery, AtPeace>,
     pcs: Query<QuarryQuery>,
     talking: Query<&crate::Conversation>,
 ) {
@@ -991,6 +1076,39 @@ fn flee_goal(at: TileLoc, from: TileLoc, tiles: u32) -> TileLoc {
     TileLoc { x, y }
 }
 
+/// The level stat (0x11).
+pub const STAT_LEVEL: usize = 0x11;
+
+/// A path from `at` away from `from` that ends at least `keep` tiles from it (0x4ac7b0), cut to
+/// the turn's points; none if it cannot get farther.
+fn back_off(w: &CombatWorld, at: TileLoc, from: TileLoc, keep: u32) -> Option<Vec<TileLoc>> {
+    let ap = w.combat.0.as_ref().map_or(0, |e| e.ap);
+    let mut path = crate::find_path(&*w.map, at, flee_goal(at, from, keep)).ok()?;
+    if let Some(i) = path.iter().position(|&t| reach_between(t, from) >= keep) {
+        path.truncate(i + 1);
+    }
+    path.truncate((ap / STEP_AP).max(0) as usize);
+    (!path.is_empty()).then_some(path)
+}
+
+/// Surrendered NPCs take heart (0x4ac660, 0x4a945a): when whom they gave up to is gone, dead or
+/// down, or at [`RECOVER_PERCENT`] hit points or more one tick in [`RECOVER_ODDS`].
+pub fn recover_surrendered(mut commands: Commands, map: Res<crate::LoadedMap>, world: Res<crate::WorldState>, rules: Res<crate::SimRules>, mut rng: ResMut<HostRng>, npcs: Query<(Entity, &Surrendered, &crate::NpcSource)>, critters: Query<(&NetId, Option<&crate::PlayerControlled>, Option<&crate::NpcSource>)>) {
+    for (entity, s, source) in &npcs {
+        let to = critters.iter().find(|c| *c.0 == s.to);
+        let gone = match to {
+            None => true,
+            Some((_, Some(pc), _)) => world.0.as_ref().and_then(|w| w.players.get(&pc.0)).is_none_or(|p| p.blueprint.sheet.hp_damage >= rules.0.derived(&p.blueprint.sheet).hit_points),
+            Some((_, None, Some(n))) => map.is_dead(n.sector, n.index),
+            Some(_) => true,
+        };
+        let heart = map.npc_hp(source.sector, source.index).is_some_and(|(left, max)| max > 0 && left * 100 / max >= RECOVER_PERCENT) && rng.range(1, RECOVER_ODDS) == 1;
+        if gone || heart {
+            commands.entity(entity).remove::<Surrendered>();
+        }
+    }
+}
+
 /// The eight tiles round `at`.
 pub fn neighbours(at: TileLoc) -> Vec<TileLoc> {
     let mut out = Vec::new();
@@ -1021,7 +1139,16 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
         return;
     }
     let Some(source) = victim.npc else { return };
-    commands.entity(victim.entity).insert(Fighting { target: attacker.net_id });
+    // One who gave up fights again only when whom it gave up to attacks it (0x4aa620 case 3).
+    match victim.surrendered {
+        Some(to) if to != attacker.net_id => {}
+        Some(_) => {
+            commands.entity(victim.entity).remove::<Surrendered>().insert(Fighting { target: attacker.net_id });
+        }
+        None => {
+            commands.entity(victim.entity).insert(Fighting { target: attacker.net_id });
+        }
+    }
     if !outcome.hit || outcome.hp <= 0 {
         return;
     }
@@ -1086,7 +1213,7 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
     let player = attacker.player.or(victim.player);
     for c in all {
         let Some(source) = c.npc else { continue };
-        if c.net_id == attacker.net_id || c.net_id == victim.net_id || c.fighting || w.joined.contains(&c.net_id) || w.map.is_dead(source.sector, source.index) || !crate::within_radius(c.at, victim.at, ENGAGE_RADIUS) {
+        if c.net_id == attacker.net_id || c.net_id == victim.net_id || c.fighting || c.surrendered.is_some() || w.joined.contains(&c.net_id) || w.map.is_dead(source.sector, source.index) || !crate::within_radius(c.at, victim.at, ENGAGE_RADIUS) {
             continue;
         }
         let own = w.npc_int(source, "npc_faction");
@@ -1162,9 +1289,14 @@ mod tests {
     fn npcs_flee_by_their_ai_row() {
         let rows = parse_ai_params(&arcanum_formats::mes::MesFile::parse(b"{0}{0 1000 1000 20 6 20 1001 1000 2 0 0 2001 100 50 20 1 1}{1}{50 20 3 20 20 20 20 20 2 0 0 2001 100 15 100 0 1}").unwrap());
         assert_eq!(rows.len(), 2);
-        assert!(!should_flee(10, &rows[0], 0), "row 0 never flees");
-        assert!(should_flee(50, &rows[1], 0) && !should_flee(51, &rows[1], 0));
-        assert!(!should_flee(10, &rows[1], OCF_NO_FLEE));
+        let one = |levels| Party { count: 1, levels };
+        assert!(!should_flee(10, 100, one(1), one(1), &rows[0], 0), "row 0: only from a side 1000 larger");
+        assert!(should_flee(50, 100, one(1), one(1), &rows[1], 0) && !should_flee(51, 100, one(1), one(1), &rows[1], 0));
+        assert!(!should_flee(10, 100, one(1), one(1), &rows[1], OCF_NO_FLEE));
+        assert!(!should_flee(10, 19, one(1), one(1), &rows[1], 0), "not from a target below column 3");
+        assert!(should_flee(60, 100, one(1), one(4), &rows[1], 0), "a side 3 levels higher");
+        assert!(!should_flee(60, 100, one(1), one(3), &rows[1], 0));
+        assert!(should_flee(60, 100, one(1), Party { count: 21, levels: 0 }, &rows[1], 0), "a side 20 larger");
         assert_eq!(flee_goal(TileLoc { x: 10, y: 10 }, TileLoc { x: 9, y: 10 }, 8), TileLoc { x: 18, y: 10 });
     }
 

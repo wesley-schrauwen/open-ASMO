@@ -142,8 +142,8 @@ fn at_offset(at: TileLoc, dx: i32, dy: i32) -> Option<TileLoc> {
 
 type ThinkerQuery<'a> = (Entity, &'a mut Position, &'a mut Standpoints, Has<Active>, Has<Walking>);
 
-/// NPCs that think for themselves: not following, not fighting.
-type IdleFilter = (With<Npc>, Without<crate::follow::Following>, Without<crate::combat::Fighting>);
+/// NPCs that think for themselves: not following, fighting or surrendered.
+type IdleFilter = (With<Npc>, Without<crate::follow::Following>, Without<crate::combat::Fighting>, Without<crate::combat::Surrendered>);
 
 /// Runs each NPC's heartbeat (one tick of time), as described in the module docs.
 pub fn npc_idle(
