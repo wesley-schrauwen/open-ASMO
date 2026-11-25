@@ -273,8 +273,16 @@ of `combat_design.md` come after the original's rules work.
      hit points are left alone (builder's call). Floats "Armor damaged", "Weapon damaged",
      "Armor broken", "Weapon broken". The wear is kept on the item, carried or dropped.
    - Firearms' chance corrected to 5 × level + 25 (tech table 0x4c6ad8 index 1).
-   - Not built: armour damaged by ordinary hits (damage array [0x14], weapons with `weapon_flags`
-     0x100), critical misses wearing the attacker's weapon, worn items weakening.
+   - Ordinary hits (`feat/armour-wear`): the damage array is normal, poison, electrical, fire,
+     fatigue at +0x44 (entry [0x14] is fire, not item damage). A hit with fire damage (0x4b454f)
+     or from a weapon of `weapon_flags` 0x100 (0x4b458d) sets the wear flag 0x100000; 0x4b4d5e →
+     0x4b54b0 wears the armour at the hit's part by 10 (0 on an ordinary hit: body armour).
+   - Finding, not built: 0x4b5580 wears the attacker's weapon on a hit with hit-point damage
+     when the attack's flags 0x10000 and `[6] == 2` hold (their meaning not traced), by the
+     target's field 0x1e (0 → 4, 1 → 3, 2 → 2, 3 → 1, 5 / 0xc → 5), cut by the weapon's field
+     0x60 percent; bare-handed, the attacker takes it as hit points (at most to 1). Also not
+     built: the shield's wear (0x4b23b0, flag 0x4000), critical misses wearing the attacker's
+     weapon, worn items weakening.
 10. **Animations** (built, `feat/combat-anims`; client `combat_ui`, `actors`).
    - On each attack the attacker faces its target and plays its attack once (20 / 21 by body;
      `Actor::action`, held at most 3 s).

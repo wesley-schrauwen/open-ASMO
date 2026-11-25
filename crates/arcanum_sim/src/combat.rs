@@ -109,6 +109,8 @@ pub struct Weapon {
     pub miss_effect: i32,
     /// Hit points lost in percent (the critical miss's wear term, 0x4c82e0).
     pub worn: i32,
+    /// `weapon_flags` [`WEAPON_WEARS_ARMOUR`]: each hit wears the armour it lands on.
+    pub wears_armour: bool,
 }
 
 /// `weapon_ammo_type` of weapons that use none (0x465ca0).
@@ -432,6 +434,11 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
             out.items |= WEAPON_DAMAGED;
         }
     }
+    // Any hit with fire damage (0x4b454f) or from a weapon of flag 0x100 (0x4b4592) wears the
+    // armour where it lands (0x4b4d5e → 0x4b54b0), by 10 as a critical's.
+    if dealt[3] > 0 || weapon.wears_armour {
+        out.items |= ARMOUR_DAMAGED;
+    }
     out.hp = (dealt[0] + dealt[2] + dealt[3]) * out.multiplier / 100;
     out.poison = dealt[1];
     out.fatigue = dealt[4];
@@ -600,11 +607,14 @@ pub fn weapon_of(item: &Object, prototypes: &Prototypes) -> Weapon {
         miss_chance: int("weapon_magic_crit_miss_chance"),
         miss_effect: int("weapon_magic_crit_miss_effect"),
         worn: 0,
+        wears_armour: int("weapon_flags") & WEAPON_WEARS_ARMOUR != 0,
     }
 }
 
 /// `weapon_flags`: a throwing weapon (0x465d80).
 pub const WEAPON_THROWN: i32 = 0x40;
+/// `weapon_flags`: its hits wear the armour they land on (0x4b4585, tested at 0x4b458d).
+pub const WEAPON_WEARS_ARMOUR: i32 = 0x100;
 /// A bare hand's speed (0x465cf0 with no weapon).
 pub const UNARMED_SPEED: i32 = 10;
 
@@ -1137,7 +1147,7 @@ impl CombatWorld<'_, '_> {
         }
     }
 
-    /// Wears the victim's items a critical hit struck (0x4b4390): the armour where it landed and
+    /// Wears the victim's items a hit struck (0x4b4390): the armour where it landed and
     /// its weapon, if it has them; what happened ([`AttackOutcome::items`]).
     fn wear_items(&mut self, victim: &Seen, outcome: &AttackOutcome) -> u8 {
         let mut inventory = match (victim.player, victim.npc) {
@@ -2260,5 +2270,18 @@ mod tests {
         let misses = (0..200).filter(|_| !resolve(&novice, &armoured, &mut rng).hit).count();
         assert!(misses > 100, "25 %: {misses}");
     }
-}
 
+    #[test]
+    fn fire_and_flagged_weapons_wear_armour_on_every_hit() {
+        let master = |w: Weapon| Fighter { levels: vec![(SKILL_MELEE, 20)], weapon: Some(Weapon { skill: SKILL_MELEE, ..w }), ..Default::default() };
+        let target = Fighter::default();
+        let mut rng = HostRng::default();
+        let hits = |f: &Fighter, rng: &mut HostRng| (0..200).map(|_| resolve(f, &target, rng)).filter(|o| o.hit && !o.critical).collect::<Vec<_>>();
+        let plain = master(Weapon { damage: [(4, 4), (0, 0), (0, 0), (0, 0), (0, 0)], ..Default::default() });
+        assert!(hits(&plain, &mut rng).iter().all(|o| o.items & ARMOUR_DAMAGED == 0), "an ordinary hit");
+        let torch = master(Weapon { damage: [(0, 0), (0, 0), (0, 0), (2, 2), (0, 0)], ..Default::default() });
+        assert!(hits(&torch, &mut rng).iter().all(|o| o.items & ARMOUR_DAMAGED != 0), "fire damage");
+        let flagged = master(Weapon { damage: [(4, 4), (0, 0), (0, 0), (0, 0), (0, 0)], wears_armour: true, ..Default::default() });
+        assert!(hits(&flagged, &mut rng).iter().all(|o| o.items & ARMOUR_DAMAGED != 0), "weapon_flags 0x100");
+    }
+}
