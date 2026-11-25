@@ -97,6 +97,9 @@ pub struct ScriptGlobals {
     /// sector key.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub blocked_sectors: BTreeSet<u64>,
+    /// The newspaper queue ([`crate::newspaper`]).
+    #[serde(default)]
+    pub newspapers: crate::newspaper::Newspapers,
 }
 
 impl ScriptGlobals {
@@ -442,6 +445,10 @@ pub trait ScriptContext {
     }
     /// The item `holder` has in inventory slot `slot` (0x4649c0).
     fn in_slot(&mut self, _holder: Self::Object, _slot: i32) -> Option<Self::Object> {
+        None
+    }
+    /// Entry `key` of `mes/gamenewspaper.mes`.
+    fn newspaper_text(&mut self, _key: i32) -> Option<String> {
         None
     }
     /// Sets a written item's first line (field 0xcb, action 0x5e).
@@ -1549,6 +1556,22 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
             let n = value(ctx, attachment, run, 1);
             for o in objects(run, ops[0], line, unsupported)? {
                 ctx.set_written_line(o, n);
+            }
+            Step::Next
+        }
+        // Queue paper N, first in line with a priority (0x4bf140).
+        0x55 => {
+            let (number, priority) = (value(ctx, attachment, run, 0), value(ctx, attachment, run, 1));
+            ctx.globals().newspapers.queue(number, priority != 0);
+            Step::Next
+        }
+        // Float today's headline over each object.
+        0x56 => {
+            let today = ctx.globals().newspapers.today();
+            if let Some(text) = ctx.newspaper_text(today) {
+                for o in objects(run, ops[0], line, unsupported)? {
+                    ctx.float_text(o, crate::newspaper::headline(&text));
+                }
             }
             Step::Next
         }

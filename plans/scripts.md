@@ -521,7 +521,20 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      and wrapped; a book's two pages (0x5ca618) with previous / next (arts 495 / 496 at (213, 77)
      / (675, 77)); a plaque in (269, 40, 428, 327) in white; a note's entries joined in font 497
      in (349, 49, 215, 300). A click closes it (Escape too, builder's call).
-   - **Not built:** newspapers and telegrams; the alternate background 817; the sounds.
+   - **Newspapers and telegrams** (built, `feat/newspapers`): a paper is `mes/gamenewspaper.mes`
+     keys: its header (table 0x5ca638: font, key, x, y, alignment), the headline (the number)
+     in (186, 97, 255, 90), then up to nine stories flowing down four columns (0x5ca738), then
+     filler stories from keys 10 on, starting at number / 10 + 10, round the ones there. A
+     telegram (`mes/gametelegram.mes`): eleven labels (0x5ca538, keys 1000-1010), the notice
+     (1011, font 481) and the entries from its line joined in font 480 (0x5ca508).
+   - **The newspaper queue** (module "Newspaper", 0x4bf060-0x4bf330; `arcanum_sim::newspaper`,
+     saved in the script state): four past papers, today's, up to twenty waiting; 5000 at the
+     start. Action 0x55 queues (first in line with a priority; scripted papers below 5000 not
+     twice); each game day the next comes out, or a random stock paper
+     `(rand(0, m) + 500) × 10`; action 0x56 floats today's headline. Builder's call: a new paper
+     each game day (the original's event every 24 hours from the start); which paper a bought
+     or found newspaper item shows is its own line (the `P:` seller not traced).
+   - **Not built:** the alternate background 817 and header (0x56bb60, map 0x36f8); the sounds.
    - **Reading items** (built, `feat/read-items`; 0x56bb60): a written item (type 13) released
      on the inventory's use box, or right-clicked when not looting (builder's call: the
      original's use), opens the window on its `written_subtype` (schematics, 5, not here) from

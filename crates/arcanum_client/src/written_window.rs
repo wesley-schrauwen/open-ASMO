@@ -111,19 +111,25 @@ pub struct Piece {
 /// stacked under the last, running on to the next page when it does not fit (at most
 /// [`MOST_PAGES`]). `font` gives a loaded font by number; an entry without one is left out.
 pub fn paginate<'a>(entries: &[Entry], font: impl Fn(u32) -> Option<&'a BitmapFont>, width: u32, height: u32) -> Vec<Vec<Piece>> {
+    flow(entries, font, width, |page| (page < MOST_PAGES).then_some(height))
+}
+
+/// Lays `entries` down a run of rectangles `width` wide, rectangle `i` `height(i)` tall (font
+/// pixels), as [`paginate`] does; stops when `height` has no more rectangles (0x56c800).
+pub fn flow<'a>(entries: &[Entry], font: impl Fn(u32) -> Option<&'a BitmapFont>, width: u32, height: impl Fn(usize) -> Option<u32>) -> Vec<Vec<Piece>> {
     let mut pages = vec![Vec::new()];
+    let Some(mut room_height) = height(0) else { return Vec::new() };
     let mut y = 0;
     for entry in entries {
         let Some(f) = font(entry.font) else { continue };
         let line_height = f.line_height.max(1);
         let mut lines: Vec<String> = f.layout(&entry.text, Some(width)).into_iter().map(|l| if l.indent > 0 { format!("\t{}", l.text) } else { l.text }).collect();
         while !lines.is_empty() {
-            let room = ((height.saturating_sub(y)) / line_height) as usize;
+            let room = ((room_height.saturating_sub(y)) / line_height) as usize;
             if room == 0 {
-                if pages.len() >= MOST_PAGES {
-                    return pages;
-                }
+                let Some(next) = height(pages.len()) else { return pages };
                 pages.push(Vec::new());
+                room_height = next;
                 y = 0;
                 continue;
             }
@@ -134,6 +140,85 @@ pub fn paginate<'a>(entries: &[Entry], font: impl Fn(u32) -> Option<&'a BitmapFo
         }
     }
     pages
+}
+
+/// A label drawn once at a point (0x56c630): font, text, x, y, alignment (0 left, 1 centred
+/// on x, 2 ending at x), in the window.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Label {
+    pub font: u32,
+    pub text: String,
+    pub at: (i32, i32),
+    pub align: u8,
+}
+
+/// The newspaper's header (table 0x5ca638): font, key, x, y, alignment.
+pub const NEWSPAPER_HEADER: [(u32, u32, i32, i32, u8); 6] = [(485, 0, 216, 44, 1), (484, 1, 453, 41, 1), (485, 0, 689, 44, 1), (482, 2, 194, 76, 0), (482, 3, 449, 76, 1), (482, 2, 712, 76, 2)];
+/// The headline's rectangle (0x5ca728) and the body's columns (0x5ca738), in the window.
+pub const HEADLINE: Rect = Rect { min: Vec2::new(186.0, 97.0), max: Vec2::new(441.0, 187.0) };
+pub const COLUMNS: [Rect; 4] = [
+    Rect { min: Vec2::new(188.0, 196.0), max: Vec2::new(308.0, 371.0) },
+    Rect { min: Vec2::new(328.0, 196.0), max: Vec2::new(448.0, 371.0) },
+    Rect { min: Vec2::new(460.0, 103.0), max: Vec2::new(580.0, 373.0) },
+    Rect { min: Vec2::new(592.0, 103.0), max: Vec2::new(712.0, 373.0) },
+];
+/// The filler stories' first key (0x56baa0 counts those from 10 to 999).
+pub const FILLER_FROM: u32 = 10;
+/// The telegram's labels (table 0x5ca538): font, key, x, y, alignment.
+pub const TELEGRAM_LABELS: [(u32, u32, i32, i32, u8); 11] = [
+    (481, 1000, 342, 35, 1),
+    (481, 1001, 342, 41, 1),
+    (481, 1002, 321, 50, 0),
+    (481, 1003, 321, 59, 0),
+    (481, 1004, 321, 68, 0),
+    (479, 1005, 450, 36, 1),
+    (479, 1006, 450, 61, 1),
+    (481, 1007, 558, 35, 1),
+    (481, 1008, 539, 50, 0),
+    (481, 1009, 539, 60, 0),
+    (481, 1010, 539, 69, 0),
+];
+/// The telegram's notice (key 1011, font 481, 0x5ca518) and its body (font 480, 0x5ca508).
+pub const TELEGRAM_NOTICE: (u32, u32, Rect) = (481, 1011, Rect { min: Vec2::new(335.0, 90.0), max: Vec2::new(569.0, 110.0) });
+pub const TELEGRAM_BODY: (u32, Rect) = (480, Rect { min: Vec2::new(327.0, 126.0), max: Vec2::new(577.0, 366.0) });
+
+/// What a written window shows: text flowing through rectangles, and labels.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Layout {
+    /// Each flow: its entries, and its rectangles (a book's: the two pages, again and again).
+    pub flows: Vec<(Vec<Entry>, Vec<Rect>, bool)>,
+    pub labels: Vec<Label>,
+}
+
+/// The layout of `kind` from `line` of `mes` (0x56bcc0 / 0x56c050).
+pub fn layout(kind: u8, line: i32, mes: &MesFile) -> Layout {
+    let texts = |from: i32, most: u32| entries_from(mes, from, most);
+    match i32::from(kind) {
+        arcanum_sim::WRITTEN_BOOK => Layout { flows: vec![(texts(line, MOST_ENTRIES).iter().map(|t| parse_entry(t)).collect(), BOOK_PAGES.to_vec(), true)], labels: Vec::new() },
+        arcanum_sim::WRITTEN_PLAQUE => Layout { flows: vec![(texts(line, MOST_ENTRIES).iter().map(|t| parse_entry(t)).collect(), vec![PLAQUE_TEXT], false)], labels: Vec::new() },
+        arcanum_sim::WRITTEN_NOTE => Layout { flows: vec![(vec![Entry { font: NOTE_FONT, centre: false, text: texts(line, MOST_ENTRIES).join("\n") }], vec![NOTE_TEXT], false)], labels: Vec::new() },
+        arcanum_sim::WRITTEN_TELEGRAM => {
+            let mut labels: Vec<Label> = TELEGRAM_LABELS.iter().filter_map(|&(font, key, x, y, align)| Some(Label { font, text: mes.get(key)?.to_string(), at: (x, y), align })).collect();
+            let notice = mes.get(TELEGRAM_NOTICE.1).map(|t| vec![Entry { font: TELEGRAM_NOTICE.0, centre: false, text: t.to_string() }]).unwrap_or_default();
+            let body = vec![Entry { font: TELEGRAM_BODY.0, centre: false, text: texts(line, MOST_ENTRIES).join("\n") }];
+            labels.retain(|l| !l.text.is_empty());
+            Layout { flows: vec![(notice, vec![TELEGRAM_NOTICE.2], false), (body, vec![TELEGRAM_BODY.1], false)], labels }
+        }
+        arcanum_sim::WRITTEN_NEWSPAPER => {
+            let labels = NEWSPAPER_HEADER.iter().filter_map(|&(font, key, x, y, align)| Some(Label { font, text: mes.get(key)?.to_string(), at: (x, y), align })).collect();
+            let headline = texts(line, 1).iter().map(|t| parse_entry(t)).collect();
+            // The paper's own stories (at most nine), then filler stories from keys 10 on,
+            // starting at line / 10 + 10 and wrapping round (0x56c16f).
+            let mut body: Vec<Entry> = texts(line + 1, MOST_ENTRIES - 1).iter().map(|t| parse_entry(t)).collect();
+            let fillers = (FILLER_FROM..1000).take_while(|&k| mes.get(k).is_some()).count() as i32;
+            if fillers > 0 {
+                let start = (line / 10 + 10 - FILLER_FROM as i32).rem_euclid(fillers);
+                body.extend((0..fillers).filter_map(|i| mes.get(FILLER_FROM + ((start + i) % fillers) as u32)).map(parse_entry));
+            }
+            Layout { flows: vec![(headline, vec![HEADLINE], false), (body, COLUMNS.to_vec(), false)], labels }
+        }
+        _ => Layout::default(),
+    }
 }
 
 /// The entries of `mes` from `line`: at most `most`, up to the first missing.
@@ -147,6 +232,8 @@ pub fn mes_file(kind: u8) -> Option<&'static str> {
     match i32::from(kind) {
         arcanum_sim::WRITTEN_BOOK => Some("mes/gamebook.mes"),
         arcanum_sim::WRITTEN_NOTE => Some("mes/gamenote.mes"),
+        arcanum_sim::WRITTEN_NEWSPAPER => Some(arcanum_sim::newspaper::NEWSPAPER_MES),
+        arcanum_sim::WRITTEN_TELEGRAM => Some("mes/gametelegram.mes"),
         arcanum_sim::WRITTEN_PLAQUE => Some("mes/gameplaque.mes"),
         _ => None,
     }
@@ -169,13 +256,14 @@ impl Plugin for WrittenWindowPlugin {
     }
 }
 
-/// What the window needs from the game data: the interface art names, the texts and fonts.
+/// What the window needs from the game data: the interface art names, the layout and fonts.
 #[derive(Default)]
 struct Loaded {
     names: Option<MesFile>,
     fonts: std::collections::BTreeMap<u32, Handle<BitmapFontAsset>>,
-    entries: Vec<Entry>,
-    pages: Option<Vec<Vec<Piece>>>,
+    layout: Layout,
+    /// Each flow's pages.
+    pages: Option<Vec<Vec<Vec<Piece>>>>,
     shown: Option<((u8, i32), usize)>,
 }
 
@@ -231,13 +319,8 @@ fn show_window(
         if loaded.names.is_none() {
             loaded.names = read(interface::INDEX);
         }
-        let texts = mes_file(kind).and_then(read).map(|m| entries_from(&m, line, MOST_ENTRIES)).unwrap_or_default();
-        loaded.entries = if i32::from(kind) == arcanum_sim::WRITTEN_NOTE {
-            vec![Entry { font: NOTE_FONT, centre: false, text: texts.join("\n") }]
-        } else {
-            texts.iter().map(|t| parse_entry(t)).collect()
-        };
-        let wanted: std::collections::BTreeSet<u32> = loaded.entries.iter().map(|e| e.font).collect();
+        loaded.layout = mes_file(kind).and_then(read).map(|m| layout(kind, line, &m)).unwrap_or_default();
+        let wanted: std::collections::BTreeSet<u32> = loaded.layout.flows.iter().flat_map(|f| f.0.iter().map(|e| e.font)).chain(loaded.layout.labels.iter().map(|l| l.font)).collect();
         let names = loaded.names.clone().unwrap_or_default();
         loaded.fonts = wanted.into_iter().filter_map(|f| Some((f, assets.load(interface_file(&names, f)?)))).collect();
         loaded.pages = None;
@@ -248,13 +331,18 @@ fn show_window(
         if pending {
             return;
         }
-        let page_rect = match i32::from(kind) {
-            arcanum_sim::WRITTEN_BOOK => BOOK_PAGES[0],
-            arcanum_sim::WRITTEN_NOTE => NOTE_TEXT,
-            _ => PLAQUE_TEXT,
-        };
         let by_number: std::collections::BTreeMap<u32, &BitmapFont> = loaded.fonts.iter().filter_map(|(&n, h)| Some((n, &fonts.get(h)?.0))).collect();
-        loaded.pages = Some(paginate(&loaded.entries, |n| by_number.get(&n).copied(), page_rect.width() as u32, page_rect.height() as u32));
+        let pages = loaded
+            .layout
+            .flows
+            .iter()
+            .map(|(entries, rects, repeats)| {
+                let width = rects.first().map_or(0.0, |r| r.width()) as u32;
+                let height = |i: usize| if *repeats { (i < MOST_PAGES).then(|| rects[i % rects.len()].height() as u32) } else { rects.get(i).map(|r| r.height() as u32) };
+                flow(entries, |n| by_number.get(&n).copied(), width, height)
+            })
+            .collect();
+        loaded.pages = Some(pages);
     }
     for root in &roots {
         commands.entity(root).despawn();
@@ -266,12 +354,9 @@ fn show_window(
     let window = |r: Rect| Rect { min: r.min + WINDOW.min, max: r.max + WINDOW.min };
     let size = |n: u32| art_size(vfs.as_deref(), &names, n);
     let background = if i32::from(kind) == arcanum_sim::WRITTEN_IMAGE { u32::try_from(line).unwrap_or(0) } else { BACKGROUNDS.get(usize::from(kind)).copied().unwrap_or(0) };
-    let (colour, slots): (Color, Vec<Rect>) = match i32::from(kind) {
-        arcanum_sim::WRITTEN_BOOK => (Color::BLACK, BOOK_PAGES.to_vec()),
-        arcanum_sim::WRITTEN_NOTE => (Color::BLACK, vec![NOTE_TEXT]),
-        arcanum_sim::WRITTEN_PLAQUE => (Color::WHITE, vec![PLAQUE_TEXT]),
-        _ => (Color::BLACK, Vec::new()),
-    };
+    let colour = if i32::from(kind) == arcanum_sim::WRITTEN_PLAQUE { Color::WHITE } else { Color::BLACK };
+    let book = i32::from(kind) == arcanum_sim::WRITTEN_BOOK;
+    let measure = |font: u32, text: &str| loaded.fonts.get(&font).and_then(|h| fonts.get(h)).map_or(0, |f| f.0.measure(text)) as f32;
     commands
         .spawn((
             WrittenRoot,
@@ -285,17 +370,31 @@ fn show_window(
                     screen.spawn((bevy::picking::Pickable::IGNORE, ImageNode::new(image), at(window(rect(corner, s)))));
                 }
             }
-            for (slot, place) in slots.iter().enumerate() {
-                let Some(pieces) = pages.get(page + slot) else { continue };
-                for piece in pieces {
-                    let Some(font) = loaded.fonts.get(&piece.font) else { continue };
-                    let text = BitmapText { shadow: false, ..BitmapText::new(piece.text.clone(), font.clone(), ORIGINAL_SCALE) }.wrapped(place.width() * ORIGINAL_SCALE, if piece.centre { Align::Center } else { Align::Left });
-                    let corner = place.min + Vec2::new(0.0, piece.y as f32);
-                    screen.spawn((bevy::picking::Pickable::IGNORE, TextColor(colour), text, Node { position_type: PositionType::Absolute, ..at(window(rect(corner, Vec2::new(place.width(), place.max.y - corner.y)))) }));
+            let mut text = |font: u32, body: String, place: Rect, align: Align| {
+                let Some(handle) = loaded.fonts.get(&font) else { return };
+                let t = BitmapText { shadow: false, ..BitmapText::new(body, handle.clone(), ORIGINAL_SCALE) }.wrapped(place.width() * ORIGINAL_SCALE, align);
+                screen.spawn((bevy::picking::Pickable::IGNORE, TextColor(colour), t, at(window(place))));
+            };
+            for ((_, rects, repeats), flow_pages) in loaded.layout.flows.iter().zip(&pages) {
+                let shown: Vec<(Rect, Option<&Vec<Piece>>)> = if *repeats { rects.iter().enumerate().map(|(i, r)| (*r, flow_pages.get(page + i))).collect() } else { rects.iter().enumerate().map(|(i, r)| (*r, flow_pages.get(i))).collect() };
+                for (place, pieces) in shown {
+                    for piece in pieces.into_iter().flatten() {
+                        let corner = place.min + Vec2::new(0.0, piece.y as f32);
+                        text(piece.font, piece.text.clone(), rect(corner, Vec2::new(place.width(), place.max.y - corner.y)), if piece.centre { Align::Center } else { Align::Left });
+                    }
                 }
             }
-            if i32::from(kind) == arcanum_sim::WRITTEN_BOOK {
-                let next_shown = page + 2 < pages.len();
+            for label in &loaded.layout.labels {
+                let w = measure(label.font, &label.text);
+                let x = match label.align {
+                    1 => label.at.0 as f32 - w / 2.0,
+                    2 => label.at.0 as f32 - w,
+                    _ => label.at.0 as f32,
+                };
+                text(label.font, label.text.clone(), rect(Vec2::new(x, label.at.1 as f32), Vec2::new(w + 1.0, 30.0)), Align::Left);
+            }
+            if book {
+                let next_shown = pages.first().is_some_and(|p| page + 2 < p.len());
                 for ((n, corner), next, shown) in [(PREVIOUS, false, page > 0), (NEXT, true, next_shown)] {
                     if let (true, Some(image), Some(s)) = (shown, art(n), size(n)) {
                         screen.spawn((PageButton(next), bevy::ui::RelativeCursorPosition::default(), ImageNode::new(image), at(window(rect(corner, s)))));
@@ -351,5 +450,27 @@ mod tests {
         assert_eq!(all.join(" "), format!("{words} omega"), "every word once, in order; the entry without a font left out");
         let last = pages.last().unwrap().last().unwrap();
         assert!(last.centre && last.text == "omega");
+    }
+
+    #[test]
+    fn a_newspaper_has_its_header_headline_stories_then_fillers() {
+        let mes = MesFile::parse(b"{0}{EXTRA!}{1}{[ THE TARANTIAN ]}{2}{Price}{3}{Motto}{10}{492c _ WEATHER _}{11}{483l Sunny.}{12}{492c _ TAX _}{5000}{490c HEADLINE}{5001}{492c _ SUB _}{5002}{483l Story.}").unwrap();
+        let l = layout(arcanum_sim::WRITTEN_NEWSPAPER as u8, 5000, &mes);
+        assert_eq!(l.labels.len(), 6);
+        assert_eq!((l.labels[1].font, l.labels[1].text.as_str(), l.labels[1].at, l.labels[1].align), (484, "[ THE TARANTIAN ]", (453, 41), 1));
+        assert_eq!(l.flows[0].0, [Entry { font: 490, centre: true, text: "HEADLINE".into() }]);
+        let body: Vec<&str> = l.flows[1].0.iter().map(|e| e.text.as_str()).collect();
+        // Fillers from 5000 / 10 + 10 = 510, round the three (10-12): 510 - 10 = 500, 500 % 3 = 2.
+        assert_eq!(body, ["_ SUB _", "Story.", "_ TAX _", "_ WEATHER _", "Sunny."]);
+        assert_eq!(l.flows[1].1.len(), 4, "four columns");
+    }
+
+    #[test]
+    fn a_telegram_has_its_labels_notice_and_body_in_its_fonts() {
+        let mes = MesFile::parse(b"{1000}{CLASS OF}{1011}{NO RESPONSIBILITY}{1020}{Mr. Ristezze}{1021}{Enclosed.}").unwrap();
+        let l = layout(arcanum_sim::WRITTEN_TELEGRAM as u8, 1020, &mes);
+        assert_eq!(l.labels, [Label { font: 481, text: "CLASS OF".into(), at: (342, 35), align: 1 }]);
+        assert_eq!(l.flows[0].0[0].text, "NO RESPONSIBILITY");
+        assert_eq!(l.flows[1].0, [Entry { font: 480, centre: false, text: "Mr. Ristezze\nEnclosed.".into() }]);
     }
 }
