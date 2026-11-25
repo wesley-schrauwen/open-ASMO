@@ -484,6 +484,8 @@ pub trait ScriptContext {
         None
     }
     /// The critters within `radius` tiles of `centre`, the larger distance (0x4ae4e0).
+    /// `npc` fights `target` (action 0x24).
+    fn start_fight(&mut self, _npc: Self::Object, _target: Self::Object) {}
     /// Make a critter walk to a tile (action 0x45).
     fn walk_to(&mut self, _object: Self::Object, _to: arcanum_formats::map::TileLoc) {}
     /// A critter uses skill `skill` with `tool` on `target` (action 0x4f).
@@ -1542,6 +1544,17 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
         0x5a => {
             let v = ctx.player().map_or(0, |p| ctx.stat(p, 5) / 2 + 3);
             set(ctx, attachment, run, ops[0], v);
+            Step::Next
+        }
+        // Each of the set fights the object (0x447d2f → 0x4a9650(object, member, 1, 2): no ally
+        // pull, no reaction change).
+        0x24 => {
+            let target = objects(run, ops[1], line, unsupported)?.first().copied();
+            if let Some(target) = target {
+                for o in objects(run, ops[0], line, unsupported)? {
+                    ctx.start_fight(o, target);
+                }
+            }
             Step::Next
         }
         // Walk to X, Y (0x448d48 → 0x4341c0, goal 7): the script goes on while it walks.

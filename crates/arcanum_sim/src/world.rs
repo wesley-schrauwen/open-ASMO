@@ -2437,6 +2437,40 @@ mod tests {
     }
 
     #[test]
+    fn a_script_sets_an_npc_on_the_pc() {
+        use crate::script::tests::{always, block, op};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]));
+        sim.update();
+        sim.update();
+        let sector = SectorId::new(1, 1);
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0 && s.sector == sector).unwrap().0
+        };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(crate::ScriptObject::Mobile { sector, index: 0 }, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 706));
+        {
+            // As script 1000 has it: the attachee (set 1) fights the triggerer (set 0).
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let lines = vec![always(block(0x24, &[op(1, 0), op(0, 0)])), always(block(1, &[]))];
+            scripts.0.get_or_insert_with(Default::default).insert(706, arcanum_formats::script::Script { description: String::new(), flags: 0, lines });
+        }
+        sim.take_deltas();
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        sim.update();
+        let order = sim.take_deltas().into_iter().find_map(|(_, d)| match d {
+            LedgerDelta::Combat { order, .. } if !order.is_empty() => Some(order),
+            _ => None,
+        });
+        assert!(order.is_some_and(|o| o.contains(&npc)), "the fight starts with the NPC in it");
+    }
+
+    #[test]
     fn a_script_walks_an_npc_and_renames_it() {
         use crate::script::tests::{always, block, n, op};
         let dir = tempfile::tempdir().unwrap();

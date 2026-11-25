@@ -587,7 +587,8 @@ Decoded so far, with confidence; the rest are named by the helper they call.
    - **Condition 0x13** (0x445b72): a set member's `aid` (field 0x18) is monster art (type 0xc)
      of number N (bits 23-27, 0x503f20); all or any by the set's kind.
    - **Real data:** 2393 of 2399 scripts run to an end. Left: 0x24 combat attack (6: the set
-     turns hostile to the object, 0x4a9650; no combat yet).
+     turns hostile to the object, 0x4a9650; built with combat, `plans/combat.md` step 4: all
+     2399 run).
 4q. **Pick Pocket** (built, `feat/pick-pocket`; `arcanum_sim::pickpocket`, 0x4c7160 skill 5).
    - The skills view's Pick Pocket button arms it; a click on an NPC walks there
      (`PlayerIntent::PickPocket`) and opens the barter window on the NPC's own inventory without

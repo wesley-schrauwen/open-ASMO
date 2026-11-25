@@ -27,12 +27,19 @@ pub fn is_unconscious(current: i32) -> bool {
     current < 1
 }
 
+/// Whether a PC lies down: unconscious, or out of hit points (builder's call: the original's PC
+/// dies there, 0x45d8d0 → 0x460780, and the game ends; here it lies until healed).
+pub fn is_down(status: &crate::PcStatus) -> bool {
+    is_unconscious(status.fatigue.current) || status.hit_points.current < 1
+}
+
 type ConsciousQuery<'a> = (Entity, &'a PlayerControlled, &'a Sheet, &'a crate::Position, Has<Unconscious>, Has<crate::Walking>);
 
-/// Knocks down the PCs whose fatigue fell below 1 and gets up those above 0 again.
+/// Knocks down the PCs whose fatigue or hit points fell below 1 and gets up those above 0
+/// again.
 pub fn update_consciousness(mut commands: Commands, rules: Res<SimRules>, mut world: ResMut<crate::WorldState>, pcs: Query<ConsciousQuery>) {
     for (entity, player, sheet, position, down, walking) in &pcs {
-        let now = is_unconscious(pc_status(&rules.0, &sheet.0).fatigue.current);
+        let now = is_down(&pc_status(&rules.0, &sheet.0));
         if now == down {
             continue;
         }
