@@ -499,7 +499,7 @@ pub fn recheck_followers(
         let check = JoinCheck {
             pc_persuasion_rank: sheet.training[PERSUASION],
             pc_charisma: rules.0.stats(sheet)[7],
-            pc_alignment: sheet.alignment,
+            pc_alignment: rules.0.alignment(sheet),
             pc_level: sheet.level,
             forced: flags & FORCED != 0,
             reaction,

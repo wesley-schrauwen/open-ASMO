@@ -731,15 +731,19 @@ impl HostWorld<'_> {
 }
 
 /// A PC's effective stat (0x4b0490 order): 0-7 primary, 8-15 derived, 0x10 the aptitude, 0x11
-/// the level, 0x15 unspent points, 0x19 age, 0x1a gender, 0x1b race; experience, alignment,
-/// fate points, magick and tech points and poison are not kept yet (0).
+/// the level, 0x12 experience, 0x13 alignment, 0x14 fate points, 0x15 unspent points, 0x18
+/// poison, 0x19 age, 0x1a gender, 0x1b race; magick and tech points are 0.
 pub fn pc_stat(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::CharacterSheet, stat: i32) -> i32 {
     match stat {
         0..=7 => rules.stats(sheet)[stat as usize],
         8..=15 => rules.derived(sheet).by_stat_id()[stat as usize - 8],
         0x10 => rules.aptitude(sheet),
         0x11 => sheet.level,
+        0x12 => sheet.experience,
+        0x13 => rules.alignment(sheet),
+        0x14 => sheet.fate_points,
         0x15 => sheet.unspent,
+        0x18 => sheet.poison,
         0x19 => sheet.age,
         0x1a => i32::from(sheet.gender),
         0x1b => i32::from(sheet.race),

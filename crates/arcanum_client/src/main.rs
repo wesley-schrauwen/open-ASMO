@@ -91,6 +91,7 @@ fn main() {
             arcanum_client::hotkey_bar::HotkeyBarPlugin,
             arcanum_client::spell_bar::SpellBarPlugin,
             arcanum_client::rest_window::RestWindowPlugin,
+            arcanum_client::fate_window::FateWindowPlugin,
             arcanum_client::dialogue_ui::DialogueUiPlugin,
             arcanum_client::vote_popup::VotePopupPlugin,
             arcanum_client::cursor::CursorPlugin,

@@ -45,6 +45,9 @@ pub enum PlayerIntent {
     /// Open the sleep window ([`crate::rest`]): the host answers with
     /// [`RestWindow`](crate::LedgerDelta::RestWindow) or [`RestRefused`](crate::LedgerDelta::RestRefused).
     RestWindow,
+    /// Spends a fate point on option `option` of `mes/fate_ui.mes` (`on`), or takes a waiting
+    /// one back (0x4f50c0 / 0x4f51b0; multiplayer packet 0x24).
+    Fate { option: u8, on: bool },
     /// Rest for `option`; the host sends [`RestEnded`](crate::LedgerDelta::RestEnded) when done.
     Rest { option: crate::RestOption },
     /// Stop resting.

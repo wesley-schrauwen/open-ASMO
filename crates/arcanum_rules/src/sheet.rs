@@ -107,6 +107,9 @@ pub struct CharacterSheet {
     /// damages or poisons a PC yet; healing and rest take them away.
     #[cfg_attr(feature = "serde", serde(default))]
     pub hp_damage: i32,
+    /// Fate point uses waiting for their moment (field 0xfe, bits by option: table 0x5bc48c).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub fate_pending: u16,
     #[cfg_attr(feature = "serde", serde(default))]
     pub poison: i32,
     /// Effects given in play (scripts, items), oldest first: the critter's effect ids (field
@@ -166,6 +169,7 @@ impl Default for CharacterSheet {
             experience: 0,
             fate_points: 0,
             hp_damage: 0,
+            fate_pending: 0,
             poison: 0,
             effects: Vec::new(),
             draft: Draft::default(),

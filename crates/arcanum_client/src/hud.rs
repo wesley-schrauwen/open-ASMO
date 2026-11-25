@@ -82,7 +82,16 @@ pub enum HudAction {
     Spells,
     /// Opens or closes the sleep window ([`crate::rest_window`]).
     Sleep,
+    /// Opens or closes the fate window ([`crate::fate_window`]).
+    Fate,
 }
+
+/// The fate point count in the top bar (`%02d`, 0x54ad00 slot 2, rect 0x5c6420).
+#[derive(Component)]
+struct FateCount;
+
+/// Where the fate point count is.
+pub const FATE_COUNT: Rect = Rect { min: Vec2::new(190.0, 17.0), max: Vec2::new(214.0, 29.0) };
 
 /// Which pool a vial shows.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,7 +119,7 @@ impl Plugin for HudPlugin {
         if !app.is_plugin_added::<crate::message_box::MessageBoxPlugin>() {
             app.add_plugins(crate::message_box::MessageBoxPlugin);
         }
-        app.add_systems(OnEnter(AppState::InGame), spawn_hud).add_systems(Update, (show_vials, crate::hud_clock::show_clock).run_if(in_state(AppState::InGame)));
+        app.add_systems(OnEnter(AppState::InGame), spawn_hud).add_systems(Update, (show_vials, show_fate_count, crate::hud_clock::show_clock).run_if(in_state(AppState::InGame)));
     }
 }
 
@@ -165,6 +174,21 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
                 ImageNode::default(),
                 at(rect(Vec2::new(605.0, 9.0), Vec2::splat(23.0))),
             ));
+            // The fate button (art 137, 0x5c6500) and the fate point count beside it.
+            top.spawn((
+                HudAction::Fate,
+                BoxHelp::Intgame(1008),
+                Button,
+                ActivateOnPress,
+                Hovered::default(),
+                FrameButton { frames: assets.load(art("lilgrnbut.art")), normal: 0, pressed: 1, hover: 0 },
+                ImageNode::default(),
+                at(rect(Vec2::new(157.0, 9.0), Vec2::splat(23.0))),
+            ));
+            let digits: Handle<BitmapFontAsset> = assets.load(fonts::HUD_NUMBERS);
+            top.spawn((Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, overflow: Overflow::clip(), ..at(FATE_COUNT) },)).with_children(|b| {
+                b.spawn((FateCount, BitmapText { shadow: false, ..BitmapText::new("", digits, ORIGINAL_SCALE) }));
+            });
             crate::hud_clock::spawn_clock(top, &assets);
         });
     let local = |r: Rect| Rect { min: r.min - Vec2::new(0.0, BOTTOM_TOP), max: r.max - Vec2::new(0.0, BOTTOM_TOP) };
@@ -217,6 +241,16 @@ pub fn vial(current: i32, max: i32) -> VialRows {
         return VialRows { empty, liquid_top: 0, liquid_rows: 0, liquid_from: 0 };
     }
     VialRows { empty, liquid_top: (empty - 8).max(0), liquid_rows: (fill + 8).min(VIAL_HEIGHT), liquid_from: 8 - empty.min(8) }
+}
+
+/// Shows the PC's fate points, two digits (`%02d`, 0x551160).
+fn show_fate_count(sheet: Res<crate::pc_sheet::SheetHost>, mut texts: Query<&mut BitmapText, With<FateCount>>) {
+    let text = sheet.sheet().map_or(String::new(), |s| format!("{:02}", s.fate_points));
+    for mut t in &mut texts {
+        if t.text != text {
+            t.text.clone_from(&text);
+        }
+    }
 }
 
 /// The number under a vial: the current value, three digits (`%03d`, 0x54ad00).

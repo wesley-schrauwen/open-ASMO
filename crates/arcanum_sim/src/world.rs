@@ -2339,6 +2339,40 @@ mod tests {
     }
 
     #[test]
+    fn fate_points_heal_at_once_and_force_the_next_reaction() {
+        use crate::script::tests::{always, block, n};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut s = save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]);
+        let sheet = &mut s.players.get_mut(&PlayerId(7)).unwrap().blueprint.sheet;
+        (sheet.fate_points, sheet.hp_damage) = (2, 5);
+        let mut sim = booted(dir.path(), s);
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Fate { option: 0, on: true }), (PlayerId(7), crate::PlayerIntent::Fate { option: crate::FATE_GOOD_REACTION, on: true })]);
+        sim.update();
+        let sheet = |sim: &SimApp| sim.app.world().resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(7)].blueprint.sheet.clone();
+        assert_eq!((sheet(&sim).fate_points, sheet(&sim).hp_damage, sheet(&sim).fate_pending), (0, 0, 1));
+        // The next talk starts at reaction 100, and the use is spent.
+        let sector = SectorId::new(1, 1);
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(crate::ScriptObject::Mobile { sector, index: 0 }, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 706));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            library.insert(706, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(4, &[n(1)]))] });
+            library.insert_dialog(706, arcanum_formats::dialog::DialogFile::parse(b"{1}{Hello.}{}{}{}{}{}"));
+        }
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0 && s.sector == sector).unwrap().0
+        };
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        assert_eq!(sheet(&sim).fate_pending, 0);
+        let key = crate::met_key(crate::ScriptObject::Mobile { sector, index: 0 });
+        let stored = sim.app.world().resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(7)].script_state.reactions[&key];
+        assert!(stored >= 100 - 20, "stored so the reaction is 100: {stored}");
+    }
+
+    #[test]
     fn a_script_called_in_seconds_runs_once_the_game_clock_gets_there() {
         use crate::script::tests::{always, block, n, op};
         let dir = tempfile::tempdir().unwrap();
