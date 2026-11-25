@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-15 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`, `feat/combat-events`, `feat/ammunition`, `feat/combat-stun`, `feat/sight`).
+Status: steps 1-16 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`, `feat/combat-events`, `feat/ammunition`, `feat/combat-stun`, `feat/sight`, `feat/combat-cursor`).
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -205,8 +205,7 @@ of `combat_design.md` come after the original's rules work.
      "Damage +x%", "Critical miss"; white over NPCs, red over PCs (`FloatColour::Red`).
    - Checked by screenshot (`DEBUG_ARCANUM_PANEL=fight`): the bar with two lights left after
      the walk to the half-ogre guard.
-   - Not built: the orange and red lights of a planned move, the battle cursor and
-     `hoverattack.art`, the attack / hit / death animations, the button's pressed look.
+   - Not built: the button's pressed look (the lights, cursors and animations came later).
 4. **Hooks** (built, `feat/combat-hooks`).
    - Action 0x24: each NPC of the set fights the object (0x447d2f; the original skips the ally
      pull and reaction there too). Dialogue result `co`: the NPC fights the PC and the talk ends.
@@ -363,3 +362,12 @@ of `combat_design.md` come after the original's rules work.
      on the line that blocks walking: builder's call for what blocks sight) or hearing.
    - Not built: light, invisibility, the stealth difficulty terms, the hearing path cost, the
      watcher's state.
+16. **Planning and the cursor** (built, `feat/combat-cursor`; client `combat_ui`, `cursor`).
+   - On the PC's turn the tile or NPC under the cursor gives the planned cost (2 a step; an NPC:
+     the steps into reach and the attack's cost): the AP bar lights green for what stays, orange
+     (296) for what the move spends, red (315) for what it lacks.
+   - In combat mode or a fight the cursor is `battlecur.art` (353), over an NPC
+     `hoverattack.art` (555), with the art's hotspot (builder's call).
+   - Checked by screenshot (`DEBUG_ARCANUM_HOVER=700,600`, the fight at the crash site): 3
+     orange and 9 red lights for a 12-point walk with 3 points left.
+   - Not built: the planned path drawn on the ground.

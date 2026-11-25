@@ -202,6 +202,8 @@ lights after the walk.
 - [ ] Hitting a townsman: his friends of the same faction come for the PC, bystanders walk off.
 - [ ] Critical floats: "Crippled arm", "Armor damaged", "Weapon broken".
 - [ ] Each attack: the attacker turns to its target and swings once, then stands again.
+- [ ] In combat mode the cursor is the battle cursor; over an NPC the attack cursor, its
+  hotspot on the point clicked.
 - [ ] A killed NPC falls through its death animation (a big hit: by the head, body or legs) and
   stays on the last frame.
 
