@@ -4,8 +4,8 @@
 //!
 //! - **On critters** (`rules/spelllist.mes`): Minor Healing (60, 5-30 by aptitude, a hurt
 //!   living target), Halt Poison (61, 50), Major Healing (62, 40-80, and scars and crippling),
-//!   Resurrect (64, a dead target not the caster, `Full | Resurrect`; a PC gets up with 15 %,
-//!   owner's call).
+//!   Resurrect (64, a dead target not the caster, `Full | Resurrect`; a PC or NPC gets up with
+//!   15 %, owner's call).
 //!
 //! - **Who may cast** (0x57bc70, 0x4564e0): a PC who knows the spell (its college's count,
 //!   [`arcanum_rules::CharacterSheet::spells`], is past the spell's place in it) with an

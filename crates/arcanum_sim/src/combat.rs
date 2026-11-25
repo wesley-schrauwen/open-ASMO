@@ -871,16 +871,19 @@ impl crate::LoadedMap {
         self.changes.entry(sector).or_default().npc_critter_flags.insert(index, flags);
     }
 
-    /// Raises dead NPC `index` with all its hit points (Resurrect's `Full`), standing (animation
-    /// 0, frame 0).
+    /// Raises dead NPC `index` with [`crate::resurrected_hp`] of its hit points, as a PC (owner's
+    /// call: one rule for both; the list's `Full` would raise it whole), standing (animation 0,
+    /// frame 0).
     pub fn revive_npc(&mut self, sector: arcanum_formats::map::SectorId, index: u32) {
         if let Some(changes) = self.changes.get_mut(&sector) {
             changes.dead.remove(&index);
         }
+        let Some(max) = self.npc_hp(sector, index).map(|h| h.1) else { return };
+        let damage = (max - crate::resurrected_hp(max)).max(0);
         if let Some(o) = self.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize)) {
-            o.set_int("hp_damage", 0);
+            o.set_int("hp_damage", damage);
         }
-        self.changes.entry(sector).or_default().npc_damage.insert(index, 0);
+        self.changes.entry(sector).or_default().npc_damage.insert(index, damage);
         if let Some(art) = self.object_at(sector, index, true).and_then(|o| self.prototypes.art_id(o)) {
             self.set_object_art(sector, index, true, art.0 & !(0x1f << 6 | 0x1f << 14));
         }

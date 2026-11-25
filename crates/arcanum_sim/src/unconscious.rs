@@ -44,11 +44,12 @@ pub fn is_down(status: &crate::PcStatus) -> bool {
 #[derive(Resource, Debug, Default)]
 pub struct Resurrections(pub u32);
 
-/// The share of its most hit points a resurrected PC gets up with, in percent (owner's call: the
-/// original never resurrects a PC, its death ends the game).
+/// The share of its most hit points a resurrected PC or NPC gets up with, in percent (owner's
+/// call: the original never resurrects a PC, its death ends the game; its Resurrect raises an
+/// NPC whole, `Full | Resurrect`, but one rule holds for both).
 pub const RESURRECTED_PERCENT: i32 = 15;
 
-/// Hit points a PC of `max` gets up with when resurrected: [`RESURRECTED_PERCENT`], at least 1.
+/// Hit points a PC or NPC of `max` gets up with when resurrected: [`RESURRECTED_PERCENT`], at least 1.
 pub fn resurrected_hp(max: i32) -> i32 {
     (max * RESURRECTED_PERCENT / 100).max(1)
 }
