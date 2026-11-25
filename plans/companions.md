@@ -42,12 +42,22 @@ Copied from the original first.
 - **Following** (0x4ac380 / 0x4346a0): farther than 4 tiles (7 spread out) the follower walks
   until within it. At 31 tiles or more it is put on the leader's tile (0x4ad4d0).
 - **Moves:** a teleport within the map puts the followers on the leader's tile.
+- **Map changes** (owner's rule, `feat/party-travel`): followers who are not waiting go with their
+  leader, onto the same tile, as the original does (0x4d3760). Waiting ones stay where they are.
+  - A follower away from its home map is a guest there. It is read from its home map's `.mob`
+    files, added to the mobile objects on its tile, and tracked by its home
+    (`Follower::away`: map, arrival tile, `npc_flags`). It is not spawned at home meanwhile.
+  - Going back to its home map, it takes its home place again (it spawns when its home sector
+    loads; the leash then brings it).
+  - A guest that leaves (`lv`) goes home at the next map load (builder's call).
+  - **Not built:**
+    - a guest's other changes (inventory, met, attachments) are kept against its place on the
+      map it is visiting, not its home;
+    - a guest's tile is the arrival tile until the next move, as NPC positions are not saved.
 - **Saved:** `WorldSave::followers` (map, NPC, leader player) and the NPC's flags in the sector's
   changes (`npc_flags`).
 - **Multiplayer:** each follower follows the PC who recruited it.
 - **Not built:**
-  - **Map changes:** followers stay behind, waiting (builder's call). The original takes them
-    along (0x4d3760), but an NPC cannot move between maps here yet.
   - **The wait timer:** 15 min to 30 days by field 0x12c, after which the follower leaves for
     good (0x4aa990).
   - **Per-tick re-checks:** the original re-checks each tick and the NPC may leave (0x4ac380).

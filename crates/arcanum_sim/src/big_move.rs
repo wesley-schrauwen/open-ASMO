@@ -221,18 +221,23 @@ impl MoveWorld<'_, '_> {
     /// Leaves the loaded map for `name`, around tile `to`.
     fn switch_map(&mut self, name: &str, to: TileLoc, movers: &[PlayerId]) {
         let Some(save) = self.world.0.as_mut() else { return };
-        // Followers stay behind, waiting (builder's call: the original takes them along, but
-        // an NPC cannot move between maps here yet).
-        if let Some(here) = self.map.name.clone() {
-            let staying: Vec<(arcanum_formats::map::SectorId, u32)> = save.followers.iter().filter(|f| f.map == here && movers.contains(&f.leader)).map(|f| (f.sector, f.index)).collect();
-            for (sector, index) in staying {
-                let flags = self.map.npc_flags(sector, index).unwrap_or(0);
-                if flags & crate::follow::WAITING == 0 {
-                    self.map.set_npc_flags(sector, index, flags | crate::follow::WAITING);
-                    if let Some(delta) = self.map.changes.get(&sector).cloned() {
-                        save.sector_changes.insert(sector, delta);
-                    }
-                }
+        // Followers who are not waiting come along (owner's rule; the original's 0x4d3760),
+        // onto the same tile; those going home take their home place again.
+        let here = self.map.name.clone().unwrap_or_default();
+        let mut returning = Vec::new();
+        for i in 0..save.followers.len() {
+            let f = &save.followers[i];
+            let on_map = f.away.as_ref().map_or(f.map.as_str(), |a| a.map.as_str()) == here;
+            let flags = crate::follow::follower_flags(f, &self.map, &save.other_maps);
+            if !on_map || !movers.contains(&f.leader) || flags & crate::follow::WAITING != 0 {
+                continue;
+            }
+            let f = &mut save.followers[i];
+            if f.map == name {
+                f.away = None;
+                returning.push((f.sector, f.index, flags));
+            } else {
+                f.away = Some(crate::follow::Away { map: name.to_string(), at: to, flags });
             }
         }
         // The old map's NPCs go; its changes are kept.
@@ -257,6 +262,13 @@ impl MoveWorld<'_, '_> {
         let vfs = vfs_guard.as_deref();
         self.map.open(vfs, name);
         self.map.changes = save.sector_changes.clone();
+        for (sector, index, flags) in returning {
+            self.map.set_npc_flags(sector, index, flags);
+            if let Some(delta) = self.map.changes.get(&sector).cloned() {
+                save.sector_changes.insert(sector, delta);
+            }
+        }
+        self.map.place_followers(vfs, &save.followers);
         self.map.load_around(vfs, to);
         self.populated.0.clear();
         let changes = save.sector_changes.clone();

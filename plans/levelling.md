@@ -35,13 +35,17 @@
   - each level reached sends "Congratulations! You are now level %d." (`mes/intgame.mes` 11) to
     the player (builder's call: the original's UI callback was not traced to that line);
   - the PC's status goes to everyone.
+- **Shared experience** (owner's rule, `feat/party-travel`): dialogue experience is split equally
+  among every PC in the world, at least 1 each, as the original splits it among the living
+  members of the team in multiplayer (0x45f110 counts them via 0x440fc0 / 0x4ba020 and
+  divides). Each share goes through that PC's `xpgain` effects and level-ups
+  (`ExperienceAwards` → `share_experience`).
 - **The character screen** shows the level and "XP Next" from the sheet. Both were fixed values
   before.
 
 ## Not built
 
 - Difficulty: here always normal.
-- The multiplayer split (0x45f110): owner's call. Here the PC who earned it gets all of it.
 - Followers catching up, auto-level schemes.
 - Alignment and fate points on the character screen. The original's gauge and its place were
   not traced.

@@ -114,7 +114,8 @@ pub fn spawn_npcs(
         outbox.0.extend(players.iter().map(|&p| (p, spawn.clone())));
     };
     // A follower can be away from its own sector: it is not spawned twice.
-    let spawned: BTreeSet<(SectorId, u32)> = npcs.iter().map(|(_, _, s)| (s.sector, s.index)).collect();
+    let mut spawned: BTreeSet<(SectorId, u32)> = npcs.iter().map(|(_, _, s)| (s.sector, s.index)).collect();
+    spawned.extend(map.away.iter().copied());
     for id in new {
         populated.0.insert(id);
         for (index, object) in map.mobiles.get(&id).into_iter().flatten().enumerate().filter(|(i, o)| o.object_type == TYPE_NPC && !off(o) && !spawned.contains(&(id, *i as u32))) {
@@ -266,6 +267,11 @@ pub struct LoadedMap {
     pub lock_day: bool,
     /// The map's jump points (`map.jmp`, [`crate::big_move`]).
     pub jump_points: Vec<arcanum_formats::map::JumpPoint>,
+    /// Followers from other maps added to the mobile objects: their place here and their home
+    /// ([`crate::follow`]).
+    pub guests: BTreeMap<(SectorId, u32), crate::follow::NpcHome>,
+    /// This map's NPCs away with their leaders: not spawned.
+    pub away: BTreeSet<(SectorId, u32)>,
 }
 
 impl LoadedMap {
@@ -302,7 +308,7 @@ impl LoadedMap {
     }
 
     /// Reads the map's `.mob` files into [`LoadedMap::mobiles`].
-    fn read_mobiles(&mut self, vfs: &Vfs, name: &str) {
+    pub(crate) fn read_mobiles(&mut self, vfs: &Vfs, name: &str) {
         let mut files: Vec<String> = vfs.list_dir(&format!("maps/{name}")).unwrap_or_default().into_iter().filter(|p| p.to_ascii_lowercase().ends_with(".mob")).collect();
         files.sort_by_key(|p| p.to_ascii_lowercase());
         for path in files {
@@ -467,6 +473,7 @@ pub fn boot_world(
     if map.name.as_deref() != Some(save.map.as_str()) {
         map.open(vfs, &save.map);
         map.changes = save.sector_changes.clone();
+        map.place_followers(vfs, &save.followers);
         // The clock goes on from the save (a new game's start time).
         *clock_time = crate::GameClock::at(save.time);
         map.lock_day = crate::lock_day(save.time.hour());
@@ -1643,6 +1650,42 @@ mod tests {
     }
 
     #[test]
+    fn experience_from_dialogue_is_shared_by_every_pc() {
+        use crate::script::tests::{always, block, n};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        std::fs::create_dir_all(dir.path().join("Rules")).unwrap();
+        std::fs::write(dir.path().join("Rules/xp_quest.mes"), "{3}{5000}\n").unwrap();
+        let rules = RulesData { xp_levels: vec![0, 2100, 4600, 7700], ..Default::default() };
+        let mut sim = SimApp::new(rules);
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(7, "Virgil", TileLoc { x: 79, y: 80 }), (8, "Sogg", TileLoc { x: 70, y: 70 })]));
+        sim.update();
+        sim.update();
+        let npc_object = crate::ScriptObject::Mobile { sector: SectorId::new(1, 1), index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 704));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            library.insert(704, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(4, &[n(1)]))] });
+            library.insert_dialog(704, arcanum_formats::dialog::DialogFile::parse(b"{1}{Well done.}{}{}{}{}{xp 3}"));
+        }
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0).unwrap().0
+        };
+        sim.take_deltas();
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        for p in [7, 8] {
+            let sheet = &save.players[&PlayerId(p)].blueprint.sheet;
+            assert_eq!((sheet.experience, sheet.level), (2500, 2), "player {p}: half of 5000");
+        }
+    }
+
+    #[test]
     fn a_script_teleport_waits_for_every_players_yes_and_one_no_cancels_it() {
         use crate::script::tests::{always, block, n, op};
         let dir = tempfile::tempdir().unwrap();
@@ -1697,6 +1740,60 @@ mod tests {
         let deltas = sim.take_deltas();
         assert!(deltas.iter().any(|(_, d)| *d == LedgerDelta::VoteEnded { id, passed: false }), "one no cancels it");
         assert_eq!(position(&mut sim, 7), TileLoc { x: 79, y: 80 });
+    }
+
+    #[test]
+    fn followers_change_maps_with_their_leader_and_come_home() {
+        use crate::follow::{Away, Follower, Following};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let (from, to) = (dir.path().join("maps").join(MAP), dir.path().join("maps").join("Other"));
+        std::fs::create_dir_all(&to).unwrap();
+        for entry in std::fs::read_dir(&from).unwrap() {
+            let entry = entry.unwrap();
+            std::fs::copy(entry.path(), to.join(entry.file_name())).unwrap();
+        }
+        std::fs::create_dir_all(dir.path().join("Rules")).unwrap();
+        std::fs::write(dir.path().join("Rules/MapList.mes"), format!("{{5000}}{{{MAP}, 70, 70}}\n{{5001}}{{Other, 75, 75}}\n")).unwrap();
+        let home = SectorId::new(1, 1);
+        let mut s = save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]);
+        s.followers.push(Follower { map: MAP.into(), sector: home, index: 0, leader: PlayerId(7), away: None });
+        let mut sim = booted(dir.path(), s);
+        let go = |sim: &mut SimApp, map: i32, at: TileLoc| {
+            let teleport = crate::big_move::ScriptTeleport { causer: PlayerId(7), object: crate::ScriptObject::Pc(PlayerId(7)), map, to: at };
+            sim.app.world_mut().resource_mut::<crate::big_move::ScriptTeleports>().0.push(teleport);
+            sim.update();
+            sim.update();
+            sim.update();
+        };
+        let arrival = TileLoc { x: 75, y: 90 };
+        go(&mut sim, 5001, arrival);
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(save.map, "Other");
+        assert_eq!(save.followers[0].away, Some(Away { map: "Other".into(), at: arrival, flags: 0 }));
+        let guest = {
+            let map = sim.app.world().resource::<LoadedMap>();
+            assert_eq!(map.guests.len(), 1);
+            *map.guests.keys().next().unwrap()
+        };
+        {
+            let world = sim.app.world_mut();
+            let found: Vec<(TileLoc, Option<Following>)> = world
+                .query::<(&crate::NpcSource, &Position, Option<&Following>)>()
+                .iter(world)
+                .filter(|(s, ..)| (s.sector, s.index) == guest)
+                .map(|(_, p, f)| (p.0, f.copied()))
+                .collect();
+            assert_eq!(found, [(arrival, Some(Following { leader: PlayerId(7), spread_out: false }))], "the follower arrives with its leader");
+        }
+        // Back home: the follower takes its home place again, once.
+        go(&mut sim, 5000, TileLoc { x: 79, y: 80 });
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!((save.map.as_str(), save.followers[0].away.clone()), (MAP, None));
+        assert!(sim.app.world().resource::<LoadedMap>().guests.is_empty());
+        let world = sim.app.world_mut();
+        let homes = world.query::<(&crate::NpcSource, Option<&Following>)>().iter(world).filter(|(s, _)| s.sector == home && s.index == 0).map(|(_, f)| f.is_some()).collect::<Vec<_>>();
+        assert_eq!(homes, [true]);
     }
 
     #[test]

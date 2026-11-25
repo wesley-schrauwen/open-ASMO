@@ -340,8 +340,9 @@ impl SheetChanges {
         *self == Self::default()
     }
 
-    /// Applies them to `sheet`; experience can raise the level. Returns the levels reached.
-    pub fn apply(&self, rules: &RulesData, sheet: &mut CharacterSheet) -> Vec<i32> {
+    /// Applies them to `sheet`. Experience is not: it is shared among the team
+    /// ([`crate::share_experience`]).
+    pub fn apply(&self, sheet: &mut CharacterSheet) {
         for &(skill, rank) in &self.training {
             sheet.training[skill] = rank;
         }
@@ -351,7 +352,6 @@ impl SheetChanges {
         sheet.fate_points += self.fate_points;
         sheet.hp_damage = (sheet.hp_damage - self.heal.max(0)).max(0);
         sheet.poison = (sheet.poison - self.cure_poison.max(0)).max(0);
-        rules.gain_experience(sheet, self.experience)
     }
 }
 
@@ -939,7 +939,7 @@ pub fn run_conversations(
     mut reports: ResMut<DialogueReports>,
     (session, rules, vfs, acks): (Res<Session>, Res<SimRules>, Option<Res<crate::SimVfs>>, Res<crate::InventoryAcks>),
     (mut rng, mut reputations): (ResMut<crate::HostRng>, ResMut<ReputationTable>),
-    (mut outbox, mut barters, mut areas): (ResMut<Outbox>, ResMut<crate::barter::BarterStarts>, ResMut<crate::areas::AreaTable>),
+    (mut outbox, mut barters, mut areas, mut awards): (ResMut<Outbox>, ResMut<crate::barter::BarterStarts>, ResMut<crate::areas::AreaTable>, ResMut<crate::ExperienceAwards>),
     mut pcs: Query<TalkerQuery>,
     npcs: Query<(&NetId, &NpcSource)>,
 ) {
@@ -1004,24 +1004,24 @@ pub fn run_conversations(
         };
         let npc_stock = stock_id.and_then(|id| map.pile(id)).map(|p| p.inventory);
         let xp_quest = generic.file(vfs, "Rules/xp_quest.mes").cloned();
-        // "Congratulations! You are now level %d." (`mes/intgame.mes` 11).
-        let level_up = generic.file(vfs, "mes/intgame.mes").and_then(|m| m.get(11)).map(str::to_string);
         let areas = &*areas;
         let pc_area = map.name.as_deref().map_or(0, |m| areas.area_at(m, pc_at));
         let follow = match npc_object {
             ScriptObject::Mobile { sector, index } => {
-                let here = map.name.clone().unwrap_or_default();
-                let record = save.followers.iter().find(|f| f.map == here && f.sector == sector && f.index == index);
-                let counted = |f: &&crate::follow::Follower| {
-                    f.leader == player && f.map == here && map.npc_flags(f.sector, f.index).is_some_and(|n| n & (crate::follow::WAITING | crate::follow::FORCED) == 0)
-                };
+                let home = map.home_of(sector, index);
+                let record = save.followers.iter().find(|f| f.is(&home));
+                let counted = save
+                    .followers
+                    .iter()
+                    .filter(|f| f.leader == player && crate::follow::follower_flags(f, &map, &save.other_maps) & (crate::follow::WAITING | crate::follow::FORCED) == 0)
+                    .count();
                 let object = map.mobiles.get(&sector).and_then(|m| m.get(index as usize));
                 let stat = |i: usize| object.and_then(|o| o.ints("critter_stat_base_idx").or_else(|| map.prototypes.of(o)?.ints("critter_stat_base_idx"))).and_then(|v| v.get(i).copied()).unwrap_or(0);
                 let packet = object.and_then(|o| map.prototypes.int(o, "npc_ai_data")).unwrap_or(0);
                 crate::follow::FollowTalk {
                     mine: record.is_some_and(|f| f.leader == player),
                     other_leader_charisma: record.filter(|f| f.leader != player).map(|f| charisma.get(&f.leader).copied().unwrap_or(0)),
-                    followers: save.followers.iter().filter(counted).count() as i32,
+                    followers: counted as i32,
                     ai: crate::follow::ai_follow(generic.file(vfs, crate::follow::GAME_AI), packet),
                     npc_alignment: stat(0x13),
                     npc_level: stat(0x11),
@@ -1115,15 +1115,25 @@ pub fn run_conversations(
             outbox.0.push((player, LedgerDelta::DialogueEnded));
         }
         let mut touched = Vec::new();
-        // A join, leave, wait or order: the follower list and the NPC's flags.
+        // A join, leave, wait or order: the follower list and the NPC's flags (a guest's on its
+        // record, else in this map's changes). A guest that leaves goes home at the next load.
         if let (Some((mine, flags)), ScriptObject::Mobile { sector, index }) = (follow_change, npc_object) {
-            let here = map.name.clone().unwrap_or_default();
-            save.followers.retain(|f| !(f.map == here && f.sector == sector && f.index == index));
+            let home = map.home_of(sector, index);
+            let away = save.followers.iter().find(|f| f.is(&home)).and_then(|f| f.away.clone());
+            save.followers.retain(|f| !f.is(&home));
+            let guest = map.guests.contains_key(&(sector, index));
             if mine {
-                save.followers.push(crate::follow::Follower { map: here, sector, index, leader: player });
+                let away = away.map(|a| crate::follow::Away { flags, ..a });
+                save.followers.push(crate::follow::Follower { map: home.0.clone(), sector: home.1, index: home.2, leader: player, away });
             }
-            map.set_npc_flags(sector, index, flags);
-            touched.push(sector);
+            if guest {
+                if let Some(object) = map.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize)) {
+                    object.set_int("npc_flags", flags);
+                }
+            } else {
+                map.set_npc_flags(sector, index, flags);
+                touched.push(sector);
+            }
         }
         if let (Some((npc_inv, npc_stock)), ScriptObject::Mobile { sector, index }) = (npc_changes, npc_object) {
             if let Some(inv) = npc_inv {
@@ -1138,15 +1148,13 @@ pub fn run_conversations(
             }
             touched.push(sector);
         }
-        if !sheet_changes.is_empty() {
-            let levels = sheet_changes.apply(&rules.0, &mut sheet.0);
+        if sheet_changes.experience != 0 {
+            awards.0.push(sheet_changes.experience);
+        }
+        if !sheet_changes.is_empty() && sheet_changes != (SheetChanges { experience: sheet_changes.experience, ..Default::default() }) {
+            sheet_changes.apply(&mut sheet.0);
             saved.blueprint.sheet = sheet.0.clone();
             outbox.0.push((player, LedgerDelta::SheetUpdate { ack: 0, sheet: sheet.0.clone() }));
-            for level in &levels {
-                if let Some(text) = &level_up {
-                    outbox.0.push((player, LedgerDelta::ScriptMessage { text: text.replace("%d", &level.to_string()) }));
-                }
-            }
             crate::ground::broadcast(&session, &mut outbox, LedgerDelta::PcStatus { net_id: pc_net, status: crate::pc_status(&rules.0, &sheet.0) });
         }
         if gold_changed {
@@ -2247,7 +2255,7 @@ mod tests {
         say.heal(&file, Healing::Spell(HALT_POISON), 1, &mut talk);
         assert_eq!((talk.gold(), talk.sheet_changes.cure_poison), (gold, 50));
         let mut healed = sheet.clone();
-        talk.sheet_changes.apply(&rules, &mut healed);
+        talk.sheet_changes.apply(&mut healed);
         assert!(healed.hp_damage < 60 - 15 && healed.poison == 20, "{healed:?}");
         assert_eq!(spell_heal(MAJOR_HEALING, 100), 80);
         assert_eq!(spell_heal(MINOR_HEALING, -30), 5, "no aptitude: the least");
@@ -2344,15 +2352,11 @@ mod tests {
         assert!(talk.passes_test("ni 2804, in 5222"), "the dagger went, the sword came");
         assert!(talk.npc_inventory_changed && talk.npc_has(2804) && !talk.npc_has(5222));
         let mut changed = sheet.clone();
-        talk.sheet_changes.apply(&rules, &mut changed);
+        talk.sheet_changes.apply(&mut changed);
         assert_eq!((changed.alignment, changed.training[9], changed.fate_points), (20, 1, 1));
-        // Experience raises the level through the rules' table.
-        let mut levelled = sheet.clone();
-        let mut rules = rules.clone();
-        rules.xp_levels = vec![0, 2100, 4600, 7700];
-        let gain = SheetChanges { experience: 5000, ..Default::default() };
-        assert_eq!(gain.apply(&rules, &mut levelled), [2, 3]);
-        assert_eq!((levelled.level, levelled.experience, levelled.unspent - sheet.unspent), (3, sheet.experience + 5000, 2));
+        // Experience is shared among the team, not applied here.
+        assert_eq!(crate::experience_share(5000, 2), 2500);
+        assert_eq!(crate::experience_share(1, 3), 1, "never 0");
         assert!(talk.unbuilt.is_empty(), "{:?}", talk.unbuilt);
     }
 }

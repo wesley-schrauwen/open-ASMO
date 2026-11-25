@@ -46,12 +46,100 @@ pub const PERSUASION: usize = 11;
 /// One NPC following a PC.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Follower {
-    /// The map the NPC is on (its folder name).
+    /// The NPC's home: its map (folder name), sector and place among that map's mobile objects
+    /// ([`crate::NpcSource`] there).
     pub map: String,
-    /// The NPC: its sector and place among the map's mobile objects ([`crate::NpcSource`]).
     pub sector: SectorId,
     pub index: u32,
     pub leader: PlayerId,
+    /// Where it is when it went with its leader to another map.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub away: Option<Away>,
+}
+
+/// A follower away from its home map (owner's rule: followers change maps with their leader,
+/// as PCs do; the original takes them along too, 0x4d3760).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Away {
+    /// The map it is on, and the tile it arrived on.
+    pub map: String,
+    pub at: arcanum_formats::map::TileLoc,
+    /// Its `npc_flags` there (at home they are in the home map's changes).
+    pub flags: i32,
+}
+
+/// An NPC's home: map, sector, place.
+pub type NpcHome = (String, SectorId, u32);
+
+impl Follower {
+    pub fn home(&self) -> NpcHome {
+        (self.map.clone(), self.sector, self.index)
+    }
+
+    pub fn is(&self, home: &NpcHome) -> bool {
+        self.map == home.0 && self.sector == home.1 && self.index == home.2
+    }
+}
+
+impl crate::LoadedMap {
+    /// The home of the NPC at `sector`, `index` of this map: its own place, or a guest's home.
+    pub fn home_of(&self, sector: SectorId, index: u32) -> NpcHome {
+        self.guests.get(&(sector, index)).cloned().unwrap_or_else(|| (self.name.clone().unwrap_or_default(), sector, index))
+    }
+
+    /// Where the NPC from `home` is on this map, if it is here.
+    pub fn place_of(&self, home: &NpcHome) -> Option<(SectorId, u32)> {
+        if let Some((&place, _)) = self.guests.iter().find(|(_, h)| *h == home) {
+            return Some(place);
+        }
+        (self.name.as_deref() == Some(home.0.as_str()) && !self.away.contains(&(home.1, home.2))).then_some((home.1, home.2))
+    }
+
+    /// Puts this map's followers in place, after [`crate::LoadedMap::open`]: those from here who
+    /// are away are not spawned at home; those away here are read from their home map's
+    /// `.mob` files and added to the mobile objects on their tile, as guests.
+    pub fn place_followers(&mut self, vfs: Option<&arcanum_vfs::Vfs>, followers: &[Follower]) {
+        let Some(name) = self.name.clone() else { return };
+        for f in followers {
+            if f.map == name && f.away.is_some() {
+                self.away.insert((f.sector, f.index));
+            }
+            let Some(away) = f.away.as_ref().filter(|a| a.map == name) else { continue };
+            let Some(mut object) = self.home_mobile(vfs, &f.map, f.sector, f.index) else { continue };
+            set_location(&mut object, away.at);
+            object.set_int("npc_flags", away.flags);
+            let list = self.mobiles.entry(away.at.sector()).or_default();
+            list.push(object);
+            self.guests.insert((away.at.sector(), list.len() as u32 - 1), f.home());
+        }
+    }
+
+    /// NPC `index` of sector `sector` of map `map`, as its `.mob` file has it.
+    fn home_mobile(&self, vfs: Option<&arcanum_vfs::Vfs>, map: &str, sector: SectorId, index: u32) -> Option<arcanum_formats::object::Object> {
+        let mut home = crate::LoadedMap { prototypes: self.prototypes.clone(), ..Default::default() };
+        home.read_mobiles(vfs?, map);
+        home.mobiles.get(&sector)?.get(index as usize).cloned()
+    }
+}
+
+/// Moves an object to `at` (field `location`).
+fn set_location(object: &mut arcanum_formats::object::Object, at: arcanum_formats::map::TileLoc) {
+    let packed = i64::from(at.x) | (i64::from(at.y) << 32);
+    if let Some((_, v)) = object.fields.iter_mut().find(|(d, _)| d.name == "location") {
+        *v = arcanum_formats::object::Value::Int64(Some(packed));
+    }
+}
+
+/// A follower's `npc_flags`, wherever it is: away, on its record; at home on the loaded map,
+/// there; at home on another map, in that map's kept changes.
+pub fn follower_flags(f: &Follower, map: &crate::LoadedMap, other_maps: &std::collections::BTreeMap<String, std::collections::BTreeMap<SectorId, crate::SectorDelta>>) -> i32 {
+    if let Some(a) = &f.away {
+        return a.flags;
+    }
+    if map.name.as_deref() == Some(f.map.as_str()) {
+        return map.npc_flags(f.sector, f.index).unwrap_or(0);
+    }
+    other_maps.get(&f.map).and_then(|c| c.get(&f.sector)).and_then(|d| d.npc_flags.get(&f.index)).copied().unwrap_or(0)
 }
 
 /// An NPC following a PC now (not waiting), on the NPC's entity.
@@ -205,8 +293,10 @@ pub fn sync_followers(
     npcs: Query<(Entity, &crate::NpcSource, Option<&Following>), With<crate::Npc>>,
 ) {
     let (Some(save), Some(here)) = (world.0.as_ref(), map.name.as_deref()) else { return };
+    let _ = here;
     for (entity, source, now) in &npcs {
-        let record = save.followers.iter().find(|f| f.map == here && f.sector == source.sector && f.index == source.index);
+        let home = map.home_of(source.sector, source.index);
+        let record = save.followers.iter().find(|f| f.is(&home));
         let flags = map.npc_flags(source.sector, source.index).unwrap_or(0);
         let want = record.filter(|_| flags & WAITING == 0).map(|f| Following { leader: f.leader, spread_out: flags & SPREAD_OUT != 0 });
         match (want, now) {
