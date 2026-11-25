@@ -123,3 +123,10 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 - [ ] Using a trapped chest at the start (no Spot Trap) shows "Trap!" over the PC, the party bar's
       hit points drop, and the chest stays shut; using it again opens it.
 - [ ] A PC with Spot Trap sometimes stops before using it with "You have spotted a trap!".
+
+## Skills view
+
+- [ ] The skills button (key, right of the message box) swaps the message box for four buttons:
+      mask, hand, trap jaws, tools; pressing it again, or the spells button, swaps back.
+- [ ] The trap button, then a click on a door or chest with a spotted trap, walks the PC there
+      and says "Trap successfully disarmed." or "Trap disarm failed.".

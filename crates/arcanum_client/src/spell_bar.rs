@@ -16,8 +16,16 @@
 //! Builder's call: the first college the PC knows is chosen when none is (the original keeps
 //! the last one chosen, 0x64c530, its start not traced).
 //!
-//! Not built: the hover names (the original shows them in the view, 0x550860 / 0x5507e0); the
-//! skills view (view 2) and the others.
+//! **The skills view** (view 2: the skills button, 0x5506c0(2); buttons 0x5501c0 / 0x551210,
+//! table 0x5c6c68): four buttons, 32x32 at y 514, x 288, 351, 414, 477: Prowling
+//! (`SKL_Conceal.ART`, art 279), Pick Pocket (280), Disarm Traps (282), Repair (278); skills
+//! 6, 5, 15, 12 (table 0x5cb240). All four always show. A click (0x57efa0 → 0x579fa0 →
+//! 0x57a0a0) arms Disarm Traps for the next click on a door or container
+//! ([`crate::skill_use`]). Prowling (sneaking), Pick Pocket and Repair are not built: their
+//! buttons do nothing yet. One view shows at a time (0x5506c0 toggles between them).
+//!
+//! Not built: the hover names (the original shows them in the view, 0x550860 / 0x5507e0;
+//! the skills' are `mes/skill_ui.mes` 100-103); the other views.
 
 use bevy::prelude::*;
 
@@ -40,11 +48,23 @@ pub const SPELL_X: [f32; SPELLS_PER_COLLEGE] = [284.0, 334.0, 384.0, 435.0, 485.
 pub const SPELL_Y: f32 = 528.0;
 pub const SPELL_SIZE: f32 = 32.0;
 
+/// The skills view's buttons (table 0x5c6c68 / 0x5cb220 / 0x5cb240): file, x, skill.
+pub const SKILL_BUTTONS: [(&str, f32, usize); 4] = [
+    (interface::SKILL_BUTTONS[0], 288.0, 6),
+    (interface::SKILL_BUTTONS[1], 351.0, 5),
+    (interface::SKILL_BUTTONS[2], 414.0, arcanum_sim::SKILL_DISARM_TRAPS),
+    (interface::SKILL_BUTTONS[3], 477.0, 12),
+];
+pub const SKILL_Y: f32 = 514.0;
+pub const SKILL_SIZE: f32 = 32.0;
+
 /// Which view the bottom bar's centre shows.
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BarView {
     /// The spells view instead of the message box.
     pub spells: bool,
+    /// The skills view instead of the message box.
+    pub skills: bool,
     /// The college whose spells show.
     pub college: Option<usize>,
 }
@@ -54,6 +74,14 @@ pub struct BarView {
 pub enum SpellViewPart {
     College(usize),
     Spell(usize),
+    /// A skills view button, by its skill.
+    Skill(usize),
+}
+
+/// The skills view button at `point`, by its skill.
+pub fn skill_at(point: Vec2) -> Option<usize> {
+    let inside = |x: f32| (x..x + SKILL_SIZE).contains(&point.x) && (SKILL_Y..SKILL_Y + SKILL_SIZE).contains(&point.y);
+    SKILL_BUTTONS.iter().find(|b| inside(b.1)).map(|b| b.2)
 }
 
 pub struct SpellBarPlugin;
@@ -101,9 +129,12 @@ pub fn part_at(point: Vec2, spells: &[i32; COLLEGES], college: Option<usize>) ->
     shown_spells(college, spells[college]).zip(SPELL_X).find(|&(_, x)| inside(x, SPELL_Y, SPELL_SIZE)).map(|(s, _)| SpellViewPart::Spell(s))
 }
 
+/// The spells and skills buttons toggle their view; one shows at a time (0x5506c0).
 fn on_spells_button(activate: On<bevy::ui_widgets::Activate>, buttons: Query<&HudAction>, mut view: ResMut<BarView>) {
-    if buttons.get(activate.entity) == Ok(&HudAction::Spells) {
-        view.spells = !view.spells;
+    match buttons.get(activate.entity) {
+        Ok(HudAction::Spells) => (view.spells, view.skills) = (!view.spells, false),
+        Ok(HudAction::Skills) => (view.skills, view.spells) = (!view.skills, false),
+        _ => {}
     }
 }
 
@@ -113,8 +144,9 @@ fn cursor(windows: &Query<&Window>) -> Option<Vec2> {
 
 /// The view closes when the cursor goes up past the bar's top (0x54b5d0); a drag ends.
 fn close_above_the_bar(windows: Query<&Window>, mut view: ResMut<BarView>, mut drag: ResMut<SpellDrag>) {
-    if view.spells && cursor(&windows).is_some_and(|p| p.y < BOTTOM_TOP) {
+    if (view.spells || view.skills) && cursor(&windows).is_some_and(|p| p.y < BOTTOM_TOP) {
         view.spells = false;
+        view.skills = false;
         drag.0 = None;
     }
 }
@@ -134,6 +166,15 @@ fn click_view(
     (mut cache, assets, frames): (ResMut<crate::inventory_screen::ItemArtCache>, Res<AssetServer>, Res<Assets<crate::art_loader::ArtFrames>>),
 ) {
     let (pressed, released) = (buttons.just_pressed(MouseButton::Left), buttons.just_released(MouseButton::Left));
+    // A skills view button arms its skill on release (only Disarm Traps is built).
+    if view.skills && released {
+        if let Some(arcanum_sim::SKILL_DISARM_TRAPS) = cursor(&windows).and_then(skill_at)
+            && let Some(mut armed) = armed
+        {
+            armed.0 = Some(crate::skill_use::Armed::Skill { skill: arcanum_sim::SKILL_DISARM_TRAPS, tool: None });
+        }
+        return;
+    }
     if !view.spells || !(pressed || released) {
         return;
     }
@@ -143,7 +184,7 @@ fn click_view(
         match part {
             Some(SpellViewPart::College(c)) => view.college = Some(c),
             Some(SpellViewPart::Spell(s)) => drag.0 = Some(s),
-            None => {}
+            Some(SpellViewPart::Skill(_)) | None => {}
         }
         return;
     }
@@ -206,12 +247,18 @@ fn show_view(
         commands.entity(e).despawn();
     }
     let Ok((mut visibility, parent)) = boxes.single_mut() else { return };
-    *visibility = if view.spells { Visibility::Hidden } else { Visibility::Inherited };
-    if !view.spells {
-        return;
-    }
+    *visibility = if view.spells || view.skills { Visibility::Hidden } else { Visibility::Inherited };
     let local = |x: f32, y: f32, size: f32| at(rect(Vec2::new(x, y - BOTTOM_TOP), Vec2::splat(size)));
     let mut spawned = Vec::new();
+    if view.skills {
+        for (file, x, skill) in SKILL_BUTTONS {
+            spawned.push(commands.spawn((SpellViewPart::Skill(skill), bevy::picking::Pickable::IGNORE, ImageNode::new(assets.load(file)), local(x, SKILL_Y, SKILL_SIZE))).id());
+        }
+    }
+    if !view.spells {
+        commands.entity(parent.parent()).add_children(&spawned);
+        return;
+    }
     for (c, path) in crate::editor_tabs::college_buttons().into_iter().enumerate().filter(|(c, _)| spells[*c] > 0) {
         spawned.push(commands.spawn((SpellViewPart::College(c), bevy::picking::Pickable::IGNORE, ImageNode::new(assets.load(path)), local(COLLEGE_X[c], COLLEGE_Y, COLLEGE_SIZE))).id());
     }
@@ -239,5 +286,13 @@ mod tests {
         assert_eq!(part_at(Vec2::new(390.0, 540.0), &spells, Some(0)), None, "the third is not known");
         assert_eq!(part_at(Vec2::new(490.0, 540.0), &spells, Some(15)), Some(SpellViewPart::Spell(79)));
         assert_eq!(part_at(Vec2::new(340.0, 540.0), &spells, None), None);
+    }
+
+    #[test]
+    fn the_skills_view_has_four_buttons() {
+        assert_eq!(skill_at(Vec2::new(290.0, 520.0)), Some(6), "Prowling");
+        assert_eq!(skill_at(Vec2::new(420.0, 530.0)), Some(arcanum_sim::SKILL_DISARM_TRAPS));
+        assert_eq!(skill_at(Vec2::new(508.0, 545.0)), Some(12), "Repair");
+        assert_eq!(skill_at(Vec2::new(330.0, 520.0)), None, "between");
     }
 }

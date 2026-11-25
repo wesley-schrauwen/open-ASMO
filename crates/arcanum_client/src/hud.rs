@@ -80,6 +80,8 @@ pub enum HudAction {
     Inventory,
     /// Shows or hides the bottom bar's spells view ([`crate::spell_bar`]).
     Spells,
+    /// Shows or hides the bottom bar's skills view ([`crate::spell_bar`]).
+    Skills,
     /// Opens or closes the sleep window ([`crate::rest_window`]).
     Sleep,
     /// Opens or closes the fate window ([`crate::fate_window`]).
@@ -197,8 +199,14 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
         .with_children(|bottom| {
             for (file, corner, help) in BOTTOM_BUTTONS {
                 let mut button = bottom.spawn((BoxHelp::Intgame(help), hud_button(assets.load(art(file)), local(rect(corner, Vec2::splat(39.0))))));
-                if file == "Spells_Button.ART" {
-                    button.insert(HudAction::Spells);
+                match file {
+                    "Spells_Button.ART" => {
+                        button.insert(HudAction::Spells);
+                    }
+                    "Skills_Button.ART" => {
+                        button.insert(HudAction::Skills);
+                    }
+                    _ => {}
                 }
             }
             crate::message_box::spawn_box(bottom, local);

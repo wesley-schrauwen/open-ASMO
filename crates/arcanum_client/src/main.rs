@@ -155,6 +155,11 @@ fn main() {
         );
     }
 
+    // Debugging aid: `DEBUG_ARCANUM_PANEL=skillsbar` shows the bottom bar's skills view.
+    if std::env::var("DEBUG_ARCANUM_PANEL").is_ok_and(|v| v == "skillsbar") {
+        app.add_systems(OnEnter(AppState::InGame), |mut view: ResMut<arcanum_client::spell_bar::BarView>| view.skills = true);
+    }
+
     // Debugging aid: `DEBUG_ARCANUM_TALK=1` walks to the nearest NPC and talks once the world is in.
     if std::env::var("DEBUG_ARCANUM_TALK").is_ok() {
         app.add_systems(
