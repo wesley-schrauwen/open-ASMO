@@ -448,6 +448,7 @@ pub fn pc_status(rules: &arcanum_rules::RulesData, sheet: &CharacterSheet) -> Pc
         hit_points: Pool { current: derived.hit_points - sheet.hp_damage, max: derived.hit_points },
         fatigue: Pool { current: derived.fatigue - sheet.fatigue_damage, max: derived.fatigue },
         level: sheet.level,
+        dead: sheet.dead,
     }
 }
 
@@ -1058,6 +1059,41 @@ mod tests {
         let world = sim.app.world_mut();
         let inv = world.query_filtered::<&crate::Inventory, With<crate::PlayerControlled>>().iter(world).next().unwrap().clone();
         assert_eq!(inv.items.iter().find(|i| i.location == 0).unwrap().wear.damage, 20, "unchanged");
+    }
+
+    #[test]
+    fn a_pc_out_of_hit_points_stays_dead_until_resurrected() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        let sheet = |sim: &SimApp| sim.app.world().resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(1)].blueprint.sheet.clone();
+        let max = sim.app.world().resource::<crate::SimRules>().0.derived(&sheet(&sim)).hit_points;
+        let set = |sim: &mut SimApp, f: &dyn Fn(&mut CharacterSheet)| {
+            f(&mut sim.app.world_mut().resource_mut::<WorldState>().0.as_mut().unwrap().players.get_mut(&PlayerId(1)).unwrap().blueprint.sheet);
+            sim.app.world_mut().resource_mut::<crate::ScriptSheets>().0.insert(PlayerId(1));
+        };
+        set(&mut sim, &|s| s.hp_damage = max);
+        sim.update();
+        sim.update();
+        assert!(sheet(&sim).dead, "out of hit points: dead");
+        // Healing does not raise the dead; neither does a talk or a walk get through.
+        set(&mut sim, &|s| s.hp_damage = 0);
+        sim.update();
+        sim.update();
+        assert!(sheet(&sim).dead);
+        let world = sim.app.world_mut();
+        assert!(world.query_filtered::<(), (With<crate::PlayerControlled>, With<crate::Unconscious>)>().iter(world).next().is_some(), "lies down");
+        sim.app.world_mut().resource_mut::<crate::Resurrections>().0 = 1;
+        sim.update();
+        sim.update();
+        let s = sheet(&sim);
+        assert!(!s.dead);
+        assert_eq!(max - s.hp_damage, crate::RESURRECTED_HP.min(max));
     }
 
     #[test]

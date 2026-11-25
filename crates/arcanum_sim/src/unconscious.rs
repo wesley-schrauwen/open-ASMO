@@ -11,8 +11,16 @@
 //!   critter gets up (goal 63, art animation 8). No message and no sound either way.
 //! - Clients see it in the PC's fatigue ([`crate::PcStatus`]): below 1 is down.
 //!
+//! - **Death** (owner's call for co-op; the original's PC dies at 0 hit points, 0x45d8d0 →
+//!   0x460780, and the game ends): a PC whose hit points run out is dead
+//!   (`CharacterSheet::dead`). It lies where it fell and takes no requests; healing, rest and
+//!   scripts' healing do not raise it. Only resurrection does ([`Resurrections`]: a healer's
+//!   Resurrect bought by another PC): it gets up with 1 hit point (builder's call).
+//!
 //! Not built: the spells being cast and maintained ending (0x457450, 0x4cbbf0; none are
-//! maintained yet); the turn ending in turn-based combat (0x4b7c90).
+//! maintained yet); the turn ending in turn-based combat (0x4b7c90); moving a dead PC to the
+//! nearest inn (owner's note: to be detailed); the Resurrect spell cast by a PC; a dead PC's
+//! inventory and followers.
 
 use bevy_ecs::prelude::*;
 
@@ -27,19 +35,48 @@ pub fn is_unconscious(current: i32) -> bool {
     current < 1
 }
 
-/// Whether a PC lies down: unconscious, or out of hit points (builder's call: the original's PC
-/// dies there, 0x45d8d0 → 0x460780, and the game ends; here it lies until healed).
+/// Whether a PC lies down: unconscious, out of hit points, or dead.
 pub fn is_down(status: &crate::PcStatus) -> bool {
-    is_unconscious(status.fatigue.current) || status.hit_points.current < 1
+    status.dead || is_unconscious(status.fatigue.current) || status.hit_points.current < 1
+}
+
+/// Resurrections bought this tick: every dead PC gets up.
+#[derive(Resource, Debug, Default)]
+pub struct Resurrections(pub u32);
+
+/// Hit points a resurrected PC has (builder's call).
+pub const RESURRECTED_HP: i32 = 1;
+
+/// Raises the dead PCs when a resurrection was bought ([`Resurrections`]).
+pub fn resurrect_pcs(mut asked: ResMut<Resurrections>, rules: Res<SimRules>, mut world: ResMut<crate::WorldState>, mut sheets: ResMut<crate::ScriptSheets>) {
+    if std::mem::take(&mut asked.0) == 0 {
+        return;
+    }
+    let Some(save) = world.0.as_mut() else { return };
+    for (&player, saved) in save.players.iter_mut().filter(|(_, s)| s.blueprint.sheet.dead) {
+        let sheet = &mut saved.blueprint.sheet;
+        sheet.dead = false;
+        sheet.hp_damage = (rules.0.derived(sheet).hit_points - RESURRECTED_HP).max(0);
+        sheets.0.insert(player);
+    }
 }
 
 type ConsciousQuery<'a> = (Entity, &'a PlayerControlled, &'a Sheet, &'a crate::Position, Has<Unconscious>, Has<crate::Walking>);
 
 /// Knocks down the PCs whose fatigue or hit points fell below 1 and gets up those above 0
 /// again.
-pub fn update_consciousness(mut commands: Commands, rules: Res<SimRules>, mut world: ResMut<crate::WorldState>, pcs: Query<ConsciousQuery>) {
+pub fn update_consciousness(mut commands: Commands, rules: Res<SimRules>, mut world: ResMut<crate::WorldState>, mut sheets: ResMut<crate::ScriptSheets>, pcs: Query<ConsciousQuery>) {
     for (entity, player, sheet, position, down, walking) in &pcs {
-        let now = is_down(&pc_status(&rules.0, &sheet.0));
+        let status = pc_status(&rules.0, &sheet.0);
+        // Out of hit points: dead (owner's call), kept on the sheet.
+        if status.hit_points.current < 1
+            && !sheet.0.dead
+            && let Some(saved) = world.0.as_mut().and_then(|w| w.players.get_mut(&player.0))
+        {
+            saved.blueprint.sheet.dead = true;
+            sheets.0.insert(player.0);
+        }
+        let now = is_down(&status);
         if now == down {
             continue;
         }
@@ -64,9 +101,9 @@ pub fn gate_unconscious(
     mut moves: ResMut<crate::MoveRequests>,
     mut uses: ResMut<crate::UseRequests>,
     mut pickups: ResMut<crate::PickUpRequests>,
-    mut picks: ResMut<crate::PickLockRequests>,
-    mut casts: ResMut<crate::CastRequests>,
+    (mut picks, mut casts): (ResMut<crate::PickLockRequests>, ResMut<crate::CastRequests>),
     mut disarms: ResMut<crate::DisarmRequests>,
+    (mut rests, mut talks): (ResMut<crate::RestRequests>, ResMut<crate::TalkRequests>),
 ) {
     let down: Vec<crate::PlayerId> = pcs.iter().map(|p| p.0).collect();
     if down.is_empty() {
@@ -78,6 +115,9 @@ pub fn gate_unconscious(
     picks.0.retain(|r| !down.contains(&r.0));
     casts.0.retain(|r| !down.contains(&r.0));
     disarms.0.retain(|r| !down.contains(&r.0));
+    rests.0.retain(|r| !down.contains(&r.0));
+    talks.talk.retain(|r| !down.contains(&r.0));
+    talks.pockets.retain(|r| !down.contains(&r.0));
 }
 
 #[cfg(test)]

@@ -92,6 +92,9 @@ pub struct PcStatus {
     /// Its level (the hover text shows it).
     #[serde(default)]
     pub level: i32,
+    /// Dead until resurrected ([`crate::unconscious`]).
+    #[serde(default)]
+    pub dead: bool,
 }
 
 /// A change to shared state, sent from the host to clients.

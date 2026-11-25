@@ -637,6 +637,10 @@ impl ScriptContext for HostWorld<'_> {
         let ScriptObject::Pc(p) = object else { return };
         let Some(saved) = self.players.get_mut(&p) else { return };
         let sheet = &mut saved.blueprint.sheet;
+        // The dead are not healed back to life ([`crate::unconscious`]).
+        if sheet.dead && !fatigue {
+            return;
+        }
         let damage = if fatigue { &mut sheet.fatigue_damage } else { &mut sheet.hp_damage };
         let healed = (*damage - amount.max(0)).max(0);
         if healed != *damage {

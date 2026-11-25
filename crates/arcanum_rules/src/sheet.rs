@@ -121,6 +121,10 @@ pub struct CharacterSheet {
     /// crippled, 0x400 legs crippled (0x4b5f40); a Master's Heal takes them away.
     #[cfg_attr(feature = "serde", serde(default))]
     pub injuries: i32,
+    /// Dead: its hit points ran out. It stays dead until resurrected (owner's call for co-op;
+    /// the original ends the game, 0x45d8d0 → 0x460780).
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub dead: bool,
     pub draft: Draft,
 }
 
@@ -177,6 +181,7 @@ impl Default for CharacterSheet {
             poison: 0,
             effects: Vec::new(),
             injuries: 0,
+            dead: false,
             draft: Draft::default(),
         }
     }

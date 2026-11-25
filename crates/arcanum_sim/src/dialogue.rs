@@ -377,7 +377,9 @@ impl SheetChanges {
             sheet.alignment = a;
         }
         sheet.fate_points += self.fate_points;
-        sheet.hp_damage = (sheet.hp_damage - self.heal.max(0)).max(0);
+        if !sheet.dead {
+            sheet.hp_damage = (sheet.hp_damage - self.heal.max(0)).max(0);
+        }
         sheet.poison = (sheet.poison - self.cure_poison.max(0)).max(0);
         if self.cure_injuries {
             sheet.injuries = 0;
@@ -394,6 +396,10 @@ pub fn passes(value: i32, n: i32) -> bool {
 pub struct Talk<'a> {
     /// Result `co`: the NPC attacks the PC; the talk ends ([`crate::combat`]).
     pub attack: bool,
+    /// A PC of the party is dead: a healer offers Resurrect.
+    pub party_dead: bool,
+    /// Resurrect was bought: the dead PCs get up ([`crate::Resurrections`]).
+    pub resurrect: bool,
     pub rules: &'a RulesData,
     pub sheet: &'a CharacterSheet,
     pub inventory: &'a mut Inventory,
@@ -1011,7 +1017,7 @@ pub fn talk_to_npcs(
 
 /// What a conversation step writes to besides the world: the outbox, barters, areas, the
 /// experience earned, and the game clock it reads.
-type ConversationOut<'w> = (ResMut<'w, Outbox>, ResMut<'w, crate::barter::BarterStarts>, ResMut<'w, crate::areas::AreaTable>, ResMut<'w, crate::ExperienceAwards>, Res<'w, crate::GameClock>, ResMut<'w, crate::combat::CombatStarts>);
+type ConversationOut<'w> = (ResMut<'w, Outbox>, ResMut<'w, crate::barter::BarterStarts>, ResMut<'w, crate::areas::AreaTable>, ResMut<'w, crate::ExperienceAwards>, Res<'w, crate::GameClock>, ResMut<'w, crate::combat::CombatStarts>, ResMut<'w, crate::Resurrections>);
 
 /// Starts, steps and ends conversations: see the module docs.
 #[allow(clippy::too_many_arguments)]
@@ -1026,7 +1032,7 @@ pub fn run_conversations(
     mut reports: ResMut<DialogueReports>,
     (session, rules, vfs, acks): (Res<Session>, Res<SimRules>, Option<Res<crate::SimVfs>>, Res<crate::InventoryAcks>),
     (mut rng, mut reputations): (ResMut<crate::HostRng>, ResMut<ReputationTable>),
-    (mut outbox, mut barters, mut areas, mut awards, clock, mut fights): ConversationOut,
+    (mut outbox, mut barters, mut areas, mut awards, clock, mut fights, mut resurrections): ConversationOut,
     mut pcs: Query<TalkerQuery>,
     npcs: Query<(&NetId, &NpcSource)>,
 ) {
@@ -1049,6 +1055,7 @@ pub fn run_conversations(
     for (player, step) in steps {
         let Some((entity, &pc_net, _, &Position(pc_at), mut sheet, mut inventory, conversation, ..)) = pcs.iter_mut().find(|pc| pc.2.0 == player) else { continue };
         let Some(save) = world.0.as_mut() else { continue };
+        let party_dead = save.players.values().any(|p| p.blueprint.sheet.dead);
         let Some(saved) = save.players.get_mut(&player) else { continue };
         let (npc_object, dialog, current) = match (&step, conversation.as_deref()) {
             (Step::Start(s), _) => (s.npc, s.dialog, None),
@@ -1129,6 +1136,8 @@ pub fn run_conversations(
         };
         let mut talk = Talk {
             attack: false,
+            party_dead,
+            resurrect: false,
             follow,
             rules: &rules.0,
             sheet: &sheet.0,
@@ -1193,6 +1202,9 @@ pub fn run_conversations(
             }
         };
         let attack = std::mem::take(&mut talk.attack);
+        if std::mem::take(&mut talk.resurrect) {
+            resurrections.0 += 1;
+        }
         let next = if attack { Shown::End } else { next };
         let gold_changed = talk.gold_changed;
         let follow_change = talk.follow.changed.then_some((talk.follow.mine, talk.npc_flags));
@@ -1829,7 +1841,7 @@ impl Say<'_> {
                 if h.college >= 2 && let Some(text) = self.pc_line(1200, 1299, talk) {
                     options.push(Offered { text, act: OptionAct::HealPage { page: 2, ret } });
                 }
-                if h.college == 5 && let Some(text) = self.spell_option(RESURRECT, talk) {
+                if h.college == 5 && talk.party_dead && let Some(text) = self.spell_option(RESURRECT, talk) {
                     options.push(Offered { text, act: heal(Healing::Spell(RESURRECT)) });
                 }
             }
@@ -1875,7 +1887,9 @@ impl Say<'_> {
     /// - Minor / Major Healing: [`spell_heal`] by the NPC's aptitude; Halt Poison: 50 poison.
     /// - A Master's Heal cures injuries (builder's call: 0x4c7160 case 10 clears `critter_flags`
     ///   0x80-0x400; the rank test not traced).
-    /// - Not built: other skills, Resurrect (the PC is not dead), the kit's charges.
+    /// - Resurrect (offered only while a PC of the party is dead): the dead PCs get up
+    ///   ([`crate::Resurrections`]).
+    /// - Not built: other skills, the kit's charges.
     fn perform_heal(&mut self, file: &DialogFile, healing: Healing, ret: i32, talk: &mut Talk) -> Shown {
         match healing {
             Healing::Skill(HEAL_SKILL) => {
@@ -1889,6 +1903,7 @@ impl Say<'_> {
                 talk.sheet_changes.cure_injuries |= rank == 3;
             }
             Healing::Spell(HALT_POISON) => talk.sheet_changes.cure_poison += 50,
+            Healing::Spell(RESURRECT) => talk.resurrect = true,
             Healing::Spell(spell) => talk.sheet_changes.heal += spell_heal(spell, self.npc.healer.aptitude),
             Healing::Skill(_) => {}
         }
@@ -2095,6 +2110,8 @@ mod tests {
         let npc_reaction = crate::NpcReaction { base: 50, race: 0, origin: 0, faction: 0, only_reputation: false };
         Talk {
             attack: false,
+            party_dead: false,
+            resurrect: false,
             follow: Default::default(),
             rules,
             sheet,

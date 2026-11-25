@@ -118,6 +118,7 @@ impl RulesData {
             poison: 0,
             effects: Vec::new(),
             injuries: 0,
+            dead: false,
             draft: Draft::default(),
         }
     }
