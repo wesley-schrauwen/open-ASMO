@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-7 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`).
+Status: steps 1-8 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`).
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -44,7 +44,10 @@ of `combat_design.md` come after the original's rules work.
   Strength short of `weapon_min_strength`, range (bow and throwing below Expert: + 5 a tile past
   PE / 2; out of range impossible), light (`(255 − light) × 30 / 255`), cover, the target's state
   (−30 / −50 helpless, −30 unnoticed), the attacker's (blind + 30, crippled arms + 20 / + 50).
-- **Roll:** 1-100 + difficulty ≤ chance hits. Critical hit 0x4c81a0, critical miss 0x4c82e0
+- **Roll:** 1-100 + difficulty ≤ chance hits. Critical hit 0x4c81a0 (a new 1-100 roll on a
+  hit, at most `chance / D`: `D` 20 for skills with flag 0x400 in table 0x5b6f64 (bow, dodge,
+  melee, throwing, firearms), else 2, checked at 0x4c81e4; + the weapon's field 0x82 scaled by
+  0x461590; backstab and effect terms), critical miss 0x4c82e0
   (`(100 − chance) / 2` and the weapon's wear, at least 2), its effects 0x4b6410 (drop, break,
   wild hit by `weapon_crit_miss_chart`).
 - **Dodge:** a hit is rolled again by the defender with Dodge; dodged: "Dodge!"
@@ -56,10 +59,22 @@ of `combat_design.md` come after the original's rules work.
   the gloves' `armor_unarmed_bonus_damage`), a critter its `npc_damage_idx` pairs.
 - **Resistance** (0x4b6860): type by table 0x5b5804 (damage, poison, electrical, fire,
   damage); fatigue three quarters; damage less its percent.
-- **Critical multiplier** (0x4b5f40): × 3 at `chance + 10`, × 2 at `+ 30`, × 1.5 at `+ 60`, else
-  × 1.5 (`chance` the weapon's `weapon_magic_crit_hit_effect`), on the hit point damage; other
-  critical effects (knock down, stun, blind, cripple, item damage) by `weapon_crit_hit_chart` and
-  the body part.
+- **Critical multiplier** (0x4b5f40): `X` the weapon's field 0x83 (`weapon_magic_crit_hit_effect`,
+  not for ranged weapons) + 10 on a called shot; × 3 on a roll up to `X + 10`, else × 2 on a
+  second up to `X + 30`, else × 1.5 (checked: + 0xa, + 0x14, + 0x1e steps); an NPC's on a PC
+  × 1.5.
+- **Critical effects** (0x4b5f40 sets bits, 0x4b4390 applies them; not for `critter_flags` 0x4):
+  - body part (0x4b65a0, checked): roll ≤ 70 torso, ≤ 85 legs, ≤ 95 arms, else head;
+  - `E = X + 5`, + 10 with `weapon_crit_hit_chart` (0x81) 1 or 3 (no weapon or ranged: 1), + 10 on
+    a bare head; saves: a roll ≤ CO + mod (0x45f060);
+  - stunned (`combat.mes` 16, `critter_flags` 0x20), unconscious (17, fatigue + 10-20),
+    knocked down (18), blinded (4, 0x80; head, chart not 1), crippled arm (5, 0x100, both 0x200;
+    drops the weapon 19 / shield 20), crippled leg (6, 0x400), scarred (3, PCs, effect 0x32),
+    weapon damaged / dropped (8 / 19), armour damaged (7), helmet knocked off (20);
+  - items worn there lose 10 hit points (field 0x1d); at 0 destroyed (23 / 24);
+  - a Master's Heal (0x4c7160 case 10) clears 0x80-0x400.
+- **Critical miss** (0x4b6410): half of them have effects, on the attacker: the weapon destroyed
+  (22), a spell weapon's spell on the fumbler (9), then 0x4b5f40's effects on it.
 - **Applying** (0x4b4390): hit points `hp_damage` (field 0x1d); poison stat 0x18; fatigue. A
   critter's most hit points (0x43d5a0): `4 × hp_pts + hp_adj + WP + 2 × (level + ST) + 4`, as a
   PC's.
@@ -149,8 +164,8 @@ of `combat_design.md` come after the original's rules work.
      as its points go; `PlayerIntent::EndTurn`. Moves in a fight: only on the PC's turn, 2 points
      a step, cut to what is left.
    - The attack as above without the light, range, cover, state and critical-effect terms;
-     critical hits on a second roll at half the chance (builder's call: 0x4c81a0's luck term not
-     read), the multiplier with no weapon bonus.
+     critical hits on a second roll at half the chance (corrected in step 8: a twentieth), the
+     multiplier with no weapon bonus.
    - NPCs: an attacked NPC fights back (`Fighting`), joins the fight and keeps out of its idle
      wandering; its turns pass for now. Damage kept as `SectorDelta::npc_damage`; at 0 hit
      points it dies as action 0x3a kills, the experience shared.
@@ -227,3 +242,15 @@ of `combat_design.md` come after the original's rules work.
    - Attackers out of reach walk towards the target until in reach (ranged ones too).
    - Not built: the surrender bark and action 0x19, ammunition (not found in the attack), weapon
      switching, the one-shot items of 0x4ac910.
+8. **Critical hits** (built, `feat/combat-criticals`).
+   - The critical chance is a twentieth of the skill chance plus `weapon_magic_crit_hit_chance`
+     (unscaled: 0x461590 not read); the multiplier by the weapon's critical effect in three rolls;
+     an NPC's on a PC × 1.5.
+   - Injuries by body part: blinded, one or both arms crippled, legs crippled
+     (`combat::critical_injuries`), all with the roll `E` (builder's call: the original's rolls
+     for each differ a little). Kept in the PC's `CharacterSheet::injuries` and NPCs'
+     `critter_flags` (`SectorDelta::npc_critter_flags`). Blinded + 30 and crippled arms + 20 /
+     + 50 to the attacker's difficulty (0x4c8430). A Master healer's Heal cures them (builder's
+     call: the rank test not traced). Floats "Blinded", "Crippled arm", "Crippled leg".
+   - Not built: stunning, knocking out and down (their mechanics not traced), scars, items
+     dropped or damaged by criticals, crippled legs' effect, critical misses' effects.

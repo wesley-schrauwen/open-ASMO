@@ -358,6 +358,8 @@ pub struct SheetChanges {
     /// Hit points healed and poison taken away.
     pub heal: i32,
     pub cure_poison: i32,
+    /// A Master's Heal cures injuries ([`CharacterSheet::injuries`]).
+    pub cure_injuries: bool,
 }
 
 impl SheetChanges {
@@ -377,6 +379,9 @@ impl SheetChanges {
         sheet.fate_points += self.fate_points;
         sheet.hp_damage = (sheet.hp_damage - self.heal.max(0)).max(0);
         sheet.poison = (sheet.poison - self.cure_poison.max(0)).max(0);
+        if self.cure_injuries {
+            sheet.injuries = 0;
+        }
     }
 }
 
@@ -1868,8 +1873,9 @@ impl Say<'_> {
     /// - The Heal skill (0x4c7160 case 10; a healer that follows nobody never fails): its level,
     ///   × 1.5 when trained, at least 1; a Master heals all of it, others 1 to it at random.
     /// - Minor / Major Healing: [`spell_heal`] by the NPC's aptitude; Halt Poison: 50 poison.
-    /// - Not built: other skills, Resurrect (the PC is not dead), the kit's charges, a Master's
-    ///   cured conditions.
+    /// - A Master's Heal cures injuries (builder's call: 0x4c7160 case 10 clears `critter_flags`
+    ///   0x80-0x400; the rank test not traced).
+    /// - Not built: other skills, Resurrect (the PC is not dead), the kit's charges.
     fn perform_heal(&mut self, file: &DialogFile, healing: Healing, ret: i32, talk: &mut Talk) -> Shown {
         match healing {
             Healing::Skill(HEAL_SKILL) => {
@@ -1880,6 +1886,7 @@ impl Say<'_> {
                     amount = self.rng.range(1, amount);
                 }
                 talk.sheet_changes.heal += amount;
+                talk.sheet_changes.cure_injuries |= rank == 3;
             }
             Healing::Spell(HALT_POISON) => talk.sheet_changes.cure_poison += 50,
             Healing::Spell(spell) => talk.sheet_changes.heal += spell_heal(spell, self.npc.healer.aptitude),
