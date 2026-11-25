@@ -961,16 +961,40 @@ impl ScriptContext for HostWorld<'_> {
 /// Critter art's death animation.
 pub const ANIM_DEATH: u32 = 7;
 
-/// `art` on the last frame of its death animation (critters, monsters, unique NPCs share the
-/// animation bits 6-10 and frame bits 14-18); other art as it is.
+/// The default death animation for the default death: `art` on the last frame of
+/// [`ANIM_DEATH`] ([`death_frame_in`]).
 pub fn death_frame(vfs: Option<&arcanum_vfs::Vfs>, index: Option<&arcanum_formats::art_id::ArtIndex>, art: arcanum_formats::art_id::ArtId) -> arcanum_formats::art_id::ArtId {
+    death_frame_in(vfs, index, art, ANIM_DEATH)
+}
+
+/// The violent deaths (0x4b5306): by the head, the body, the legs.
+pub const ANIM_DEATH_HEAD: u32 = 17;
+pub const ANIM_DEATH_BODY: u32 = 18;
+pub const ANIM_DEATH_LEGS: u32 = 19;
+
+/// `art` on the last frame of death animation `anim` (critters, monsters, unique NPCs share the
+/// animation bits 6-10 and frame bits 14-18), or of 18 when it has no art for `anim` (0x42bce9),
+/// or of 7; other art as it is.
+pub fn death_frame_in(vfs: Option<&arcanum_vfs::Vfs>, index: Option<&arcanum_formats::art_id::ArtIndex>, art: arcanum_formats::art_id::ArtId, anim: u32) -> arcanum_formats::art_id::ArtId {
     use arcanum_formats::art_id::{ArtId, ArtKind};
     if !matches!(art.kind(), ArtKind::Critter | ArtKind::Monster | ArtKind::UniqueNpc) {
         return art;
     }
-    let dying = ArtId((art.0 & !(0x1f << 6 | 0x1f << 14)) | ANIM_DEATH << 6);
-    let frames = index.and_then(|i| i.path(dying)).and_then(|p| vfs?.read(&p).ok()).and_then(|d| arcanum_formats::art::ArtFile::parse(&d).ok()).map_or(1, |f| f.frame_count);
+    let with = |anim: u32| ArtId((art.0 & !(0x1f << 6 | 0x1f << 14)) | anim << 6);
+    let frames_of = |id: ArtId| index.and_then(|i| i.path(id)).and_then(|p| vfs?.read(&p).ok()).and_then(|d| arcanum_formats::art::ArtFile::parse(&d).ok()).map(|f| f.frame_count);
+    let (dying, frames) = [anim, ANIM_DEATH_BODY, ANIM_DEATH].into_iter().find_map(|a| Some((with(a), frames_of(with(a))?))).unwrap_or((with(ANIM_DEATH), 1));
     ArtId(dying.0 | ((frames.saturating_sub(1) as u32 & 0x1f) << 14))
+}
+
+/// The death animation of a fatal hit (0x4b5306): more than 20 damage dies by where it landed
+/// (head 17, legs 19, else 18); else the default 7.
+pub fn death_anim(damage: i32, part: u8) -> u32 {
+    match (damage > 20, part) {
+        (false, _) => ANIM_DEATH,
+        (true, 1) => ANIM_DEATH_HEAD,
+        (true, 3) => ANIM_DEATH_LEGS,
+        (true, _) => ANIM_DEATH_BODY,
+    }
 }
 
 /// A map object's place: sector, index, whether it is a mobile one.

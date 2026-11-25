@@ -294,7 +294,13 @@ pub struct Actor {
     pub posture: Posture,
     /// Prowling ([`arcanum_sim::prowl`]): it stands and walks in animation 5.
     pub prowling: bool,
+    /// An animation played once (an attack, a death; [`crate::combat_ui`]), and the seconds it
+    /// has played.
+    pub action: Option<(u32, f32)>,
 }
+
+/// Longest an action is held when its art does not load or finish.
+const ACTION_LIMIT_SECS: f32 = 3.0;
 
 /// Whether an actor stands, lies unconscious or gets up (Arcanum.exe 0x435a90 / 0x434de0).
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -443,7 +449,7 @@ impl Actor {
     /// NPC drawn as scenery) is shown as it is.
     pub fn current_art(&self) -> ArtId {
         let lying = match self.posture {
-            Posture::Standing => None,
+            Posture::Standing => self.action.filter(|_| !self.walking()).map(|(anim, _)| anim),
             Posture::Down => Some(ANIM_KNOCKED_DOWN),
             Posture::GettingUp(_) => Some(ANIM_GET_UP),
         };
@@ -491,6 +497,7 @@ fn apply_actor_deltas(
     mut clock: ResMut<WorldClock>,
     mut party: ResMut<Party>,
     mut actors: Query<(Entity, &mut Actor)>,
+    mut dying: Option<ResMut<crate::combat_ui::Dying>>,
 ) {
     if deltas.0.is_empty() {
         return;
@@ -512,7 +519,7 @@ fn apply_actor_deltas(
                 let rotation = CritterArt::from_id(art).rotation as usize;
                 let pc = matches!(kind, arcanum_sim::EntityKind::Pc { .. });
                 let prowling = pc && CritterArt::from_id(art).anim == arcanum_sim::prowl::ANIM_PROWL;
-                let actor = Actor { net_id, art, gait, own_gait: gait, pc, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling };
+                let actor = Actor { net_id, art, gait, own_gait: gait, pc, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling, action: dying.as_mut().is_some_and(|d| d.0.remove(&net_id)).then_some(((art.0 >> 6) & 0x1f, 0.0)) };
                 // The art is set once the art index is in (`place_actors`).
                 let entity = commands
                     .spawn((
@@ -928,6 +935,12 @@ pub fn next_posture(posture: Posture, down: bool, finished: bool, dt: f32) -> Po
 /// above 0 and the get-up has played.
 fn update_postures(time: Res<Time>, party: Res<Party>, mut actors: Query<(&mut Actor, &ArtAnimation)>) {
     for (mut actor, animation) in &mut actors {
+        // An action ends when it has played (its art loaded and finished), or after a while.
+        if let Some((anim, secs)) = actor.action {
+            let secs = secs + time.delta_secs();
+            let done = animation.finished || secs >= ACTION_LIMIT_SECS || actor.walking();
+            actor.action = (!done).then_some((anim, secs));
+        }
         let down = actor.pc && unconscious(&party, actor.net_id);
         let finished = matches!(actor.posture, Posture::GettingUp(_)) && animation.finished;
         let next = next_posture(actor.posture, down, finished, time.delta_secs());
@@ -991,9 +1004,9 @@ fn place_actors(
         let changed = animation.art != handle;
         animation.set(&handle, actor.rotation);
         animation.frame_millis = walking.then_some(actor.gait.frame_millis);
-        // Standing holds the frame the art id names; walking plays; falling and getting up
-        // play once.
-        let lying = actor.posture != Posture::Standing;
+        // Standing holds the frame the art id names; walking plays; falling, getting up,
+        // attacks and deaths play once.
+        let lying = actor.posture != Posture::Standing || (actor.action.is_some() && !walking);
         animation.once = lying;
         animation.playing = walking || lying;
         if !walking && !lying && changed {
@@ -1012,7 +1025,7 @@ mod tests {
 
     fn actor() -> Actor {
         let art = arcanum_sim::pc_art(0, true);
-        Actor { net_id: NetId(0), art, gait: Gait::human(17), own_gait: Gait::human(17), pc: true, at: t(10, 10), rotation: 4, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling: false }
+        Actor { net_id: NetId(0), art, gait: Gait::human(17), own_gait: Gait::human(17), pc: true, at: t(10, 10), rotation: 4, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling: false, action: None }
     }
 
     #[test]
