@@ -541,10 +541,49 @@ pub struct CombatRequests {
 #[derive(Resource, Debug, Default)]
 pub struct CombatStarts(pub Vec<(NetId, NetId)>);
 
-/// Script events the fight raises (0x4aabe0, 0x45da20): the NPC, the event and the player whose
-/// PC triggers it.
+/// Script events the fight raises (0x4aabe0, 0x45da20, 0x4b3770 …): the attachee, the event, the
+/// player whose PC is involved, the triggerer. An item a PC carries runs its prototype's script.
+/// Their answers are ignored, as the original's.
 #[derive(Resource, Debug, Default)]
-pub struct CombatEvents(pub Vec<(crate::ScriptObject, u32, PlayerId)>);
+pub struct CombatEvents(pub Vec<(crate::ScriptObject, u32, PlayerId, crate::ScriptObject)>);
+
+/// Script events of attacks: hit and miss (on the weapon, the attacker the triggerer; 0x4b37a3 /
+/// 0x4b3972), critical hit and miss after them (0x4b37cd / 0x4b399c), taking damage (on the
+/// victim, the attacker the triggerer, 0x4b446b: a 0 answer cancels the damage), critter hits
+/// (on the attacker, the victim the triggerer, 0x4b37fc), will kill on sight (on the NPC, its
+/// target the triggerer, 0x4ae179: a 0 answer leaves it peaceful), leader killing (on each
+/// follower of the killer, the dead the triggerer, 0x45db95).
+pub const EVENT_HIT: u32 = 7;
+pub const EVENT_MISS: u32 = 8;
+pub const EVENT_LEADER_KILLING: u32 = 20;
+pub const EVENT_KILL_ON_SIGHT: u32 = 22;
+pub const EVENT_TAKING_DAMAGE: u32 = 23;
+pub const EVENT_CRITTER_HITS: u32 = 26;
+pub const EVENT_CRITICAL_HIT: u32 = 34;
+pub const EVENT_CRITICAL_MISS: u32 = 35;
+
+/// A hit on an NPC whose taking-damage script is asked first (0x4b446b): the damage waits for its
+/// answer, a tick.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldHit {
+    pub attacker_object: crate::ScriptObject,
+    /// The attacking PC (its team gets the experience).
+    pub attacker_player: Option<PlayerId>,
+    /// The player the script runs for.
+    pub player: Option<PlayerId>,
+    pub victim: NetId,
+    pub victim_object: crate::ScriptObject,
+    pub outcome: AttackOutcome,
+}
+
+/// Script answers the fight waits on: held hits (answered: whether the damage goes ahead), and
+/// NPCs about to turn on a PC (`(npc, pc, npc object, player)`; event 22).
+#[derive(Resource, Debug, Default)]
+pub struct ScriptChecks {
+    pub hits: Vec<HeldHit>,
+    pub answered: Vec<(HeldHit, bool)>,
+    pub hostile: Vec<(NetId, NetId, crate::ScriptObject, PlayerId)>,
+}
 
 /// Script events: an NPC dying (killer the triggerer), starting and stopping a fight.
 pub const EVENT_DYING: u32 = 12;
@@ -552,9 +591,29 @@ pub const EVENT_ENTER_COMBAT: u32 = 13;
 pub const EVENT_EXIT_COMBAT: u32 = 14;
 
 /// Runs the fight's script events with the host.
-pub fn run_combat_events(mut events: ResMut<CombatEvents>, mut host: crate::ScriptHost, mut world: ResMut<crate::WorldState>, mut map: ResMut<crate::LoadedMap>, mut outbox: ResMut<crate::Outbox>) {
-    for (object, event, player) in std::mem::take(&mut events.0) {
-        host.hook(&mut world, &mut map, &mut outbox, object, event, player);
+/// Runs the fight's script events with the host; asks the held hits' and would-be foes' scripts.
+pub fn run_combat_events(mut events: ResMut<CombatEvents>, mut checks: ResMut<ScriptChecks>, mut starts: ResMut<CombatStarts>, mut host: crate::ScriptHost, mut world: ResMut<crate::WorldState>, mut map: ResMut<crate::LoadedMap>, mut outbox: ResMut<crate::Outbox>) {
+    for (object, event, player, triggerer) in std::mem::take(&mut events.0) {
+        match object {
+            crate::ScriptObject::Carried { holder, prototype } => {
+                host.item_hook(&mut world, &mut map, &mut outbox, holder, prototype, event);
+            }
+            _ => {
+                host.hook_by(&mut world, &mut map, &mut outbox, object, event, player, triggerer);
+            }
+        }
+    }
+    for hit in std::mem::take(&mut checks.hits) {
+        let allowed = match hit.player {
+            Some(player) => host.hook_by(&mut world, &mut map, &mut outbox, hit.victim_object, EVENT_TAKING_DAMAGE, player, hit.attacker_object) == crate::HookResult::RunDefault,
+            None => true,
+        };
+        checks.answered.push((hit, allowed));
+    }
+    for (npc, pc, object, player) in std::mem::take(&mut checks.hostile) {
+        if host.hook(&mut world, &mut map, &mut outbox, object, EVENT_KILL_ON_SIGHT, player) == crate::HookResult::RunDefault {
+            starts.0.push((npc, pc));
+        }
     }
 }
 
@@ -632,6 +691,7 @@ pub struct CombatWorld<'w, 's> {
     pub ai: ResMut<'w, AiParams>,
     pub starts: ResMut<'w, CombatStarts>,
     pub events: ResMut<'w, CombatEvents>,
+    pub checks: ResMut<'w, ScriptChecks>,
     pub reputations: ResMut<'w, crate::ReputationTable>,
     pub inventories: ResMut<'w, crate::script_host::ScriptInventories>,
     /// NPCs made to fight this tick (their `Fighting` lands after the system).
@@ -897,6 +957,13 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
     let find = |id: NetId| all.iter().find(|c| c.net_id == id).cloned();
     let mut changed = false;
     w.joined.clear();
+    // Hits whose taking-damage scripts answered: the damage goes ahead unless one said no.
+    for (hit, allowed) in std::mem::take(&mut w.checks.answered) {
+        if allowed && let Some(victim) = find(hit.victim) {
+            damage_npc(&mut commands, &mut w, hit.attacker_player, &victim, &hit.outcome);
+            changed = true;
+        }
+    }
     // Fights started by dialogue or scripts: the NPC fights its target (0x4a9650).
     for (npc, target) in std::mem::take(&mut w.starts.0) {
         let (Some(attacker), Some(victim)) = (find(npc), find(target)) else { continue };
@@ -907,7 +974,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
         commands.entity(attacker.entity).insert(Fighting { target });
         w.joined.push(npc);
         if !attacker.fighting && let Some(player) = victim.player {
-            w.events.0.push((source.object(), EVENT_ENTER_COMBAT, player));
+            w.events.0.push((source.object(), EVENT_ENTER_COMBAT, player, crate::ScriptObject::Pc(player)));
         }
         match w.combat.0.as_mut() {
             None => {
@@ -939,7 +1006,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
         if !victim.fighting {
             commands.entity(victim.entity).insert(Fighting { target: pc.net_id });
             w.joined.push(target);
-            w.events.0.push((source.object(), EVENT_ENTER_COMBAT, player));
+            w.events.0.push((source.object(), EVENT_ENTER_COMBAT, player, crate::ScriptObject::Pc(player)));
         }
         if w.combat.0.is_none() {
             let mut order = gather(&all, pc.at, Some(pc.net_id));
@@ -1160,7 +1227,7 @@ fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[See
             let from = from_critter.map_or(npc.at, |c| c.at);
             commands.entity(npc.entity).remove::<Fighting>();
             if let Some(player) = from_critter.and_then(|c| c.player) {
-                w.events.0.push((source.object(), EVENT_EXIT_COMBAT, player));
+                w.events.0.push((source.object(), EVENT_EXIT_COMBAT, player, crate::ScriptObject::Pc(player)));
             }
             let away = flee_goal(npc.at, from, FLEE_TILES);
             let ap = w.combat.0.as_ref().map_or(0, |e| e.ap);
@@ -1252,7 +1319,7 @@ pub fn notice_foes(
     world: Res<crate::WorldState>,
     rules: Res<crate::SimRules>,
     (mut ai, mut reputations, vfs): (ResMut<AiParams>, ResMut<crate::ReputationTable>, Option<Res<crate::SimVfs>>),
-    mut starts: ResMut<CombatStarts>,
+    (mut starts, mut checks): (ResMut<CombatStarts>, ResMut<ScriptChecks>),
     npcs: Query<FoeQuery, AtPeace>,
     pcs: Query<QuarryQuery>,
     talking: Query<&crate::Conversation>,
@@ -1289,7 +1356,12 @@ pub fn notice_foes(
             let towards = crate::reaction_to(&saved.script_state, &key, &reaction, &rules.0, &sheet.0, reputations);
             let gap = (alignment - sheet.0.alignment).abs();
             if hostile(flags, towards, gap, row) {
-                starts.0.push((npc, pc));
+                // Its kill-on-sight script has the last word (0x4ae179).
+                if map.attachment(source.object(), EVENT_KILL_ON_SIGHT).number != 0 {
+                    checks.hostile.push((npc, pc, source.object(), player.0));
+                } else {
+                    starts.0.push((npc, pc));
+                }
                 break;
             }
         }
@@ -1366,6 +1438,7 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     }
     outcome.killed = outcome.hit && outcome.hp > 0 && victim.npc.is_some_and(|n| w.map.npc_hp(n.sector, n.index).is_some_and(|(left, _)| left - outcome.hp < 1));
     crate::ground::broadcast(&w.session, &mut w.outbox, LedgerDelta::Attacked { attacker: attacker.net_id, target: victim.net_id, outcome });
+    attack_events(w, attacker, victim, &outcome);
     rally(commands, w, all, attacker, victim);
     if let Some(player) = victim.player {
         if outcome.hit {
@@ -1387,6 +1460,52 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     if !outcome.hit || outcome.hp <= 0 {
         return;
     }
+    // Its taking-damage script is asked first: the damage waits for the answer.
+    if w.map.attachment(source.object(), EVENT_TAKING_DAMAGE).number != 0 {
+        let hit = HeldHit { attacker_object: object_of(attacker), attacker_player: attacker.player, player: attacker.player.or(attacker.leader).or(victim.leader), victim: victim.net_id, victim_object: source.object(), outcome };
+        w.checks.hits.push(hit);
+        return;
+    }
+    damage_npc(commands, w, attacker.player, victim, &outcome);
+}
+
+/// The script object of a critter of the fight.
+fn object_of(c: &Seen) -> crate::ScriptObject {
+    match (c.player, c.npc) {
+        (Some(p), _) => crate::ScriptObject::Pc(p),
+        (None, Some(n)) => n.object(),
+        _ => crate::ScriptObject::Pc(PlayerId(0)),
+    }
+}
+
+/// The script events of an attack (answers ignored): the PC's weapon's hit or miss, and critical
+/// hit or miss; the attacker's critter-hits on a hit. NPCs' weapons run nothing (builder's call:
+/// their carried items are not script objects yet).
+fn attack_events(w: &mut CombatWorld, attacker: &Seen, victim: &Seen, outcome: &AttackOutcome) {
+    let Some(player) = attacker.player.or(victim.player).or(attacker.leader).or(victim.leader) else { return };
+    if let (Some(holder), Some(inv)) = (attacker.player, &attacker.inventory)
+        && let Some(weapon) = inv.items.iter().find(|i| i.location == WEAPON_SLOT)
+    {
+        let item = crate::ScriptObject::Carried { holder, prototype: weapon.prototype };
+        let (first, critical) = if outcome.hit || outcome.dodged { (EVENT_HIT, outcome.critical) } else { (EVENT_MISS, outcome.fumbled) };
+        w.events.0.push((item, first, holder, crate::ScriptObject::Pc(holder)));
+        if critical {
+            let second = if first == EVENT_HIT { EVENT_CRITICAL_HIT } else { EVENT_CRITICAL_MISS };
+            w.events.0.push((item, second, holder, crate::ScriptObject::Pc(holder)));
+        }
+    }
+    if outcome.hit && attacker.npc.is_some() {
+        w.events.0.push((object_of(attacker), EVENT_CRITTER_HITS, player, object_of(victim)));
+    }
+}
+
+/// An NPC takes a hit's damage: injuries, hit points, the experience, and its death (events 12
+/// and 20).
+fn damage_npc(commands: &mut Commands, w: &mut CombatWorld, attacker_player: Option<PlayerId>, victim: &Seen, outcome: &AttackOutcome) {
+    let Some(source) = victim.npc else { return };
+    if w.map.is_dead(source.sector, source.index) {
+        return;
+    }
     if outcome.injured != 0 {
         w.map.injure_npc(source.sector, source.index, outcome.injured);
     }
@@ -1396,7 +1515,7 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     // Experience for the damage (0x4b4390) and the kill (0x45da20: a fifth of its worth).
     let (worth, pool) = w.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)).map_or((0, 0), |o| (w.map.prototypes.int(o, "npc_experience_worth").unwrap_or(0), w.map.prototypes.int(o, "npc_experience_pool").unwrap_or(0)));
     let mut xp = 0;
-    if attacker.player.is_some() {
+    if attacker_player.is_some() {
         xp = hit_experience(dealt, max, worth, pool);
         if xp > 0 {
             w.map.spend_npc_pool(source.sector, source.index, xp);
@@ -1408,10 +1527,15 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
         w.map.kill_npc(guard.as_deref(), source.sector, source.index, crate::death_anim(outcome.hp, outcome.part));
         commands.entity(victim.entity).remove::<Fighting>();
         w.toggled.0.push((source.sector, source.index));
-        if let Some(player) = attacker.player {
-            w.events.0.push((source.object(), EVENT_DYING, player));
-        }
-        if attacker.player.is_some() {
+        if let Some(player) = attacker_player {
+            w.events.0.push((source.object(), EVENT_DYING, player, crate::ScriptObject::Pc(player)));
+            // The killer's followers hear of it (0x45db95).
+            let homes: Vec<crate::follow::NpcHome> = w.world.0.as_ref().map(|s| s.followers.iter().filter(|f| f.leader == player).map(|f| f.home()).collect()).unwrap_or_default();
+            for home in homes {
+                if let Some((sector, index)) = w.map.place_of(&home) {
+                    w.events.0.push((crate::ScriptObject::Mobile { sector, index }, EVENT_LEADER_KILLING, player, source.object()));
+                }
+            }
             xp += worth * 20 / 100;
         }
     }
@@ -1484,7 +1608,7 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
             e.order.push(c.net_id);
         }
         if let Some(player) = player {
-            w.events.0.push((source.object(), EVENT_ENTER_COMBAT, player));
+            w.events.0.push((source.object(), EVENT_ENTER_COMBAT, player, crate::ScriptObject::Pc(player)));
         }
     }
     // The victim's reaction to a PC attacker falls to its row's column 10.

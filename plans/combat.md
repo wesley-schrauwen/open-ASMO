@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-11 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`).
+Status: steps 1-12 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`, `feat/combat-events`).
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -295,3 +295,18 @@ of `combat_design.md` come after the original's rules work.
      bought by another PC, every dead PC gets up with 1 hit point (builder's call).
    - Owner's note, not built: moving a dead PC to the nearest inn (to be detailed).
    - Not built: the Resurrect spell cast by a PC, a dead PC's items and followers.
+12. **Script events** (built, `feat/combat-events`; hook 0x441980 args: triggerer, attachee,
+    extra, event, checked at 0x45da20).
+   - Hit 7 / miss 8 on the PC's weapon (triggerer the attacker; 0x4b37a3 / 0x4b3972), then
+     critical hit 34 / miss 35 (0x4b37cd / 0x4b399c); critter hits 26 on the NPC attacker
+     (triggerer the victim; 0x4b37fc); leader killing 20 on each follower of the killing PC
+     (triggerer the dead, 0x45db95). The original ignores their answers; here they run after
+     the attack rather than before its damage.
+   - Taking damage 23 on the NPC victim (0x4b446b, checked: a 0 answer jumps past the damage,
+     0x4b447f): the damage waits a tick for the answer.
+   - Will kill on sight 22 on a noticing NPC (0x4ae179, checked: a 0 answer is "not hostile",
+     0x4ae183): the fight starts after its answer.
+   - Not built: NPCs' weapons' scripts (their items are no script objects), 15 / 16 (0x4a8570,
+     their order unclear), 2 destroy (0x43cd0e), 23 on PCs, 22 in hostility checks other than
+     noticing.
+   - Real data: prototypes attach 7 (10), 8 (7), 26 (9), 23 (3), 22 (1).
