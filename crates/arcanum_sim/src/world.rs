@@ -887,6 +887,88 @@ mod tests {
     }
 
     #[test]
+    fn a_thief_opens_an_npcs_pockets_and_steals_or_fails() {
+        use arcanum_formats::object::{Array, Object, ObjectId, TYPE_GOLD, TYPE_WEAPON, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, object_id_bytes, prototype_id};
+        use crate::InventoryRequest;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let guid = |n: u8| ObjectId { kind: ObjectId::KIND_GUID, payload: [n; 16] };
+        let mut dagger = ObjectBuilder::new(TYPE_WEAPON).field("flags", Value::Int32(crate::OF_INVENTORY)).field("item_inv_location", Value::Int32(3));
+        dagger.prototype = prototype_id(6049);
+        dagger.id = guid(9);
+        std::fs::write(folder.join("G_D.mob"), dagger.build()).unwrap();
+        let data = object_id_bytes(&guid(9)).to_vec();
+        let mark = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(72, 70)).field("critter_inventory_list_idx", Value::Array(Some(Array { elem_size: 24, id: 0, data, bitset: vec![] })));
+        std::fs::write(folder.join("G_0S.mob"), mark.build()).unwrap();
+        let proto = |number: u32, kind: u32| {
+            let mut o = Object::parse_instance(&ObjectBuilder::new(kind).field("item_weight", Value::Int32(1)).field("item_worth", Value::Int32(10)).build()).unwrap();
+            o.id = prototype_id(number);
+            o
+        };
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        let mut prototypes = Prototypes::default();
+        prototypes.insert(proto(crate::GOLD, TYPE_GOLD));
+        prototypes.insert(proto(6049, TYPE_WEAPON));
+        sim.app.world_mut().resource_mut::<LoadedMap>().prototypes = Arc::new(prototypes);
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        let (npc, index) = {
+            let world = sim.app.world_mut();
+            let map = world.resource::<LoadedMap>();
+            let index = map.mobiles[&SectorId::new(1, 1)].iter().position(|o| o.object_type == TYPE_NPC && crate::object_location(o) == Some(TileLoc { x: 72, y: 70 })).unwrap() as u32;
+            let npc = *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == index).unwrap().0;
+            (npc, index)
+        };
+        sim.take_deltas();
+        sim.receive([(PlayerId(1), crate::PlayerIntent::PickPocket { npc, seq: 0 })]);
+        sim.update();
+        sim.update();
+        let deltas = sim.take_deltas();
+        let view = deltas.iter().find_map(|(_, d)| match d { LedgerDelta::Barter { view } => Some(view.clone()), _ => None }).expect("the window opens");
+        assert!(view.pickpocket && view.buy.is_empty(), "no prices");
+        assert_eq!(view.stock.items.iter().map(|i| i.location).collect::<Vec<_>>(), [3]);
+        // Putting an item in is refused; taking rolls.
+        let mut stolen = false;
+        for seq in 1..40 {
+            sim.receive([(PlayerId(1), crate::PlayerIntent::Inventory { seq, request: InventoryRequest::Buy { from: 3, to: None } })]);
+            sim.update();
+            let deltas = sim.take_deltas();
+            let result = deltas.iter().find_map(|(_, d)| match d { LedgerDelta::SkillResult { message } => Some(*message), _ => None });
+            if deltas.iter().any(|(_, d)| *d == LedgerDelta::BarterClosed) {
+                assert_eq!(result, Some(crate::pickpocket::STEAL_FAILED), "caught on a failure");
+                sim.receive([(PlayerId(1), crate::PlayerIntent::PickPocket { npc, seq: 100 + seq })]);
+                sim.update();
+                sim.update();
+                sim.take_deltas();
+                continue;
+            }
+            if result == Some(crate::pickpocket::STEAL_SUCCEEDED) {
+                let world = sim.app.world_mut();
+                let inventory = world.query::<(&crate::PlayerControlled, &crate::Inventory)>().iter(world).next().unwrap().1.clone();
+                assert!(inventory.items.iter().any(|i| i.prototype == 6049), "the dagger is the PC's");
+                assert!(sim.app.world().resource::<LoadedMap>().npc_inventory(SectorId::new(1, 1), index).unwrap().items.is_empty());
+                stolen = true;
+                break;
+            }
+            assert_eq!(result, Some(crate::pickpocket::STEAL_FAILED));
+        }
+        assert!(stolen, "an even chance of 47 % comes up in 39 tries");
+        // A target flagged against it refuses.
+        sim.app.world_mut().resource_mut::<LoadedMap>().mobiles.get_mut(&SectorId::new(1, 1)).unwrap()[index as usize].set_int("critter_flags2", crate::pickpocket::OCF2_NO_PICKPOCKET);
+        sim.receive([(PlayerId(1), crate::PlayerIntent::Inventory { seq: 200, request: InventoryRequest::CloseBarter })]);
+        sim.receive([(PlayerId(1), crate::PlayerIntent::PickPocket { npc, seq: 300 })]);
+        sim.update();
+        sim.update();
+        assert!(sim.take_deltas().contains(&(PlayerId(1), LedgerDelta::SkillResult { message: crate::CANNOT_STEAL })));
+    }
+
+    #[test]
     fn barter_opens_from_the_dialogue_and_trades_for_gold() {
         use arcanum_formats::object::{Array, Object, ObjectId, TYPE_GOLD, TYPE_WEAPON, Value};
         use arcanum_formats::test_util::{ObjectBuilder, object_id_bytes, prototype_id};

@@ -187,6 +187,9 @@ pub enum LedgerDelta {
     Barter { view: crate::barter::BarterView },
     /// The barter NPC refuses a trade, in the window's text line.
     BarterLine { text: String },
+    /// The host closed the player's barter or pick-pocket window (a thief caught,
+    /// [`crate::pickpocket`]).
+    BarterClosed,
     /// A big move waits for every player's answer ([`crate::big_move`]).
     MoveVote { ask: crate::big_move::VoteAsk },
     /// A vote ended: the move happened (`passed`) or someone declined.

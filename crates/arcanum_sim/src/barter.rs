@@ -172,6 +172,8 @@ pub struct BarterOpen {
     pub sector: SectorId,
     pub index: u32,
     pub stock: Stock,
+    /// A pick-pocket window ([`crate::pickpocket`]): taking is stealing.
+    pub pickpocket: bool,
 }
 
 /// Barter windows to open: the player, the NPC and its map object.
@@ -196,6 +198,9 @@ pub struct BarterView {
     /// What the NPC pays for the PC's items, by location.
     pub sell: BTreeMap<i32, Offer>,
     pub npc_gold: i32,
+    /// A pick-pocket window ([`crate::pickpocket`]): no prices; taking is stealing.
+    #[serde(default)]
+    pub pickpocket: bool,
 }
 
 /// An item's price and the line the window shows for it under the cursor (0x578330).
@@ -295,6 +300,7 @@ pub struct BarterWorld<'w> {
     generic: ResMut<'w, crate::GenericLines>,
     rng: ResMut<'w, crate::HostRng>,
     clock: Res<'w, crate::GameClock>,
+    caught: ResMut<'w, crate::pickpocket::CaughtThieves>,
 }
 
 /// The restock delay's bounds, in game milliseconds (0x4640c0: 43,200,000 to 86,400,000).
@@ -387,6 +393,9 @@ impl BarterWorld<'_> {
     fn view(&mut self, player: PlayerId, sheet: &arcanum_rules::CharacterSheet, pc: &Inventory, open: &BarterOpen) -> Option<BarterView> {
         let (trader, haggle, training, npc) = self.deal_parts(player, sheet, open.sector, open.index)?;
         let stock = self.map.stock(open.stock)?;
+        if open.pickpocket {
+            return Some(BarterView { npc: open.npc, npc_male: npc.male, npc_name: npc.name.clone(), stock, buy: BTreeMap::new(), sell: BTreeMap::new(), npc_gold: 0, pickpocket: true });
+        }
         let npc_gold = self.map.npc_inventory(open.sector, open.index).map_or(0, |i| i.gold());
         let vfs = self.vfs.as_ref().map(|v| v.0.clone());
         let vfs_guard = vfs.as_ref().and_then(|v| v.read().ok());
@@ -419,13 +428,23 @@ impl BarterWorld<'_> {
             };
             sell.insert(item.location, Offer { price, line: line.unwrap_or_default() });
         }
-        Some(BarterView { npc: open.npc, npc_male: npc.male, npc_name: npc.name.clone(), stock, buy, sell, npc_gold })
+        Some(BarterView { npc: open.npc, npc_male: npc.male, npc_name: npc.name.clone(), stock, buy, sell, npc_gold, pickpocket: false })
     }
 }
 
 /// Opens the barter windows asked for (0x572240 mode 1): the goods are the NPC's substitute
 /// inventory if it has one in reach, whose gold then moves to the NPC (0x572640).
-pub fn open_barters(mut commands: Commands, mut starts: ResMut<BarterStarts>, mut w: BarterWorld, pcs: Query<TraderQuery>) {
+pub fn open_barters(mut commands: Commands, mut starts: ResMut<BarterStarts>, mut pockets: ResMut<crate::pickpocket::PickPocketStarts>, mut w: BarterWorld, pcs: Query<TraderQuery>) {
+    // Pick-pocket windows: the NPC's own inventory, as it stands.
+    for (player, npc, object) in std::mem::take(&mut pockets.0) {
+        let ScriptObject::Mobile { sector, index } = object else { continue };
+        let Some((entity, _, _, sheet, inventory, _)) = pcs.iter().find(|pc| pc.2.0 == player) else { continue };
+        let open = BarterOpen { npc, sector, index, stock: Stock::Npc { sector, index }, pickpocket: true };
+        commands.entity(entity).insert(open);
+        if let Some(view) = w.view(player, &sheet.0, inventory, &open) {
+            w.outbox.0.push((player, LedgerDelta::Barter { view }));
+        }
+    }
     for (player, npc, object) in std::mem::take(&mut starts.0) {
         let ScriptObject::Mobile { sector, index } = object else { continue };
         let Some((entity, _, _, sheet, inventory, _)) = pcs.iter().find(|pc| pc.2.0 == player) else { continue };
@@ -450,7 +469,7 @@ pub fn open_barters(mut commands: Commands, mut starts: ResMut<BarterStarts>, mu
         if stock == (Stock::Npc { sector, index }) {
             w.restock(sector, index, stock);
         }
-        let open = BarterOpen { npc, sector, index, stock };
+        let open = BarterOpen { npc, sector, index, stock, pickpocket: false };
         commands.entity(entity).insert(open);
         if let Some(view) = w.view(player, &sheet.0, inventory, &open) {
             w.outbox.0.push((player, LedgerDelta::Barter { view }));
@@ -511,6 +530,10 @@ enum Refused {
 fn trade(w: &mut BarterWorld, player: PlayerId, sheet: &arcanum_rules::CharacterSheet, pc: &Inventory, open: &BarterOpen, request: &crate::InventoryRequest) -> Result<Inventory, Refused> {
     use crate::InventoryRequest::{Buy, Sell};
     let silent = Refused::Item(crate::ItemRefusal::Silent);
+    if open.pickpocket {
+        let Buy { from, to } = *request else { return Err(silent) };
+        return steal(w, player, sheet, pc, open, from, to);
+    }
     let (trader, haggle, training, npc) = w.deal_parts(player, sheet, open.sector, open.index).ok_or(Refused::Item(crate::ItemRefusal::Silent))?;
     let vfs = w.vfs.as_ref().map(|v| v.0.clone());
     let vfs_guard = vfs.as_ref().and_then(|v| v.read().ok());
@@ -571,6 +594,48 @@ fn trade(w: &mut BarterWorld, player: PlayerId, sheet: &arcanum_rules::Character
         }
         _ => Err(silent),
     }
+}
+
+/// One steal ([`crate::pickpocket`]): the roll, then the item (gold and ammunition in part) to
+/// the PC, or a failure the victim may notice.
+#[allow(clippy::too_many_arguments)]
+fn steal(w: &mut BarterWorld, player: PlayerId, sheet: &arcanum_rules::CharacterSheet, pc: &Inventory, open: &BarterOpen, from: i32, to: Option<i32>) -> Result<Inventory, Refused> {
+    use crate::pickpocket::{MOST_AMMO, MOST_GOLD, SKILL_PICK_POCKET, STEAL_FAILED, STEAL_SUCCEEDED};
+    let silent = || Refused::Item(crate::ItemRefusal::Silent);
+    let vfs = w.vfs.as_ref().map(|v| v.0.clone());
+    let vfs_guard = vfs.as_ref().and_then(|v| v.read().ok());
+    let (prototypes, art) = (w.map.prototypes.clone(), w.map.art.clone());
+    let info = crate::item_info(&prototypes, |id| crate::world::art_size(vfs_guard.as_deref(), art.as_deref(), id));
+    let stock = w.map.stock(open.stock).ok_or_else(silent)?;
+    let (mut rest, mut item) = stock.take_out(from).ok_or_else(silent)?;
+    let victim = w.map.mobiles.get(&open.sector).and_then(|m| m.get(open.index as usize)).ok_or_else(silent)?;
+    let perception = crate::pickpocket::perception(victim, &prototypes);
+    let chance = crate::pickpocket::steal_chance(w.rules.0.skill_level(sheet, SKILL_PICK_POCKET), perception);
+    let kind = info(item.prototype);
+    let training = sheet.training[SKILL_PICK_POCKET];
+    let difficulty = crate::pickpocket::steal_difficulty(from, kind.map_or((1, 1), |k| k.cells), training);
+    let outcome = crate::roll_pick(chance, difficulty, &mut w.rng);
+    if outcome != crate::PickOutcome::Success {
+        w.outbox.0.push((player, LedgerDelta::SkillResult { message: STEAL_FAILED }));
+        let noticed = outcome == crate::PickOutcome::Jammed || (training == 0 && w.rng.range(1, 20) <= perception);
+        if noticed {
+            w.caught.0.push((player, ScriptObject::Mobile { sector: open.sector, index: open.index }));
+        }
+        return Err(silent());
+    }
+    // Gold and ammunition: a handful at a time (0x464830, 0x4658e0).
+    let most = if item.prototype == crate::GOLD { MOST_GOLD } else if kind.is_some_and(|k| k.kind == arcanum_formats::object::TYPE_AMMO) { MOST_AMMO } else { i32::MAX };
+    if item.quantity > most {
+        rest.items.push(CarriedItem { quantity: item.quantity - most, ..item.clone() });
+        item.quantity = most;
+    }
+    let wearer = crate::Wearer { race: sheet.race, gender: sheet.gender };
+    let (carry, aptitude) = (w.rules.0.derived(sheet).carry_weight, w.rules.0.aptitude(sheet));
+    let taken = pc.put_in(&CarriedItem { location: 0, ..item }, to, wearer, &info, carry, aptitude).map_err(Refused::Item)?;
+    w.map.set_stock(open.stock, rest);
+    save_stock(w, open);
+    w.outbox.0.push((player, LedgerDelta::SkillResult { message: STEAL_SUCCEEDED }));
+    Ok(taken)
 }
 
 fn save_stock(w: &mut BarterWorld, open: &BarterOpen) {

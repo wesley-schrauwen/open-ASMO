@@ -20,9 +20,9 @@
 //! table 0x5c6c68): four buttons, 32x32 at y 514, x 288, 351, 414, 477: Prowling
 //! (`SKL_Conceal.ART`, art 279), Pick Pocket (280), Disarm Traps (282), Repair (278); skills
 //! 6, 5, 15, 12 (table 0x5cb240). All four always show. A click (0x57efa0 → 0x579fa0 →
-//! 0x57a0a0) arms Disarm Traps for the next click on a door or container
-//! ([`crate::skill_use`]). Prowling (sneaking), Pick Pocket and Repair are not built: their
-//! buttons do nothing yet. One view shows at a time (0x5506c0 toggles between them).
+//! 0x57a0a0) arms Disarm Traps for the next click on a door or container, Pick Pocket for the
+//! next click on an NPC ([`crate::skill_use`], [`arcanum_sim::pickpocket`]). Prowling (sneaking)
+//! and Repair are not built: their buttons do nothing yet. One view shows at a time (0x5506c0 toggles between them).
 //!
 //! Not built: the hover names (the original shows them in the view, 0x550860 / 0x5507e0;
 //! the skills' are `mes/skill_ui.mes` 100-103); the other views.
@@ -166,12 +166,12 @@ fn click_view(
     (mut cache, assets, frames): (ResMut<crate::inventory_screen::ItemArtCache>, Res<AssetServer>, Res<Assets<crate::art_loader::ArtFrames>>),
 ) {
     let (pressed, released) = (buttons.just_pressed(MouseButton::Left), buttons.just_released(MouseButton::Left));
-    // A skills view button arms its skill on release (only Disarm Traps is built).
+    // A skills view button arms its skill on release (Disarm Traps and Pick Pocket are built).
     if view.skills && released {
-        if let Some(arcanum_sim::SKILL_DISARM_TRAPS) = cursor(&windows).and_then(skill_at)
+        if let Some(skill @ (arcanum_sim::SKILL_DISARM_TRAPS | arcanum_sim::SKILL_PICK_POCKET)) = cursor(&windows).and_then(skill_at)
             && let Some(mut armed) = armed
         {
-            armed.0 = Some(crate::skill_use::Armed::Skill { skill: arcanum_sim::SKILL_DISARM_TRAPS, tool: None });
+            armed.0 = Some(crate::skill_use::Armed::Skill { skill, tool: None });
         }
         return;
     }

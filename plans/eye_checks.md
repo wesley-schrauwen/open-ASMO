@@ -178,6 +178,12 @@ guard (race icon, level, 100% gauges) and the locked chest (icon, "Locked", 100/
       headline, older papers; buying one for 2-4 coins puts a newspaper in the inventory that
       reads as that day's paper.
 
+## Pick Pocket
+
+- [ ] The skills view's Pick Pocket button, then a click on an NPC: the PC walks there and the
+      barter window opens on the NPC's things without prices; dragging one out steals it or
+      says "You fail."; caught, the window closes.
+
 ## Spotting traps while walking
 
 - [ ] Walking towards a trap object with Spot Trap, the PC sometimes stops a tile short with
