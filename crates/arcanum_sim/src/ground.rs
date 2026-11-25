@@ -64,12 +64,19 @@ pub struct GroundItem {
     /// A key's number, or a key ring's ([`crate::keys`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<i32>,
+    /// A written item's first line ([`crate::CarriedItem::written`]).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub written: i32,
+}
+
+fn is_zero(v: &i32) -> bool {
+    *v == 0
 }
 
 impl GroundItem {
     /// The item as carried, at `location`.
     pub fn carried(&self, location: i32) -> crate::CarriedItem {
-        crate::CarriedItem { prototype: self.prototype, location, quantity: self.quantity, keys: self.keys.clone() }
+        crate::CarriedItem { prototype: self.prototype, location, quantity: self.quantity, keys: self.keys.clone(), written: self.written }
     }
 }
 
@@ -99,7 +106,7 @@ impl LoadedMap {
                     return None;
                 }
                 let object = self.mobiles.get(&sector)?.get(index as usize).filter(|o| is_item(o.object_type))?;
-                Some(GroundItem { prototype: object.prototype.prototype()?, quantity: self.quantity_of(object), location: crate::object_location(object)?, keys: crate::object_keys(object, &self.prototypes) })
+                Some(GroundItem { prototype: object.prototype.prototype()?, quantity: self.quantity_of(object), location: crate::object_location(object)?, keys: crate::object_keys(object, &self.prototypes), written: crate::object_written(object, &self.prototypes) })
             }
             GroundItemId::Dropped { number, .. } => changes?.dropped.get(&number).cloned(),
             GroundItemId::Pile { .. } | GroundItemId::Container { .. } => None,
@@ -153,7 +160,7 @@ impl LoadedMap {
             let Some(item) = self.stored_items.get(&id) else { continue };
             let Some(prototype) = item.prototype.prototype() else { continue };
             let location = self.prototypes.int(item, "item_inv_location").unwrap_or(0);
-            items.push(crate::CarriedItem { prototype, location, quantity: self.quantity_of(item), keys: crate::object_keys(item, &self.prototypes) });
+            items.push(crate::CarriedItem { prototype, location, quantity: self.quantity_of(item), keys: crate::object_keys(item, &self.prototypes), written: crate::object_written(item, &self.prototypes) });
         }
         items
     }
@@ -356,7 +363,7 @@ pub(crate) fn place_on_ground(item: crate::CarriedItem, at: TileLoc, info: &impl
     let bare = map.items_on_tile(at);
     if bare.is_empty() {
         let id = GroundItemId::Dropped { sector, number };
-        let ground = GroundItem { prototype: item.prototype, quantity: item.quantity, location: at, keys: item.keys };
+        let ground = GroundItem { prototype: item.prototype, quantity: item.quantity, location: at, keys: item.keys, written: item.written };
         map.drop_ground_item(id, ground.clone());
         save_change(world, map, sector);
         broadcast(session, outbox, LedgerDelta::GroundItemDropped { item: id, ground });

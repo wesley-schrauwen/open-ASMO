@@ -521,8 +521,14 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      and wrapped; a book's two pages (0x5ca618) with previous / next (arts 495 / 496 at (213, 77)
      / (675, 77)); a plaque in (269, 40, 428, 327) in white; a note's entries joined in font 497
      in (349, 49, 215, 300). A click closes it (Escape too, builder's call).
-   - **Not built:** newspapers and telegrams; the alternate background 817; the sounds; the
-     readable items (0x5e sets an item's written start; reading from the inventory).
+   - **Not built:** newspapers and telegrams; the alternate background 817; the sounds.
+   - **Reading items** (built, `feat/read-items`; 0x56bb60): a written item (type 13) released
+     on the inventory's use box, or right-clicked when not looting (builder's call: the
+     original's use), opens the window on its `written_subtype` (schematics, 5, not here) from
+     its first line: the item's own `written_text_start_line` (carried as
+     `CarriedItem::written`, kept through the ground and inventories), else its prototype's.
+     Action 0x5e sets it on a carried item. In the data, 10 written prototypes are readable
+     (58 are schematics); most lines are on the placed items.
 4o. **Script gaps 7** (built, `feat/script-gaps-7`).
    - **Actions:** 0x2e night standpoint (field 0x122, kept as `SectorDelta::night_standpoints`);
      0x34 make an object of basic prototype N near an object (0x4ed8b0; here items only, on its

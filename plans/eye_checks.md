@@ -150,3 +150,8 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
       off clears it.
 - [ ] An NPC not yet talked to shows its unknown name ("Man", "Elf"…); after talking, its own.
 - [ ] Magick or tech items not identified show their unknown name.
+
+## Reading items
+
+- [ ] A book or note picked up opens in the written window when dropped on the inventory's use
+      box, or right-clicked; the inventory closes.

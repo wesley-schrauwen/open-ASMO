@@ -81,6 +81,14 @@ pub struct CarriedItem {
     /// A key's own key number, or a key ring's numbers ([`crate::keys`]).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<i32>,
+    /// A written item's first line (`written_text_start_line`, its own or its prototype's; set
+    /// by script action 0x5e): what reading it opens.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub written: i32,
+}
+
+fn is_zero(v: &i32) -> bool {
+    *v == 0
 }
 
 /// What a critter or a container carries.
@@ -329,7 +337,7 @@ impl Inventory {
         }
         match self.items.iter_mut().find(|i| i.prototype == crate::GOLD) {
             Some(stack) => stack.quantity = (stack.quantity + n).max(0),
-            None if n > 0 => self.items.insert(0, CarriedItem { prototype: crate::GOLD, location: 0, quantity: n, keys: Vec::new() }),
+            None if n > 0 => self.items.insert(0, CarriedItem { prototype: crate::GOLD, location: 0, quantity: n, keys: Vec::new(), written: 0 }),
             None => return false,
         }
         self.items.retain(|i| i.prototype != crate::GOLD || i.quantity > 0);
@@ -528,7 +536,7 @@ impl Inventory {
     /// onto a stack of the same gold or ammo, else the first free spot. `carry` is the carry
     /// weight. Returns the location.
     pub fn insert(&mut self, prototype: u32, quantity: i32, info: impl Fn(u32) -> Option<ItemInfo>, carry: i32, aptitude: i32) -> Result<i32, InsertRefusal> {
-        self.insert_item(CarriedItem { prototype, location: 0, quantity, keys: Vec::new() }, info, carry, aptitude)
+        self.insert_item(CarriedItem { prototype, location: 0, quantity, keys: Vec::new(), written: 0 }, info, carry, aptitude)
     }
 
     /// [`Self::insert`] for a carried item, keeping its key numbers; a key goes onto a critter's
@@ -551,7 +559,7 @@ impl Inventory {
             return Ok(stack.location);
         }
         let location = Self::free_spot(&self.occupied(&info), item.cells).ok_or(InsertRefusal::NoRoom)?;
-        self.items.push(CarriedItem { prototype, location, quantity: if item.stacks() { quantity } else { 0 }, keys: carried.keys });
+        self.items.push(CarriedItem { prototype, location, quantity: if item.stacks() { quantity } else { 0 }, keys: carried.keys, written: carried.written });
         self.fold_keys(&info);
         Ok(location)
     }
@@ -816,7 +824,7 @@ mod tests {
     fn a_premade_starts_with_its_gold_first_and_wields_its_kit() {
         let blueprint = arcanum_rules::CharacterBlueprint { sheet: Default::default(), gold: 385, items: vec![1, 2, 4, 99], prototype: Some(16094) };
         let kit = starting_kit(&blueprint, objects, 10_000, 0);
-        assert_eq!(kit.items[0], CarriedItem { prototype: GOLD, location: 0, quantity: 385, keys: vec![] });
+        assert_eq!(kit.items[0], CarriedItem { prototype: GOLD, location: 0, quantity: 385, keys: vec![], written: 0 });
         assert_eq!(kit.worn(Slot::Weapon).map(|i| i.prototype), Some(21), "basic 1 is object 21");
         assert_eq!(kit.items.len(), 4, "an unknown prototype is left out");
     }

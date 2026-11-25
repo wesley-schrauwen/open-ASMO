@@ -696,7 +696,7 @@ mod tests {
         }).collect();
         assert_eq!(sent.len(), 2, "each player gets only their own: {sent:?}");
         let (_, kit) = sent.iter().find(|(p, _)| *p == 1).unwrap();
-        assert_eq!(kit.items[0], crate::CarriedItem { prototype: crate::GOLD, location: 0, quantity: 385, keys: vec![] });
+        assert_eq!(kit.items[0], crate::CarriedItem { prototype: crate::GOLD, location: 0, quantity: 385, keys: vec![], written: 0 });
         assert_eq!(kit.worn(crate::Slot::Weapon).map(|i| i.prototype), Some(dagger), "a pre-made wields its weapon");
         let saved = sim.app.world().resource::<WorldState>().0.clone().unwrap();
         assert_eq!(saved.players[&PlayerId(1)].inventory.as_ref(), Some(kit), "kept in the save");
@@ -739,7 +739,7 @@ mod tests {
         let mut s = save(&[(1, "A", TileLoc { x: 70, y: 70 }), (2, "B", TileLoc { x: 72, y: 72 })]);
         let player = s.players.get_mut(&PlayerId(1)).unwrap();
         player.blueprint.sheet.base[0] = 8;
-        player.inventory = Some(crate::Inventory { items: vec![crate::CarriedItem { prototype: 6049, location: 0, quantity: 0, keys: vec![] }], ..Default::default() });
+        player.inventory = Some(crate::Inventory { items: vec![crate::CarriedItem { prototype: 6049, location: 0, quantity: 0, keys: vec![], written: 0 }], ..Default::default() });
         let mut sim = SimApp::new(RulesData::default());
         sim.use_manual_clock();
         sim.app.insert_resource(vfs(dir.path()));
@@ -772,7 +772,7 @@ mod tests {
         sim.update();
         let deltas = sim.take_deltas();
         let dropped = GroundItemId::Dropped { sector: TileLoc { x: 70, y: 70 }.sector(), number: 0 };
-        let ground = crate::GroundItem { prototype: 6049, quantity: 0, location: TileLoc { x: 70, y: 70 }, keys: vec![] };
+        let ground = crate::GroundItem { prototype: 6049, quantity: 0, location: TileLoc { x: 70, y: 70 }, keys: vec![], written: 0 };
         assert!(deltas.iter().any(|(p, d)| p.0 == 2 && *d == LedgerDelta::GroundItemDropped { item: dropped, ground: ground.clone() }));
         assert!(!carried(&deltas).unwrap().items.iter().any(|i| i.prototype == 6049));
         let saved = sim.app.world().resource::<WorldState>().0.clone().unwrap();
@@ -1140,7 +1140,7 @@ mod tests {
         let mut s = save(&[(1, "A", TileLoc { x: 70, y: 70 })]);
         s.players.get_mut(&PlayerId(1)).unwrap().blueprint.sheet.base[0] = 8;
         // The PC carries a key ring with key 3 on it.
-        let ring = crate::CarriedItem { prototype: 7001, location: 0, quantity: 0, keys: vec![3] };
+        let ring = crate::CarriedItem { prototype: 7001, location: 0, quantity: 0, keys: vec![3], written: 0 };
         s.players.get_mut(&PlayerId(1)).unwrap().inventory = Some(crate::Inventory { items: vec![ring], ..Default::default() });
         let mut sim = SimApp::new(RulesData::default());
         sim.use_manual_clock();
@@ -2318,7 +2318,7 @@ mod tests {
         sim.app.world_mut().resource_mut::<LoadedMap>().prototypes = Arc::new(prototypes);
         let mut s = save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]);
         let mut carried = crate::Inventory::default();
-        carried.items.push(crate::CarriedItem { prototype: 8000, location: 0, quantity: 0, keys: vec![] });
+        carried.items.push(crate::CarriedItem { prototype: 8000, location: 0, quantity: 0, keys: vec![], written: 0 });
         s.players.get_mut(&PlayerId(7)).unwrap().inventory = Some(carried);
         sim.boot(s);
         {
@@ -2370,7 +2370,7 @@ mod tests {
         sim.app.world_mut().resource_mut::<LoadedMap>().prototypes = Arc::new(prototypes);
         let mut s = save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]);
         let mut carried = crate::Inventory::default();
-        carried.items.push(crate::CarriedItem { prototype: 8000, location: 0, quantity: 0, keys: vec![] });
+        carried.items.push(crate::CarriedItem { prototype: 8000, location: 0, quantity: 0, keys: vec![], written: 0 });
         s.players.get_mut(&PlayerId(7)).unwrap().inventory = Some(carried);
         sim.boot(s);
         {
@@ -2398,7 +2398,7 @@ mod tests {
             let mut q = world.query::<(&PlayerControlled, &mut crate::Inventory)>();
             q.single_mut(world).unwrap().1.items = items;
         };
-        let ring = crate::CarriedItem { prototype: 8000, location: 3, quantity: 0, keys: vec![] };
+        let ring = crate::CarriedItem { prototype: 8000, location: 3, quantity: 0, keys: vec![], written: 0 };
         set_items(&mut sim, vec![]);
         sim.update();
         assert_eq!((var(&sim, 1), var(&sim, 2)), (0, 1), "removed");

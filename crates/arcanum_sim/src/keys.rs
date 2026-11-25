@@ -29,6 +29,12 @@ pub fn key_matches(lock: i32, key: i32) -> bool {
     lock == 1 || key == 1 || lock == key
 }
 
+/// A written item object's first line (`written_text_start_line`, its own or its
+/// prototype's); 0 for anything else.
+pub fn object_written(object: &Object, prototypes: &Prototypes) -> i32 {
+    if object.object_type == arcanum_formats::object::TYPE_WRITTEN { prototypes.int(object, "written_text_start_line").unwrap_or(0) } else { 0 }
+}
+
 /// The key numbers an item object carries: a key's own, or a ring's list.
 pub fn object_keys(object: &Object, prototypes: &Prototypes) -> Vec<i32> {
     match object.object_type {
@@ -104,21 +110,21 @@ mod tests {
     }
 
     fn key(location: i32, keys: Vec<i32>) -> CarriedItem {
-        CarriedItem { prototype: 1, location, quantity: 0, keys }
+        CarriedItem { prototype: 1, location, quantity: 0, keys, written: 0 }
     }
 
     #[test]
     fn keys_go_onto_the_ring() {
-        let mut inv = Inventory { items: vec![key(0, vec![14]), CarriedItem { prototype: 3, location: 1, quantity: 0, keys: vec![] }, key(2, vec![23])], ..Default::default() };
+        let mut inv = Inventory { items: vec![key(0, vec![14]), CarriedItem { prototype: 3, location: 1, quantity: 0, keys: vec![], written: 0 }, key(2, vec![23])], ..Default::default() };
         inv.fold_keys(&info);
         assert_eq!(inv.items.len(), 3, "no ring: loose keys stay");
         assert!(inv.has_key(23));
-        inv.items.push(CarriedItem { prototype: 2, location: 5, quantity: 0, keys: vec![7] });
+        inv.items.push(CarriedItem { prototype: 2, location: 5, quantity: 0, keys: vec![7], written: 0 });
         inv.fold_keys(&info);
         assert_eq!(inv.items.iter().map(|i| (i.prototype, i.keys.clone())).collect::<Vec<_>>(), [(3, vec![]), (2, vec![7, 14, 23])]);
         assert!(inv.has_key(14) && inv.has_key(7) && !inv.has_key(8));
         assert!(inv.takes_onto_ring(1, &info));
-        let chest = Inventory { items: vec![key(0, vec![14]), CarriedItem { prototype: 2, location: 1, quantity: 0, keys: vec![] }], ..Inventory::container() };
+        let chest = Inventory { items: vec![key(0, vec![14]), CarriedItem { prototype: 2, location: 1, quantity: 0, keys: vec![], written: 0 }], ..Inventory::container() };
         let mut folded = chest.clone();
         folded.fold_keys(&info);
         assert_eq!(folded, chest, "a container keeps its keys loose");
@@ -126,10 +132,21 @@ mod tests {
 
     #[test]
     fn a_second_ring_gives_its_numbers_to_the_first() {
-        let ring = |location, keys| CarriedItem { prototype: 2, location, quantity: 0, keys };
+        let ring = |location, keys| CarriedItem { prototype: 2, location, quantity: 0, keys, written: 0 };
         let mut inv = Inventory { items: vec![ring(0, vec![]), ring(1, vec![5]), ring(2, vec![6])], ..Default::default() };
         inv.fold_keys(&info);
         let keys: Vec<Vec<i32>> = inv.items.iter().map(|i| i.keys.clone()).collect();
         assert_eq!(keys, [vec![], vec![5, 6], vec![]], "the first with keys takes them; the others stay, empty");
+    }
+
+    #[test]
+    fn written_items_carry_their_first_line() {
+        use arcanum_formats::object::{TYPE_KEY, TYPE_WRITTEN, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let note = Object::parse_instance(&ObjectBuilder::new(TYPE_WRITTEN).field("written_text_start_line", Value::Int32(1030)).build()).unwrap();
+        let key = Object::parse_instance(&ObjectBuilder::new(TYPE_KEY).field("key_key_id", Value::Int32(4)).build()).unwrap();
+        assert_eq!(object_written(&note, &Prototypes::default()), 1030);
+        assert_eq!(object_written(&key, &Prototypes::default()), 0);
+        assert!(object_keys(&note, &Prototypes::default()).is_empty(), "no key");
     }
 }

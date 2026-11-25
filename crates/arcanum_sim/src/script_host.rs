@@ -689,6 +689,17 @@ impl ScriptContext for HostWorld<'_> {
         }
     }
 
+    /// Carried items only: the first such item the holder has (items are kept by prototype
+    /// here); a map item's field is not kept.
+    fn set_written_line(&mut self, item: ScriptObject, line: i32) {
+        let ScriptObject::Carried { holder, prototype } = item else { return };
+        let Some(inventory) = self.players.get_mut(&holder).and_then(|s| s.inventory.as_mut()) else { return };
+        if let Some(i) = inventory.items.iter_mut().find(|i| i.prototype == prototype) {
+            i.written = line;
+            self.inventories.insert(holder);
+        }
+    }
+
     fn give_experience(&mut self, pc: ScriptObject, amount: i32) {
         if matches!(pc, ScriptObject::Pc(_)) {
             self.experience.push(amount);
@@ -1305,7 +1316,7 @@ impl ScriptHost<'_, '_> {
             let (prototypes, art) = (map.prototypes.clone(), map.art.clone());
             let info = crate::item_info(&prototypes, |id| crate::world::art_size(vfs, art.as_deref(), id));
             for (prototype, at) in created {
-                let item = crate::CarriedItem { prototype, location: 0, quantity: 0, keys: vec![] };
+                let item = crate::CarriedItem { prototype, location: 0, quantity: 0, keys: vec![], written: 0 };
                 crate::ground::place_on_ground(item, at, &info, map, world, &self.session, outbox);
             }
         }
