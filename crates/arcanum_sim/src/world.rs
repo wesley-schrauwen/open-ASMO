@@ -1191,6 +1191,29 @@ mod tests {
     }
 
     #[test]
+    fn a_player_who_joins_later_learns_the_hurt_npcs_health() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let mut npc = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(74, 70)).field("hp_damage", Value::Int32(2));
+        npc.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
+        std::fs::write(folder.join("G_0F.mob"), npc.build()).unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        let told = |sim: &mut SimApp, p: u64| (0..crate::combat::HEALTH_TICKS).any(|_| { sim.update(); sim.take_deltas().iter().any(|(to, d)| *to == PlayerId(p) && matches!(d, LedgerDelta::NpcHealth { .. })) });
+        assert!(told(&mut sim, 1), "the hurt NPC's health at first sight");
+        assert!(!told(&mut sim, 1), "once");
+        sim.app.world_mut().resource_mut::<crate::Session>().players.insert(PlayerId(2), crate::SessionPlayer::InWorld(NetId(999)));
+        assert!(told(&mut sim, 2), "the newcomer hears of it");
+        assert!(!told(&mut sim, 1), "the others not again");
+    }
+
+    #[test]
     fn fists_knock_an_npc_out_and_it_gets_up_later() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;

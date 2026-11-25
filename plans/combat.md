@@ -387,4 +387,5 @@ of `combat_design.md` come after the original's rules work.
      and sends `LedgerDelta::NpcHealth` on a change (at first sight only when not whole); the
      client keeps them (`combat_ui::NpcHealth`) and the hover's gauges show them as
      percentages (0x553f70).
-   - Not built: players who join later learn an NPC's health only at its next change.
+   - Players who join later first get every NPC's health told so far that is not whole
+     (`feat/npc-health-join`).

@@ -1756,11 +1756,21 @@ fn back_off(w: &CombatWorld, at: TileLoc, from: TileLoc, keep: u32) -> Option<Ve
 pub const HEALTH_TICKS: u64 = 5;
 
 /// Tells every player an NPC's hit points and fatigue when they change from what was last told
-/// (or, at first sight, are not full): the hover's gauges show the host's numbers.
-pub fn send_npc_health(tick: Res<crate::SimTick>, map: Res<crate::LoadedMap>, session: Res<crate::Session>, mut outbox: ResMut<crate::Outbox>, npcs: Query<(&NetId, &crate::NpcSource)>, mut told: Local<std::collections::HashMap<NetId, (crate::Pool, crate::Pool)>>) {
+/// (or, at first sight, are not full): the hover's gauges show the host's numbers. A player new
+/// in the world first learns every NPC told so far that is not whole.
+pub fn send_npc_health(tick: Res<crate::SimTick>, map: Res<crate::LoadedMap>, session: Res<crate::Session>, mut outbox: ResMut<crate::Outbox>, npcs: Query<(&NetId, &crate::NpcSource)>, mut told: Local<std::collections::HashMap<NetId, (crate::Pool, crate::Pool)>>, mut players: Local<std::collections::HashSet<crate::PlayerId>>) {
     if !tick.0.is_multiple_of(HEALTH_TICKS) {
         return;
     }
+    let here: std::collections::HashSet<crate::PlayerId> = session.players.iter().filter(|p| matches!(p.1, crate::SessionPlayer::InWorld(_))).map(|p| *p.0).collect();
+    let mut known: Vec<(&NetId, &(crate::Pool, crate::Pool))> = told.iter().filter(|t| t.1.0.current < t.1.0.max || t.1.1.current < t.1.1.max).collect();
+    known.sort_by_key(|t| *t.0);
+    for &player in here.difference(&players) {
+        for &(&net_id, &(hit_points, fatigue)) in &known {
+            outbox.0.push((player, LedgerDelta::NpcHealth { net_id, hit_points, fatigue }));
+        }
+    }
+    *players = here;
     for (&net_id, source) in &npcs {
         let (Some(hp), Some(fatigue)) = (map.npc_hp(source.sector, source.index), map.npc_fatigue(source.sector, source.index)) else { continue };
         let now = (crate::Pool { current: hp.0, max: hp.1 }, crate::Pool { current: fatigue.0, max: fatigue.1 });
