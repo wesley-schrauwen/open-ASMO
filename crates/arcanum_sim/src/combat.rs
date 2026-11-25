@@ -176,6 +176,8 @@ pub struct Fighter {
     pub crit_chart: i32,
     /// Stunned now (`critter_flags` 0x20): not stunned again.
     pub stunned: bool,
+    /// Its `critter_flags` (NPCs).
+    pub flags: i32,
 }
 
 impl Fighter {
@@ -196,6 +198,9 @@ impl Fighter {
         self.weapon.as_ref().is_some_and(|w| w.uses_ammo() && self.ammo < w.ammo_per_shot)
     }
 }
+
+/// `critter_flags` 0x4000000: not knocked out by critical hits (0x4b5f40).
+pub const OCF_NO_KNOCK_OUT: i32 = 0x0400_0000;
 
 /// `critter_flags`: undead, blinded, one / both arms crippled, legs crippled (0x4b5f40).
 pub const OCF_UNDEAD: i32 = 0x4;
@@ -336,6 +341,8 @@ pub const KNOCKED_DOWN: u8 = 2;
 pub const WEAPON_DESTROYED: u8 = 4;
 pub const AMMO_LOST_ALL: u8 = 8;
 pub const AMMO_LOST: u8 = 16;
+/// Knocked out (`combat.mes` 17; 0x4b5f40 flag 0x100): fatigue to its most + 10-20.
+pub const KNOCKED_OUT: u8 = 32;
 
 /// A stunned critter (0x4357b0, anim goal 57): it loses its turns, 3 off the count each, until
 /// the count is under 1 (0x427000); its count starts at `(20 - CO) / 2`.
@@ -493,6 +500,10 @@ pub fn critical_effects(attacker: &Fighter, defender: &Fighter, weapon: &Weapon,
     }
     if stun && !defender.stunned && effects & KNOCKED_DOWN == 0 {
         effects |= STUNNED;
+        // Knocked out on top (0x100): an NPC, not of flag 0x4000000, another roll and save.
+        if !defender.pc && !defender.undead && defender.flags & OCF_NO_KNOCK_OUT == 0 && rng.range(1, 100) <= e && rng.range(1, 100) > defender.constitution - 5 {
+            effects |= KNOCKED_OUT;
+        }
     }
     effects
 }
@@ -823,6 +834,35 @@ impl crate::LoadedMap {
         self.changes.entry(sector).or_default().npc_critter_flags.insert(index, flags);
     }
 
+    /// NPC `index`'s fatigue: what is left, and the most (0x45d670: `critter_fatigue_pts × 4 +
+    /// critter_fatigue_adj + 4 + (level + CO) × 2 + WP`).
+    pub fn npc_fatigue(&self, sector: arcanum_formats::map::SectorId, index: u32) -> Option<(i32, i32)> {
+        let o = self.mobiles.get(&sector)?.get(index as usize)?;
+        let int = |f: &str| self.prototypes.int(o, f).unwrap_or(0);
+        let max = int("critter_fatigue_pts") * 4 + int("critter_fatigue_adj") + 4 + (npc_stat(o, &self.prototypes, STAT_LEVEL) + npc_stat(o, &self.prototypes, 2)) * 2 + npc_stat(o, &self.prototypes, 6);
+        Some((max - int("critter_fatigue_damage"), max))
+    }
+
+    /// Whether NPC `index` is out of the fight: dead, or knocked out (fatigue below 1, 0x45d800).
+    pub fn npc_down(&self, sector: arcanum_formats::map::SectorId, index: u32) -> bool {
+        self.is_dead(sector, index) || self.npc_fatigue(sector, index).is_some_and(|(left, _)| left < 1)
+    }
+
+    /// Sets NPC `index`'s fatigue damage, kept in [`crate::LoadedMap::changes`].
+    pub fn set_npc_fatigue_damage(&mut self, sector: arcanum_formats::map::SectorId, index: u32, damage: i32) {
+        let Some(o) = self.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize)) else { return };
+        o.set_int("critter_fatigue_damage", damage.max(0));
+        self.changes.entry(sector).or_default().npc_fatigue.insert(index, damage.max(0));
+    }
+
+    /// Lays NPC `index` down on the last frame of animation 7 (knocked down, 0x435a90), or stands
+    /// it up again (animation 0, frame 0).
+    pub fn lay_npc_down(&mut self, vfs: Option<&arcanum_vfs::Vfs>, sector: arcanum_formats::map::SectorId, index: u32, down: bool) {
+        let Some(art) = self.object_at(sector, index, true).and_then(|o| self.prototypes.art_id(o)) else { return };
+        let art = if down { crate::death_frame(vfs, self.art.as_deref(), art).0 } else { art.0 & !(0x1f << 6 | 0x1f << 14) };
+        self.set_object_art(sector, index, true, art);
+    }
+
     /// Mends NPC `index`'s injuries (`critter_flags` 0x80-0x400).
     pub fn cure_npc_injuries(&mut self, sector: arcanum_formats::map::SectorId, index: u32) {
         let Some(o) = self.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize)) else { return };
@@ -973,6 +1013,7 @@ impl CombatWorld<'_, '_> {
                 ammo: 0,
                 crit_chart: 0,
                 stunned: c.stunned.is_some(),
+                flags: 0,
             }
             .with_ammo(inv, prototypes);
         }
@@ -996,6 +1037,7 @@ impl CombatWorld<'_, '_> {
             ammo: 0,
             crit_chart: prototypes.int(o, "critter_crit_hit_chart").unwrap_or(0),
             stunned: c.stunned.is_some(),
+            flags: prototypes.int(o, "critter_flags").unwrap_or(0),
         }
         .with_ammo(&inv, prototypes)
     }
@@ -1217,7 +1259,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
     for (npc, target) in std::mem::take(&mut w.starts.0) {
         let (Some(attacker), Some(victim)) = (find(npc), find(target)) else { continue };
         let Some(source) = attacker.npc else { continue };
-        if w.map.is_dead(source.sector, source.index) {
+        if w.map.npc_down(source.sector, source.index) {
             continue;
         }
         commands.entity(attacker.entity).insert(Fighting { target });
@@ -1308,7 +1350,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
                 true
             }
             Some(c) if c.walking || c.pending.is_some() => false,
-            Some(c) if c.npc.is_some_and(|n| w.map.is_dead(n.sector, n.index)) => true,
+            Some(c) if c.npc.is_some_and(|n| w.map.npc_down(n.sector, n.index)) => true,
             Some(c) if c.npc.is_some() => {
                 let acted = npc_turn(&mut commands, &mut w, c, &all, e.fresh);
                 if let Some(e) = w.combat.0.as_mut() {
@@ -1327,7 +1369,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
     // No NPC left fighting, or no PC standing: the fight is over at once (0x4b7580 finds no
     // active critter).
     if let Some(e) = &w.combat.0 {
-        let fights = e.order.iter().filter_map(|id| find(*id)).any(|c| c.foe() && c.npc.is_some_and(|n| !w.map.is_dead(n.sector, n.index)) && (c.fighting || w.joined.contains(&c.net_id)));
+        let fights = e.order.iter().filter_map(|id| find(*id)).any(|c| c.foe() && c.npc.is_some_and(|n| !w.map.npc_down(n.sector, n.index)) && (c.fighting || w.joined.contains(&c.net_id)));
         let stands = e.order.iter().filter_map(|id| find(*id)).any(|c| c.player.is_some() && !w.pc_down(&c));
         if !fights || !stands {
             w.combat.0 = None;
@@ -1357,7 +1399,7 @@ fn next_turn(w: &mut CombatWorld, all: &[Seen]) {
         return;
     };
     if turn >= len {
-        let alive: Vec<Seen> = all.iter().filter(|c| c.npc.is_none_or(|n| !w.map.is_dead(n.sector, n.index))).cloned().collect();
+        let alive: Vec<Seen> = all.iter().filter(|c| c.npc.is_none_or(|n| !w.map.npc_down(n.sector, n.index))).cloned().collect();
         let order = centre.map(|at| gather(&alive, at, None)).unwrap_or_default();
         let fights = order.iter().any(|id| alive.iter().any(|c| c.net_id == *id && c.foe()));
         let stands = order.iter().any(|id| alive.iter().any(|c| c.net_id == *id && c.player.is_some() && !w.pc_down(c)));
@@ -1527,7 +1569,7 @@ fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[See
     let in_fight = |c: &&Seen| w.combat.0.as_ref().is_some_and(|e| e.order.contains(&c.net_id));
     let standing = |c: &Seen| match (c.player, c.npc) {
         (Some(_), _) => !w.pc_down(c),
-        (None, Some(n)) => !w.map.is_dead(n.sector, n.index),
+        (None, Some(n)) => !w.map.npc_down(n.sector, n.index),
         _ => false,
     };
     let target = npc.target.and_then(|t| all.iter().find(|c| c.net_id == t)).filter(|c| standing(c)).cloned();
@@ -1650,7 +1692,7 @@ pub fn notice_foes(
     let busy: Vec<NetId> = talking.iter().map(|c| c.npc).collect();
     for (&npc, at, source, facing, look) in &npcs {
         let rotation = facing_of(facing, look);
-        if map.is_dead(source.sector, source.index) || busy.contains(&npc) {
+        if map.npc_down(source.sector, source.index) || busy.contains(&npc) {
             continue;
         }
         let Some(o) = map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { continue };
@@ -1707,6 +1749,36 @@ fn back_off(w: &CombatWorld, at: TileLoc, from: TileLoc, keep: u32) -> Option<Ve
     (!path.is_empty()).then_some(path)
 }
 
+/// NPCs' fatigue recovers as PCs' does ([`crate::magick::recover_fatigue`], 0x45e610): every
+/// [`crate::RECOVERY_MS`] of game time by their heal rate `(CO + 1) / 3`; one back above 0 gets
+/// up (0x434de0).
+pub fn recover_npc_fatigue(clock: Res<crate::GameClock>, mut last: Local<Option<u64>>, mut map: ResMut<crate::LoadedMap>, mut world: ResMut<crate::WorldState>, mut toggled: ResMut<crate::world::ToggledNpcs>, vfs: Option<Res<crate::SimVfs>>) {
+    let now = clock.now.days as u64 * crate::DAY_MS as u64 + clock.now.ms as u64;
+    let from = *last.get_or_insert(now);
+    let steps = now.saturating_sub(from) / crate::RECOVERY_MS;
+    if steps == 0 {
+        return;
+    }
+    *last = Some(from + steps * crate::RECOVERY_MS);
+    let tired: Vec<(arcanum_formats::map::SectorId, u32)> = map.changes.iter().flat_map(|(&s, c)| c.npc_fatigue.iter().filter(|(_, d)| **d > 0).map(move |(&i, _)| (s, i))).collect();
+    let guard = vfs.as_ref().and_then(|v| v.0.read().ok());
+    for (sector, index) in tired {
+        if map.is_dead(sector, index) {
+            continue;
+        }
+        let Some((left, most)) = map.npc_fatigue(sector, index) else { continue };
+        let co = map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).map_or(0, |o| npc_stat(o, &map.prototypes, 2));
+        let rate = ((co + 1) / 3).max(1);
+        let damage = crate::recovered(most - left, rate, steps);
+        map.set_npc_fatigue_damage(sector, index, damage);
+        if left < 1 && most - damage >= 1 {
+            map.lay_npc_down(guard.as_deref(), sector, index, false);
+            toggled.0.push((sector, index));
+        }
+        crate::ground::save_change(&mut world, &map, sector);
+    }
+}
+
 /// Surrendered NPCs take heart (0x4ac660, 0x4a945a): when whom they gave up to is gone, dead or
 /// down, or at [`RECOVER_PERCENT`] hit points or more one tick in [`RECOVER_ODDS`].
 pub fn recover_surrendered(mut commands: Commands, map: Res<crate::LoadedMap>, world: Res<crate::WorldState>, rules: Res<crate::SimRules>, mut rng: ResMut<HostRng>, npcs: Query<(Entity, &Surrendered, &crate::NpcSource)>, critters: Query<(&NetId, Option<&crate::PlayerControlled>, Option<&crate::NpcSource>)>) {
@@ -1715,7 +1787,7 @@ pub fn recover_surrendered(mut commands: Commands, map: Res<crate::LoadedMap>, w
         let gone = match to {
             None => true,
             Some((_, Some(pc), _)) => world.0.as_ref().and_then(|w| w.players.get(&pc.0)).is_none_or(|p| p.blueprint.sheet.hp_damage >= rules.0.derived(&p.blueprint.sheet).hit_points),
-            Some((_, None, Some(n))) => map.is_dead(n.sector, n.index),
+            Some((_, None, Some(n))) => map.npc_down(n.sector, n.index),
             Some(_) => true,
         };
         let heart = map.npc_hp(source.sector, source.index).is_some_and(|(left, max)| max > 0 && left * 100 / max >= RECOVER_PERCENT) && rng.range(1, RECOVER_ODDS) == 1;
@@ -1774,7 +1846,7 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
             commands.entity(victim.entity).insert(Fighting { target: attacker.net_id });
         }
     }
-    if !outcome.hit || outcome.hp <= 0 {
+    if !outcome.hit || (outcome.hp <= 0 && outcome.fatigue <= 0 && outcome.effects & KNOCKED_OUT == 0) {
         return;
     }
     // Its taking-damage script is asked first: the damage waits for the answer.
@@ -1861,6 +1933,22 @@ fn damage_npc(commands: &mut Commands, w: &mut CombatWorld, attacker_player: Opt
     if outcome.injured != 0 {
         w.map.injure_npc(source.sector, source.index, outcome.injured);
     }
+    // Fatigue (0x4b4390, field 0xe2): a knock-out takes it to its most + 10-20 (0x4b5f40 /
+    // 0x4cef00(10, 20)); out of it the NPC lies down (0x45d5a0 → 0x435a90).
+    if let Some((tired, most)) = w.map.npc_fatigue(source.sector, source.index) {
+        let damage = most - tired;
+        let new = if outcome.effects & KNOCKED_OUT != 0 && tired >= 1 { most + w.rng.range(10, 20) } else { damage + outcome.fatigue.max(0) };
+        if new != damage {
+            w.map.set_npc_fatigue_damage(source.sector, source.index, new);
+            if tired >= 1 && most - new < 1 {
+                let vfs = w.vfs.as_ref().map(|v| v.0.clone());
+                let guard = vfs.as_ref().and_then(|v| v.read().ok());
+                w.map.lay_npc_down(guard.as_deref(), source.sector, source.index, true);
+                commands.entity(victim.entity).remove::<Fighting>();
+                w.toggled.0.push((source.sector, source.index));
+            }
+        }
+    }
     let Some((left, max)) = w.map.npc_hp(source.sector, source.index) else { return };
     let dealt = outcome.hp.min(left.max(0));
     w.map.hurt_npc(source.sector, source.index, outcome.hp);
@@ -1927,7 +2015,7 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
     let player = attacker.player.or(victim.player);
     for c in all {
         let Some(source) = c.npc else { continue };
-        if c.net_id == attacker.net_id || c.net_id == victim.net_id || c.fighting || c.surrendered.is_some() || w.joined.contains(&c.net_id) || w.map.is_dead(source.sector, source.index) || !crate::within_radius(c.at, victim.at, ENGAGE_RADIUS) {
+        if c.net_id == attacker.net_id || c.net_id == victim.net_id || c.fighting || c.surrendered.is_some() || w.joined.contains(&c.net_id) || w.map.npc_down(source.sector, source.index) || !crate::within_radius(c.at, victim.at, ENGAGE_RADIUS) {
             continue;
         }
         let own = w.npc_int(source, "npc_faction");
@@ -2049,7 +2137,9 @@ mod tests {
         let pc = Fighter { weapon: Some(sword.clone()), pc: true, ..Default::default() };
         let mut rng = HostRng::default();
         let npc = Fighter { crit_chart: 5, ..Default::default() };
-        assert!((0..50).all(|_| critical_effects(&pc, &npc, &sword, BodyPart::Torso, &mut rng) == STUNNED), "not chart 0: never knocked down");
+        assert!((0..50).all(|_| critical_effects(&pc, &npc, &sword, BodyPart::Torso, &mut rng) == STUNNED | KNOCKED_OUT), "not chart 0: never knocked down; CO 0: knocked out too");
+        let tough = Fighter { flags: OCF_NO_KNOCK_OUT, ..npc.clone() };
+        assert!((0..20).all(|_| critical_effects(&pc, &tough, &sword, BodyPart::Torso, &mut rng) == STUNNED), "flag 0x4000000: never knocked out");
         let down = critical_effects(&pc, &Fighter::default(), &sword, BodyPart::Legs, &mut rng);
         assert_eq!(down, KNOCKED_DOWN, "knocked down: not stunned too");
         let stunned = Fighter { stunned: true, crit_chart: 5, ..Default::default() };

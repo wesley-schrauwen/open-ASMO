@@ -110,8 +110,8 @@ pub fn spawn_npcs(
         let look = Appearance { art, speed: NPC_SPEED };
         let gait = Gait::load(art, NPC_SPEED, |p| vfs_guard.as_deref().and_then(|v| v.read(p).ok()));
         let mut npc = commands.spawn((net_id, Npc { prototype }, crate::NpcSource { sector, index: index as u32 }, Position(position), look, gait));
-        // A corpse thinks no more: no standpoints, no wandering.
-        if !map.is_dead(sector, index as u32) {
+        // A corpse, or one knocked out, thinks no more: no standpoints, no wandering.
+        if !map.npc_down(sector, index as u32) {
             npc.insert(crate::Standpoints::of(object, &map.prototypes, position));
         }
         let spawn = look.spawn(net_id, EntityKind::Npc { prototype }, position);
@@ -1180,6 +1180,47 @@ mod tests {
         let map = sim.app.world().resource::<LoadedMap>();
         let (left, max) = map.npc_hp(SectorId::new(1, 1), 0).unwrap();
         assert_eq!(left, max, "healed whole");
+    }
+
+    #[test]
+    fn fists_knock_an_npc_out_and_it_gets_up_later() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        // Hard to kill (60 hit points), easy to tire (4 fatigue: no stats).
+        let mut foe = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(72, 70)).field("hp_pts", Value::Int32(60));
+        foe.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
+        std::fs::write(folder.join("G_0F.mob"), foe.build()).unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        let sector = SectorId::new(1, 1);
+        let npc = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::NpcSource)>().iter(world).next().unwrap().0 };
+        let mut ended = false;
+        for seq in 0..200 {
+            sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: npc, seq })]);
+            sim.update();
+            if sim.take_deltas().iter().any(|(_, d)| matches!(d, LedgerDelta::Combat { order, .. } if order.is_empty())) {
+                ended = true;
+                break;
+            }
+        }
+        assert!(ended, "the fight ends with the NPC down");
+        let map = sim.app.world().resource::<LoadedMap>();
+        assert!(map.npc_down(sector, 0) && !map.is_dead(sector, 0), "knocked out, not dead");
+        assert_eq!(map.npc_fatigue(sector, 0).map(|(left, _)| left < 1), Some(true));
+        // Game time passes: its fatigue comes back and it gets up.
+        for _ in 0..20 {
+            sim.app.world_mut().resource_mut::<crate::GameClock>().now.ms += crate::RECOVERY_MS as u32;
+            sim.update();
+        }
+        assert!(!sim.app.world().resource::<LoadedMap>().npc_down(sector, 0), "up again");
     }
 
     #[test]
