@@ -511,6 +511,18 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      not run it.
    - **Not built:** examine (0, 0x57cd60: a PC only, before the description; "skip" shows
      none) — there is no examine yet; destroy (2, 0x43cca0, before; "skip" keeps the object).
+4n. **The written window** (built, `feat/written-windows`; client `written_window`).
+   - Actions 0x40 (book), 0x41 (image: the number is its interface art) and 0x72 (plaque) send
+     `LedgerDelta::Written { kind, line }` to the reader's player (they went to the message box
+     before). Kinds (0x56bc00): 0 book, 1 note, 2 newspaper, 3 telegram, 4 image, 6 plaque.
+   - The client draws it as 0x56c050 does: art 494 over (0, 41, 800, 399), the kind's
+     background (table 0x5ca4b8: 477, 489, 487, 491, -, -, 633) at (132, 0); entries "font
+     justification text" (0x56c9f0: the font is an interface art number; `c` centres), stacked
+     and wrapped; a book's two pages (0x5ca618) with previous / next (arts 495 / 496 at (213, 77)
+     / (675, 77)); a plaque in (269, 40, 428, 327) in white; a note's entries joined in font 497
+     in (349, 49, 215, 300). A click closes it (Escape too, builder's call).
+   - **Not built:** newspapers and telegrams; the alternate background 817; the sounds; the
+     readable items (0x5e sets an item's written start; reading from the inventory).
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,

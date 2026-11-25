@@ -1,0 +1,355 @@
+//! The written window: books, notes, plaques and images a script shows (Arcanum.exe 0x56bc00
+//! open, 0x56c050 draw, 0x56bfc0 input; the host sends [`arcanum_sim::LedgerDelta::Written`]).
+//!
+//! - **The window** (0x51cb90, rect 0x5ca480): (0, 41, 800, 399), under the top bar. Art 494
+//!   is drawn over all of it, then the kind's background (table 0x5ca4b8) at (132, 0): book
+//!   477, note 489, newspaper 487, telegram 491, plaque 633; an image is the interface art the
+//!   script names.
+//! - **Entries** (0x56c9f0): an entry starts with its font (an interface art number, a font
+//!   `.ART`) and a justification letter (`c` centre, anything else left), then one space and
+//!   the text. They stack down their rectangle, each wrapped to its width (0x56c800).
+//! - **A book** (`mes/gamebook.mes`): two pages, (227, 57) and (476, 57), each 200x290; entries
+//!   from the line, at most ten, up to the first missing one; an entry runs on over the pages.
+//!   Previous (art 495 at (213, 77)) and next (496 at (675, 77)) turn two pages, shown only
+//!   when there is somewhere to go.
+//! - **A plaque** (`mes/gameplaque.mes`): the same flow in (269, 40, 428, 327), at most ten
+//!   entries, in white (0x56c800 colour 0xff); the others in black (colour 0).
+//! - **A note** (`mes/gamenote.mes`): the entries joined, in font 497, left, in (349, 49, 215, 300).
+//! - **Closing:** a left click on the world (0x56bfc0 → 0x551000) closes it; opening another
+//!   replaces it. Builder's calls: any click outside the page buttons closes it, and so does
+//!   Escape; while it is open the world takes no clicks.
+//!
+//! Not built: newspapers and telegrams (their header tables 0x5ca638 / 0x5ca548 and columns
+//! 0x5ca738); the alternate background 817 (0x56bb60); the sounds (3008 open, 3009 close, 3010
+//! turn); text past what fits the last page (the original keeps it for the next spread, so does
+//! this, up to 100 pages).
+
+use arcanum_formats::font::BitmapFont;
+use arcanum_formats::mes::MesFile;
+use bevy::prelude::*;
+
+use crate::bitmap_text::{Align, BitmapFontAsset, BitmapText};
+use crate::fonts::ORIGINAL_SCALE;
+use crate::main_menu::AppState;
+use crate::menu_window::{at, rect};
+use crate::resource_pack::paths::interface;
+use crate::vfs_asset::VfsResource;
+
+/// The window, in screen pixels (0x5ca480).
+pub const WINDOW: Rect = Rect { min: Vec2::new(0.0, 41.0), max: Vec2::new(800.0, 440.0) };
+/// Art drawn over the whole window first.
+pub const BACKDROP_ART: u32 = 494;
+/// Where the background goes, in the window.
+pub const BACKGROUND_AT: Vec2 = Vec2::new(132.0, 0.0);
+/// The backgrounds by kind (table 0x5ca4b8): book, note, newspaper, telegram, image, -, plaque.
+pub const BACKGROUNDS: [u32; 7] = [477, 489, 487, 491, 0, 0, 633];
+/// A book's pages (0x5ca618), in the window.
+pub const BOOK_PAGES: [Rect; 2] = [Rect { min: Vec2::new(227.0, 57.0), max: Vec2::new(427.0, 347.0) }, Rect { min: Vec2::new(476.0, 57.0), max: Vec2::new(676.0, 347.0) }];
+/// A plaque's text (0x5ca528) and a note's (0x5ca4f8).
+pub const PLAQUE_TEXT: Rect = Rect { min: Vec2::new(269.0, 40.0), max: Vec2::new(697.0, 367.0) };
+pub const NOTE_TEXT: Rect = Rect { min: Vec2::new(349.0, 49.0), max: Vec2::new(564.0, 349.0) };
+/// A note's font.
+pub const NOTE_FONT: u32 = 497;
+/// The page buttons (0x5ca4d8): previous and next, art and corner in the window.
+pub const PREVIOUS: (u32, Vec2) = (495, Vec2::new(213.0, 77.0));
+pub const NEXT: (u32, Vec2) = (496, Vec2::new(675.0, 77.0));
+/// Most entries a book or plaque shows from its line.
+pub const MOST_ENTRIES: u32 = 10;
+/// Most pages a book keeps (0x680dd4 below 100).
+pub const MOST_PAGES: usize = 100;
+
+/// The open window: kind, line, and the left page shown.
+#[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
+pub struct WrittenPanel {
+    pub open: Option<(u8, i32)>,
+    pub page: usize,
+}
+
+impl WrittenPanel {
+    /// Opens `kind` from `line` (replacing any open one).
+    pub fn show(&mut self, kind: u8, line: i32) {
+        self.open = Some((kind, line));
+        self.page = 0;
+    }
+}
+
+/// One entry: font, centred, text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Entry {
+    pub font: u32,
+    pub centre: bool,
+    pub text: String,
+}
+
+/// Reads an entry (0x56c9f0): the font number, whitespace, the justification letter, one
+/// whitespace character, the text.
+pub fn parse_entry(raw: &str) -> Entry {
+    let digits = raw.trim_start();
+    let end = digits.find(|c: char| !c.is_ascii_digit()).unwrap_or(digits.len());
+    let font = digits[..end].parse().unwrap_or(0);
+    let rest = digits[end..].trim_start();
+    let mut chars = rest.chars();
+    let letter = chars.next();
+    let mut text = chars.as_str();
+    if text.starts_with(char::is_whitespace) {
+        text = &text[text.chars().next().map_or(0, char::len_utf8)..];
+    }
+    Entry { font, centre: matches!(letter, Some('c' | 'C')), text: text.to_string() }
+}
+
+/// A block of text on a page: its entry's font and justification, its lines, and how far down
+/// the page it starts (font pixels).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Piece {
+    pub font: u32,
+    pub centre: bool,
+    pub text: String,
+    pub y: u32,
+}
+
+/// Lays `entries` over pages `width` x `height` (font pixels): each entry wrapped in its font,
+/// stacked under the last, running on to the next page when it does not fit (at most
+/// [`MOST_PAGES`]). `font` gives a loaded font by number; an entry without one is left out.
+pub fn paginate<'a>(entries: &[Entry], font: impl Fn(u32) -> Option<&'a BitmapFont>, width: u32, height: u32) -> Vec<Vec<Piece>> {
+    let mut pages = vec![Vec::new()];
+    let mut y = 0;
+    for entry in entries {
+        let Some(f) = font(entry.font) else { continue };
+        let line_height = f.line_height.max(1);
+        let mut lines: Vec<String> = f.layout(&entry.text, Some(width)).into_iter().map(|l| if l.indent > 0 { format!("\t{}", l.text) } else { l.text }).collect();
+        while !lines.is_empty() {
+            let room = ((height.saturating_sub(y)) / line_height) as usize;
+            if room == 0 {
+                if pages.len() >= MOST_PAGES {
+                    return pages;
+                }
+                pages.push(Vec::new());
+                y = 0;
+                continue;
+            }
+            let taken: Vec<String> = lines.drain(..room.min(lines.len())).collect();
+            let used = taken.len() as u32 * line_height;
+            pages.last_mut().expect("a page").push(Piece { font: entry.font, centre: entry.centre, text: taken.join("\n"), y });
+            y += used;
+        }
+    }
+    pages
+}
+
+/// The entries of `mes` from `line`: at most `most`, up to the first missing.
+pub fn entries_from(mes: &MesFile, line: i32, most: u32) -> Vec<String> {
+    let Ok(first) = u32::try_from(line) else { return Vec::new() };
+    (first..first + most).map_while(|id| mes.get(id).map(str::to_string)).collect()
+}
+
+/// The `.mes` a kind reads.
+pub fn mes_file(kind: u8) -> Option<&'static str> {
+    match i32::from(kind) {
+        arcanum_sim::WRITTEN_BOOK => Some("mes/gamebook.mes"),
+        arcanum_sim::WRITTEN_NOTE => Some("mes/gamenote.mes"),
+        arcanum_sim::WRITTEN_PLAQUE => Some("mes/gameplaque.mes"),
+        _ => None,
+    }
+}
+
+#[derive(Component)]
+struct WrittenRoot;
+
+/// The page buttons: true for next.
+#[derive(Component, Clone, Copy)]
+struct PageButton(bool);
+
+pub struct WrittenWindowPlugin;
+
+impl Plugin for WrittenWindowPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<WrittenPanel>()
+            .add_systems(OnExit(AppState::InGame), |mut panel: ResMut<WrittenPanel>| *panel = WrittenPanel::default())
+            .add_systems(Update, (click, show_window).chain().run_if(in_state(AppState::InGame)));
+    }
+}
+
+/// What the window needs from the game data: the interface art names, the texts and fonts.
+#[derive(Default)]
+struct Loaded {
+    names: Option<MesFile>,
+    fonts: std::collections::BTreeMap<u32, Handle<BitmapFontAsset>>,
+    entries: Vec<Entry>,
+    pages: Option<Vec<Vec<Piece>>>,
+    shown: Option<((u8, i32), usize)>,
+}
+
+fn interface_file(names: &MesFile, art: u32) -> Option<String> {
+    names.get(art).map(|n| format!("{}/{}", interface::DIR, n.trim()))
+}
+
+/// A release closes the window, or turns its pages on a page button; Escape closes it.
+fn click(buttons: Res<ButtonInput<MouseButton>>, mut keys: ResMut<ButtonInput<KeyCode>>, windows: Query<&Window>, mut panel: ResMut<WrittenPanel>, pages: Query<(&PageButton, &bevy::ui::RelativeCursorPosition)>) {
+    if panel.open.is_none() {
+        return;
+    }
+    if keys.clear_just_pressed(KeyCode::Escape) {
+        panel.open = None;
+        return;
+    }
+    if !buttons.just_released(MouseButton::Left) || windows.iter().all(|w| w.cursor_position().is_none()) {
+        return;
+    }
+    if let Some((&PageButton(next), _)) = pages.iter().find(|(_, r)| r.cursor_over()) {
+        panel.page = if next { panel.page + 2 } else { panel.page.saturating_sub(2) };
+    } else {
+        panel.open = None;
+    }
+}
+
+/// Draws the window as it should be, once its fonts are in.
+#[allow(clippy::too_many_arguments)]
+fn show_window(
+    mut commands: Commands,
+    panel: Res<WrittenPanel>,
+    roots: Query<Entity, With<WrittenRoot>>,
+    assets: Res<AssetServer>,
+    fonts: Res<Assets<BitmapFontAsset>>,
+    vfs: Option<Res<VfsResource>>,
+    mut loaded: Local<Loaded>,
+) {
+    let want = panel.open.map(|o| (o, panel.page));
+    if loaded.shown == want && (want.is_none() || !roots.is_empty()) {
+        return;
+    }
+    let Some(((kind, line), page)) = want else {
+        for root in &roots {
+            commands.entity(root).despawn();
+        }
+        loaded.shown = None;
+        return;
+    };
+    // A new text: read it and ask for its fonts.
+    if loaded.shown.map(|s| s.0) != Some((kind, line)) {
+        let guard = vfs.as_ref().and_then(|v| v.0.read().ok());
+        let read = |path: &str| guard.as_ref().and_then(|v| v.read(path).ok()).and_then(|d| MesFile::parse(&d).ok());
+        if loaded.names.is_none() {
+            loaded.names = read(interface::INDEX);
+        }
+        let texts = mes_file(kind).and_then(read).map(|m| entries_from(&m, line, MOST_ENTRIES)).unwrap_or_default();
+        loaded.entries = if i32::from(kind) == arcanum_sim::WRITTEN_NOTE {
+            vec![Entry { font: NOTE_FONT, centre: false, text: texts.join("\n") }]
+        } else {
+            texts.iter().map(|t| parse_entry(t)).collect()
+        };
+        let wanted: std::collections::BTreeSet<u32> = loaded.entries.iter().map(|e| e.font).collect();
+        let names = loaded.names.clone().unwrap_or_default();
+        loaded.fonts = wanted.into_iter().filter_map(|f| Some((f, assets.load(interface_file(&names, f)?)))).collect();
+        loaded.pages = None;
+        loaded.shown = None;
+    }
+    if loaded.pages.is_none() {
+        let pending = loaded.fonts.values().any(|h| !fonts.contains(h) && !assets.load_state(h).is_failed());
+        if pending {
+            return;
+        }
+        let page_rect = match i32::from(kind) {
+            arcanum_sim::WRITTEN_BOOK => BOOK_PAGES[0],
+            arcanum_sim::WRITTEN_NOTE => NOTE_TEXT,
+            _ => PLAQUE_TEXT,
+        };
+        let by_number: std::collections::BTreeMap<u32, &BitmapFont> = loaded.fonts.iter().filter_map(|(&n, h)| Some((n, &fonts.get(h)?.0))).collect();
+        loaded.pages = Some(paginate(&loaded.entries, |n| by_number.get(&n).copied(), page_rect.width() as u32, page_rect.height() as u32));
+    }
+    for root in &roots {
+        commands.entity(root).despawn();
+    }
+    loaded.shown = want;
+    let pages = loaded.pages.clone().unwrap_or_default();
+    let names = loaded.names.clone().unwrap_or_default();
+    let art = |n: u32| interface_file(&names, n).map(|p| assets.load::<Image>(p));
+    let window = |r: Rect| Rect { min: r.min + WINDOW.min, max: r.max + WINDOW.min };
+    let size = |n: u32| art_size(vfs.as_deref(), &names, n);
+    let background = if i32::from(kind) == arcanum_sim::WRITTEN_IMAGE { u32::try_from(line).unwrap_or(0) } else { BACKGROUNDS.get(usize::from(kind)).copied().unwrap_or(0) };
+    let (colour, slots): (Color, Vec<Rect>) = match i32::from(kind) {
+        arcanum_sim::WRITTEN_BOOK => (Color::BLACK, BOOK_PAGES.to_vec()),
+        arcanum_sim::WRITTEN_NOTE => (Color::BLACK, vec![NOTE_TEXT]),
+        arcanum_sim::WRITTEN_PLAQUE => (Color::WHITE, vec![PLAQUE_TEXT]),
+        _ => (Color::BLACK, Vec::new()),
+    };
+    commands
+        .spawn((
+            WrittenRoot,
+            DespawnOnExit(AppState::InGame),
+            GlobalZIndex(5),
+            Node { position_type: PositionType::Absolute, top: Val::Px(0.0), left: Val::Percent(50.0), margin: UiRect::left(crate::menu_window::px(-400.0)), width: crate::menu_window::px(800.0), height: crate::menu_window::px(600.0), ..default() },
+        ))
+        .with_children(|screen| {
+            for (n, corner) in [(BACKDROP_ART, Vec2::ZERO), (background, BACKGROUND_AT)] {
+                if let (Some(image), Some(s)) = (art(n), size(n)) {
+                    screen.spawn((bevy::picking::Pickable::IGNORE, ImageNode::new(image), at(window(rect(corner, s)))));
+                }
+            }
+            for (slot, place) in slots.iter().enumerate() {
+                let Some(pieces) = pages.get(page + slot) else { continue };
+                for piece in pieces {
+                    let Some(font) = loaded.fonts.get(&piece.font) else { continue };
+                    let text = BitmapText { shadow: false, ..BitmapText::new(piece.text.clone(), font.clone(), ORIGINAL_SCALE) }.wrapped(place.width() * ORIGINAL_SCALE, if piece.centre { Align::Center } else { Align::Left });
+                    let corner = place.min + Vec2::new(0.0, piece.y as f32);
+                    screen.spawn((bevy::picking::Pickable::IGNORE, TextColor(colour), text, Node { position_type: PositionType::Absolute, ..at(window(rect(corner, Vec2::new(place.width(), place.max.y - corner.y)))) }));
+                }
+            }
+            if i32::from(kind) == arcanum_sim::WRITTEN_BOOK {
+                let next_shown = page + 2 < pages.len();
+                for ((n, corner), next, shown) in [(PREVIOUS, false, page > 0), (NEXT, true, next_shown)] {
+                    if let (true, Some(image), Some(s)) = (shown, art(n), size(n)) {
+                        screen.spawn((PageButton(next), bevy::ui::RelativeCursorPosition::default(), ImageNode::new(image), at(window(rect(corner, s)))));
+                    }
+                }
+            }
+        });
+}
+
+/// An interface art's size (its first frame), in original pixels.
+fn art_size(vfs: Option<&VfsResource>, names: &MesFile, n: u32) -> Option<Vec2> {
+    let path = interface_file(names, n)?;
+    let guard = vfs?.0.read().ok()?;
+    let art = arcanum_formats::art::ArtFile::parse(&guard.read(&path).ok()?).ok()?;
+    let frame = art.frames.first()?.first()?;
+    Some(Vec2::new(frame.width as f32, frame.height as f32))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entries_start_with_a_font_and_a_justification() {
+        assert_eq!(parse_entry("28c\nOffer to him\nWho"), Entry { font: 28, centre: true, text: "Offer to him\nWho".into() });
+        assert_eq!(parse_entry("497l \tMay 11, 1823"), Entry { font: 497, centre: false, text: "\tMay 11, 1823".into() });
+        assert_eq!(parse_entry("37r Right"), Entry { font: 37, centre: false, text: "Right".into() }, "only c centres");
+        assert_eq!(parse_entry("744c 5"), Entry { font: 744, centre: true, text: "5".into() });
+    }
+
+    #[test]
+    fn entries_run_from_the_line_to_the_first_gap() {
+        let mes = MesFile::parse(b"{1000}{37l a}{1001}{37l b}{1003}{37l d}").unwrap();
+        assert_eq!(entries_from(&mes, 1000, MOST_ENTRIES), ["37l a", "37l b"]);
+        assert_eq!(entries_from(&mes, 1003, 1), ["37l d"]);
+        assert!(entries_from(&mes, -1, 5).is_empty());
+    }
+
+    #[test]
+    fn pages_fill_and_run_on() {
+        let font = BitmapFont::parse(&arcanum_formats::test_util::font_art(10)).unwrap();
+        let words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu";
+        let entries = vec![Entry { font: 1, centre: false, text: words.into() }, Entry { font: 1, centre: true, text: "omega".into() }, Entry { font: 2, centre: false, text: "no font".into() }];
+        let width = font.measure("epsilon zeta");
+        let pages = paginate(&entries, |n| (n == 1).then_some(&font), width, 30);
+        assert!(pages.len() > 1, "{pages:?}");
+        for page in &pages {
+            for piece in page {
+                assert!(piece.y + piece.text.lines().count() as u32 * 10 <= 30, "{piece:?} fits its page");
+            }
+        }
+        let all: Vec<&str> = pages.iter().flatten().flat_map(|p| p.text.split_whitespace()).collect();
+        assert_eq!(all.join(" "), format!("{words} omega"), "every word once, in order; the entry without a font left out");
+        let last = pages.last().unwrap().last().unwrap();
+        assert!(last.centre && last.text == "omega");
+    }
+}

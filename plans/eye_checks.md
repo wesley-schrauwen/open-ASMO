@@ -135,3 +135,11 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 
 - [ ] Picking up, dropping and looting items behaves as before (items with get/drop scripts are
       rare; nothing should be kept back without a reason).
+
+## Written window
+
+- [ ] A script plaque (for example the shrine plaques, `mes/gameplaque.mes` 1000) opens the
+      stone plaque with centred white text; a click closes it.
+- [ ] A book opens on two pages; the arrows turn two pages; text runs on across the pages.
+- [ ] Art 494 leaves a round hole at the top left that shows the world: check whether the
+      original shows the same.

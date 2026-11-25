@@ -92,6 +92,7 @@ fn main() {
             arcanum_client::spell_bar::SpellBarPlugin,
             arcanum_client::rest_window::RestWindowPlugin,
             arcanum_client::fate_window::FateWindowPlugin,
+            arcanum_client::written_window::WrittenWindowPlugin,
             arcanum_client::dialogue_ui::DialogueUiPlugin,
             arcanum_client::vote_popup::VotePopupPlugin,
             arcanum_client::cursor::CursorPlugin,
@@ -158,6 +159,22 @@ fn main() {
     // Debugging aid: `DEBUG_ARCANUM_PANEL=skillsbar` shows the bottom bar's skills view.
     if std::env::var("DEBUG_ARCANUM_PANEL").is_ok_and(|v| v == "skillsbar") {
         app.add_systems(OnEnter(AppState::InGame), |mut view: ResMut<arcanum_client::spell_bar::BarView>| view.skills = true);
+    }
+
+    // Debugging aid: `DEBUG_ARCANUM_PANEL=book:1010` (or `note:`, `plaque:`, `image:`) opens the
+    // written window on that line.
+    if let Some((kind, line)) = std::env::var("DEBUG_ARCANUM_PANEL").ok().and_then(|v| {
+        let (kind, line) = v.split_once(':')?;
+        let kind = match kind {
+            "book" => arcanum_sim::WRITTEN_BOOK,
+            "note" => arcanum_sim::WRITTEN_NOTE,
+            "image" => arcanum_sim::WRITTEN_IMAGE,
+            "plaque" => arcanum_sim::WRITTEN_PLAQUE,
+            _ => return None,
+        };
+        Some((kind as u8, line.parse::<i32>().ok()?))
+    }) {
+        app.add_systems(OnEnter(AppState::InGame), move |mut panel: ResMut<arcanum_client::written_window::WrittenPanel>| panel.show(kind, line));
     }
 
     // Debugging aid: `DEBUG_ARCANUM_TALK=1` walks to the nearest NPC and talks once the world is in.

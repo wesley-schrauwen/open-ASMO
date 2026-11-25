@@ -2176,7 +2176,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());
         std::fs::create_dir_all(dir.path().join("mes")).unwrap();
-        std::fs::write(dir.path().join("mes/gameplaque.mes"), "{1000}{28c\nOffer to him\nWho cannot see}\n").unwrap();
         let mut sim = SimApp::new(RulesData::default());
         sim.use_manual_clock();
         sim.app.insert_resource(vfs(dir.path()));
@@ -2222,8 +2221,7 @@ mod tests {
         let sheet = &save.players[&PlayerId(7)].blueprint.sheet;
         let max = RulesData::default().derived(sheet).hit_points;
         assert_eq!((sheet.hp_damage, sheet.poison, sheet.fatigue_damage), (max - 5, 0, 3), "down to 0 hit points, then healed 5");
-        let messages: Vec<&str> = deltas.iter().filter_map(|(_, d)| match d { LedgerDelta::ScriptMessage { text } => Some(text.as_str()), _ => None }).collect();
-        assert_eq!(messages, ["Offer to him", "Who cannot see"]);
+        assert!(deltas.contains(&(PlayerId(7), LedgerDelta::Written { kind: crate::WRITTEN_PLAQUE as u8, line: 1000 })), "the plaque window");
         assert!(save.scripts.switches.contains(&7) && save.scripts.flag(6));
         assert_eq!(save.sector_changes[&sector].mobile_protos[&0], 9000);
         assert_eq!(save.sector_changes[&sector].mobile_flags[&0] & crate::OF_DESTROYED, crate::OF_DESTROYED);
