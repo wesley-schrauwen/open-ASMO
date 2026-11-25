@@ -103,7 +103,13 @@ pub struct BoxDetails {
     pub title_colour: Option<[u8; 3]>,
     pub rows: Vec<BoxRow>,
     pub gauges: Vec<BoxGauge>,
+    /// In combat mode, in the icon's place (0x554830): "To Hit:" and the percentage.
+    pub to_hit: Option<(String, String)>,
 }
+
+/// The to-hit panel's two lines on screen (rect 0x55 in the bar: (215, 526, 64, 18), the
+/// percentage 18 lower).
+pub const TO_HIT: Rect = Rect { min: Vec2::new(215.0, 526.0), max: Vec2::new(279.0, 544.0) };
 
 /// The rows' rects on screen (0x5c70c8: the name's, then three under it).
 pub const ROWS: [Rect; 4] = [
@@ -284,6 +290,7 @@ fn show_box(
             }
             BoxIcon::Interface(n) => interface_art.image(n, &assets, vfs.as_deref()),
         };
+        let icon = if m.details.as_ref().is_some_and(|d| d.to_hit.is_some()) { None } else { icon };
         let gauges: Vec<(BoxGauge, Option<Handle<Image>>, Option<Handle<Image>>, Option<Vec2>)> =
             m.details.iter().flat_map(|d| &d.gauges).map(|g| (g.clone(), interface_art.image(g.fill, &assets, vfs.as_deref()), interface_art.image(g.empty, &assets, vfs.as_deref()), interface_art.size(g.empty, vfs.as_deref()))).collect();
         commands.entity(root).with_children(|b| {
@@ -316,6 +323,11 @@ fn show_box(
                 if let Some(title) = &m.title {
                     let colour = details.title_colour.map_or(SCREEN_WHITE, |[r, g, b]| Color::srgb_u8(r, g, b));
                     line(ROWS[0], title, BoxText::Title, UiFont::Small, colour, JustifyContent::FlexStart);
+                }
+                if let Some((label, percent)) = &details.to_hit {
+                    let below = Rect { min: TO_HIT.min + Vec2::new(0.0, 18.0), max: TO_HIT.max + Vec2::new(0.0, 18.0) };
+                    line(TO_HIT, label, BoxText::Detail, UiFont::Body, SCREEN_WHITE, JustifyContent::Center);
+                    line(below, percent, BoxText::Detail, UiFont::Body, SCREEN_WHITE, JustifyContent::Center);
                 }
                 for row in &details.rows {
                     let Some(&r) = ROWS.get(row.row) else { continue };

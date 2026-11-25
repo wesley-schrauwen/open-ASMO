@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-4 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`); step 5 planned.
+Status: steps 1-5 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`).
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -76,8 +76,9 @@ of `combat_design.md` come after the original's rules work.
   surrendered (0x4000). Fleeing and surrender by `rules/ai_params.mes` (41 rows of 17 numbers,
   row by field 0x11a): flee at the row's HP percent (0), against the target's strength (1-3).
 - **Targets** (0x4ab460): critters within `clamp(PE, 1, 10)` tiles it sees or hears, nearest
-  first, hostile by: `npc_flags` 0x100 (kill on sight); a PC whose reaction is at or below the
-  row's [10]; an alignment gap of the row's [12]; one fighting its friend.
+  first, hostile by (0x4ae120): `npc_flags` 0x100 (kill on sight) without 0x800; a PC whose
+  reaction is at or below the row's column 10; an alignment gap of at least column 11 (checked:
+  the agent read 12; most rows hold 2001 there); one fighting its friend.
 - **Noticing** (0x4aa0d0, heartbeat): critters within 10 tiles it sees or hears.
 - **Script events:** 13 entering a fight, 14 leaving it (0x4aabe0); 12 dying; action 0x24
   makes the object attack each of a set (no ally pull, no reaction).
@@ -147,4 +148,12 @@ of `combat_design.md` come after the original's rules work.
      the original's PC dies and the game ends; the owner decides what death is in co-op).
    - Real data: all 2399 scripts run to an end.
    - Not built: hit / miss events (7 / 8 not traced), the fate points that wait on attacks.
-5. **Noticing:** kill-on-sight NPCs and monsters starting fights; the hover's to-hit panel.
+5. **Noticing** (built, `feat/combat-notice`).
+   - Every 15 ticks (builder's call: the original on each heartbeat) each NPC not fighting,
+     following, talking or dead looks for a PC within reach (`clamp(PE, 1, 10)` tiles, Perception
+     cut by a prowler's value, or its hearing reach) it is hostile to (0x4ae120 as above); one
+     found starts a fight (`CombatStarts`). Sight lines and facing are not counted.
+   - The hover's to-hit panel in combat mode (0x554830): "To Hit:" and the weapon chance less the
+     difficulty in the icon's place; the dodge and 0x461620 terms not counted.
+   - Checked by screenshot: no fight starts at the house of the start tile `90330,84122` nor at
+     the crash site.

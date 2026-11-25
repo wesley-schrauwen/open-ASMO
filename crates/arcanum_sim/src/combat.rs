@@ -847,6 +847,82 @@ fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[See
 /// `rules/ai_params.mes`.
 pub const AI_PARAMS: &str = "rules/ai_params.mes";
 
+/// `npc_flags`: kill on sight (0x4ae120), and its "made peaceful" bit.
+pub const ONF_KOS: i32 = 0x100;
+pub const ONF_KOS_OVERRIDE: i32 = 0x800;
+/// How often NPCs look for foes, in ticks (builder's call: the original on each heartbeat).
+pub const NOTICE_TICKS: u64 = 15;
+
+/// Whether an NPC is hostile to a PC (0x4ae120): kill on sight; or its reaction at or below its
+/// row's column 10; or their alignments at least column 11 apart.
+pub fn hostile(npc_flags: i32, reaction: i32, alignment_gap: i32, row: &[i32; 17]) -> bool {
+    (npc_flags & ONF_KOS != 0 && npc_flags & ONF_KOS_OVERRIDE == 0) || reaction <= row[10] || alignment_gap >= row[11]
+}
+
+/// How far an NPC of Perception `pe` notices a PC (0x4ab460 / 0x4af260: `clamp(PE, 1, 10)`
+/// tiles, Perception first cut by a prowler's value), or hears it (0x4af470).
+pub fn notice_reach(pe: i32, prowler: Option<i32>) -> u32 {
+    let seen = pe - prowler.map_or(0, |p| pe * p.clamp(0, 100) / 100);
+    (seen.clamp(1, 10) as u32).max(crate::prowl::hearing_reach(pe, prowler) as u32)
+}
+
+type FoeQuery<'a> = (&'a NetId, &'a crate::Position, &'a crate::NpcSource);
+type QuarryQuery<'a> = (&'a NetId, &'a crate::Position, &'a crate::PlayerControlled, &'a crate::Sheet, Has<crate::Prowling>);
+
+/// NPCs that are not fighting look for PCs they are hostile to within reach (0x4aa0d0 →
+/// 0x4ab460 → 0x4ae120); one found starts a fight ([`CombatStarts`]). Followers, the dead and
+/// those talking keep still. Sight lines and facing are not counted.
+#[allow(clippy::too_many_arguments)]
+pub fn notice_foes(
+    tick: Res<crate::SimTick>,
+    map: Res<crate::LoadedMap>,
+    world: Res<crate::WorldState>,
+    rules: Res<crate::SimRules>,
+    (mut ai, mut reputations, vfs): (ResMut<AiParams>, ResMut<crate::ReputationTable>, Option<Res<crate::SimVfs>>),
+    mut starts: ResMut<CombatStarts>,
+    npcs: Query<FoeQuery, (Without<Fighting>, Without<crate::follow::Following>)>,
+    pcs: Query<QuarryQuery>,
+    talking: Query<&crate::Conversation>,
+) {
+    if !tick.0.is_multiple_of(NOTICE_TICKS) || pcs.is_empty() {
+        return;
+    }
+    let Some(save) = world.0.as_ref() else { return };
+    let guard = vfs.as_ref().and_then(|v| v.0.read().ok());
+    if ai.0.is_none() {
+        let mes = guard.as_deref().and_then(|v| v.read(AI_PARAMS).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).unwrap_or_default();
+        ai.0 = Some(parse_ai_params(&mes));
+    }
+    let reputations = &*reputations.0.get_or_insert_with(|| guard.as_deref().and_then(|v| v.read(crate::GAME_REP).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).map(|m| crate::ReputationEffects::parse(&m)).unwrap_or_default());
+    let rows = ai.0.as_deref().unwrap_or_default();
+    let busy: Vec<NetId> = talking.iter().map(|c| c.npc).collect();
+    for (&npc, at, source) in &npcs {
+        if map.is_dead(source.sector, source.index) || busy.contains(&npc) {
+            continue;
+        }
+        let Some(o) = map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { continue };
+        let Some(row) = rows.get(map.prototypes.int(o, "npc_ai_data").unwrap_or(0).max(0) as usize) else { continue };
+        let flags = map.prototypes.int(o, "npc_flags").unwrap_or(0);
+        let pe = npc_stat(o, &map.prototypes, 5);
+        let reaction = crate::NpcReaction::of(o, &map.prototypes);
+        let key = crate::met_key(source.object());
+        let alignment = npc_stat(o, &map.prototypes, 0x13);
+        for (&pc, pc_at, player, sheet, prowling) in &pcs {
+            let Some(saved) = save.players.get(&player.0) else { continue };
+            let prowler = prowling.then(|| crate::prowl::prowl_value(rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING)));
+            if crate::tile_distance(at.0, pc_at.0) > notice_reach(pe, prowler) {
+                continue;
+            }
+            let towards = crate::reaction_to(&saved.script_state, &key, &reaction, &rules.0, &sheet.0, reputations);
+            let gap = (alignment - sheet.0.alignment).abs();
+            if hostile(flags, towards, gap, row) {
+                starts.0.push((npc, pc));
+                break;
+            }
+        }
+    }
+}
+
 /// A tile up to `tiles` away from `from`, straight on past `at`.
 fn flee_goal(at: TileLoc, from: TileLoc, tiles: u32) -> TileLoc {
     let dx = i64::from(at.x) - i64::from(from.x);
@@ -936,6 +1012,16 @@ mod tests {
         assert_eq!(pc_unarmed(40)[0], (15, 45));
         assert_eq!(hit_experience(10, 20, 100, 100), 50);
         assert_eq!(hit_experience(10, 20, 100, 30), 30, "what is left");
+    }
+
+    #[test]
+    fn hostility_and_reach_follow_the_ai_row() {
+        let row = [0, 1000, 1000, 20, 6, 20, 1001, 1000, 2, 0, 0, 2001, 100, 50, 20, 1, 1];
+        assert!(hostile(ONF_KOS, 60, 0, &row), "kill on sight");
+        assert!(!hostile(ONF_KOS | ONF_KOS_OVERRIDE, 60, 0, &row), "made peaceful");
+        assert!(hostile(0, 0, 0, &row) && !hostile(0, 1, 0, &row), "reaction at or below column 10");
+        assert!(!hostile(0, 50, 1000, &row), "alignment: column 11 (2001) is out of reach");
+        assert_eq!((notice_reach(8, None), notice_reach(20, None), notice_reach(8, Some(100))), (8, 10, 3));
     }
 
     #[test]

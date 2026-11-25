@@ -197,6 +197,8 @@ lights after the walk.
 - [ ] The lights sit in the bar's holes; End Turn passes the turn; the NPC hits back.
 - [ ] Floats: "HT 3" white over an NPC, red over the PC; "Dodge!"; "Critical hit".
 - [ ] The NPC dies in its death frame; the fight ends; the bar goes.
+- [ ] In combat mode, hovering an NPC shows "To Hit:" and a percentage in the icon's place.
+- [ ] Monsters (wolves, kill-on-sight NPCs) attack when the PC comes near; townsfolk do not.
 
 ## Spotting traps while walking
 
