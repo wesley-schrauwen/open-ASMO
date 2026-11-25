@@ -120,6 +120,9 @@ pub enum LedgerDelta {
     PortalChanged { door: MapObjectId, open: bool },
     /// A lock was picked or jammed: the door's or container's new flags ([`crate::lockpick`]).
     LockChanged { target: crate::LockTarget, flags: i32 },
+    /// A script switched an object off or on (actions 0x38 / 0x39): its new `flags`. `mobile`:
+    /// `index` is in the sector's mobile objects, else in its own list.
+    ObjectFlags { sector: SectorId, index: u32, mobile: bool, flags: i32 },
     /// How the player's skill use went: a `mes/skill_ui.mes` line for the message box.
     SkillResult { message: u32 },
     /// Why the player's spell was not cast: a `mes/spell.mes` line for the message box.

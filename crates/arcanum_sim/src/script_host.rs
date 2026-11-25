@@ -125,6 +125,7 @@ pub struct ScriptHost<'w, 's> {
     areas: ResMut<'w, crate::areas::AreaTable>,
     changed_inventories: ResMut<'w, ScriptInventories>,
     changed_sheets: ResMut<'w, ScriptSheets>,
+    toggled_npcs: ResMut<'w, crate::world::ToggledNpcs>,
     teleports: ResMut<'w, crate::big_move::ScriptTeleports>,
     reports: ResMut<'w, ScriptReports>,
     rng: ResMut<'w, crate::HostRng>,
@@ -153,6 +154,10 @@ struct HostWorld<'a> {
     inventories: std::collections::BTreeSet<PlayerId>,
     /// PCs whose sheet a script changed.
     sheets: std::collections::BTreeSet<PlayerId>,
+    /// Objects switched off or on, for every player.
+    flag_changes: Vec<crate::LedgerDelta>,
+    /// Mobile objects switched, for NPCs to go or come.
+    npcs_toggled: Vec<(arcanum_formats::map::SectorId, u32)>,
     /// Sectors whose changes a script touched.
     sectors: std::collections::BTreeSet<arcanum_formats::map::SectorId>,
     rules: &'a arcanum_rules::RulesData,
@@ -344,6 +349,24 @@ impl ScriptContext for HostWorld<'_> {
                 }
                 out
             }
+        }
+    }
+
+    /// Objects of the map: kept in the sector's changes and sent to every player; NPCs go or
+    /// come. PCs are not switched (builder's call: no script switches one).
+    fn toggle_flags(&mut self, object: ScriptObject, mask: i32) {
+        let (sector, index, mobile) = match object {
+            ScriptObject::Map(id) => (id.sector, id.index, false),
+            ScriptObject::Mobile { sector, index } => (sector, index, true),
+            ScriptObject::Pc(_) => return,
+        };
+        let Some(flags) = self.map.object_flags(sector, index, mobile) else { return };
+        let flags = flags ^ mask;
+        self.map.set_object_flags(sector, index, mobile, flags);
+        self.sectors.insert(sector);
+        self.flag_changes.push(crate::LedgerDelta::ObjectFlags { sector, index, mobile, flags });
+        if mobile {
+            self.npcs_toggled.push((sector, index));
         }
     }
 
@@ -659,6 +682,8 @@ impl ScriptHost<'_, '_> {
             floats: Vec::new(),
             inventories: Default::default(),
             sheets: Default::default(),
+            flag_changes: Vec::new(),
+            npcs_toggled: Vec::new(),
             sectors: Default::default(),
             vfs,
             globals: &mut save.scripts,
@@ -683,6 +708,12 @@ impl ScriptHost<'_, '_> {
         }
         self.changed_inventories.0.append(&mut ctx.inventories);
         self.changed_sheets.0.append(&mut ctx.sheets);
+        for delta in std::mem::take(&mut ctx.flag_changes) {
+            for &to in &players {
+                outbox.0.push((to, delta.clone()));
+            }
+        }
+        self.toggled_npcs.0.append(&mut ctx.npcs_toggled);
         self.timed.0.append(&mut ctx.scheduled);
         let touched = std::mem::take(&mut ctx.sectors);
         for (object, map, to) in std::mem::take(&mut ctx.teleports) {

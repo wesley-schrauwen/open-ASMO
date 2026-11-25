@@ -44,6 +44,7 @@ impl Plugin for SimPlugin {
             .init_resource::<MoveRequests>()
             .init_resource::<SyncClock>()
             .init_resource::<PopulatedSectors>()
+            .init_resource::<crate::world::ToggledNpcs>()
             .init_resource::<GameClock>()
             .init_resource::<PartyPace>()
             .init_resource::<HostRng>()

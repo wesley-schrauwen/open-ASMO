@@ -335,6 +335,24 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      criticals, `xpgain`) are read but nothing uses them yet.
    - **Real data:** all 309 effect lines read whole (651 changes). 2085 of 2399 scripts run to an
      end (2005 before). Next: 0x50 (48), 0x38 (17), 0x3a (17), 0x28 (12), 0x72 (12).
+4g. **Magic/tech on a target, switching objects** (built, `feat/script-gaps-4`).
+   - **Action 0x50** (0x44933f → 0x461620): N (operand 0), item, user and target (1-3, single
+     objects), result (4) := `N × (100 - r) / 100`. r is 0 unless user and target are critters
+     and the item's adjustment k (field 0x60) opposes the target's aptitude: magick (k > 0) on a
+     technologist loses the target's whole aptitude (-target) when the user is a technologist
+     too, else `(100 - user) × -target / 100`; tech on a mage the same, mirrored.
+   - **Actions 0x38 / 0x39** (0x4487ce / 0x448858): for each object (operand 0), flip object
+     flag 0x2 "off" (0x39: 0x400000; 0x4efee0 clears, 0x4eff50 sets), any type. Here kept in the
+     sector's changes (`object_flags` / `mobile_flags`, saved), applied to the loaded object
+     (blocking follows), sent to every player (`ObjectFlags`); the client draws the sector
+     again. An NPC switched off despawns for everyone; switched on, it spawns. NPCs off in the
+     map's data are not spawned.
+   - **Not built:** objects off in the map's data are not loaded as mobiles, so they cannot be
+     switched on; most 0x38 calls are in heartbeat scripts, which do not run yet. The original's
+     clean-up when switching off (0x4d62b0 / 0x4d56c0 for flags 0x8 and 0x200000) and its light
+     updates.
+   - **Real data:** 2105 of 2399 scripts run to an end (2085 before). Next: 0x3c (29), 0x3d (26),
+     0x3a kill (17), 0x28 (12), 0x72 (12).
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,

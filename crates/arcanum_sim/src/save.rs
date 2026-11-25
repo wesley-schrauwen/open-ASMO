@@ -112,11 +112,18 @@ pub struct SectorDelta {
     /// ([`crate::barter`], 0x4640c0).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub npc_restock: BTreeMap<u32, crate::GameTime>,
+    /// Objects' `flags` a script toggled (actions 0x38 / 0x39: off, 0x2; 0x400000), by index in
+    /// the sector's list.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub object_flags: BTreeMap<u32, i32>,
+    /// The same for the sector's mobile objects.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mobile_flags: BTreeMap<u32, i32>,
 }
 
 impl SectorDelta {
     pub fn is_empty(&self) -> bool {
-        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty() && self.npc_inventories.is_empty() && self.npc_restock.is_empty()
+        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty() && self.npc_inventories.is_empty() && self.npc_restock.is_empty() && self.object_flags.is_empty() && self.mobile_flags.is_empty()
     }
 }
 

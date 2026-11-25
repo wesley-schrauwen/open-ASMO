@@ -75,9 +75,15 @@ pub struct PopulatedSectors(pub BTreeSet<SectorId>);
 /// The walking speed NPCs are announced with until their stats are read (they do not move yet).
 pub const NPC_SPEED: i32 = 8;
 
+/// NPCs a script switched off or on (action 0x38), for [`spawn_npcs`] to despawn or spawn.
+#[derive(Resource, Debug, Default)]
+pub struct ToggledNpcs(pub Vec<(SectorId, u32)>);
+
 /// Spawns the NPCs of every loaded sector not populated yet, in sector and file order (so two
 /// hosts booted from one save give them the same net ids), and announces each to every player
-/// in the world. Their art is their own or their prototype's.
+/// in the world. Their art is their own or their prototype's. NPCs switched off (object flag
+/// 0x2) are not spawned; those a script switches off go, and those it switches on come.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_npcs(
     mut commands: Commands,
     map: Res<LoadedMap>,
@@ -86,25 +92,43 @@ pub fn spawn_npcs(
     session: Res<Session>,
     mut outbox: ResMut<Outbox>,
     vfs: Option<Res<SimVfs>>,
+    mut toggled: ResMut<ToggledNpcs>,
+    npcs: Query<(Entity, &NetId, &crate::NpcSource)>,
 ) {
     let mut new: Vec<SectorId> = map.sectors.keys().filter(|id| !populated.0.contains(id)).copied().collect();
-    if new.is_empty() {
+    if new.is_empty() && toggled.0.is_empty() {
         return;
     }
     new.sort_by_key(|id| (id.y(), id.x()));
     let players: Vec<PlayerId> = session.players.iter().filter(|(_, s)| matches!(s, SessionPlayer::InWorld(_))).map(|(&p, _)| p).collect();
+    let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
+    let off = |object: &Object| map.prototypes.int(object, "flags").unwrap_or(0) & crate::OF_OFF != 0;
+    let spawn = |commands: &mut Commands, ids: &mut NetIds, outbox: &mut Outbox, sector: SectorId, index: usize, object: &Object| {
+        let (Some(position), Some(art), Some(prototype)) = (crate::object_location(object), map.prototypes.art_id(object), object.prototype.prototype()) else { return };
+        let net_id = ids.0.allocate();
+        let look = Appearance { art, speed: NPC_SPEED };
+        let gait = Gait::load(art, NPC_SPEED, |p| vfs_guard.as_deref().and_then(|v| v.read(p).ok()));
+        let standpoints = crate::Standpoints::of(object, &map.prototypes, position);
+        commands.spawn((net_id, Npc { prototype }, crate::NpcSource { sector, index: index as u32 }, Position(position), look, gait, standpoints));
+        let spawn = look.spawn(net_id, EntityKind::Npc { prototype }, position);
+        outbox.0.extend(players.iter().map(|&p| (p, spawn.clone())));
+    };
     for id in new {
         populated.0.insert(id);
-        for (index, object) in map.mobiles.get(&id).into_iter().flatten().enumerate().filter(|(_, o)| o.object_type == TYPE_NPC) {
-            let (Some(position), Some(art), Some(prototype)) = (crate::object_location(object), map.prototypes.art_id(object), object.prototype.prototype()) else { continue };
-            let net_id = ids.0.allocate();
-            let look = Appearance { art, speed: NPC_SPEED };
-            let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
-            let gait = Gait::load(art, NPC_SPEED, |p| vfs_guard.as_deref().and_then(|v| v.read(p).ok()));
-            let standpoints = crate::Standpoints::of(object, &map.prototypes, position);
-            commands.spawn((net_id, Npc { prototype }, crate::NpcSource { sector: id, index: index as u32 }, Position(position), look, gait, standpoints));
-            let spawn = look.spawn(net_id, EntityKind::Npc { prototype }, position);
-            outbox.0.extend(players.iter().map(|&p| (p, spawn.clone())));
+        for (index, object) in map.mobiles.get(&id).into_iter().flatten().enumerate().filter(|(_, o)| o.object_type == TYPE_NPC && !off(o)) {
+            spawn(&mut commands, &mut ids, &mut outbox, id, index, object);
+        }
+    }
+    for (sector, index) in std::mem::take(&mut toggled.0) {
+        let Some(object) = map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).filter(|o| o.object_type == TYPE_NPC) else { continue };
+        let entity = npcs.iter().find(|(_, _, s)| s.sector == sector && s.index == index);
+        match (entity, off(object)) {
+            (Some((entity, &net_id, _)), true) => {
+                commands.entity(entity).despawn();
+                outbox.0.extend(players.iter().map(|&p| (p, LedgerDelta::Despawn { net_id })));
+            }
+            (None, false) if populated.0.contains(&sector) => spawn(&mut commands, &mut ids, &mut outbox, sector, index as usize, object),
+            _ => {}
         }
     }
 }
@@ -1875,6 +1899,50 @@ mod tests {
         let world = sim.app.world_mut();
         let component = world.query::<(&PlayerControlled, &crate::Sheet)>().iter(world).next().unwrap().1.0.clone();
         assert_eq!(component.effects, sheet.effects, "and on the PC");
+    }
+
+    #[test]
+    fn a_script_switches_an_npc_off_and_it_goes_for_everyone() {
+        use crate::script::tests::{always, block, op};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]));
+        sim.update();
+        sim.update();
+        let sector = SectorId::new(1, 1);
+        let npc_object = crate::ScriptObject::Mobile { sector, index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 702));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            let lines = vec![always(block(0x38, &[op(1, 0)])), always(block(1, &[]))];
+            library.insert(702, arcanum_formats::script::Script { description: String::new(), flags: 0, lines });
+        }
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0).unwrap().0
+        };
+        sim.take_deltas();
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        sim.update();
+        let deltas = sim.take_deltas();
+        let flags = deltas.iter().find_map(|(_, d)| match d { LedgerDelta::ObjectFlags { sector: s, index: 0, mobile: true, flags } if *s == sector => Some(*flags), _ => None }).expect("sent");
+        assert_eq!(flags & crate::OF_OFF, crate::OF_OFF);
+        assert!(deltas.contains(&(PlayerId(7), LedgerDelta::Despawn { net_id: npc })), "{deltas:?}");
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(save.sector_changes[&sector].mobile_flags[&0], flags, "kept");
+        let world = sim.app.world_mut();
+        assert_eq!(world.query::<&crate::NpcSource>().iter(world).filter(|s| s.index == 0 && s.sector == sector).count(), 0);
+        // Switched on again, it comes back.
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_object_flags(sector, 0, true, flags & !crate::OF_OFF);
+        sim.app.world_mut().resource_mut::<ToggledNpcs>().0.push((sector, 0));
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.iter().any(|(p, d)| p.0 == 7 && matches!(d, LedgerDelta::Spawn { .. })), "{deltas:?}");
     }
 
     #[test]

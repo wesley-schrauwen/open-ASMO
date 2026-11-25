@@ -153,9 +153,39 @@ impl LoadedMap {
         true
     }
 
+    /// An object's `flags`, its own or its prototype's.
+    pub fn object_flags(&self, sector: arcanum_formats::map::SectorId, index: u32, mobile: bool) -> Option<i32> {
+        let object = if mobile { self.mobiles.get(&sector)?.get(index as usize)? } else { self.sectors.get(&sector)?.objects.get(index as usize)? };
+        Some(self.prototypes.int(object, "flags").unwrap_or(0))
+    }
+
+    /// Sets an object's `flags` (a script's toggle, 0x4efee0 / 0x4eff50): kept in
+    /// [`LoadedMap::changes`], and the sector's blocking follows. False if it is not loaded.
+    pub fn set_object_flags(&mut self, sector: arcanum_formats::map::SectorId, index: u32, mobile: bool, flags: i32) -> bool {
+        let delta = self.changes.entry(sector).or_default();
+        if mobile { delta.mobile_flags.insert(index, flags) } else { delta.object_flags.insert(index, flags) };
+        self.apply_object_flags(sector, index, mobile, flags)
+    }
+
+    fn apply_object_flags(&mut self, sector: arcanum_formats::map::SectorId, index: u32, mobile: bool, flags: i32) -> bool {
+        let object = if mobile { self.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize)) } else { self.sectors.get_mut(&sector).and_then(|s| s.objects.get_mut(index as usize)) };
+        let Some(object) = object else { return false };
+        object.set_int("flags", flags);
+        if self.sectors.contains_key(&sector) {
+            self.rebuild_blocking(sector);
+        }
+        true
+    }
+
     /// Applies the saved changes of sector `id` (just loaded) to its objects.
     pub fn apply_changes(&mut self, id: arcanum_formats::map::SectorId) {
         let Some(delta) = self.changes.get(&id).cloned() else { return };
+        for (index, flags) in delta.object_flags {
+            self.apply_object_flags(id, index, false, flags);
+        }
+        for (index, flags) in delta.mobile_flags {
+            self.apply_object_flags(id, index, true, flags);
+        }
         for (index, open) in delta.portals {
             self.apply_portal(MapObjectId { sector: id, index }, open);
         }
