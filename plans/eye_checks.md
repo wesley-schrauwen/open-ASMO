@@ -42,3 +42,10 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 - [ ] NPCs without a script greet by class or race and reaction, and bark when passed.
 - [ ] Rumours, training and quest lines show their prices and take the gold.
 - [ ] Directions (`D:` / `X:`) give a sensible direction and distance and mark the map.
+
+## Effects (script effects PR)
+
+- [ ] An effect a script gives changes the character screen (a stat, a resistance or the
+      pools). Most effects come from magic items' wield scripts, which do not run yet; until they
+      do, use a dialogue or use script that gives one.
+- [ ] Other players' party bars show the new maximum hit points or fatigue.

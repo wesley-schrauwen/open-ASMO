@@ -43,7 +43,7 @@ pub fn skill_points(s: &CharacterSheet, k: usize) -> i32 {
 impl RulesData {
     /// Skill `k`'s level, 0-20.
     pub fn skill_level(&self, s: &CharacterSheet, k: usize) -> i32 {
-        let raw = skill_points(s, k) * LEVELS_PER_POINT + self.character_effects(s).skills[k];
+        let raw = self.apply_effects(crate::EffectTarget::Skill(k as u8), skill_points(s, k) * LEVELS_PER_POINT, &self.effect_ids(s));
         let stat = self.stats(s)[SKILL_STAT[k]];
         raw.clamp(0, MAX_SKILL_LEVEL).min(skill_cap(stat))
     }

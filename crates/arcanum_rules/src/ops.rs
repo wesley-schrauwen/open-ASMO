@@ -3,7 +3,7 @@
 //! Every operation takes the current sheet and returns a new one (or a [`Refusal`]), so the same
 //! call can preview a change on the client and apply it on the host.
 
-use crate::data::{Background, Effect, RACE_EFFECT_BASE, RESISTANCES, RulesData, race_gender_code};
+use crate::data::{Background, Effect, EffectTarget, MAX_FATIGUE, MAX_HIT_POINTS, RACE_EFFECT_BASE, RESISTANCES, RulesData, race_gender_code};
 use crate::sheet::*;
 
 /// The highest value primary stat `stat` can reach for `race` (Arcanum.exe 0x4b0fd0; 20 unless
@@ -170,33 +170,45 @@ impl RulesData {
         entry.map(|(_, stem)| stem.as_str())
     }
 
-    /// The race, gender and background effects together. Race is effect 64 + race; women carry
-    /// effect 330 (`rules/effect.mes` "all females"), applied by the gender setter
-    /// (Arcanum.exe 0x4b0980 case 0x1a, cause 9).
-    pub(crate) fn character_effects(&self, s: &CharacterSheet) -> Effect {
-        let race = self.effect(RACE_EFFECT_BASE + u32::from(s.race));
-        let gender = if s.gender == FEMALE { self.effect(FEMALE_EFFECT) } else { Effect::default() };
-        let background = self.background(s).and_then(|b| b.effect).map(|e| self.effect(e)).unwrap_or_default();
-        Effect {
-            stats: std::array::from_fn(|i| race.stats[i] + gender.stats[i] + background.stats[i]),
-            resist: std::array::from_fn(|i| race.resist[i] + gender.resist[i] + background.resist[i]),
-            skills: std::array::from_fn(|i| race.skills[i] + gender.skills[i] + background.skills[i]),
-            magick_points: race.magick_points + gender.magick_points + background.magick_points,
-            tech_points: race.tech_points + gender.tech_points + background.tech_points,
-            aptitude: race.aptitude + gender.aptitude + background.aptitude,
-            alignment: race.alignment + gender.alignment + background.alignment,
+    /// Every effect the character holds: race (64 + race), gender (women carry 330, "all
+    /// females", applied by the gender setter Arcanum.exe 0x4b0980 case 0x1a, cause 9), the
+    /// background's, then those given in play.
+    pub fn effect_ids(&self, s: &CharacterSheet) -> Vec<u32> {
+        let mut ids = vec![RACE_EFFECT_BASE + u32::from(s.race)];
+        if s.gender == FEMALE {
+            ids.push(FEMALE_EFFECT);
         }
+        ids.extend(self.background(s).and_then(|b| b.effect));
+        ids.extend(s.effects.iter().map(|e| e.id));
+        ids
     }
 
-    /// Current primary stats: base, plus the draft, plus race and background effects.
+    /// The flat parts of every effect held, summed (for the aptitude, magick and tech points and
+    /// the alignment).
+    pub(crate) fn character_effects(&self, s: &CharacterSheet) -> Effect {
+        self.effect_ids(s).into_iter().map(|id| self.effect(id)).fold(Effect::default(), |a, e| Effect {
+            stats: std::array::from_fn(|i| a.stats[i] + e.stats[i]),
+            resist: std::array::from_fn(|i| a.resist[i] + e.resist[i]),
+            skills: std::array::from_fn(|i| a.skills[i] + e.skills[i]),
+            magick_points: a.magick_points + e.magick_points,
+            tech_points: a.tech_points + e.tech_points,
+            aptitude: a.aptitude + e.aptitude,
+            alignment: a.alignment + e.alignment,
+        })
+    }
+
+    /// Current primary stats: base plus the draft, then every effect held (0x4b0490 →
+    /// 0x4ea690). The stat's own limits (0x4b0fc0 / 0x4b0fd0) are not applied here.
     pub fn stats(&self, s: &CharacterSheet) -> [i32; PRIMARY_STATS] {
-        let e = self.character_effects(s);
-        std::array::from_fn(|i| s.base[i] + s.draft.stats[i] + e.stats[i])
+        let ids = self.effect_ids(s);
+        std::array::from_fn(|i| self.apply_effects(EffectTarget::Stat(i as u8), s.base[i] + s.draft.stats[i], &ids))
     }
 
-    /// Resistances from race and background, in percent.
+    /// Resistances from the effects held, in percent ([`RESIST_KEYS`] order; 0x43d7ee →
+    /// 0x4ea9c0). Armour is not counted yet.
     pub fn resistances(&self, s: &CharacterSheet) -> [i32; RESISTANCES] {
-        self.character_effects(s).resist
+        let ids = self.effect_ids(s);
+        std::array::from_fn(|i| self.apply_effects(EffectTarget::Resist(i as u8), 0, &ids))
     }
 
     /// Character points left after the draft.
@@ -296,17 +308,21 @@ impl RulesData {
             let d = if d < 0 { d / 2 } else { d };
             if st >= 20 { d * 2 } else { d }
         };
+        // Each after the effects held: stats 8-15 through the stat table (0x4b06f7), the pools'
+        // maxima through `maxhps` (0x43d5e2) and `maxfatigue` (0x45d6e4).
+        let ids = self.effect_ids(s);
+        let stat = |id: u8, v: i32| self.apply_effects(EffectTarget::Stat(id), v, &ids);
         Derived {
-            carry_weight: 500 * st,
-            damage_bonus,
-            ac_adjustment: dx - 10,
-            speed: dx + if dx >= 20 { 5 } else { 0 },
-            heal_rate: (cn + 1) / 3,
-            poison_recovery: cn,
-            reaction: reaction_modifier(be),
-            max_followers: ch / 4,
-            hit_points: 4 * (s.hp_points + s.draft.hit_points) + wp + 2 * (level + st) + 4,
-            fatigue: 4 * (s.fatigue_points + s.draft.fatigue) + wp + 2 * (level + cn) + 4,
+            carry_weight: stat(8, 500 * st),
+            damage_bonus: stat(9, damage_bonus),
+            ac_adjustment: stat(10, dx - 10),
+            speed: stat(11, dx + if dx >= 20 { 5 } else { 0 }),
+            heal_rate: stat(12, (cn + 1) / 3),
+            poison_recovery: stat(13, cn),
+            reaction: stat(14, reaction_modifier(be)),
+            max_followers: stat(15, ch / 4),
+            hit_points: self.apply_effects(MAX_HIT_POINTS, 4 * (s.hp_points + s.draft.hit_points) + wp + 2 * (level + st) + 4, &ids),
+            fatigue: self.apply_effects(MAX_FATIGUE, 4 * (s.fatigue_points + s.draft.fatigue) + wp + 2 * (level + cn) + 4, &ids),
         }
     }
 }

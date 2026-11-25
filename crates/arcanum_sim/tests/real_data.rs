@@ -663,3 +663,23 @@ fn the_start_is_in_the_crash_site_area() {
     assert_eq!(table.area_at(&start.map, start.position), 2);
     assert_eq!(table.area_at("BessieToonesMine-fixed", TileLoc { x: 96, y: 126 }), 1, "the mine is Shrouded Hills'");
 }
+
+/// Every change of every line of `rules/effect.mes` reads: a key the original knows, then a
+/// value it understands.
+#[test]
+fn every_effect_line_reads_whole() {
+    let Some(vfs) = vfs() else { return };
+    let mes = arcanum_formats::mes::MesFile::parse(&vfs.read("rules/effect.mes").unwrap()).unwrap();
+    let (mut lines, mut changes, mut short) = (0, 0, Vec::new());
+    for (&id, text) in &mes.messages {
+        let keys = text.split([' ', ',', '\t']).filter(|t| t.starts_with(|c: char| c.is_ascii_alphabetic()) && !t.eq_ignore_ascii_case("min") && !t.eq_ignore_ascii_case("max")).count();
+        let read = arcanum_rules::parse_changes(text);
+        lines += 1;
+        changes += read.len();
+        if read.len() != keys {
+            short.push((id, text.clone()));
+        }
+    }
+    eprintln!("{lines} effect lines, {changes} changes");
+    assert!(short.is_empty(), "{short:?}");
+}

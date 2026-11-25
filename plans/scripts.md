@@ -308,6 +308,33 @@ Decoded so far, with confidence; the rest are named by the helper they call.
    - **Real data:** 2005 of 2399 scripts run to an end (1906 before). Next: action 0x4d give an
      effect (82), 0x50 magic/tech adjust on a target (48), 0x38 toggle off (17), 0x3a kill
      (17), 0x28 transform (12), 0x72 plaque window (12), 0x3b art (11).
+4f. **Effects** (built, `feat/script-effects`).
+   - **Note:** the action dispatch is `dec eax; jmp [0x44adbc + 4 × eax]` (0x447248): action N
+     is table entry N - 1.
+   - **Action 0x4d** (0x449190 → 0x4e9f70): objects (operand 0), effect id (1), cause (2). Critters
+     only; appended to the effect ids (field 0xe4) and causes (0xe5), no limit, duplicates kept.
+     **0x4e** (0x449230 → 0x4ea100): objects, id; drops the first hold of the id, whatever its
+     cause.
+   - **Reading `rules/effect.mes`** (0x4e9c20): tokens split at spaces and commas; keys compared
+     without case against five tables (stats 0x5b9ba8, skills 0x5b9c18 / 0x5b9c48, resistances
+     0x5b9c58, expertise 0x5b9c6c, others 0x5b9c8c: maxhps, maxfatigue, ...); values `+N` / `-N`
+     (type 0; `%` at the end: type 5), `*N` (1), `/N` (2), `min N` (3), `max N` (4). An unknown
+     key ends the line.
+   - **Applying** (0x4ea6c0, for every effect held): percentages summed, then multiplied, divided,
+     additions summed, the highest `min` a floor, the lowest `max` a cap, in that order. Used by
+     the effective stat (0x4b06f7), max hit points (0x43d5e2), max fatigue (0x45d6e4),
+     resistances (0x43d7ee), skills (0x4c5f1e / 0x4c662d).
+   - **Here:** PCs hold them on the sheet (`CharacterSheet::effects`, saved); race, gender and
+     background effects go through the same loop. A changed sheet goes to its player, and the
+     PC's status to everyone. Fatigue spent is kept as damage, so a new maximum moves the current
+     value as the original's fix-ups (0x4e9f70) do.
+   - **Not built:** the item wield / unwield events, where most 0x4d / 0x4e calls are (245 of
+     251 give to the triggerer, cause 5); NPCs' effects (not kept; their stats are their prototype's base stats); the
+     stats' own limits after the effects (0x4b0fc0 / 0x4b0fd0); `magicpts`, `techpts`,
+     `aptitude` and `alignment` count only `+N` / `-N`; expertise and the other keys (reaction,
+     criticals, `xpgain`) are read but nothing uses them yet.
+   - **Real data:** all 309 effect lines read whole (651 changes). 2085 of 2399 scripts run to an
+     end (2005 before). Next: 0x50 (48), 0x38 (17), 0x3a (17), 0x28 (12), 0x72 (12).
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,

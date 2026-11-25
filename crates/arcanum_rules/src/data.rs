@@ -5,7 +5,8 @@
 //!   allows everyone; `NPC` marks the pre-made characters' own backgrounds, never offered at
 //!   creation.
 //! - Effects: `rules/effect.mes`, e.g. `st +1, cn +1, resistpoison +10`; race effects are
-//!   64 + race.
+//!   64 + race. Each line is read as a list of [`Change`]s (0x4e9c20) and applied to a value by
+//!   [`RulesData::apply_effects`] (0x4ea6c0).
 //! - Portraits: `portrait/gameport.mes` entries named after the race-gender code (`DWM1`, ...).
 
 use arcanum_formats::mes::MesFile;
@@ -21,7 +22,7 @@ const STAT_KEYS: [&str; PRIMARY_STATS] = ["st", "dx", "cn", "be", "in", "pe", "w
 pub const RACE_EFFECT_BASE: u32 = 64;
 /// Resistance kinds, in the character editor's order.
 pub const RESISTANCES: usize = 5;
-const RESIST_KEYS: [&str; RESISTANCES] = ["resistdamage", "resistmagic", "resistfire", "resistpoison", "resistelectrical"];
+pub const RESIST_KEYS: [&str; RESISTANCES] = ["resistdamage", "resistmagic", "resistfire", "resistpoison", "resistelectrical"];
 /// Skill keys in `rules/effect.mes`, in `mes/skill.mes` order.
 const SKILL_KEYS: [&str; SKILLS] = [
     "bow", "dodge", "melee", "throwing", "backstab", "pickpocket", "prowling", "spottrap", "gambling", "haggle", "heal", "persuasion", "repair",
@@ -81,8 +82,10 @@ pub struct RulesData {
     pub backgrounds: Vec<Background>,
     /// `(portrait id, file stem)` in id order.
     pub portraits: Vec<(u32, String)>,
-    /// Stat and resistance changes per effect id.
+    /// Stat and resistance changes per effect id (the flat `+N` / `-N` ones only).
     pub effects: Vec<(u32, Effect)>,
+    /// Every change of every effect, by effect id.
+    pub changes: std::collections::BTreeMap<u32, Vec<Change>>,
     pub skills: SkillTable,
     pub tech: TechTable,
     pub spells: SpellTable,
@@ -139,11 +142,16 @@ impl RulesData {
             list.push(Background { id, description, effect, codes, npc, money, items });
         }
         let mut stat_effects = Vec::new();
+        let mut changes = std::collections::BTreeMap::new();
         for id in 0..2000u32 {
             if let Some(text) = effects.get(id) {
                 let effect = parse_effect(text);
                 if effect != Effect::default() {
                     stat_effects.push((id, effect));
+                }
+                let list = parse_changes(text);
+                if !list.is_empty() {
+                    changes.insert(id, list);
                 }
             }
         }
@@ -153,12 +161,145 @@ impl RulesData {
                 portrait_list.push((id, stem.trim().to_string()));
             }
         }
-        Self { backgrounds: list, portraits: portrait_list, effects: stat_effects, ..Self::default() }
+        Self { backgrounds: list, portraits: portrait_list, effects: stat_effects, changes, ..Self::default() }
     }
 
     pub(crate) fn effect(&self, id: u32) -> Effect {
         self.effects.iter().find(|(e, _)| *e == id).map(|(_, m)| *m).unwrap_or_default()
     }
+
+    /// `value` after the effects `ids` (0x4ea6c0): over every change aimed at `target`, the
+    /// percentages are summed, the multipliers and divisors multiplied, the additions summed;
+    /// the highest `min` is a floor and the lowest `max` a cap. Applied in that order: percent,
+    /// multiply, divide, add, floor, cap.
+    pub fn apply_effects(&self, target: EffectTarget, value: i32, ids: &[u32]) -> i32 {
+        let (mut add, mut multiply, mut divide, mut percent) = (0, 1, 1, 0);
+        let (mut floor, mut cap) = (-1, -1);
+        for change in ids.iter().filter_map(|id| self.changes.get(id)).flatten().filter(|c| c.target == target) {
+            match change.kind {
+                ChangeKind::Add => add += change.value,
+                ChangeKind::Multiply => multiply *= change.value,
+                ChangeKind::Divide => divide *= change.value,
+                ChangeKind::AtLeast => floor = floor.max(change.value),
+                ChangeKind::AtMost => cap = if cap == -1 { change.value } else { cap.min(change.value) },
+                ChangeKind::Percent => percent += change.value,
+            }
+        }
+        let mut v = value;
+        if percent != 0 {
+            v = (percent + 100) * v / 100;
+        }
+        if multiply != 1 {
+            v *= multiply;
+        }
+        if divide != 1 && divide != 0 {
+            v /= divide;
+        }
+        v += add;
+        if floor != -1 && v < floor {
+            v = floor;
+        }
+        if cap != -1 && cap < v {
+            v = cap;
+        }
+        v
+    }
+}
+
+/// What a change in an effect line acts on: the five key tables of 0x4e9c20.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectTarget {
+    /// A stat by `mes/stat.mes` id ([`STAT_NAMES`], table 0x5b9ba8).
+    Stat(u8),
+    /// A skill in `mes/skill.mes` order (tables 0x5b9c18 and 0x5b9c48).
+    Skill(u8),
+    /// A resistance in [`RESIST_KEYS`] order (table 0x5b9c58).
+    Resist(u8),
+    /// A tech discipline's expertise (table 0x5b9c6c).
+    Expertise(u8),
+    /// [`OTHER_KEYS`]: max hit points, max fatigue, reaction, criticals... (table 0x5b9c8c).
+    Other(u8),
+}
+
+/// How a change acts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeKind {
+    /// `+N` / `-N`.
+    Add,
+    /// `*N`.
+    Multiply,
+    /// `/N`.
+    Divide,
+    /// `min N`: the value is at least N.
+    AtLeast,
+    /// `max N`: the value is at most N.
+    AtMost,
+    /// `+N%` / `-N%`.
+    Percent,
+}
+
+/// One change of an effect line, e.g. `speed -50%`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Change {
+    pub target: EffectTarget,
+    pub kind: ChangeKind,
+    pub value: i32,
+}
+
+/// The stat keys, by stat id (table 0x5b9ba8).
+pub const STAT_NAMES: [&str; 28] = [
+    "st", "dx", "cn", "be", "in", "pe", "wp", "ch", "carry", "damage", "ac", "speed", "healrate", "poisonrate", "beautyreaction", "maxfollowers",
+    "aptitude", "level", "xpsUNUSED", "alignment", "fateUNUSED", "unspentUNUSED", "magicpts", "techpts", "poisonlevel", "age", "gender", "race",
+];
+/// The expertise keys (table 0x5b9c6c).
+const EXPERTISE_KEYS: [&str; 8] = [
+    "expertiseanatomical", "expertisechemistry", "expertiseelectric", "expertiseexplosives", "expertisegun_smithy", "expertisemechanical",
+    "expertisesmithy", "expertisetherapeutics",
+];
+/// The other keys (table 0x5b9c8c).
+pub const OTHER_KEYS: [&str; 10] =
+    ["maxhps", "maxfatigue", "reaction", "crithitchance", "crithiteffect", "critfailchance", "critfaileffect", "badreactionadj", "goodreactionadj", "xpgain"];
+/// `maxhps` and `maxfatigue` in [`OTHER_KEYS`].
+pub const MAX_HIT_POINTS: EffectTarget = EffectTarget::Other(0);
+pub const MAX_FATIGUE: EffectTarget = EffectTarget::Other(1);
+
+fn effect_target(key: &str) -> Option<EffectTarget> {
+    let find = |keys: &[&str]| keys.iter().position(|k| k.eq_ignore_ascii_case(key)).map(|i| i as u8);
+    find(&STAT_NAMES)
+        .map(EffectTarget::Stat)
+        .or_else(|| find(&SKILL_KEYS).map(EffectTarget::Skill))
+        .or_else(|| find(&RESIST_KEYS).map(EffectTarget::Resist))
+        .or_else(|| find(&EXPERTISE_KEYS).map(EffectTarget::Expertise))
+        .or_else(|| find(&OTHER_KEYS).map(EffectTarget::Other))
+}
+
+/// The changes in an effect line (0x4e9c20): tokens split at spaces and commas, each a key then
+/// `+N` / `-N` (`%` at the end: a percentage), `*N`, `/N`, or `min N` / `max N`, compared without
+/// case (0x58adb0). An unknown key
+/// ends the line ("Effect: ERROR: Invalid symbol"); an unknown value form is skipped.
+pub fn parse_changes(text: &str) -> Vec<Change> {
+    let atoi = |t: &str| {
+        let t = t.trim_start_matches('+');
+        let end = t.char_indices().find(|&(i, c)| !(c.is_ascii_digit() || (i == 0 && c == '-'))).map_or(t.len(), |(i, _)| i);
+        t[..end].parse::<i32>().unwrap_or(0)
+    };
+    let text = text.split("//").next().unwrap_or("");
+    let mut tokens = text.split([' ', ',', '\t']).filter(|t| !t.is_empty());
+    let mut out = Vec::new();
+    while let Some(key) = tokens.next() {
+        let Some(target) = effect_target(key) else { break };
+        let Some(value) = tokens.next() else { break };
+        let (kind, v) = match value.to_ascii_lowercase().as_str() {
+            "min" => (ChangeKind::AtLeast, tokens.next().map_or(0, atoi)),
+            "max" => (ChangeKind::AtMost, tokens.next().map_or(0, atoi)),
+            _ if value.starts_with(['+', '-']) => (if value.ends_with('%') { ChangeKind::Percent } else { ChangeKind::Add }, atoi(value)),
+            _ if value.starts_with('*') => (ChangeKind::Multiply, atoi(&value[1..])),
+            _ if value.starts_with('/') => (ChangeKind::Divide, atoi(&value[1..])),
+            _ => continue,
+        };
+        out.push(Change { target, kind, value: v });
+    }
+    out
 }
 
 /// The primary stat changes in an effect line such as `st +1, cn +1, ch -1, repair +2`.
@@ -213,6 +354,32 @@ mod tests {
         let data = RulesData::load(&vfs).expect("skill/tech/spell/schematic tables are optional for now");
         assert_eq!((data.backgrounds.len(), data.portraits.len()), (1, 1));
         assert!(data.skills.skills.is_empty() && data.schematics.is_empty() && data.premades.is_empty());
+    }
+
+    #[test]
+    fn effect_lines_read_every_form_of_change() {
+        use ChangeKind::*;
+        use EffectTarget::*;
+        let c = |target, kind, value| Change { target, kind, value };
+        assert_eq!(
+            parse_changes("speed +10, damage max 0, resistdamage min 95, ST -6, Melee +1, maxfatigue +5%, wp *2, cn /3"),
+            [c(Stat(11), Add, 10), c(Stat(9), AtMost, 0), c(Resist(0), AtLeast, 95), c(Stat(0), Add, -6), c(Skill(2), Add, 1), c(Other(1), Percent, 5), c(Stat(6), Multiply, 2), c(Stat(2), Divide, 3)]
+        );
+        assert_eq!(parse_changes("BE -4, CN +2 DX +1"), [c(Stat(3), Add, -4), c(Stat(2), Add, 2), c(Stat(1), Add, 1)], "a missing comma");
+        assert_eq!(parse_changes("st +1, nonsense +2, dx +1"), [c(Stat(0), Add, 1)], "an unknown key ends the line");
+    }
+
+    #[test]
+    fn effects_apply_percent_then_multiply_divide_add_floor_cap() {
+        let r = RulesData::from_files(&MesFile::default(), &MesFile::parse(b"{1}{speed -50%}{2}{speed +4}{3}{speed max 9}{4}{speed min 30}{5}{speed *3, speed /2}").unwrap(), &MesFile::default());
+        let speed = |v, ids: &[u32]| r.apply_effects(EffectTarget::Stat(11), v, ids);
+        assert_eq!(speed(10, &[]), 10);
+        assert_eq!(speed(10, &[1, 2]), 9, "half of 10, then + 4");
+        assert_eq!(speed(10, &[1, 1]), 0, "-100%");
+        assert_eq!(speed(20, &[2, 3]), 9, "the cap comes last");
+        assert_eq!(speed(10, &[4, 3]), 9, "floor 30, then cap 9");
+        assert_eq!(speed(11, &[5]), 16, "x3 then /2");
+        assert_eq!(r.apply_effects(EffectTarget::Stat(0), 10, &[1, 2]), 10, "another stat");
     }
 
     #[test]
