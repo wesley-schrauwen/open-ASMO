@@ -7,6 +7,7 @@
 //!   a Master who fails rolls again; a success below Expert on a magical trap fails. Spotted,
 //!   the object gets flag [`OF_TRAP_SPOTTED`] (0x4bc090) and the PC is told `mes/trap.mes` 0.
 //! - **Disarming** (Disarm Traps, skill 15, 0x4c7160 case 0xf → 0x4bc7b0): only a spotted trap.
+//!   Its chance is [`crate::tech_chance`]'s (4 a level + 20, none at level 0).
 //!   The roll is the lock pick's ([`crate::roll_pick`]; a door's or container's trap has no
 //!   difficulty, 0x4c8430 adds `trap_difficulty` only for trap objects); a Master who fails
 //!   without a critical failure rolls again. Success removes the trap (0x4bc220: the
@@ -202,7 +203,7 @@ pub fn disarm_traps(
             continue;
         }
         let sheet = &sheet.0;
-        let chance = crate::pick_chance(rules.0.skill_level(sheet, SKILL_DISARM_TRAPS), sheet.base[4]);
+        let chance = crate::tech_chance(crate::TECH_DISARM_TRAPS, rules.0.skill_level(sheet, SKILL_DISARM_TRAPS), sheet.base[4]);
         match roll_disarm(chance, sheet.training[SKILL_DISARM_TRAPS], host.rng()) {
             crate::PickOutcome::Success => {
                 map.set_attachment(object, crate::EVENT_USE, crate::Attachment { number: 0, ..attachment });

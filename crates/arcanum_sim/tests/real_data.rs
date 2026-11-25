@@ -339,10 +339,10 @@ fn a_skilled_pc_picks_a_locked_chest_on_the_start_map_with_a_lockpick() {
         position.0 = at;
         sheet.0.base[1] = 20;
         sheet.0.skills[arcanum_sim::SKILL_PICK_LOCKS] = 5;
-        inventory.items = vec![CarriedItem { prototype: skeleton_key, location: 0, quantity: 0, keys: vec![], written: 0 }];
+        inventory.items = vec![CarriedItem { prototype: skeleton_key, location: 0, quantity: 0, keys: vec![], written: 0, wear: Default::default() }];
     }
     let map = sim.app.world().resource::<LoadedMap>();
-    assert_eq!(lockpick_bonus(&Inventory { items: vec![CarriedItem { prototype: skeleton_key, location: 0, quantity: 0, keys: vec![], written: 0 }], ..Default::default() }, Some(0), &map.prototypes), 10);
+    assert_eq!(lockpick_bonus(&Inventory { items: vec![CarriedItem { prototype: skeleton_key, location: 0, quantity: 0, keys: vec![], written: 0, wear: Default::default() }], ..Default::default() }, Some(0), &map.prototypes), 10);
     let mut picked = false;
     for seq in 0..20 {
         sim.receive([(PlayerId(1), PlayerIntent::PickLock { target: LockTarget::Container(chest), tool: Some(0), seq })]);

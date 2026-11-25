@@ -43,6 +43,7 @@ pub mod save;
 pub mod script;
 pub mod script_host;
 pub mod reaction;
+pub mod repair;
 pub mod rest;
 pub mod session;
 pub mod unconscious;

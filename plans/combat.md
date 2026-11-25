@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-8 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`).
+Status: steps 1-9 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`).
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -38,7 +38,8 @@ of `combat_design.md` come after the original's rules work.
   ammunition 1-3 (bullets, charges, fuel), firearms (tech 1); ammunition 0 (arrows), bow; else
   melee.
 - **Chance** (0x4c62e0 / 0x4c69f0): bow and melee 5 × level + 25, throwing 7 × level + 25,
-  dodge 2 × level, firearms (tech) 6 × level; + 10 with effect 4; the difficulty setting scales
+  dodge 2 × level, firearms (tech 0x4c69f0 index 1, checked) 5 × level + 25, − 20 against
+  `flags` 0x400000; + 10 with effect 4; the difficulty setting scales
   a PC's; at most 95.
 - **Difficulty** (0x4c8430): −(the weapon's to-hit and its magick part), + 5 a point of
   Strength short of `weapon_min_strength`, range (bow and throwing below Expert: + 5 a tile past
@@ -254,3 +255,12 @@ of `combat_design.md` come after the original's rules work.
      call: the rank test not traced). Floats "Blinded", "Crippled arm", "Crippled leg".
    - Not built: stunning, knocking out and down (their mechanics not traced), scars, items
      dropped or damaged by criticals, crippled legs' effect, critical misses' effects.
+9. **Item wear** (built, `feat/repair`; `arcanum_sim::repair`).
+   - A critical hit's two item rolls (each up to the base + 10, 0x4b5f40 flags 0x100000 /
+     0x4000) wear the armour where it landed (helmet, body, gloves, boots by part, 0x4b54b0) and
+     the target's weapon by 10 hit points (0x4b4390); at 0 the item is destroyed. Items with no
+     hit points are left alone (builder's call). Floats "Armor damaged", "Weapon damaged",
+     "Armor broken", "Weapon broken". The wear is kept on the item, carried or dropped.
+   - Firearms' chance corrected to 5 × level + 25 (tech table 0x4c6ad8 index 1).
+   - Not built: armour damaged by ordinary hits (damage array [0x14], weapons with `weapon_flags`
+     0x100), critical misses wearing the attacker's weapon, worn items weakening.

@@ -85,6 +85,24 @@ pub struct CarriedItem {
     /// by script action 0x5e): what reading it opens.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub written: i32,
+    /// Hit points lost and most hit points lost ([`crate::repair`]).
+    #[serde(default, skip_serializing_if = "ItemWear::is_new")]
+    pub wear: ItemWear,
+}
+
+/// An item's wear (fields 0x1d `hp_damage` and the repairs' cut to 0x1c `hp_adj`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ItemWear {
+    /// Hit points lost.
+    pub damage: i32,
+    /// Most hit points lost to repairs.
+    pub lost: i32,
+}
+
+impl ItemWear {
+    pub fn is_new(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 fn is_zero(v: &i32) -> bool {
@@ -300,6 +318,8 @@ pub enum InventoryRequest {
     Sell { from: i32, to: Option<i32> },
     /// The barter window closed.
     CloseBarter,
+    /// Use the Repair skill on the item at the PC's `from` ([`crate::repair`]).
+    Repair { from: i32 },
 }
 
 impl InventoryRequest {
@@ -311,6 +331,11 @@ impl InventoryRequest {
     /// Whether it is a trade with the barter NPC (the host's alone to apply).
     pub fn is_barter(&self) -> bool {
         matches!(self, Self::Buy { .. } | Self::Sell { .. } | Self::CloseBarter)
+    }
+
+    /// Whether only the host applies it (the client waits for the answer).
+    pub fn is_host_only(&self) -> bool {
+        self.is_loot() || self.is_barter() || matches!(self, Self::Repair { .. })
     }
 }
 
@@ -337,7 +362,7 @@ impl Inventory {
         }
         match self.items.iter_mut().find(|i| i.prototype == crate::GOLD) {
             Some(stack) => stack.quantity = (stack.quantity + n).max(0),
-            None if n > 0 => self.items.insert(0, CarriedItem { prototype: crate::GOLD, location: 0, quantity: n, keys: Vec::new(), written: 0 }),
+            None if n > 0 => self.items.insert(0, CarriedItem { prototype: crate::GOLD, location: 0, quantity: n, keys: Vec::new(), written: 0, wear: Default::default() }),
             None => return false,
         }
         self.items.retain(|i| i.prototype != crate::GOLD || i.quantity > 0);
@@ -399,7 +424,7 @@ impl Inventory {
             InventoryRequest::Move { from, to } => self.move_item(from, to, wearer, info),
             InventoryRequest::HotkeySpell { spell, to } => self.put_spell(spell, to, info),
             InventoryRequest::Take { .. } | InventoryRequest::Put { .. } | InventoryRequest::TakeAll | InventoryRequest::ClosePile => Err(ItemRefusal::Silent),
-            InventoryRequest::Buy { .. } | InventoryRequest::Sell { .. } | InventoryRequest::CloseBarter => Err(ItemRefusal::Silent),
+            InventoryRequest::Buy { .. } | InventoryRequest::Sell { .. } | InventoryRequest::CloseBarter | InventoryRequest::Repair { .. } => Err(ItemRefusal::Silent),
             InventoryRequest::Drop { from } => {
                 let index = self.items.iter().position(|i| i.location == from).ok_or(ItemRefusal::Silent)?;
                 if info(self.items[index].prototype).is_some_and(|i| i.item_flags & ITEM_NO_DROP != 0) {
@@ -469,6 +494,24 @@ pub fn apply_inventory_requests(
                 }
                 crate::apply_loot(loot, open, &inventory, wearer, carry, aptitude, others, &info, &mut map, &mut world, &session, &mut outbox)
             }
+            InventoryRequest::Repair { from } => {
+                let sheet = &sheet.0;
+                let chance = crate::tech_chance(crate::TECH_REPAIR, rules.0.skill_level(sheet, crate::repair::SKILL_REPAIR), sheet.base[4]);
+                let mut changed = inventory.clone();
+                match changed.items.iter_mut().find(|i| i.location == from) {
+                    Some(item) => {
+                        let max = crate::repair::item_max_hp(item, &prototypes);
+                        let (wear, message) = match crate::repair::repair(item.wear, max, chance, sheet.training[crate::repair::SKILL_REPAIR]) {
+                            Ok((wear, message)) => (wear, message),
+                            Err(message) => (item.wear, message),
+                        };
+                        item.wear = wear;
+                        outbox.0.push((player, crate::LedgerDelta::SkillResult { message }));
+                        Ok(changed)
+                    }
+                    None => Err(ItemRefusal::Silent),
+                }
+            }
             _ => inventory.apply(&request, wearer, &info),
         };
         if let Err(refusal) = result
@@ -536,7 +579,7 @@ impl Inventory {
     /// onto a stack of the same gold or ammo, else the first free spot. `carry` is the carry
     /// weight. Returns the location.
     pub fn insert(&mut self, prototype: u32, quantity: i32, info: impl Fn(u32) -> Option<ItemInfo>, carry: i32, aptitude: i32) -> Result<i32, InsertRefusal> {
-        self.insert_item(CarriedItem { prototype, location: 0, quantity, keys: Vec::new(), written: 0 }, info, carry, aptitude)
+        self.insert_item(CarriedItem { prototype, location: 0, quantity, keys: Vec::new(), written: 0, wear: Default::default() }, info, carry, aptitude)
     }
 
     /// [`Self::insert`] for a carried item, keeping its key numbers; a key goes onto a critter's
@@ -559,7 +602,7 @@ impl Inventory {
             return Ok(stack.location);
         }
         let location = Self::free_spot(&self.occupied(&info), item.cells).ok_or(InsertRefusal::NoRoom)?;
-        self.items.push(CarriedItem { prototype, location, quantity: if item.stacks() { quantity } else { 0 }, keys: carried.keys, written: carried.written });
+        self.items.push(CarriedItem { prototype, location, quantity: if item.stacks() { quantity } else { 0 }, keys: carried.keys, written: carried.written, wear: Default::default() });
         self.fold_keys(&info);
         Ok(location)
     }
@@ -824,7 +867,7 @@ mod tests {
     fn a_premade_starts_with_its_gold_first_and_wields_its_kit() {
         let blueprint = arcanum_rules::CharacterBlueprint { sheet: Default::default(), gold: 385, items: vec![1, 2, 4, 99], prototype: Some(16094) };
         let kit = starting_kit(&blueprint, objects, 10_000, 0);
-        assert_eq!(kit.items[0], CarriedItem { prototype: GOLD, location: 0, quantity: 385, keys: vec![], written: 0 });
+        assert_eq!(kit.items[0], CarriedItem { prototype: GOLD, location: 0, quantity: 385, keys: vec![], written: 0, wear: Default::default() });
         assert_eq!(kit.worn(Slot::Weapon).map(|i| i.prototype), Some(21), "basic 1 is object 21");
         assert_eq!(kit.items.len(), 4, "an unknown prototype is left out");
     }

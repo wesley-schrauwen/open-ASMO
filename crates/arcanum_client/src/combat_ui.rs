@@ -9,8 +9,8 @@
 //!   0x5caa48), y 10. End Turn sends `PlayerIntent::EndTurn`.
 //! - **Floats** (`mes/combat.mes`, 0x4b4390 / 0x4b3600): over the target, "HT n" for hit points
 //!   and "FT n" for fatigue, "Dodge!", "Critical hit", "Damage +50% / +100% / +200%",
-//!   "Critical miss" over the attacker, "Blinded", "Crippled arm", "Crippled leg"; white over
-//!   NPCs, red over PCs.
+//!   "Critical miss" over the attacker, "Blinded", "Crippled arm", "Crippled leg", "Armor
+//!   damaged" / "broken", "Weapon damaged" / "broken"; white over NPCs, red over PCs.
 //!
 //! Not built: the orange and red lights of a planned move's cost, the battle cursor (art 353) and
 //! `hoverattack.art`, the attack, hit and death animations (attacks most likely 20 / 21), called
@@ -80,6 +80,14 @@ pub fn attack_floats(attacker: NetId, target: NetId, outcome: &arcanum_sim::comb
             use arcanum_sim::combat::{OCF_BLINDED, OCF_CRIPPLED_ARM, OCF_CRIPPLED_ARMS, OCF_CRIPPLED_LEGS};
             for (bits, line) in [(OCF_BLINDED, 4), (OCF_CRIPPLED_ARM | OCF_CRIPPLED_ARMS, 5), (OCF_CRIPPLED_LEGS, 6)] {
                 if outcome.injured & bits != 0 {
+                    out.push((target, mes(line), colour));
+                }
+            }
+            // Items (0x4b4390): "Armor damaged" (7), "Weapon damaged" (8), "Weapon broken" (23),
+            // "Armor broken" (24).
+            use arcanum_sim::combat::{ARMOUR_BROKEN, ARMOUR_DAMAGED, WEAPON_BROKEN, WEAPON_DAMAGED};
+            for (bit, line) in [(ARMOUR_DAMAGED, 7), (WEAPON_DAMAGED, 8), (ARMOUR_BROKEN, 24), (WEAPON_BROKEN, 23)] {
+                if outcome.items & bit != 0 {
                     out.push((target, mes(line), colour));
                 }
             }
@@ -232,12 +240,13 @@ mod tests {
             12 => "Critical hit".into(),
             14 => "Damage +100%".into(),
             6 => "Crippled leg".into(),
+            24 => "Armor broken".into(),
             _ => "?".into(),
         };
-        let hit = arcanum_sim::combat::AttackOutcome { hit: true, critical: true, multiplier: 200, hp: 8, fatigue: 3, injured: arcanum_sim::combat::OCF_CRIPPLED_LEGS, ..Default::default() };
+        let hit = arcanum_sim::combat::AttackOutcome { hit: true, critical: true, multiplier: 200, hp: 8, fatigue: 3, injured: arcanum_sim::combat::OCF_CRIPPLED_LEGS, items: arcanum_sim::combat::ARMOUR_BROKEN, ..Default::default() };
         let floats = attack_floats(NetId(1), NetId(2), &hit, true, &mes);
         let texts: Vec<&str> = floats.iter().map(|f| f.1.as_str()).collect();
-        assert_eq!(texts, ["Critical hit", "Damage +100%", "Crippled leg", "HT 8", "FT 3"]);
+        assert_eq!(texts, ["Critical hit", "Damage +100%", "Crippled leg", "Armor broken", "HT 8", "FT 3"]);
         assert!(floats.iter().all(|f| f.0 == NetId(2) && f.2 == FloatColour::Red), "over the PC, red");
         let dodged = arcanum_sim::combat::AttackOutcome { dodged: true, ..Default::default() };
         assert_eq!(attack_floats(NetId(1), NetId(2), &dodged, false, &mes), [(NetId(2), "Dodge!".into(), FloatColour::White)]);
