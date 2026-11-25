@@ -141,11 +141,14 @@ pub struct SectorDelta {
     pub object_protos: BTreeMap<u32, u32>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub mobile_protos: BTreeMap<u32, u32>,
+    /// NPCs killed (action 0x3a), by index in the sector's mobile objects.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub dead: std::collections::BTreeSet<u32>,
 }
 
 impl SectorDelta {
     pub fn is_empty(&self) -> bool {
-        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty() && self.npc_inventories.is_empty() && self.npc_restock.is_empty() && self.object_flags.is_empty() && self.mobile_flags.is_empty() && self.npc_flags.is_empty() && self.object_art.is_empty() && self.mobile_art.is_empty() && self.object_protos.is_empty() && self.mobile_protos.is_empty()
+        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty() && self.npc_inventories.is_empty() && self.npc_restock.is_empty() && self.object_flags.is_empty() && self.mobile_flags.is_empty() && self.npc_flags.is_empty() && self.object_art.is_empty() && self.mobile_art.is_empty() && self.object_protos.is_empty() && self.mobile_protos.is_empty() && self.dead.is_empty()
     }
 }
 

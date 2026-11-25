@@ -915,7 +915,9 @@ pub fn talk_to_npcs(
             continue;
         }
         commands.entity(entity).remove::<PendingTalk>();
-        if talking {
+        // The dead do not talk (builder's call: the original's can-talk test 0x4ad800 is not
+        // read).
+        if talking || map.is_dead(source.sector, source.index) {
             continue;
         }
         // The NPC's dialogue script (0x57cc70); its action 4 starts the conversation. If it runs

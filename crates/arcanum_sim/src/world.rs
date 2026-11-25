@@ -109,8 +109,11 @@ pub fn spawn_npcs(
         let net_id = ids.0.allocate();
         let look = Appearance { art, speed: NPC_SPEED };
         let gait = Gait::load(art, NPC_SPEED, |p| vfs_guard.as_deref().and_then(|v| v.read(p).ok()));
-        let standpoints = crate::Standpoints::of(object, &map.prototypes, position);
-        commands.spawn((net_id, Npc { prototype }, crate::NpcSource { sector, index: index as u32 }, Position(position), look, gait, standpoints));
+        let mut npc = commands.spawn((net_id, Npc { prototype }, crate::NpcSource { sector, index: index as u32 }, Position(position), look, gait));
+        // A corpse thinks no more: no standpoints, no wandering.
+        if !map.is_dead(sector, index as u32) {
+            npc.insert(crate::Standpoints::of(object, &map.prototypes, position));
+        }
         let spawn = look.spawn(net_id, EntityKind::Npc { prototype }, position);
         outbox.0.extend(players.iter().map(|&p| (p, spawn.clone())));
     };
@@ -2223,6 +2226,80 @@ mod tests {
         move_ring(&mut sim, 0);
         sim.update();
         assert!(effects(&sim).is_empty(), "taken off");
+    }
+
+    #[test]
+    fn heartbeats_run_first_then_on_a_timer_even_for_an_npc_switched_off() {
+        use crate::script::tests::{always, block, line, n, op};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]));
+        let sector = SectorId::new(1, 1);
+        let npc_object = crate::ScriptObject::Mobile { sector, index: 0 };
+        {
+            let mut map = sim.app.world_mut().resource_mut::<LoadedMap>();
+            map.set_attachment(npc_object, crate::heartbeat::EVENT_FIRST_HEARTBEAT, crate::Attachment::new(0, 0, 720));
+            map.set_attachment(npc_object, crate::heartbeat::EVENT_HEARTBEAT, crate::Attachment::new(0, 0, 721));
+            let flags = map.object_flags(sector, 0, true).unwrap();
+            map.set_object_flags(sector, 0, true, flags | crate::OF_OFF);
+        }
+        sim.app.world_mut().resource_mut::<crate::world::ToggledNpcs>().0.push((sector, 0));
+        sim.app.world_mut().resource_mut::<crate::heartbeat::Heartbeats>().seen.clear();
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            // First heartbeat: count it in global var 1; run the default (event 19 follows).
+            library.insert(720, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(0xb, &[op(1, 1), op(1, 1), n(1)])), always(block(2, &[]))] });
+            // Heartbeat: count in global var 2; the first time, switch itself on.
+            let lines = vec![always(block(0xb, &[op(1, 2), op(1, 2), n(1)])), line(block(4, &[op(1, 2), n(1)]), block(0x38, &[op(1, 0)]), block(0, &[])), always(block(1, &[]))];
+            library.insert(721, arcanum_formats::script::Script { description: String::new(), flags: 0, lines });
+        }
+        let var = |sim: &SimApp, i: i32| sim.app.world().resource::<WorldState>().0.as_ref().unwrap().scripts.var(i);
+        sim.update();
+        sim.update();
+        assert_eq!((var(&sim, 1), var(&sim, 2)), (1, 1), "first heartbeat, then a heartbeat, at once");
+        assert_eq!(sim.app.world().resource::<LoadedMap>().object_flags(sector, 0, true).unwrap() & crate::OF_OFF, 0, "it switched itself on");
+        // Next beats: at most 250 + 4750 x 1 / 30 + 5000 ms later.
+        for _ in 0..(5500 * 30 / 1000) {
+            sim.update();
+        }
+        assert_eq!(var(&sim, 1), 1, "the first heartbeat runs once");
+        assert!(var(&sim, 2) >= 2, "{}", var(&sim, 2));
+    }
+
+    #[test]
+    fn a_killed_npc_lies_dead_and_says_nothing() {
+        use crate::script::tests::{always, block, op};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]));
+        let sector = SectorId::new(1, 1);
+        let npc_object = crate::ScriptObject::Mobile { sector, index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 722));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            library.insert(722, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(0x3a, &[op(1, 0)])), always(block(1, &[]))] });
+        }
+        let find = |sim: &mut SimApp| {
+            let world = sim.app.world_mut();
+            world.query::<(Entity, &NetId, &crate::NpcSource)>().iter(world).find(|(_, _, s)| s.index == 0 && s.sector == sector).map(|(e, n, _)| (e, *n))
+        };
+        let (_, npc) = find(&mut sim).unwrap();
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        sim.update();
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert!(save.sector_changes[&sector].dead.contains(&0));
+        let (corpse, again) = find(&mut sim).expect("spawned again, as a corpse");
+        assert_ne!(again, npc);
+        let art = sim.app.world().get::<crate::Appearance>(corpse).unwrap().art;
+        assert_eq!((art.0 >> 6) & 0x1f, crate::script_host::ANIM_DEATH);
+        assert!(sim.app.world().get::<crate::Standpoints>(corpse).is_none(), "it does not wander");
+        sim.take_deltas();
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc: again, seq: 1 })]);
+        sim.update();
+        assert!(!sim.take_deltas().iter().any(|(_, d)| matches!(d, LedgerDelta::DialogueOptions { .. } | LedgerDelta::FloatText { .. })), "the dead say nothing");
     }
 
     #[test]

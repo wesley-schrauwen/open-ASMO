@@ -228,6 +228,11 @@ impl LoadedMap {
         true
     }
 
+    /// Whether NPC `index` of `sector` was killed.
+    pub fn is_dead(&self, sector: arcanum_formats::map::SectorId, index: u32) -> bool {
+        self.changes.get(&sector).is_some_and(|c| c.dead.contains(&index))
+    }
+
     /// An NPC's `npc_flags` (its own or its prototype's), if it is loaded.
     pub fn npc_flags(&self, sector: arcanum_formats::map::SectorId, index: u32) -> Option<i32> {
         let object = self.mobiles.get(&sector)?.get(index as usize)?;

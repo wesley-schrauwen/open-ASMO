@@ -405,6 +405,29 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      (0x45bff0, type 4, 0x44aff0 compares the record's script and an object; which object was
      not read: either here).
    - **Real data:** 27 item scripts on events 24 / 25; all run to an end. 2235 of 2399 scripts.
+4j. **Heartbeats and killing** (built, `feat/heartbeats`).
+   - **Heartbeats** (time event type 10, 0x4ad200; `arcanum_sim::heartbeat`):
+     - NPCs only, on loaded sectors, switched off or not.
+     - The first beat comes as the sector loads (0x441fc0 → 0x4ad790). It runs event 10;
+       unless that says "run the default", event 19 is skipped that time.
+     - Event 19 runs while a PC is within 30 tiles (0x4ad420). The NPC is triggerer and
+       attachee.
+     - The next beat comes after `250 + 4750 × d / 30` ms (0x4ad5d0, checked:
+       0x88888889 divides by 30), plus 0-5000 ms after the first.
+     - "Skip the default" holds the NPC's wandering until the next beat.
+     - **Not built:** turn-based combat's per-turn beat (0x4b7010); corpse clean-up.
+   - **0x3a kill** (0x4488e8 → 0x45d900):
+     - NPCs are kept dead (`SectorDelta::dead`) and shown on the last frame of the death
+       animation (7), as 0x45d900 leaves them.
+     - They are spawned again as corpses: no wandering, no heartbeats, no talk (builder's call
+       for talk).
+     - A PC loses all its hit points; death is not built.
+     - `is_dead` reads both.
+   - **Real data:**
+     - On the start map, 13 NPCs have heartbeat scripts. The crash site's 9 kill themselves at
+       the first beat (scripts 1781-1792: unless global flag 2350 is set). The other 4 beat
+       with nothing unbuilt.
+     - 2252 of 2399 scripts run to an end.
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,
