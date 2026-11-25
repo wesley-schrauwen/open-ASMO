@@ -407,3 +407,16 @@ of `combat_design.md` come after the original's rules work.
      percentages (0x553f70).
    - Players who join later first get every NPC's health told so far that is not whole
      (`feat/npc-health-join`).
+19. **Poison** (built, `feat/poison`; `arcanum_sim::poison`).
+   - Findings: an attack's poison (damage type 1, at +0x48), cut by poison resistance (0x4b6860),
+     adds to stat 0x18 of a PC or NPC alike (0x4b51a4). Time event 6 (0x4b1170, queued by
+     0x4b1350): subtype 0 every 15 000 game ms (0x4b13ab) deals 1 hit point under 200, 2 under
+     550, else 3 (0x4b11d1 / 0x4b11e2) as normal damage through 0x4b4390 (0x4b1203: it can
+     kill) and does not lower the level; subtype 1 every 120 000 ms (0x4b12bb) lowers it by
+     stat 0xd (poison recovery), to 0. Halt Poison subtracts its amount (script op 0x80).
+   - Built: PCs' and NPCs' poison hurts and wears off on one clock (builder's call); NPCs keep
+     it in `SectorDelta::npc_poison`; Halt Poison cures NPCs too.
+   - Builder's calls: the tick's damage is not cut by resistance; an NPC's recovery is its CN
+     (at least 1); an NPC killed by poison dies on animation 7, without experience or events.
+   - Not built: the immunity flags (`critter_flags` 0x20000004, 0x4b4390), a float or message
+     for the tick (0x433020), poison kept through resurrection (0x49d272).

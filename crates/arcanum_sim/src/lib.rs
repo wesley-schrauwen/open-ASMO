@@ -29,6 +29,7 @@ pub mod inventory;
 pub mod keys;
 pub mod lockpick;
 pub mod pickpocket;
+pub mod poison;
 pub mod prowl;
 pub mod trap;
 pub mod newspaper;

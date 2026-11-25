@@ -859,6 +859,20 @@ impl crate::LoadedMap {
     }
 
     /// Sets NPC `index`'s fatigue damage, kept in [`crate::LoadedMap::changes`].
+    /// NPC `index`'s poison level (stat 0x18): as kept in [`crate::SectorDelta::npc_poison`],
+    /// else its own.
+    pub fn npc_poison(&self, sector: arcanum_formats::map::SectorId, index: u32) -> i32 {
+        if let Some(&p) = self.changes.get(&sector).and_then(|c| c.npc_poison.get(&index)) {
+            return p;
+        }
+        self.mobiles.get(&sector).and_then(|m| m.get(index as usize)).map_or(0, |o| npc_stat(o, &self.prototypes, crate::poison::STAT_POISON))
+    }
+
+    /// Sets NPC `index`'s poison level, at least 0.
+    pub fn set_npc_poison(&mut self, sector: arcanum_formats::map::SectorId, index: u32, level: i32) {
+        self.changes.entry(sector).or_default().npc_poison.insert(index, level.max(0));
+    }
+
     pub fn set_npc_fatigue_damage(&mut self, sector: arcanum_formats::map::SectorId, index: u32, damage: i32) {
         let Some(o) = self.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize)) else { return };
         o.set_int("critter_fatigue_damage", damage.max(0));
@@ -1999,6 +2013,11 @@ fn damage_npc(commands: &mut Commands, w: &mut CombatWorld, attacker_player: Opt
                 w.toggled.0.push((source.sector, source.index));
             }
         }
+    }
+    // Poison adds to its level (0x4b51a4), as a PC's.
+    if outcome.poison > 0 {
+        let level = w.map.npc_poison(source.sector, source.index);
+        w.map.set_npc_poison(source.sector, source.index, level + outcome.poison);
     }
     let Some((left, max)) = w.map.npc_hp(source.sector, source.index) else { return };
     let dealt = outcome.hp.min(left.max(0));

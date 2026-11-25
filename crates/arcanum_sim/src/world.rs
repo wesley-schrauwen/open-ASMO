@@ -979,6 +979,50 @@ mod tests {
     }
 
     #[test]
+    fn poison_hurts_pcs_and_npcs_and_wears_off() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let mut npc = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(74, 70)).field("hp_pts", Value::Int32(60));
+        npc.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
+        std::fs::write(folder.join("G_0F.mob"), npc.build()).unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        let mut start = save(&[(1, "A", TileLoc { x: 71, y: 70 })]);
+        let sheet = &mut start.players.get_mut(&PlayerId(1)).unwrap().blueprint.sheet;
+        sheet.base = [10; arcanum_rules::PRIMARY_STATS];
+        sheet.poison = 300;
+        sheet.spells[crate::HALT_POISON as usize / arcanum_rules::SPELLS_PER_COLLEGE] = 5;
+        sim.boot(start);
+        sim.update();
+        sim.update();
+        let sector = SectorId::new(1, 1);
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_npc_poison(sector, 0, 100);
+        let pc = |sim: &SimApp| sim.app.world().resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(1)].blueprint.sheet.clone();
+        let npc_hp = |sim: &SimApp| sim.app.world().resource::<LoadedMap>().npc_hp(sector, 0).unwrap();
+        let full = npc_hp(&sim).1;
+        for _ in 0..8 {
+            sim.app.world_mut().resource_mut::<crate::GameClock>().now.ms += crate::poison::POISON_MS as u32;
+            sim.update();
+        }
+        // 8 hurts (2 a time at 300, 1 for the NPC at 100), one wearing off at 2 minutes.
+        assert_eq!(pc(&sim).hp_damage, 16);
+        assert_eq!(npc_hp(&sim).0, full - 8);
+        let recovery = sim.app.world().resource::<crate::SimRules>().0.derived(&pc(&sim)).poison_recovery;
+        assert_eq!(pc(&sim).poison, 300 - recovery, "CN's worth off");
+        assert_eq!(sim.app.world().resource::<LoadedMap>().npc_poison(sector, 0), 100 - 1, "no stats: 1");
+        // Halt Poison on the NPC.
+        let npc = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::NpcSource)>().iter(world).next().unwrap().0 };
+        sim.receive([(PlayerId(1), crate::PlayerIntent::CastOn { spell: crate::HALT_POISON as usize, target: npc })]);
+        sim.update();
+        assert_eq!(sim.app.world().resource::<LoadedMap>().npc_poison(sector, 0), 49, "50 off");
+    }
+
+    #[test]
     fn allies_of_the_victim_join_and_neutrals_flee() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;
