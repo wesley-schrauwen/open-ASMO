@@ -239,15 +239,18 @@ impl LoadedMap {
         Some(self.prototypes.int(object, "npc_flags").unwrap_or(0))
     }
 
-    /// Moves an NPC's day standpoint (`npc_standpoint_day`, action 0x2d), kept in
-    /// [`LoadedMap::changes`]. False when it is not an NPC of this map or did not move.
-    pub fn set_day_standpoint(&mut self, sector: arcanum_formats::map::SectorId, index: u32, to: TileLoc) -> bool {
+    /// Moves an NPC's day or night standpoint (`npc_standpoint_day` / `_night`, actions 0x2d /
+    /// 0x2e), kept in [`LoadedMap::changes`]. False when it is not an NPC of this map or did not
+    /// move.
+    pub fn set_standpoint(&mut self, sector: arcanum_formats::map::SectorId, index: u32, to: TileLoc, night: bool) -> bool {
         let Some(object) = self.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize)) else { return false };
         if object.object_type != arcanum_formats::object::TYPE_NPC {
             return false;
         }
-        set_standpoint(object, to);
-        self.changes.entry(sector).or_default().standpoints.insert(index, to) != Some(to)
+        set_standpoint(object, to, night);
+        let changes = self.changes.entry(sector).or_default();
+        let kept = if night { &mut changes.night_standpoints } else { &mut changes.standpoints };
+        kept.insert(index, to) != Some(to)
     }
 
     /// Sets an NPC's `npc_flags` ([`crate::follow`]), kept in [`LoadedMap::changes`].
@@ -289,9 +292,11 @@ impl LoadedMap {
                 object.set_int("npc_flags", flags);
             }
         }
-        for (index, at) in delta.standpoints {
-            if let Some(object) = self.mobiles.get_mut(&id).and_then(|m| m.get_mut(index as usize)) {
-                set_standpoint(object, at);
+        for (night, kept) in [(false, delta.standpoints), (true, delta.night_standpoints)] {
+            for (index, at) in kept {
+                if let Some(object) = self.mobiles.get_mut(&id).and_then(|m| m.get_mut(index as usize)) {
+                    set_standpoint(object, at, night);
+                }
             }
         }
         for (index, open) in delta.portals {
@@ -306,9 +311,10 @@ impl LoadedMap {
     }
 }
 
-/// Sets `npc_standpoint_day` (a packed location: x low, y high).
-fn set_standpoint(object: &mut arcanum_formats::object::Object, at: TileLoc) {
-    object.set_value("npc_standpoint_day", arcanum_formats::object::Value::Int64(Some(i64::from(at.x) | (i64::from(at.y) << 32))));
+/// Sets `npc_standpoint_day` or `_night` (a packed location: x low, y high).
+fn set_standpoint(object: &mut arcanum_formats::object::Object, at: TileLoc, night: bool) {
+    let field = if night { "npc_standpoint_night" } else { "npc_standpoint_day" };
+    object.set_value(field, arcanum_formats::object::Value::Int64(Some(i64::from(at.x) | (i64::from(at.y) << 32))));
 }
 
 /// Where a door is: its object's tile.

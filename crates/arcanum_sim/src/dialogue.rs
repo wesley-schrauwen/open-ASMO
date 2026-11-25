@@ -78,6 +78,8 @@ use crate::{Attachment, Inventory, LedgerDelta, LoadedMap, NetId, Outbox, PcScri
 
 /// The dialogue event (attach point 9).
 pub const EVENT_DIALOGUE: u32 = 9;
+/// Experience for quests by level (0x4c53c0).
+pub const XP_QUEST: &str = "Rules/xp_quest.mes";
 /// The attach point whose script names the NPC's override dialogue (0x418870 reads
 /// `scripts_idx` entry 0x1f).
 pub const EVENT_OVERRIDE: u32 = 31;
@@ -1042,7 +1044,7 @@ pub fn run_conversations(
             _ => (0, None, None),
         };
         let npc_stock = stock_id.and_then(|id| map.pile(id)).map(|p| p.inventory);
-        let xp_quest = generic.file(vfs, "Rules/xp_quest.mes").cloned();
+        let xp_quest = generic.file(vfs, XP_QUEST).cloned();
         let areas = &*areas;
         let pc_area = map.name.as_deref().map_or(0, |m| areas.area_at(m, pc_at));
         let follow = match npc_object {

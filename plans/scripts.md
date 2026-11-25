@@ -523,6 +523,25 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      in (349, 49, 215, 300). A click closes it (Escape too, builder's call).
    - **Not built:** newspapers and telegrams; the alternate background 817; the sounds; the
      readable items (0x5e sets an item's written start; reading from the inventory).
+4o. **Script gaps 7** (built, `feat/script-gaps-7`).
+   - **Actions:** 0x2e night standpoint (field 0x122, kept as `SectorDelta::night_standpoints`);
+     0x34 make an object of basic prototype N near an object (0x4ed8b0; here items only, on its
+     tile as a drop; the original tries ten random tiles 1-3 away and makes anything); 0x3f
+     quest experience (`Rules/xp_quest.mes` N, 0x4c53c0 → 0x45f110: PCs, shared as dialogue's);
+     0x46 the wielded weapon's art nibble (slot 1004, field 0x5f bits 6-9 of an item art; none:
+     1); 0x59 an NPC's faction (0x124); 0x5a the scroll distance (the player's PE / 2 + 3);
+     0x5f an object's X and Y; 0x6a toggle a sector in the blocked list (key 0x4cfc50: 64-tile
+     sectors; kept as `ScriptGlobals::blocked_sectors`; condition 0x2d reads it; the original's
+     paths avoid those sectors, not built); 0x6f an armour's coverage (field 0x5d bits 14-16;
+     not an armour: -1); 0x80 / 0x88 an unresistable spell (0x3d's with flag 4).
+   - **Go on without effect:** 0x53 / 0x57 sounds, 0x68 / 0x74 / 0x7c eye candy, 0x5d prone (the
+     knock-down pose 0x435b30), 0x71 unfog a town map (no town maps), 0x7f an item shown or
+     hidden in inventories (field 0x57 bit 0x10; carried items keep no flags).
+   - **Conditions:** 0x1d hears (0x4af470: within `(clamp(PE - 4, 1, 10) + 6) / 2` tiles;
+     prowling and obstruction not counted); 0x24 a portal or container is open.
+   - **Real data:** 2377 of 2399 scripts run to an end (2336 before). Left: 0x24 combat attack
+     (6), 0x45 walk to (3), 0x55 newspaper queue (3), 0x4f use a skill (2), 0x5e written start
+     (2), 0x84 end game (2), 0x3e animation, 0x56 headline, 0x5c rename, condition 0x13.
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,

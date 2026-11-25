@@ -133,6 +133,8 @@ pub struct ScriptHost<'w, 's> {
     reports: ResMut<'w, ScriptReports>,
     rng: ResMut<'w, crate::HostRng>,
     clock: Res<'w, crate::GameClock>,
+    session: Res<'w, crate::Session>,
+    awards: ResMut<'w, crate::ExperienceAwards>,
     vfs: Option<Res<'w, crate::SimVfs>>,
 }
 
@@ -185,6 +187,10 @@ struct HostWorld<'a> {
     messages: Vec<(PlayerId, String)>,
     /// Written windows to open: player, kind, line.
     written: Vec<(PlayerId, u8, i32)>,
+    /// Items made near objects (action 0x34): prototype, tile.
+    created: Vec<(u32, arcanum_formats::map::TileLoc)>,
+    /// Experience given (action 0x3f), shared as dialogue's is.
+    experience: Vec<i32>,
     /// Conversations scripts started.
     dialogs: Vec<crate::StartedDialogue>,
     /// Teleports asked for: object, map, tile.
@@ -665,11 +671,59 @@ impl ScriptContext for HostWorld<'_> {
     }
 
     /// Kept in the sector's changes; the NPC is spawned again to take it up.
-    fn set_day_standpoint(&mut self, npc: ScriptObject, to: arcanum_formats::map::TileLoc) {
+    fn set_standpoint(&mut self, npc: ScriptObject, to: arcanum_formats::map::TileLoc, night: bool) {
         let ScriptObject::Mobile { sector, index } = npc else { return };
-        if self.map.set_day_standpoint(sector, index, to) {
+        if self.map.set_standpoint(sector, index, to, night) {
             self.sectors.insert(sector);
             self.npcs_toggled.push((sector, index));
+        }
+    }
+
+    /// Items only, on the object's tile as a drop would put them (builder's call: the original
+    /// tries up to ten random tiles 1-3 away, 0x4f4e40, and makes critters and scenery too).
+    fn create_near(&mut self, basic: i32, near: ScriptObject) {
+        let (Ok(basic), Some(at)) = (u32::try_from(basic), self.tile_of(near)) else { return };
+        let prototype = basic + crate::BASIC_TO_PROTOTYPE;
+        if self.map.prototypes.get(prototype).is_some_and(|p| (5..=14).contains(&p.object_type)) {
+            self.created.push((prototype, at));
+        }
+    }
+
+    fn give_experience(&mut self, pc: ScriptObject, amount: i32) {
+        if matches!(pc, ScriptObject::Pc(_)) {
+            self.experience.push(amount);
+        }
+    }
+
+    fn quest_experience(&mut self, level: i32) -> i32 {
+        let Ok(level) = u32::try_from(level) else { return 0 };
+        let Some(mes) = self.vfs.and_then(|v| v.read(crate::XP_QUEST).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()) else { return 0 };
+        mes.get(level).map_or(0, |t| arcanum_formats::dialog::atoi(t.as_bytes()))
+    }
+
+    /// PCs: their save's inventory (NPCs' slots are not read: none).
+    fn in_slot(&mut self, holder: ScriptObject, slot: i32) -> Option<ScriptObject> {
+        let ScriptObject::Pc(p) = holder else { return None };
+        let item = self.players.get(&p)?.inventory.as_ref()?.items.iter().find(|i| i.location == slot)?.prototype;
+        Some(ScriptObject::Carried { holder: p, prototype: item })
+    }
+
+    /// Living, and within `(clamp(PE - 4, 1, 10) + 6) / 2` tiles, the larger distance (0x4af470;
+    /// builder's call: prowling and the obstruction penalty 0x4af640 are not counted).
+    fn can_hear(&mut self, listener: ScriptObject, target: ScriptObject) -> bool {
+        if self.is_dead(listener) {
+            return false;
+        }
+        let (Some(a), Some(b)) = (self.tile_of(listener), self.tile_of(target)) else { return false };
+        let reach = i64::from(((self.stat(listener, 5) - 4).clamp(1, 10) + 6) / 2);
+        (i64::from(a.x) - i64::from(b.x)).abs().max((i64::from(a.y) - i64::from(b.y)).abs()) <= reach
+    }
+
+    fn is_open(&mut self, object: ScriptObject) -> bool {
+        match object {
+            ScriptObject::Map(id) => self.map.map_object(id).filter(|o| o.object_type == arcanum_formats::object::TYPE_PORTAL).and_then(|o| self.map.prototypes.art_id(o)).is_some_and(crate::portal_open),
+            ScriptObject::Mobile { sector, index } => self.map.container_object(GroundItemId::Container { sector, index }).is_some() && self.map.container_open(GroundItemId::Container { sector, index }),
+            _ => false,
         }
     }
 
@@ -1190,6 +1244,8 @@ impl ScriptHost<'_, '_> {
             now: self.clock.now,
             messages: Vec::new(),
             written: Vec::new(),
+            created: Vec::new(),
+            experience: Vec::new(),
             dialogs: Vec::new(),
             teleports: Vec::new(),
         };
@@ -1200,6 +1256,8 @@ impl ScriptHost<'_, '_> {
         for (to, kind, line) in std::mem::take(&mut ctx.written) {
             outbox.0.push((to, crate::LedgerDelta::Written { kind, line }));
         }
+        self.awards.0.append(&mut ctx.experience);
+        let created = std::mem::take(&mut ctx.created);
         self.started.0.append(&mut ctx.dialogs);
         // Floats go to everyone in the world (the original to those who can see it).
         let players: Vec<PlayerId> = ctx.players.keys().copied().collect();
@@ -1242,6 +1300,14 @@ impl ScriptHost<'_, '_> {
         }
         for sector in touched {
             crate::ground::save_change(world, map, sector);
+        }
+        if !created.is_empty() {
+            let (prototypes, art) = (map.prototypes.clone(), map.art.clone());
+            let info = crate::item_info(&prototypes, |id| crate::world::art_size(vfs, art.as_deref(), id));
+            for (prototype, at) in created {
+                let item = crate::CarriedItem { prototype, location: 0, quantity: 0, keys: vec![] };
+                crate::ground::place_on_ground(item, at, &info, map, world, &self.session, outbox);
+            }
         }
         Some(run.result)
     }

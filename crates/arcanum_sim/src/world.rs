@@ -1689,6 +1689,42 @@ mod tests {
     }
 
     #[test]
+    fn quest_experience_from_a_script_is_shared_too() {
+        use crate::script::tests::{always, block, n, op};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        std::fs::create_dir_all(dir.path().join("Rules")).unwrap();
+        std::fs::write(dir.path().join("Rules/xp_quest.mes"), "{3}{5000}\n").unwrap();
+        let rules = RulesData { xp_levels: vec![0, 2100, 4600, 7700], ..Default::default() };
+        let mut sim = SimApp::new(rules);
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(7, "Virgil", TileLoc { x: 79, y: 80 }), (8, "Sogg", TileLoc { x: 70, y: 70 })]));
+        sim.update();
+        sim.update();
+        let npc_object = crate::ScriptObject::Mobile { sector: SectorId::new(1, 1), index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 705));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            // Quest level 3 for the triggerer (set 0); the attachee, an NPC, gets nothing.
+            let lines = vec![always(block(0x3f, &[op(0, 0), n(3)])), always(block(0x3f, &[op(1, 0), n(3)])), always(block(1, &[]))];
+            library.insert(705, arcanum_formats::script::Script { description: String::new(), flags: 0, lines });
+        }
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0).unwrap().0
+        };
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        sim.update();
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        for p in [7, 8] {
+            assert_eq!(save.players[&PlayerId(p)].blueprint.sheet.experience, 2500, "player {p}: half of 5000");
+        }
+    }
+
+    #[test]
     fn a_script_teleport_waits_for_every_players_yes_and_one_no_cancels_it() {
         use crate::script::tests::{always, block, n, op};
         let dir = tempfile::tempdir().unwrap();
