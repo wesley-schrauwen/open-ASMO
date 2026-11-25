@@ -58,8 +58,29 @@ pub enum LockTarget {
 
 /// The chance in percent for a picker of skill `level` and base Intelligence `intelligence`.
 pub fn pick_chance(level: i32, intelligence: i32) -> i32 {
+    tech_chance(TECH_PICK_LOCKS, level, intelligence)
+}
+
+/// The technological skills' order in 0x4c69f0 (skills 12-15).
+pub const TECH_REPAIR: usize = 0;
+pub const TECH_FIREARMS: usize = 1;
+pub const TECH_PICK_LOCKS: usize = 2;
+pub const TECH_DISARM_TRAPS: usize = 3;
+
+/// A technological skill's chance (0x4c69f0, table 0x4c6ad8): Repair 4 a level, Firearms 5 + 25,
+/// Pick Locks 6, Disarm Traps 4 + 20 (none at level 0); + 10 with a base Intelligence of 20 or
+/// more (0x4b0ee0 stat 4); at most 95.
+pub fn tech_chance(tech: usize, level: i32, intelligence: i32) -> i32 {
+    let level = level.max(0);
+    let chance = match tech {
+        TECH_REPAIR => level * 4,
+        TECH_FIREARMS => level * 5 + 25,
+        TECH_PICK_LOCKS => level * 6,
+        _ if level == 0 => 0,
+        _ => level * 4 + 20,
+    };
     let bonus = if intelligence >= 20 { 10 } else { 0 };
-    (level * 6 + bonus).clamp(0, MAX_PICK_CHANCE)
+    (chance + bonus).clamp(0, MAX_PICK_CHANCE)
 }
 
 /// The difficulty of a lock of `lock` difficulty, for a picker of `training` rank with a tool
@@ -252,6 +273,8 @@ mod tests {
         assert_eq!(pick_chance(4, 8), 24);
         assert_eq!(pick_chance(4, 20), 34, "an extraordinary Intelligence");
         assert_eq!(pick_chance(20, 20), 95);
+        assert_eq!([TECH_REPAIR, TECH_FIREARMS, TECH_PICK_LOCKS, TECH_DISARM_TRAPS].map(|t| tech_chance(t, 5, 8)), [20, 50, 30, 40]);
+        assert_eq!(tech_chance(TECH_DISARM_TRAPS, 0, 20), 10, "untrained by level: only the Intelligence");
     }
 
     #[test]
@@ -291,7 +314,7 @@ mod tests {
         prototypes.insert(proto(15101, TYPE_GENERIC, OGF_IS_LOCKPICK, 10));
         prototypes.insert(proto(15200, TYPE_GENERIC, 8, 20));
         prototypes.insert(proto(6049, TYPE_WEAPON, 0, 0));
-        let item = |prototype, location| crate::CarriedItem { prototype, location, quantity: 0, keys: vec![], written: 0 };
+        let item = |prototype, location| crate::CarriedItem { prototype, location, quantity: 0, keys: vec![], written: 0, wear: Default::default() };
         let inv = Inventory { items: vec![item(15101, 0), item(15200, 1), item(6049, 2)], ..Default::default() };
         assert_eq!(lockpick_bonus(&inv, Some(0), &prototypes), 10, "the auto skeleton key");
         assert_eq!(lockpick_bonus(&inv, Some(1), &prototypes), 0, "a healing kit is no lockpick");

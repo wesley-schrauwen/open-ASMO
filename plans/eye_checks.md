@@ -199,6 +199,13 @@ lights after the walk.
 - [ ] The NPC dies in its death frame; the fight ends; the bar goes.
 - [ ] In combat mode, hovering an NPC shows "To Hit:" and a percentage in the icon's place.
 - [ ] Monsters (wolves, kill-on-sight NPCs) attack when the PC comes near; townsfolk do not.
+- [ ] Hitting a townsman: his friends of the same faction come for the PC, bystanders walk off.
+- [ ] Critical floats: "Crippled arm", "Armor damaged", "Weapon broken".
+
+## Repair
+
+- [ ] The skills view's Repair button opens the inventory; a click on a worn item shows
+  "repaired" (or "not in need of repair") in the message box and leaves the item in place.
 
 ## Spotting traps while walking
 

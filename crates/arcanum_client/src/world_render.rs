@@ -584,7 +584,7 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
 
 /// What a pile shows on the map: the junk pile's prototype on its tile.
 fn pile_look(pile: &arcanum_sim::Pile) -> arcanum_sim::GroundItem {
-    arcanum_sim::GroundItem { prototype: arcanum_sim::PILE, quantity: 0, location: pile.location, keys: vec![], written: 0 }
+    arcanum_sim::GroundItem { prototype: arcanum_sim::PILE, quantity: 0, location: pile.location, keys: vec![], written: 0, wear: Default::default() }
 }
 
 /// A sprite for a dropped item or a pile: its prototype's ground art on its tile.

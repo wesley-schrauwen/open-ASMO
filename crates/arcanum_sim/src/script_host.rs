@@ -1421,7 +1421,7 @@ impl ScriptHost<'_, '_> {
             let (prototypes, art) = (map.prototypes.clone(), map.art.clone());
             let info = crate::item_info(&prototypes, |id| crate::world::art_size(vfs, art.as_deref(), id));
             for (prototype, at) in created {
-                let item = crate::CarriedItem { prototype, location: 0, quantity: 0, keys: vec![], written: 0 };
+                let item = crate::CarriedItem { prototype, location: 0, quantity: 0, keys: vec![], written: 0, wear: Default::default() };
                 crate::ground::place_on_ground(item, at, &info, map, world, &self.session, outbox);
             }
         }

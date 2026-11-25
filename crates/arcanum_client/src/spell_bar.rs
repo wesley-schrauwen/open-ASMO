@@ -22,7 +22,8 @@
 //! 6, 5, 15, 12 (table 0x5cb240). All four always show. A click (0x57efa0 → 0x579fa0 →
 //! 0x57a0a0) arms Disarm Traps for the next click on a door or container, Pick Pocket for the
 //! next click on an NPC ([`crate::skill_use`], [`arcanum_sim::pickpocket`]); Prowling toggles
-//! sneaking ([`arcanum_sim::prowl`]). Repair is not built: its button does nothing yet. One view shows at a time (0x5506c0 toggles between them).
+//! sneaking ([`arcanum_sim::prowl`]); Repair opens the inventory, where a click on an item
+//! repairs it ([`arcanum_sim::repair`]). One view shows at a time (0x5506c0 toggles between them).
 //!
 //! Not built: the hover names (the original shows them in the view, 0x550860 / 0x5507e0;
 //! the skills' are `mes/skill_ui.mes` 100-103); the other views.
@@ -151,6 +152,9 @@ fn close_above_the_bar(windows: Query<&Window>, mut view: ResMut<BarView>, mut d
     }
 }
 
+/// What the views reach outside: the host, the player's PC and the inventory.
+type ViewLinks<'w, 's, 'a> = (Option<Res<'w, crate::sim_bridge::HostLink>>, Res<'w, crate::sim_bridge::LocalPc>, Query<'w, 's, &'a crate::actors::Actor>, Option<ResMut<'w, crate::inventory_screen::InventoryPanel>>);
+
 /// Press on a college shows its spells; press on a spell picks it up, and the release arms it
 /// (on the spell) or puts it on a hotkey slot (0x57e8d0).
 #[allow(clippy::too_many_arguments)]
@@ -164,7 +168,7 @@ fn click_view(
     armed: Option<ResMut<crate::skill_use::SkillTargeting>>,
     client: Option<Res<crate::world_render::ClientMap>>,
     (mut cache, assets, frames): (ResMut<crate::inventory_screen::ItemArtCache>, Res<AssetServer>, Res<Assets<crate::art_loader::ArtFrames>>),
-    (link, local, actors): (Option<Res<crate::sim_bridge::HostLink>>, Res<crate::sim_bridge::LocalPc>, Query<&crate::actors::Actor>),
+    (link, local, actors, panel): ViewLinks,
 ) {
     let (pressed, released) = (buttons.just_pressed(MouseButton::Left), buttons.just_released(MouseButton::Left));
     // Prowling toggles at once (0x57a0a0 case 0 → 0x45ee30).
@@ -175,12 +179,18 @@ fn click_view(
         }
         return;
     }
-    // A skills view button arms its skill on release (Disarm Traps and Pick Pocket are built).
+    // A skills view button arms its skill on release (Disarm Traps and Pick Pocket for the next
+    // click in the world; Repair opens the inventory for a click on an item).
     if view.skills && released {
-        if let Some(skill @ (arcanum_sim::SKILL_DISARM_TRAPS | arcanum_sim::SKILL_PICK_POCKET)) = cursor(&windows).and_then(skill_at)
+        if let Some(skill @ (arcanum_sim::SKILL_DISARM_TRAPS | arcanum_sim::SKILL_PICK_POCKET | arcanum_sim::repair::SKILL_REPAIR)) = cursor(&windows).and_then(skill_at)
             && let Some(mut armed) = armed
         {
             armed.0 = Some(crate::skill_use::Armed::Skill { skill, tool: None });
+            if skill == arcanum_sim::repair::SKILL_REPAIR
+                && let Some(mut panel) = panel
+            {
+                panel.open = true;
+            }
         }
         return;
     }

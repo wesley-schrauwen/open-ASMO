@@ -110,21 +110,21 @@ mod tests {
     }
 
     fn key(location: i32, keys: Vec<i32>) -> CarriedItem {
-        CarriedItem { prototype: 1, location, quantity: 0, keys, written: 0 }
+        CarriedItem { prototype: 1, location, quantity: 0, keys, written: 0, wear: Default::default() }
     }
 
     #[test]
     fn keys_go_onto_the_ring() {
-        let mut inv = Inventory { items: vec![key(0, vec![14]), CarriedItem { prototype: 3, location: 1, quantity: 0, keys: vec![], written: 0 }, key(2, vec![23])], ..Default::default() };
+        let mut inv = Inventory { items: vec![key(0, vec![14]), CarriedItem { prototype: 3, location: 1, quantity: 0, keys: vec![], written: 0, wear: Default::default() }, key(2, vec![23])], ..Default::default() };
         inv.fold_keys(&info);
         assert_eq!(inv.items.len(), 3, "no ring: loose keys stay");
         assert!(inv.has_key(23));
-        inv.items.push(CarriedItem { prototype: 2, location: 5, quantity: 0, keys: vec![7], written: 0 });
+        inv.items.push(CarriedItem { prototype: 2, location: 5, quantity: 0, keys: vec![7], written: 0, wear: Default::default() });
         inv.fold_keys(&info);
         assert_eq!(inv.items.iter().map(|i| (i.prototype, i.keys.clone())).collect::<Vec<_>>(), [(3, vec![]), (2, vec![7, 14, 23])]);
         assert!(inv.has_key(14) && inv.has_key(7) && !inv.has_key(8));
         assert!(inv.takes_onto_ring(1, &info));
-        let chest = Inventory { items: vec![key(0, vec![14]), CarriedItem { prototype: 2, location: 1, quantity: 0, keys: vec![], written: 0 }], ..Inventory::container() };
+        let chest = Inventory { items: vec![key(0, vec![14]), CarriedItem { prototype: 2, location: 1, quantity: 0, keys: vec![], written: 0, wear: Default::default() }], ..Inventory::container() };
         let mut folded = chest.clone();
         folded.fold_keys(&info);
         assert_eq!(folded, chest, "a container keeps its keys loose");
@@ -132,7 +132,7 @@ mod tests {
 
     #[test]
     fn a_second_ring_gives_its_numbers_to_the_first() {
-        let ring = |location, keys| CarriedItem { prototype: 2, location, quantity: 0, keys, written: 0 };
+        let ring = |location, keys| CarriedItem { prototype: 2, location, quantity: 0, keys, written: 0, wear: Default::default() };
         let mut inv = Inventory { items: vec![ring(0, vec![]), ring(1, vec![5]), ring(2, vec![6])], ..Default::default() };
         inv.fold_keys(&info);
         let keys: Vec<Vec<i32>> = inv.items.iter().map(|i| i.keys.clone()).collect();

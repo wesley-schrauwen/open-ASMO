@@ -603,12 +603,20 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      hostile, 0x4a9650).
    - Not built: planting, the victim's awareness and the thief's state modifiers, critical
      success, event 33, the stolen flag.
-4r. **Repair** (not built; findings, 0x4c7160 case at 0x4c7bce, callbacks 0x6876b4 / 0x6876b8).
+4r. **Repair** (built, `feat/repair`; `arcanum_sim::repair`; 0x4c7160 case at 0x4c7bce, callbacks
+   0x6876b4 / 0x6876b8).
    - No damage roll: success is forced unless the skill's chance (0x4c69f0) is below 1. The hit
      points restored are max × chance / 100 (at least 1; all of them with effect 9); the most
      falls by 10 / 5 / 1 / 0 % by training (`hp_adj`), and a Master mends a broken item (art bit
      0x400) for 5 %. Undamaged: `skill_ui` 505 "That is not in need of repair."; else 500 / 501.
-   - Waits on item damage: carried items keep no hit points yet, and nothing damages objects.
+   - Built: carried (and dropped) items keep their wear (`CarriedItem::wear`); critical hits
+     wear armour and weapons (`plans/combat.md` step 9). The skills view's Repair button opens
+     the inventory and a click on an item sends `InventoryRequest::Repair` (builder's call:
+     the original's target cursor). The chance is 0x4c69f0's Repair row, 4 a level
+     (`tech_chance`; checked: the table 0x4c6ad8 also corrects Firearms to 5 a level + 25 and
+     Disarm Traps to 4 + 20).
+   - Not built: a Master mending broken items, effect 9, repairing items on the ground or
+     others'.
 4s. **Prowling** (built, `feat/prowling`; `arcanum_sim::prowl`; 0x57a0a0 → 0x45ee30 →
    0x45ee90).
    - The skills view's Prowling button toggles it (`PlayerIntent::Prowl`); a right click in the
