@@ -1130,7 +1130,7 @@ mod tests {
         let mut stock = Inventory::default();
         stock.change_gold(40);
         stock.items.push(CarriedItem { prototype: 6049, location: 3, quantity: 0, keys: vec![], written: 0 });
-        let view = BarterView { npc: arcanum_sim::NetId(4), npc_male: true, npc_name: "Bates".into(), stock, buy: [(3, Offer { price: 12, line: "I will sell that for 12 coins.".into() })].into(), sell: Default::default(), npc_gold: 40 };
+        let view = BarterView { npc: arcanum_sim::NetId(4), npc_male: true, npc_name: "Bates".into(), stock, buy: [(3, Offer { price: 12, line: "I will sell that for 12 coins.".into() })].into(), sell: Default::default(), npc_gold: 40, pickpocket: false };
         let mut inventory = PcInventory::default();
         inventory.barter_view(view.clone());
         assert!(inventory.barter_opened);

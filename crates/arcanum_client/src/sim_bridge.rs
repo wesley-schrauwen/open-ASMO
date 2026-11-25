@@ -316,6 +316,10 @@ fn receive_deltas(
         if let (LedgerDelta::BarterLine { text }, Some(inv)) = (delta, inventory.as_mut()) {
             inv.barter_refused(text.clone());
         }
+        // A thief caught: the host closed the window.
+        if let (LedgerDelta::BarterClosed, Some(inv)) = (delta, inventory.as_mut()) {
+            inv.left_map();
+        }
         if let LedgerDelta::EnterMap { map: name } = delta {
             if map.0.as_ref().is_some_and(|old| old != name)
                 && let Some(inv) = inventory.as_mut()

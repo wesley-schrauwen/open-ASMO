@@ -291,12 +291,16 @@ pub fn quest_option(row: &str, state: i32, intelligence: i32, reaction: i32) -> 
 pub struct PendingTalk {
     pub npc: NetId,
     pub seq: u32,
+    /// To pick its pocket, not to talk.
+    pub steal: bool,
 }
 
 /// Requests taken from the inbox.
 #[derive(Resource, Debug, Default)]
 pub struct TalkRequests {
     pub talk: Vec<(PlayerId, NetId, u32)>,
+    /// Pockets to pick ([`crate::pickpocket`]): the same walk, then the window.
+    pub pockets: Vec<(PlayerId, NetId, u32)>,
     pub choose: Vec<(PlayerId, usize)>,
     pub end: Vec<PlayerId>,
     /// NPCs whose dialogue script ran the default: they bark at the PC.
@@ -941,13 +945,15 @@ pub fn talk_to_npcs(
     mut map: ResMut<LoadedMap>,
     mut outbox: ResMut<Outbox>,
     mut scripts: crate::ScriptHost,
+    mut pockets: ResMut<crate::pickpocket::PickPocketStarts>,
     pcs: Query<WalkerQuery>,
     npcs: Query<(&NetId, &NpcSource, &Position)>,
 ) {
     let mut fresh: HashMap<Entity, PendingTalk> = HashMap::new();
-    for (player, npc, seq) in requests.talk.drain(..) {
+    let talks = requests.talk.drain(..).map(|r| (r, false)).collect::<Vec<_>>();
+    for ((player, npc, seq), steal) in talks.into_iter().chain(requests.pockets.drain(..).map(|r| (r, true))) {
         if let Some((entity, ..)) = pcs.iter().find(|pc| pc.1.0 == player) {
-            fresh.insert(entity, PendingTalk { npc, seq });
+            fresh.insert(entity, PendingTalk { npc, seq, steal });
         }
     }
     for (entity, player, position, pending, walking, talking) in &pcs {
@@ -965,6 +971,15 @@ pub fn talk_to_npcs(
             continue;
         }
         commands.entity(entity).remove::<PendingTalk>();
+        if want.steal {
+            let can = !map.is_dead(source.sector, source.index) && map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)).is_some_and(|o| crate::pickpocket::can_steal_from(o, &map.prototypes));
+            if can && !talking {
+                pockets.0.push((player.0, want.npc, source.object()));
+            } else if !talking {
+                outbox.0.push((player.0, LedgerDelta::SkillResult { message: crate::pickpocket::CANNOT_STEAL }));
+            }
+            continue;
+        }
         // The dead do not talk (builder's call: the original's can-talk test 0x4ad800 is not
         // read).
         if talking || map.is_dead(source.sector, source.index) {

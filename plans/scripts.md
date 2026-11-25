@@ -588,6 +588,26 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      of number N (bits 23-27, 0x503f20); all or any by the set's kind.
    - **Real data:** 2393 of 2399 scripts run to an end. Left: 0x24 combat attack (6: the set
      turns hostile to the object, 0x4a9650; no combat yet).
+4q. **Pick Pocket** (built, `feat/pick-pocket`; `arcanum_sim::pickpocket`, 0x4c7160 skill 5).
+   - The skills view's Pick Pocket button arms it; a click on an NPC walks there
+     (`PlayerIntent::PickPocket`) and opens the barter window on the NPC's own inventory without
+     prices (`BarterView::pickpocket`). Refused targets (`critter_flags2` 0x80, mechanical
+     `critter_flags` 0x20000000): `skill_ui` 525.
+   - Dragging an item out rolls: chance from table 0x5b7068 by level − the victim's Perception
+     (quartered, at most 95), difficulty from slot table 0x5b70e4 and cells × 5 (halved from
+     Expert), the roll as Pick Locks'. Gold 100 and ammunition 20 at a time. `skill_ui` 500 / 501.
+   - Caught (critical failure, or untrained and the victim's Perception roll, its die a
+     builder's call 1-20): the window closes (`LedgerDelta::BarterClosed`), the victim's event 11
+     runs; unless it skips the default, reaction -10 (builder's call; the original turns it
+     hostile, 0x4a9650).
+   - Not built: planting, the victim's awareness and the thief's state modifiers, critical
+     success, event 33, the stolen flag.
+4r. **Repair** (not built; findings, 0x4c7160 case at 0x4c7bce, callbacks 0x6876b4 / 0x6876b8).
+   - No damage roll: success is forced unless the skill's chance (0x4c69f0) is below 1. The hit
+     points restored are max × chance / 100 (at least 1; all of them with effect 9); the most
+     falls by 10 / 5 / 1 / 0 % by training (`hp_adj`), and a Master mends a broken item (art bit
+     0x400) for 5 %. Undamaged: `skill_ui` 505 "That is not in need of repair."; else 500 / 501.
+   - Waits on item damage: carried items keep no hit points yet, and nothing damages objects.
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,
