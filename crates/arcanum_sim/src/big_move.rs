@@ -112,6 +112,9 @@ pub struct VoteAsk {
 
 type MoverQuery<'a> = (Entity, &'a NetId, &'a PlayerControlled, &'a mut Position, &'a Sheet);
 
+/// The NPCs a move takes along or leaves: id, tile, and whom they follow.
+type NpcMoverQuery<'a> = (Entity, &'a NetId, &'a mut crate::Position, Option<&'a crate::follow::Following>);
+
 /// What a move changes.
 #[derive(bevy_ecs::system::SystemParam)]
 pub struct MoveWorld<'w, 's> {
@@ -123,7 +126,7 @@ pub struct MoveWorld<'w, 's> {
     populated: ResMut<'w, crate::PopulatedSectors>,
     vfs: Option<Res<'w, crate::SimVfs>>,
     pcs: Query<'w, 's, MoverQuery<'static>>,
-    npcs: Query<'w, 's, (Entity, &'static NetId), With<crate::Npc>>,
+    npcs: Query<'w, 's, NpcMoverQuery<'static>, (With<crate::Npc>, Without<PlayerControlled>)>,
     talking: Query<'w, 's, (Entity, &'static PlayerControlled), With<crate::Conversation>>,
 }
 
@@ -194,7 +197,15 @@ impl MoveWorld<'_, '_> {
     /// standing, the walk dropped).
     fn go(&mut self, vote: &Vote) {
         if let Some(name) = &vote.map {
-            self.switch_map(name, vote.to);
+            self.switch_map(name, vote.to, &vote.movers);
+        } else {
+            // The movers' followers come along onto the same tile (0x4d3760 / 0x4d39a0).
+            for (entity, _, mut position, following) in self.npcs.iter_mut() {
+                if following.is_some_and(|f| vote.movers.contains(&f.leader)) {
+                    position.0 = vote.to;
+                    self.commands.entity(entity).remove::<crate::Walking>().insert(crate::JustStopped);
+                }
+            }
         }
         for (entity, &net_id, controlled, mut position, _) in self.pcs.iter_mut() {
             if !vote.movers.contains(&controlled.0) {
@@ -208,10 +219,24 @@ impl MoveWorld<'_, '_> {
     }
 
     /// Leaves the loaded map for `name`, around tile `to`.
-    fn switch_map(&mut self, name: &str, to: TileLoc) {
+    fn switch_map(&mut self, name: &str, to: TileLoc, movers: &[PlayerId]) {
         let Some(save) = self.world.0.as_mut() else { return };
+        // Followers stay behind, waiting (builder's call: the original takes them along, but
+        // an NPC cannot move between maps here yet).
+        if let Some(here) = self.map.name.clone() {
+            let staying: Vec<(arcanum_formats::map::SectorId, u32)> = save.followers.iter().filter(|f| f.map == here && movers.contains(&f.leader)).map(|f| (f.sector, f.index)).collect();
+            for (sector, index) in staying {
+                let flags = self.map.npc_flags(sector, index).unwrap_or(0);
+                if flags & crate::follow::WAITING == 0 {
+                    self.map.set_npc_flags(sector, index, flags | crate::follow::WAITING);
+                    if let Some(delta) = self.map.changes.get(&sector).cloned() {
+                        save.sector_changes.insert(sector, delta);
+                    }
+                }
+            }
+        }
         // The old map's NPCs go; its changes are kept.
-        for (entity, &net_id) in &self.npcs {
+        for (entity, &net_id, ..) in &self.npcs {
             self.commands.entity(entity).despawn();
             crate::ground::broadcast(&self.session, &mut self.outbox, LedgerDelta::Despawn { net_id });
         }

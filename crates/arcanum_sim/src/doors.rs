@@ -177,6 +177,20 @@ impl LoadedMap {
         true
     }
 
+    /// An NPC's `npc_flags` (its own or its prototype's), if it is loaded.
+    pub fn npc_flags(&self, sector: arcanum_formats::map::SectorId, index: u32) -> Option<i32> {
+        let object = self.mobiles.get(&sector)?.get(index as usize)?;
+        Some(self.prototypes.int(object, "npc_flags").unwrap_or(0))
+    }
+
+    /// Sets an NPC's `npc_flags` ([`crate::follow`]), kept in [`LoadedMap::changes`].
+    pub fn set_npc_flags(&mut self, sector: arcanum_formats::map::SectorId, index: u32, flags: i32) {
+        self.changes.entry(sector).or_default().npc_flags.insert(index, flags);
+        if let Some(object) = self.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize)) {
+            object.set_int("npc_flags", flags);
+        }
+    }
+
     /// Applies the saved changes of sector `id` (just loaded) to its objects.
     pub fn apply_changes(&mut self, id: arcanum_formats::map::SectorId) {
         let Some(delta) = self.changes.get(&id).cloned() else { return };
@@ -185,6 +199,11 @@ impl LoadedMap {
         }
         for (index, flags) in delta.mobile_flags {
             self.apply_object_flags(id, index, true, flags);
+        }
+        for (index, flags) in delta.npc_flags {
+            if let Some(object) = self.mobiles.get_mut(&id).and_then(|m| m.get_mut(index as usize)) {
+                object.set_int("npc_flags", flags);
+            }
         }
         for (index, open) in delta.portals {
             self.apply_portal(MapObjectId { sector: id, index }, open);

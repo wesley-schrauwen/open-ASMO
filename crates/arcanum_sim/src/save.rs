@@ -46,6 +46,9 @@ pub struct WorldSave {
     /// The changes of the maps the party has left, by folder name ([`crate::big_move`]).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub other_maps: BTreeMap<String, BTreeMap<SectorId, SectorDelta>>,
+    /// The NPCs following PCs, on every map ([`crate::follow`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub followers: Vec<crate::follow::Follower>,
 }
 
 fn default_first_year() -> u32 {
@@ -119,11 +122,15 @@ pub struct SectorDelta {
     /// The same for the sector's mobile objects.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub mobile_flags: BTreeMap<u32, i32>,
+    /// NPCs' `npc_flags` changed by following ([`crate::follow`]), by index in the sector's
+    /// mobile objects.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub npc_flags: BTreeMap<u32, i32>,
 }
 
 impl SectorDelta {
     pub fn is_empty(&self) -> bool {
-        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty() && self.npc_inventories.is_empty() && self.npc_restock.is_empty() && self.object_flags.is_empty() && self.mobile_flags.is_empty()
+        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty() && self.npc_inventories.is_empty() && self.npc_restock.is_empty() && self.object_flags.is_empty() && self.mobile_flags.is_empty() && self.npc_flags.is_empty()
     }
 }
 
@@ -170,6 +177,7 @@ impl WorldSave {
             next_dropped: 0,
             scripts: Default::default(),
             other_maps: BTreeMap::new(),
+            followers: Vec::new(),
         }
     }
 

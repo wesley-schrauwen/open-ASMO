@@ -19,6 +19,7 @@ pub mod creation;
 pub mod delta;
 pub mod dialogue;
 pub mod doors;
+pub mod follow;
 pub mod gait;
 pub mod barter;
 pub mod ground;

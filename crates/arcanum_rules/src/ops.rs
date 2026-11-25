@@ -367,7 +367,8 @@ impl RulesData {
             heal_rate: stat(12, (cn + 1) / 3),
             poison_recovery: stat(13, cn),
             reaction: stat(14, reaction_modifier(be)),
-            max_followers: stat(15, ch / 4),
+            // An Expert or Master of Persuasion leads one more (0x4b0490 stat 0xf).
+            max_followers: stat(15, ch / 4 + i32::from(s.training[11] > 1)),
             hit_points: self.apply_effects(MAX_HIT_POINTS, 4 * (s.hp_points + s.draft.hit_points) + wp + 2 * (level + st) + 4, &ids),
             fatigue: self.apply_effects(MAX_FATIGUE, 4 * (s.fatigue_points + s.draft.fatigue) + wp + 2 * (level + cn) + 4, &ids),
         }

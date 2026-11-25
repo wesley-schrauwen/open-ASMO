@@ -66,7 +66,7 @@
 //! checks (0x4ad800) and hostility at choice time (0x4ae120); alignment, aptitude, training and the
 //! rest of the tests and results; turning to face each other.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use arcanum_formats::dialog::{DialogFile, DialogLine, Token, effects, tests};
 use arcanum_formats::mes::MesFile;
@@ -320,6 +320,8 @@ pub struct Talk<'a> {
     pub prototypes: &'a arcanum_formats::object::Prototypes,
     /// The NPC's `npc_flags` (tests `wa`, `wt`).
     pub npc_flags: i32,
+    /// Following ([`crate::follow`]).
+    pub follow: crate::follow::FollowTalk,
     /// The NPC's inventory, and its substitute container's (results `in -N`); changed ones are
     /// kept after the step.
     pub npc_inventory: Option<Inventory>,
@@ -360,6 +362,43 @@ impl Talk<'_> {
 
     fn alignment(&self) -> i32 {
         self.sheet_changes.alignment.unwrap_or(self.sheet.alignment)
+    }
+
+    /// What deciding whether the NPC joins this PC reads (0x4ad950).
+    fn join_check(&self) -> crate::follow::JoinCheck {
+        let f = &self.follow;
+        crate::follow::JoinCheck {
+            pc_persuasion_rank: self.sheet.training[crate::follow::PERSUASION],
+            pc_charisma: self.rules.stats(self.sheet)[7],
+            pc_alignment: self.alignment(),
+            pc_level: self.sheet.level,
+            max_followers: self.rules.derived(self.sheet).max_followers,
+            followers: f.followers,
+            other_leader_charisma: f.other_leader_charisma,
+            forced: self.npc_flags & crate::follow::FORCED != 0,
+            reaction: self.reaction(),
+            npc_alignment: f.npc_alignment,
+            npc_level: f.npc_level,
+            ai: f.ai,
+        }
+    }
+
+    /// `jo force line` (0x41624d): the NPC joins this PC and the talk goes on at NPC line
+    /// `line`, or it refuses. Forced, the count is not asked and the NPC is not counted.
+    fn join(&mut self, force: bool, line: i32) {
+        use crate::follow::{FORCED, LEFT, WAITING};
+        match crate::follow::can_join(&self.join_check(), force) {
+            Ok(()) => {
+                let counted = !force && !(self.follow.mine && self.npc_flags & (WAITING | FORCED) == 0);
+                self.follow.followers += i32::from(counted);
+                self.follow.mine = true;
+                self.follow.other_leader_charisma = None;
+                self.npc_flags = (self.npc_flags & !(LEFT | WAITING)) | if force { FORCED } else { 0 };
+                self.follow.changed = true;
+                self.follow.goto = Some(line);
+            }
+            Err(r) => self.follow.refused = Some(r),
+        }
     }
 
     /// Result `in` (0x415fed): `N > 0` the PC gives its first item named N to the NPC; `N < 0`
@@ -486,7 +525,7 @@ impl Talk<'_> {
             "sk" => usize::try_from(a).ok().filter(|&k| k < arcanum_rules::SKILLS).is_some_and(|k| passes(self.rules.skill_level(self.sheet, k), b)),
             "sc" => usize::try_from(a).ok().and_then(|c| self.sheet.spells.get(c)).is_some_and(|&l| if b > 0 { l >= b } else { l <= -b }),
             // Follows the PC (nobody follows anyone yet): 0 not, 1 yes, others always pass.
-            "fo" => a != 1,
+            "fo" => self.follow.mine == (a != 0),
             // A party member named N: none yet.
             "pa" => a < 0,
             // The NPC's `npc_flags` 0x8 / 0x20: 0 clear, else set.
@@ -583,6 +622,40 @@ impl Talk<'_> {
                     self.sheet_changes.experience += amount;
                 }
                 "fp" => self.sheet_changes.fate_points += 1,
+                "jo" => self.join(a != 0, b),
+                "uw" => {
+                    if self.follow.mine && self.npc_flags & crate::follow::WAITING != 0 {
+                        match crate::follow::can_join(&self.join_check(), a != 0) {
+                            Ok(()) => {
+                                self.npc_flags &= !crate::follow::WAITING;
+                                self.follow.followers += i32::from(self.npc_flags & crate::follow::FORCED == 0);
+                                self.follow.changed = true;
+                                self.follow.goto = Some(b);
+                            }
+                            Err(r) => self.follow.refused = Some(r),
+                        }
+                    }
+                }
+                "lv" => {
+                    if self.follow.mine || self.follow.other_leader_charisma.is_some() {
+                        self.follow.mine = false;
+                        self.follow.other_leader_charisma = None;
+                        self.npc_flags &= !(crate::follow::FORCED | crate::follow::WAITING);
+                        self.follow.changed = true;
+                    }
+                }
+                "wa" => {
+                    if self.follow.mine && self.npc_flags & crate::follow::WAITING == 0 {
+                        self.follow.followers -= i32::from(self.npc_flags & crate::follow::FORCED == 0);
+                        self.npc_flags |= crate::follow::WAITING;
+                        self.follow.changed = true;
+                    }
+                }
+                "sc" | "so" => {
+                    let flags = if t.op() == "so" { self.npc_flags | crate::follow::SPREAD_OUT } else { self.npc_flags & !crate::follow::SPREAD_OUT };
+                    self.follow.changed |= flags != self.npc_flags;
+                    self.npc_flags = flags;
+                }
                 "re" => self.change_reaction(a, t.change),
                 op => self.unbuilt.push(format!("result {op}")),
             }
@@ -820,6 +893,8 @@ pub fn run_conversations(
     steps.extend(requests.choose.drain(..).map(|(p, i)| (p, Step::Choose(i))));
     steps.extend(requests.end.drain(..).map(|p| (p, Step::End)));
     steps.extend(requests.barks.drain(..).map(|(p, npc)| (p, Step::Bark(npc))));
+    // Every PC's charisma, for an NPC that already follows another (0x4ad950).
+    let charisma: BTreeMap<PlayerId, i32> = pcs.iter().map(|pc| (pc.2.0, rules.0.stats(&pc.4.0)[7])).collect();
     for (player, step) in steps {
         let Some((entity, &pc_net, _, &Position(pc_at), mut sheet, mut inventory, conversation, ..)) = pcs.iter_mut().find(|pc| pc.2.0 == player) else { continue };
         let Some(save) = world.0.as_mut() else { continue };
@@ -869,7 +944,30 @@ pub fn run_conversations(
         let level_up = generic.file(vfs, "mes/intgame.mes").and_then(|m| m.get(11)).map(str::to_string);
         let areas = &*areas;
         let pc_area = map.name.as_deref().map_or(0, |m| areas.area_at(m, pc_at));
+        let follow = match npc_object {
+            ScriptObject::Mobile { sector, index } => {
+                let here = map.name.clone().unwrap_or_default();
+                let record = save.followers.iter().find(|f| f.map == here && f.sector == sector && f.index == index);
+                let counted = |f: &&crate::follow::Follower| {
+                    f.leader == player && f.map == here && map.npc_flags(f.sector, f.index).is_some_and(|n| n & (crate::follow::WAITING | crate::follow::FORCED) == 0)
+                };
+                let object = map.mobiles.get(&sector).and_then(|m| m.get(index as usize));
+                let stat = |i: usize| object.and_then(|o| o.ints("critter_stat_base_idx").or_else(|| map.prototypes.of(o)?.ints("critter_stat_base_idx"))).and_then(|v| v.get(i).copied()).unwrap_or(0);
+                let packet = object.and_then(|o| map.prototypes.int(o, "npc_ai_data")).unwrap_or(0);
+                crate::follow::FollowTalk {
+                    mine: record.is_some_and(|f| f.leader == player),
+                    other_leader_charisma: record.filter(|f| f.leader != player).map(|f| charisma.get(&f.leader).copied().unwrap_or(0)),
+                    followers: save.followers.iter().filter(counted).count() as i32,
+                    ai: crate::follow::ai_follow(generic.file(vfs, crate::follow::GAME_AI), packet),
+                    npc_alignment: stat(0x13),
+                    npc_level: stat(0x11),
+                    ..Default::default()
+                }
+            }
+            _ => Default::default(),
+        };
         let mut talk = Talk {
+            follow,
             rules: &rules.0,
             sheet: &sheet.0,
             inventory: &mut inventory,
@@ -922,6 +1020,7 @@ pub fn run_conversations(
             }
         };
         let gold_changed = talk.gold_changed;
+        let follow_change = talk.follow.changed.then_some((talk.follow.mine, talk.npc_flags));
         let sheet_changes = std::mem::take(&mut talk.sheet_changes);
         let npc_changes = talk.npc_inventory_changed.then(|| (talk.npc_inventory.take(), talk.npc_stock.take()));
         for op in talk.unbuilt.drain(..) {
@@ -950,6 +1049,16 @@ pub fn run_conversations(
             outbox.0.push((player, LedgerDelta::DialogueEnded));
         }
         let mut touched = Vec::new();
+        // A join, leave, wait or order: the follower list and the NPC's flags.
+        if let (Some((mine, flags)), ScriptObject::Mobile { sector, index }) = (follow_change, npc_object) {
+            let here = map.name.clone().unwrap_or_default();
+            save.followers.retain(|f| !(f.map == here && f.sector == sector && f.index == index));
+            if mine {
+                save.followers.push(crate::follow::Follower { map: here, sector, index, leader: player });
+            }
+            map.set_npc_flags(sector, index, flags);
+            touched.push(sector);
+        }
         if let (Some((npc_inv, npc_stock)), ScriptObject::Mobile { sector, index }) = (npc_changes, npc_object) {
             if let Some(inv) = npc_inv {
                 map.set_npc_inventory(sector, index, inv);
@@ -1301,6 +1410,15 @@ impl Say<'_> {
         if let Some(closing) = talk.run_result(&entry.result) {
             return self.show_closing(file, closing, talk);
         }
+        // A refusal to follow (0x413a90): the NPC says why (`gd_npc` by reason) and the talk
+        // ends (builder's call); a join goes on at the line it names.
+        if let Some(r) = talk.follow.refused.take() {
+            self.npc_says(Block::Npc, crate::follow::refusal_line(r), talk);
+            return Shown::End;
+        }
+        if let Some(line) = talk.follow.goto.take() {
+            return self.respond(file, line, talk, depth);
+        }
         let text = entry.text.trim();
         match prefix(text) {
             // An insult (0x4191e0): reaction -10; below 21 the NPC insults back and leaves.
@@ -1542,6 +1660,7 @@ mod tests {
     fn talk_with<'a>(rules: &'a RulesData, sheet: &'a CharacterSheet, inventory: &'a mut Inventory, pc: &'a mut PcScriptState, globals: &'a mut ScriptGlobals, npc: &'a mut Attachment) -> Talk<'a> {
         let npc_reaction = crate::NpcReaction { base: 50, race: 0, origin: 0, faction: 0, only_reputation: false };
         Talk {
+            follow: Default::default(),
             rules,
             sheet,
             inventory,
@@ -1564,6 +1683,35 @@ mod tests {
             xp_quest: None,
             item_info: &|_| None,
         }
+    }
+
+    #[test]
+    fn join_wait_rejoin_spread_out_and_leave() {
+        use crate::follow::{FORCED, Refusal, SPREAD_OUT, WAITING};
+        let rules = RulesData::default();
+        let sheet = CharacterSheet::default();
+        let (mut inventory, mut pc, mut globals, mut npc) = Default::default();
+        let mut talk = talk_with(&rules, &sheet, &mut inventory, &mut pc, &mut globals, &mut npc);
+        talk.follow.npc_level = 1;
+        assert!(talk.passes_test("fo 0") && !talk.passes_test("fo 1"));
+        talk.run_result("jo 0 74");
+        assert!(talk.follow.mine && talk.passes_test("fo 1, wa 0"), "joined");
+        assert_eq!((talk.follow.goto, talk.follow.followers), (Some(74), 1));
+        talk.run_result("wa");
+        assert!(talk.npc_flags & WAITING != 0 && talk.passes_test("wa 1, fo 1"), "waiting, still its leader");
+        assert_eq!(talk.follow.followers, 0, "not counted while waiting");
+        talk.follow.goto = None;
+        talk.run_result("uw 0 9, so");
+        assert_eq!((talk.npc_flags & (WAITING | SPREAD_OUT), talk.follow.goto, talk.follow.followers), (SPREAD_OUT, Some(9), 1));
+        talk.run_result("sc, lv");
+        assert!(!talk.follow.mine && talk.npc_flags == 0 && talk.passes_test("fo 0"));
+        // Charisma 8 leads 2: a third is refused, unless forced.
+        talk.follow.followers = 2;
+        talk.run_result("jo 0 74");
+        assert_eq!(talk.follow.refused.take(), Some(Refusal::TooMany));
+        talk.run_result("jo 1 74");
+        assert!(talk.follow.mine && talk.npc_flags & FORCED != 0 && talk.follow.followers == 2, "forced: not counted");
+        assert!(talk.unbuilt.is_empty(), "{:?}", talk.unbuilt);
     }
 
     #[test]
