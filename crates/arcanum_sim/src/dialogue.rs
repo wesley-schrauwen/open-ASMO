@@ -2444,12 +2444,12 @@ mod tests {
             o.id = prototype_id(number);
             prototypes.insert(o);
         }
-        inventory.items.push(crate::CarriedItem { prototype: 6049, location: 0, quantity: 0, keys: vec![] });
+        inventory.items.push(crate::CarriedItem { prototype: 6049, location: 0, quantity: 0, keys: vec![], written: 0 });
         let one_cell = |_: u32| Some(crate::ItemInfo { kind: arcanum_formats::object::TYPE_WEAPON, inventory_art: 0, cells: (1, 1), weight: 1, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 0, item_flags: 0, worth: 0 });
         let mut talk = talk_with(&rules, &sheet, &mut inventory, &mut pc, &mut globals, &mut attachment);
         talk.prototypes = &prototypes;
         talk.item_info = &one_cell;
-        talk.npc_inventory = Some(Inventory { items: vec![crate::CarriedItem { prototype: 6050, location: 3, quantity: 0, keys: vec![] }], ..Default::default() });
+        talk.npc_inventory = Some(Inventory { items: vec![crate::CarriedItem { prototype: 6050, location: 3, quantity: 0, keys: vec![], written: 0 }], ..Default::default() });
         talk.npc_flags = 0x8;
         assert!(talk.passes_test("al 30, al -40, na 40") && !talk.passes_test("al 31") && !talk.passes_test("na -40"));
         let apt = rules.aptitude(&sheet);

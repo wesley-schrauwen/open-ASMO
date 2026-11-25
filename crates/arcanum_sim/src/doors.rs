@@ -989,7 +989,7 @@ mod tests {
             let give = |sim: &mut SimApp, key: i32| {
                 let world = sim.app.world_mut();
                 let mut inventory = world.query_filtered::<&mut crate::Inventory, With<PlayerControlled>>().single_mut(world).unwrap();
-                inventory.items = vec![crate::CarriedItem { prototype: 1, location: 0, quantity: 0, keys: vec![key] }];
+                inventory.items = vec![crate::CarriedItem { prototype: 1, location: 0, quantity: 0, keys: vec![key], written: 0 }];
             };
             give(&mut sim, 21);
             assert_eq!(changed(&use_door(&mut sim, 7, LOCKED, 0), 7), None, "the wrong key");

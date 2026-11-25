@@ -339,10 +339,10 @@ fn a_skilled_pc_picks_a_locked_chest_on_the_start_map_with_a_lockpick() {
         position.0 = at;
         sheet.0.base[1] = 20;
         sheet.0.skills[arcanum_sim::SKILL_PICK_LOCKS] = 5;
-        inventory.items = vec![CarriedItem { prototype: skeleton_key, location: 0, quantity: 0, keys: vec![] }];
+        inventory.items = vec![CarriedItem { prototype: skeleton_key, location: 0, quantity: 0, keys: vec![], written: 0 }];
     }
     let map = sim.app.world().resource::<LoadedMap>();
-    assert_eq!(lockpick_bonus(&Inventory { items: vec![CarriedItem { prototype: skeleton_key, location: 0, quantity: 0, keys: vec![] }], ..Default::default() }, Some(0), &map.prototypes), 10);
+    assert_eq!(lockpick_bonus(&Inventory { items: vec![CarriedItem { prototype: skeleton_key, location: 0, quantity: 0, keys: vec![], written: 0 }], ..Default::default() }, Some(0), &map.prototypes), 10);
     let mut picked = false;
     for seq in 0..20 {
         sim.receive([(PlayerId(1), PlayerIntent::PickLock { target: LockTarget::Container(chest), tool: Some(0), seq })]);
@@ -791,3 +791,50 @@ fn blessings_and_curses_name_effects_that_exist() {
     }
 }
 
+
+#[test]
+fn written_items_open_text_that_exists() {
+    use std::sync::{Arc, RwLock};
+
+    use arcanum_formats::mes::MesFile;
+    use arcanum_rules::{CharacterBlueprint, CharacterSheet, RulesData};
+    use arcanum_sim::{LoadedMap, PlayerId, SimApp, SimVfs, WorldState};
+    use arcanum_formats::object::TYPE_WRITTEN;
+    let Some(vfs) = vfs() else { return };
+    let start = StartMap::load(&vfs).unwrap();
+    let mut world = WorldState::default();
+    let sheet = CharacterSheet { name: "Virgil".into(), ..Default::default() };
+    world.add_player(Some(&start), PlayerId(1), CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None });
+    let files = ["mes/gamebook.mes", "mes/gamenote.mes", "mes/gamenewspaper.mes", "mes/gametelegram.mes"].map(|f| MesFile::parse(&vfs.read(f).unwrap()).unwrap());
+    let plaques = MesFile::parse(&vfs.read("mes/gameplaque.mes").unwrap()).unwrap();
+    let mut sim = SimApp::new(RulesData::default());
+    sim.use_manual_clock();
+    sim.app.insert_resource(SimVfs(Arc::new(RwLock::new(vfs))));
+    sim.boot(world.0.unwrap());
+    sim.update();
+    sim.update();
+    let map = sim.app.world().resource::<LoadedMap>();
+    let types: std::collections::BTreeMap<u32, usize> = (1..100000).filter_map(|n| map.prototypes.get(n)).fold(Default::default(), |mut m, p| {
+        *m.entry(p.object_type).or_default() += 1;
+        m
+    });
+    eprintln!("{} prototypes, by type {types:?}", map.prototypes.len());
+    let (mut by_kind, mut missing) = (std::collections::BTreeMap::<i32, usize>::new(), Vec::new());
+    for number in 1..100000 {
+        let Some(item) = map.prototypes.get(number).filter(|p| p.object_type == TYPE_WRITTEN) else { continue };
+        let kind = map.prototypes.int(item, "written_subtype").unwrap_or(0);
+        let line = map.prototypes.int(item, "written_text_start_line").unwrap_or(0);
+        *by_kind.entry(kind).or_default() += 1;
+        let file = match kind {
+            0..=3 => Some(&files[kind as usize]),
+            6 => Some(&plaques),
+            _ => None,
+        };
+        if file.is_some_and(|f| f.get(line as u32).is_none()) {
+            missing.push((number, kind, line));
+        }
+    }
+    eprintln!("written prototypes by subtype: {by_kind:?}; start lines missing: {missing:?}");
+    assert!(by_kind.values().sum::<usize>() > 10);
+    assert!(missing.len() * 10 < by_kind.values().sum::<usize>(), "{missing:?}");
+}

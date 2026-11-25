@@ -587,6 +587,16 @@ fn settle_inventory(mut inventory: ResMut<PcInventory>, sheet: Res<crate::pc_she
     inventory.settle(wearer(&sheet), client_info(prototypes, &sizes));
 }
 
+/// What reading written `item` opens (0x56bb60): the written window's kind (its prototype's
+/// `written_subtype`) and first line (the item's own, else its prototype's
+/// `written_text_start_line`). Schematics (subtype 5) are not read here.
+pub fn written_page(item: &CarriedItem, prototypes: &Prototypes) -> Option<(u8, i32)> {
+    let proto = prototypes.get(item.prototype).filter(|p| p.object_type == arcanum_formats::object::TYPE_WRITTEN)?;
+    let kind = u8::try_from(prototypes.int(proto, "written_subtype").unwrap_or(0)).ok().filter(|&k| k != 5)?;
+    let line = if item.written != 0 { item.written } else { prototypes.int(proto, "written_text_start_line").unwrap_or(0) };
+    Some((kind, line))
+}
+
 /// The use box (band coordinates).
 pub const USE_BOX: Rect = Rect { min: Vec2::new(703.0, 290.0), max: Vec2::new(783.0, 333.0) };
 
@@ -694,7 +704,7 @@ fn drag_items(
     (mut cache, assets, frames): (ResMut<ItemArtCache>, Res<AssetServer>, Res<Assets<ArtFrames>>),
     (boxed, time): (Option<ResMut<crate::message_box::MessageBox>>, Option<Res<Time<Real>>>),
     scroll: Res<LootScroll>,
-    armed: Option<ResMut<crate::skill_use::SkillTargeting>>,
+    (armed, mut written): (Option<ResMut<crate::skill_use::SkillTargeting>>, Option<ResMut<crate::written_window::WrittenPanel>>),
 ) {
     let right = buttons.just_pressed(MouseButton::Right);
     if !panel.open || !(buttons.just_pressed(MouseButton::Left) || buttons.just_released(MouseButton::Left) || right) {
@@ -726,7 +736,7 @@ fn drag_items(
                 .iter()
                 .find(|i| Some(i.location) == hotkey)
                 .cloned()
-                .or_else(|| hotkey.filter(|h| inv.spells.contains_key(h)).map(|h| CarriedItem { prototype: 0, location: h, quantity: 0, keys: vec![] }))
+                .or_else(|| hotkey.filter(|h| inv.spells.contains_key(h)).map(|h| CarriedItem { prototype: 0, location: h, quantity: 0, keys: vec![], written: 0 }))
                 .map(|i| (i.clone(), i.location, false)),
             Some(Spot::Pile(at)) => pile.as_ref().and_then(|p| pile_item_at(p, at, &info)).map(|i| (i.clone(), at, true)),
             Some(Spot::Pc(_)) => item_at(&inv, point, &info).map(|i| (i.clone(), location_at(point).unwrap_or(i.location), false)),
@@ -740,6 +750,10 @@ fn drag_items(
             // A right click sends it to the other side where the insert puts it (0x574248).
             if loot {
                 inventory.send(if from_pile { take(item.location, None) } else { put(item.location, None) });
+            } else if let (Some(page), Some(written)) = (written_page(&item, prototypes), written.as_mut()) {
+                // Not looting: a written item is read (builder's call: the original's use).
+                written.show(page.0, page.1);
+                panel.open = false;
             }
             return;
         }
@@ -752,10 +766,15 @@ fn drag_items(
         && let Some(h) = held.0.take()
     {
         if USE_BOX.contains(point) && !h.from_pile {
-            // A lockpick on the use box arms Pick Locks with it; the screen closes.
-            let lockpick = inv.items.iter().find(|i| i.location == h.from).is_some_and(|i| arcanum_sim::is_lockpick(i.prototype, prototypes));
+            // A lockpick on the use box arms Pick Locks with it; a written item is read
+            // (0x56bb60); the screen closes.
+            let used = inv.items.iter().find(|i| i.location == h.from);
+            let lockpick = used.is_some_and(|i| arcanum_sim::is_lockpick(i.prototype, prototypes));
             if lockpick && let Some(mut armed) = armed {
                 armed.0 = Some(crate::skill_use::Armed::Skill { skill: arcanum_sim::SKILL_PICK_LOCKS, tool: Some(h.from) });
+                panel.open = false;
+            } else if let (Some(page), Some(written)) = (used.and_then(|i| written_page(i, prototypes)), written.as_mut()) {
+                written.show(page.0, page.1);
                 panel.open = false;
             }
             return;
@@ -1044,7 +1063,7 @@ mod tests {
         assert_eq!(location_at(Vec2::new(368.0 + 32.0 * 9.5, 8.0 + 32.0 * 11.5)), Some(119));
         assert_eq!(location_at(Vec2::new(30.0, 200.0)), Some(Slot::Weapon as i32));
         assert_eq!(location_at(Vec2::new(700.0, 200.0)), None);
-        let inv = Inventory { items: vec![CarriedItem { prototype: 1, location: 13, quantity: 0, keys: vec![] }], ..Default::default() };
+        let inv = Inventory { items: vec![CarriedItem { prototype: 1, location: 13, quantity: 0, keys: vec![], written: 0 }], ..Default::default() };
         let on = |cell: i32| Vec2::new(368.0 + 32.0 * (cell % 10) as f32 + 5.0, 8.0 + 32.0 * (cell / 10) as f32 + 5.0);
         assert!(item_at(&inv, on(33), sword).is_some(), "the footprint's last cell");
         assert!(item_at(&inv, on(43), sword).is_none());
@@ -1068,7 +1087,7 @@ mod tests {
         assert_eq!(spot_at(Vec2::new(10.0, 170.0 + 7.0 * 32.0), Some(BARTER_SIDE), 0), None, "seven rows shown");
         assert_eq!(spot_at(Vec2::new(10.0, 140.0), Some(BARTER_SIDE), 0), None, "the text line, not the grid");
         assert_eq!(pile_box(23, (1, 2), 1, PILE_GRID).min, Vec2::new(8.0 + 96.0, 136.0 + 32.0));
-        let pile = Inventory { items: vec![CarriedItem { prototype: 1, location: 12, quantity: 0, keys: vec![] }], ..Inventory::container() };
+        let pile = Inventory { items: vec![CarriedItem { prototype: 1, location: 12, quantity: 0, keys: vec![], written: 0 }], ..Inventory::container() };
         assert!(pile_item_at(&pile, 32, sword).is_some(), "a 1x3 sword from row 1 to 3");
     }
 
@@ -1077,18 +1096,18 @@ mod tests {
         let man = Wearer { race: 0, gender: 1 };
         let mut inv = PcInventory::default();
         assert!(inv.request(InventoryRequest::Move { from: 0, to: 1 }, man, sword).is_err(), "nothing before the host's copy");
-        inv.receive(0, Inventory { items: vec![CarriedItem { prototype: 1, location: 0, quantity: 0, keys: vec![] }], ..Default::default() });
+        inv.receive(0, Inventory { items: vec![CarriedItem { prototype: 1, location: 0, quantity: 0, keys: vec![], written: 0 }], ..Default::default() });
         inv.settle(man, sword);
         inv.request(InventoryRequest::Move { from: 0, to: 5 }, man, sword).unwrap();
         inv.request(InventoryRequest::Move { from: 5, to: 7 }, man, sword).unwrap();
         assert_eq!(inv.shown().unwrap().items[0].location, 7);
         assert_eq!(inv.take_outgoing().len(), 2);
         // The host took the first; the second is replayed on its copy.
-        inv.receive(1, Inventory { items: vec![CarriedItem { prototype: 1, location: 5, quantity: 0, keys: vec![] }], ..Default::default() });
+        inv.receive(1, Inventory { items: vec![CarriedItem { prototype: 1, location: 5, quantity: 0, keys: vec![], written: 0 }], ..Default::default() });
         inv.settle(man, sword);
         assert_eq!(inv.shown().unwrap().items[0].location, 7);
         // The host refused the second: its copy wins.
-        inv.receive(2, Inventory { items: vec![CarriedItem { prototype: 1, location: 5, quantity: 0, keys: vec![] }], ..Default::default() });
+        inv.receive(2, Inventory { items: vec![CarriedItem { prototype: 1, location: 5, quantity: 0, keys: vec![], written: 0 }], ..Default::default() });
         inv.settle(man, sword);
         assert_eq!(inv.shown().unwrap().items[0].location, 5);
         assert_eq!(inv.request(InventoryRequest::Move { from: 5, to: 1001 }, man, sword), Err(ItemRefusal::WrongSlot));
@@ -1096,11 +1115,11 @@ mod tests {
 
     #[test]
     fn items_sit_centred_in_their_footprint() {
-        let item = CarriedItem { prototype: 1, location: 12, quantity: 0, keys: vec![] };
+        let item = CarriedItem { prototype: 1, location: 12, quantity: 0, keys: vec![], written: 0 };
         let inside = placement(&item, (2, 3)).unwrap();
         assert_eq!(inside, Rect::from_corners(Vec2::new(432.0, 40.0), Vec2::new(496.0, 136.0)));
         assert_eq!(centred(inside, UVec2::new(41, 90), true), Vec2::new(443.0, 43.0));
-        let sword = CarriedItem { prototype: 1, location: Slot::Weapon as i32, quantity: 0, keys: vec![] };
+        let sword = CarriedItem { prototype: 1, location: Slot::Weapon as i32, quantity: 0, keys: vec![], written: 0 };
         assert_eq!(placement(&sword, (1, 1)).unwrap().min, Vec2::new(23.0, 170.0));
         assert_eq!(centred(placement(&sword, (1, 1)).unwrap(), UVec2::new(101, 128), false), Vec2::new(20.0, 170.0), "an arithmetic shift rounds down");
     }
@@ -1110,7 +1129,7 @@ mod tests {
         use arcanum_sim::barter::{BarterView, Offer};
         let mut stock = Inventory::default();
         stock.change_gold(40);
-        stock.items.push(CarriedItem { prototype: 6049, location: 3, quantity: 0, keys: vec![] });
+        stock.items.push(CarriedItem { prototype: 6049, location: 3, quantity: 0, keys: vec![], written: 0 });
         let view = BarterView { npc: arcanum_sim::NetId(4), npc_male: true, npc_name: "Bates".into(), stock, buy: [(3, Offer { price: 12, line: "I will sell that for 12 coins.".into() })].into(), sell: Default::default(), npc_gold: 40 };
         let mut inventory = PcInventory::default();
         inventory.barter_view(view.clone());
@@ -1126,5 +1145,26 @@ mod tests {
         inventory.left_map();
         assert!(inventory.barter().is_none() && inventory.left_map, "another map: the window closes");
     }
-}
 
+    #[test]
+    fn written_items_open_their_page_and_schematics_do_not() {
+        use arcanum_formats::object::{Object, TYPE_WEAPON, TYPE_WRITTEN, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, prototype_id};
+        let make = |number: u32, kind: u32, subtype: i32| {
+            let b = ObjectBuilder::new(kind);
+            let b = if kind == TYPE_WRITTEN { b.field("written_subtype", Value::Int32(subtype)).field("written_text_start_line", Value::Int32(1010)) } else { b };
+            let mut o = Object::parse_instance(&b.build()).unwrap();
+            o.id = prototype_id(number);
+            o
+        };
+        let mut prototypes = Prototypes::default();
+        prototypes.insert(make(9000, TYPE_WRITTEN, 0));
+        prototypes.insert(make(9001, TYPE_WRITTEN, 5));
+        prototypes.insert(make(9002, TYPE_WEAPON, 0));
+        let item = |prototype, written| CarriedItem { prototype, location: 0, quantity: 0, keys: vec![], written };
+        assert_eq!(written_page(&item(9000, 0), &prototypes), Some((0, 1010)), "a book from its prototype's line 1010");
+        assert_eq!(written_page(&item(9000, 1500), &prototypes), Some((0, 1500)), "its own line first");
+        assert_eq!(written_page(&item(9001, 0), &prototypes), None, "a schematic");
+        assert_eq!(written_page(&item(9002, 0), &prototypes), None);
+    }
+}

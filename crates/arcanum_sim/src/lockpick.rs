@@ -291,7 +291,7 @@ mod tests {
         prototypes.insert(proto(15101, TYPE_GENERIC, OGF_IS_LOCKPICK, 10));
         prototypes.insert(proto(15200, TYPE_GENERIC, 8, 20));
         prototypes.insert(proto(6049, TYPE_WEAPON, 0, 0));
-        let item = |prototype, location| crate::CarriedItem { prototype, location, quantity: 0, keys: vec![] };
+        let item = |prototype, location| crate::CarriedItem { prototype, location, quantity: 0, keys: vec![], written: 0 };
         let inv = Inventory { items: vec![item(15101, 0), item(15200, 1), item(6049, 2)], ..Default::default() };
         assert_eq!(lockpick_bonus(&inv, Some(0), &prototypes), 10, "the auto skeleton key");
         assert_eq!(lockpick_bonus(&inv, Some(1), &prototypes), 0, "a healing kit is no lockpick");

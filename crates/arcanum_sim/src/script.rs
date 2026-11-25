@@ -444,6 +444,8 @@ pub trait ScriptContext {
     fn in_slot(&mut self, _holder: Self::Object, _slot: i32) -> Option<Self::Object> {
         None
     }
+    /// Sets a written item's first line (field 0xcb, action 0x5e).
+    fn set_written_line(&mut self, _item: Self::Object, _line: i32) {}
     /// `listener` hears `target` (0x4af470 is 0).
     fn can_hear(&mut self, _listener: Self::Object, _target: Self::Object) -> bool {
         false
@@ -1540,6 +1542,14 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
                 _ => -1,
             };
             set(ctx, attachment, run, ops[1], v);
+            Step::Next
+        }
+        // A written item's first line (field 0xcb).
+        0x5e => {
+            let n = value(ctx, attachment, run, 1);
+            for o in objects(run, ops[0], line, unsupported)? {
+                ctx.set_written_line(o, n);
+            }
             Step::Next
         }
         // Unfog town map N (0x4bed30): there are no town maps yet; the script goes on.
