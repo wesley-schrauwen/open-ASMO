@@ -140,6 +140,9 @@ fn at_offset(at: TileLoc, dx: i32, dy: i32) -> Option<TileLoc> {
 
 type ThinkerQuery<'a> = (Entity, &'a mut Position, &'a mut Standpoints, Has<Active>, Has<Walking>);
 
+/// NPCs that think for themselves: not following, not fighting.
+type IdleFilter = (With<Npc>, Without<crate::follow::Following>, Without<crate::combat::Fighting>);
+
 /// Runs each NPC's heartbeat (one tick of time), as described in the module docs.
 pub fn npc_idle(
     mut commands: Commands,
@@ -147,7 +150,7 @@ pub fn npc_idle(
     clock: Res<GameClock>,
     mut rng: ResMut<HostRng>,
     pcs: Query<&Position, (With<PlayerControlled>, Without<Npc>)>,
-    mut npcs: Query<ThinkerQuery, (With<Npc>, Without<crate::follow::Following>)>,
+    mut npcs: Query<ThinkerQuery, IdleFilter>,
 ) {
     let tick_ms = (1000.0 / crate::TICK_HZ) as u32;
     let hour = clock.now.hour();

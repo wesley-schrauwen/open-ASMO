@@ -176,6 +176,7 @@ pub fn apply_moves(
     mut clock: ResMut<SyncClock>,
     mut world: ResMut<WorldState>,
     mut pcs: Query<MoverQuery>,
+    mut combat: ResMut<crate::combat::Combat>,
 ) {
     for (player, seq, path) in requests.0.drain(..) {
         let Some(SessionPlayer::InWorld(net_id)) = session.players.get(&player) else { continue };
@@ -202,8 +203,26 @@ pub fn apply_moves(
             map.load_sector(vfs_guard.as_deref(), id);
         }
         drop(vfs_guard);
-        match check_path(&*map, at, &path).or_else(|refusal| continue_route(&*map, walking.map(|w| &w.steps), &path).ok_or(refusal)) {
+        // In a fight (owner's rule: within its radius): only on the PC's turn, as far as its
+        // points go (a step 2, 0x4b7ba0).
+        let net_id = *net_id;
+        let fighting = combat.0.as_mut().filter(|e| e.order.contains(&net_id));
+        let allowed = match fighting {
+            None => usize::MAX,
+            Some(e) if e.current() == Some(net_id) => (e.ap / crate::combat::STEP_AP).max(0) as usize,
+            Some(_) => 0,
+        };
+        commands.entity(entity).remove::<crate::combat::PendingAttack>();
+        match check_path(&*map, at, &path).or_else(|refusal| continue_route(&*map, walking.map(|w| &w.steps), &path).ok_or(refusal)).map(|mut s| {
+            s.truncate(allowed);
+            s
+        }) {
             Ok(steps) if !steps.is_empty() => {
+                if allowed != usize::MAX
+                    && let Some(e) = combat.0.as_mut()
+                {
+                    e.ap -= steps.len() as i32 * crate::combat::STEP_AP;
+                }
                 // The step under way goes on where it was if the new path takes it too.
                 let progress = walking.filter(|w| w.steps.front() == steps.first()).map_or(0.0, |w| w.progress);
                 commands.entity(entity).insert(Walking { steps: steps.into(), progress });

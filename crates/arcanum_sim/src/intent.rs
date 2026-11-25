@@ -48,6 +48,11 @@ pub enum PlayerIntent {
     PickPocket { npc: crate::NetId, seq: u32 },
     /// Start or stop prowling ([`crate::prowl`]).
     Prowl { on: bool },
+    /// Attack critter `target` ([`crate::combat`]): starts a fight if none runs; on the PC's
+    /// turn it strikes, walking next to it first for melee. `seq` is the move sent with it.
+    Attack { target: crate::NetId, seq: u32 },
+    /// End the PC's turn in a fight.
+    EndTurn,
     /// Cast `spell` on a door or container from where the PC stands ([`crate::magick`]).
     Cast { spell: usize, target: crate::LockTarget },
     /// Open the sleep window ([`crate::rest`]): the host answers with

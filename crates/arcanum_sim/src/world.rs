@@ -887,6 +887,62 @@ mod tests {
     }
 
     #[test]
+    fn a_pc_fights_an_npc_turn_by_turn_until_it_dies() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let mut foe = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(72, 70)).field("npc_experience_worth", Value::Int32(100)).field("npc_experience_pool", Value::Int32(100));
+        foe.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
+        std::fs::write(folder.join("G_0F.mob"), foe.build()).unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        let (npc, index) = {
+            let world = sim.app.world_mut();
+            let map = world.resource::<LoadedMap>();
+            let index = map.mobiles[&SectorId::new(1, 1)].iter().position(|o| o.object_type == TYPE_NPC && crate::object_location(o) == Some(TileLoc { x: 72, y: 70 })).unwrap() as u32;
+            (*world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == index).unwrap().0, index)
+        };
+        let pc = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::PlayerControlled)>().iter(world).next().unwrap().0 };
+        sim.take_deltas();
+        let mut attacks = 0;
+        let mut ended = false;
+        for seq in 0..200 {
+            sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: npc, seq })]);
+            sim.update();
+            for (_, d) in sim.take_deltas() {
+                match d {
+                    LedgerDelta::Attacked { attacker, target, .. } => {
+                        assert_eq!((attacker, target), (pc, npc));
+                        attacks += 1;
+                    }
+                    LedgerDelta::Combat { order, turn, .. } if order.is_empty() => {
+                        assert_eq!(turn, None);
+                        ended = true;
+                    }
+                    LedgerDelta::Combat { order, .. } => assert_eq!(order, [pc, npc], "the PC first"),
+                    _ => {}
+                }
+            }
+            if ended {
+                break;
+            }
+        }
+        assert!(ended, "the NPC dies and the fight ends after {attacks} attacks");
+        let map = sim.app.world().resource::<LoadedMap>();
+        assert!(map.is_dead(SectorId::new(1, 1), index));
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert!(save.sector_changes[&SectorId::new(1, 1)].npc_damage[&index] >= 4, "4 hit points: no stats");
+        assert!(save.players[&PlayerId(1)].blueprint.sheet.experience > 0, "experience for the hits and the kill");
+    }
+
+    #[test]
     fn prowling_switches_the_pcs_art_and_everyone_hears_of_it() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());

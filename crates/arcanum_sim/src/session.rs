@@ -65,7 +65,7 @@ pub fn handle_intents(
     (mut picks, mut disarms): (ResMut<crate::PickLockRequests>, ResMut<crate::DisarmRequests>),
     mut casts: ResMut<crate::CastRequests>,
     (mut rests, mut stops, mut talks): (ResMut<crate::RestRequests>, ResMut<crate::StopRestRequests>, ResMut<crate::TalkRequests>),
-    (mut votes, mut fates, mut prowls): (ResMut<crate::big_move::VoteRequests>, ResMut<crate::FateRequests>, ResMut<crate::prowl::ProwlRequests>),
+    (mut votes, mut fates, mut prowls, mut fights): (ResMut<crate::big_move::VoteRequests>, ResMut<crate::FateRequests>, ResMut<crate::prowl::ProwlRequests>, ResMut<crate::combat::CombatRequests>),
 ) {
     for (player, intent) in inbox.0.drain(..) {
         match intent {
@@ -102,6 +102,8 @@ pub fn handle_intents(
             PlayerIntent::Talk { npc, seq } => talks.talk.push((player, npc, seq)),
             PlayerIntent::PickPocket { npc, seq } => talks.pockets.push((player, npc, seq)),
             PlayerIntent::Prowl { on } => prowls.0.push((player, on)),
+            PlayerIntent::Attack { target, seq } => fights.attacks.push((player, target, seq)),
+            PlayerIntent::EndTurn => fights.end_turn.push(player),
             PlayerIntent::Choose { option } => talks.choose.push((player, option)),
             PlayerIntent::EndTalk => talks.end.push(player),
             PlayerIntent::Vote { id, yes } => votes.0.push((player, id, yes)),

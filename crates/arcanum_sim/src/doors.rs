@@ -306,6 +306,13 @@ impl LoadedMap {
                 }
             }
         }
+        for (field, kept) in [("hp_damage", &delta.npc_damage), ("npc_experience_pool", &delta.npc_pools)] {
+            for (&index, &v) in kept {
+                if let Some(o) = self.mobiles.get_mut(&id).and_then(|m| m.get_mut(index as usize)) {
+                    o.set_int(field, v);
+                }
+            }
+        }
         for (index, flags) in delta.npc_flags {
             if let Some(object) = self.mobiles.get_mut(&id).and_then(|m| m.get_mut(index as usize)) {
                 object.set_int("npc_flags", flags);
