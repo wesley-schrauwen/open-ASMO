@@ -67,6 +67,10 @@ pub struct PlayerSave {
     /// The PC's script variables and flags ([`crate::script`]).
     #[serde(default)]
     pub script_state: crate::PcScriptState,
+    /// What it wore when its wield scripts last ran, by slot ([`crate::run_wield_scripts`]);
+    /// `None` before the first time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worn: Option<BTreeMap<i32, u32>>,
 }
 
 /// What changed in one sector since the original data. Objects are named by their place in the
@@ -247,7 +251,7 @@ impl WorldState {
     pub fn add_player(&mut self, start: Option<&StartMap>, player: PlayerId, blueprint: CharacterBlueprint) -> bool {
         let Some(start) = start else { return false };
         let save = self.0.get_or_insert_with(|| WorldSave::new_game(start));
-        save.players.insert(player, PlayerSave { blueprint, position: start.position, inventory: None, script_state: Default::default() });
+        save.players.insert(player, PlayerSave { blueprint, position: start.position, inventory: None, script_state: Default::default(), worn: None });
         true
     }
 }

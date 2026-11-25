@@ -1217,6 +1217,7 @@ pub fn met_key(npc: ScriptObject) -> String {
         ScriptObject::Mobile { sector, index } => format!("{}:{}", sector.0, index),
         ScriptObject::Map(id) => format!("map {}:{}", id.sector.0, id.index),
         ScriptObject::Pc(p) => format!("pc {}", p.0),
+        ScriptObject::Carried { holder, prototype } => format!("item {} of {}", prototype, holder.0),
     }
 }
 
@@ -1225,7 +1226,7 @@ pub fn npc_details(map: &LoadedMap, npc: ScriptObject, generic: &mut GenericLine
     let object = match npc {
         ScriptObject::Mobile { sector, index } => map.mobiles.get(&sector).and_then(|m| m.get(index as usize)),
         ScriptObject::Map(id) => map.map_object(id),
-        ScriptObject::Pc(_) => None,
+        ScriptObject::Pc(_) | ScriptObject::Carried { .. } => None,
     };
     let none = crate::NpcReaction { base: crate::BASE_REACTION, race: 0, origin: 0, faction: 0, only_reputation: false };
     let Some(object) = object else { return NpcInfo { name: String::new(), male: true, reaction: none, class: 0, dumb: false, overrides: None, healer: Healer::default() } };

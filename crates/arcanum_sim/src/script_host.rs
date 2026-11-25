@@ -38,6 +38,8 @@ pub enum ScriptObject {
     Map(MapObjectId),
     /// One of the map's mobile objects (containers, items on the ground, NPCs).
     Mobile { sector: arcanum_formats::map::SectorId, index: u32 },
+    /// An item a PC carries, by its prototype (its scripts are the prototype's).
+    Carried { holder: PlayerId, prototype: u32 },
 }
 
 impl ScriptObject {
@@ -75,7 +77,7 @@ impl LoadedMap {
     /// The attachment `object` has for `event` now: changed by a script, else from the data.
     pub fn attachment(&self, object: ScriptObject, event: u32) -> Attachment {
         let (sector, index, data) = match object {
-            ScriptObject::Pc(_) => return Attachment::default(),
+            ScriptObject::Pc(_) | ScriptObject::Carried { .. } => return Attachment::default(),
             ScriptObject::Map(id) => (id.sector, id.index, self.map_object(id)),
             ScriptObject::Mobile { sector, index } => (sector, index, self.mobiles.get(&sector).and_then(|m| m.get(index as usize))),
         };
@@ -92,7 +94,7 @@ impl LoadedMap {
     /// Keeps a changed attachment in the sector's changes.
     pub fn set_attachment(&mut self, object: ScriptObject, event: u32, attachment: Attachment) {
         let (sector, index) = match object {
-            ScriptObject::Pc(_) => return,
+            ScriptObject::Pc(_) | ScriptObject::Carried { .. } => return,
             ScriptObject::Map(id) => (id.sector, id.index),
             ScriptObject::Mobile { sector, index } => (sector, index),
         };
@@ -165,6 +167,8 @@ struct HostWorld<'a> {
     areas: &'a crate::areas::AreaTable,
     /// Scripts to run later (action 0x36).
     scheduled: Vec<TimedScript>,
+    /// Scheduled runs cancelled (action 0x7d): script and object.
+    cancelled: Vec<(u32, ScriptObject)>,
     vfs: Option<&'a arcanum_vfs::Vfs>,
     globals: &'a mut ScriptGlobals,
     players: &'a mut BTreeMap<PlayerId, crate::PlayerSave>,
@@ -220,6 +224,7 @@ impl ScriptContext for HostWorld<'_> {
     fn object_int(&mut self, object: ScriptObject, field: &str) -> Option<i32> {
         let data = match object {
             ScriptObject::Pc(_) => None,
+            ScriptObject::Carried { prototype, .. } => return self.map.prototypes.get(prototype)?.int(field),
             ScriptObject::Map(id) => self.map.map_object(id),
             ScriptObject::Mobile { sector, index } => self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)),
         }?;
@@ -287,6 +292,7 @@ impl ScriptContext for HostWorld<'_> {
     fn object_type(&mut self, object: ScriptObject) -> i32 {
         match object {
             ScriptObject::Pc(_) => arcanum_formats::object::TYPE_PC as i32,
+            ScriptObject::Carried { prototype, .. } => self.map.prototypes.get(prototype).map_or(0, |p| p.object_type as i32),
             ScriptObject::Map(id) => self.map.map_object(id).map_or(0, |o| o.object_type as i32),
             ScriptObject::Mobile { sector, index } => self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).map_or(0, |o| o.object_type as i32),
         }
@@ -314,7 +320,7 @@ impl ScriptContext for HostWorld<'_> {
             ScriptObject::Mobile { sector, .. } => {
                 self.sectors.insert(sector);
             }
-            ScriptObject::Pc(_) => {}
+            ScriptObject::Pc(_) | ScriptObject::Carried { .. } => {}
         }
     }
 
@@ -451,7 +457,7 @@ impl ScriptContext for HostWorld<'_> {
                 let raw = o.ints(field).or_else(|| self.map.prototypes.of(o)?.ints(field)).and_then(|v| v.get(i).copied()).unwrap_or(0);
                 ((raw & 0x3f) * arcanum_rules::LEVELS_PER_POINT).min(arcanum_rules::MAX_SKILL_LEVEL)
             }
-            ScriptObject::Map(_) => 0,
+            ScriptObject::Map(_) | ScriptObject::Carried { .. } => 0,
         }
     }
 
@@ -474,7 +480,7 @@ impl ScriptContext for HostWorld<'_> {
         let (sector, index, mobile) = match object {
             ScriptObject::Map(id) => (id.sector, id.index, false),
             ScriptObject::Mobile { sector, index } => (sector, index, true),
-            ScriptObject::Pc(_) => return,
+            ScriptObject::Pc(_) | ScriptObject::Carried { .. } => return,
         };
         let Some(flags) = self.map.object_flags(sector, index, mobile) else { return };
         let flags = flags ^ mask;
@@ -517,7 +523,7 @@ impl ScriptContext for HostWorld<'_> {
                 let stats = o.ints("critter_stat_base_idx").or_else(|| self.map.prototypes.of(o)?.ints("critter_stat_base_idx"));
                 usize::try_from(stat).ok().and_then(|i| stats?.get(i).copied()).unwrap_or(0)
             }
-            ScriptObject::Map(_) => 0,
+            ScriptObject::Map(_) | ScriptObject::Carried { .. } => 0,
         }
     }
 
@@ -566,6 +572,14 @@ impl ScriptContext for HostWorld<'_> {
         self.scheduled.push(TimedScript { at: self.now.plus_ms(delay_ms), script, line, triggerer, attachee });
     }
 
+    /// Which of the record's objects the original compares was not read (0x44aff0): here
+    /// either (builder's call). Runs scheduled in this same run are dropped too.
+    fn cancel_scheduled(&mut self, script: u32, object: ScriptObject) {
+        let matches = |t: &TimedScript| t.script == script && (t.triggerer == object || t.attachee == object);
+        self.scheduled.retain(|t| !matches(t));
+        self.cancelled.push((script, object));
+    }
+
     fn area_of(&mut self, object: ScriptObject) -> i32 {
         let (Some(at), Some(map)) = (self.location(object), self.map.name.clone()) else { return 0 };
         self.areas.area_at(&map, at) as i32
@@ -581,7 +595,7 @@ fn map_place(object: ScriptObject) -> Option<(arcanum_formats::map::SectorId, u3
     match object {
         ScriptObject::Map(id) => Some((id.sector, id.index, false)),
         ScriptObject::Mobile { sector, index } => Some((sector, index, true)),
-        ScriptObject::Pc(_) => None,
+        ScriptObject::Pc(_) | ScriptObject::Carried { .. } => None,
     }
 }
 
@@ -609,7 +623,7 @@ impl HostWorld<'_> {
         match object {
             ScriptObject::Map(id) => crate::object_location(self.map.map_object(id)?),
             ScriptObject::Mobile { sector, index } => crate::object_location(self.map.mobiles.get(&sector)?.get(index as usize)?),
-            ScriptObject::Pc(_) => None,
+            ScriptObject::Pc(_) | ScriptObject::Carried { .. } => None,
         }
     }
 
@@ -625,7 +639,7 @@ impl HostWorld<'_> {
                     _ => None,
                 }
             }
-            ScriptObject::Map(_) => None,
+            ScriptObject::Map(_) | ScriptObject::Carried { .. } => None,
         }
     }
 
@@ -647,7 +661,7 @@ impl HostWorld<'_> {
                 }
                 self.sectors.insert(sector);
             }
-            ScriptObject::Map(_) => {}
+            ScriptObject::Map(_) | ScriptObject::Carried { .. } => {}
         }
     }
 
@@ -721,6 +735,56 @@ pub fn sync_script_inventories(mut changed: ResMut<ScriptInventories>, world: Re
     }
 }
 
+/// Item events (0x441980's list): an item worn (24) and taken off (25).
+pub const EVENT_WIELD_ON: u32 = 24;
+pub const EVENT_WIELD_OFF: u32 = 25;
+
+/// Runs the wield scripts of the items each PC puts on or takes off (0x466640 → 0x4677b0,
+/// 0x467860 → 0x467cb0), after the change, by comparing what it wears with what it wore (kept
+/// in the save, [`crate::PlayerSave::worn`]). Taken off first, then put on. A PC seen for the
+/// first time (a new character) puts its starting gear on; loading a game runs nothing, as in
+/// the original.
+pub fn run_wield_scripts(mut host: ScriptHost, mut world: ResMut<WorldState>, mut map: ResMut<LoadedMap>, mut outbox: ResMut<crate::Outbox>, pcs: Query<(&crate::PlayerControlled, &crate::Inventory)>) {
+    // Read first: the save is only touched when something changed.
+    let mut changes = Vec::new();
+    let mut now_worn = Vec::new();
+    {
+        let Some(save) = world.0.as_ref() else { return };
+        for (controlled, inventory) in &pcs {
+            let Some(saved) = save.players.get(&controlled.0) else { continue };
+            let now: BTreeMap<i32, u32> = inventory.items.iter().filter(|i| (crate::FIRST_SLOT..=crate::LAST_SLOT).contains(&i.location)).map(|i| (i.location, i.prototype)).collect();
+            let before = saved.worn.clone().unwrap_or_default();
+            if before == now {
+                continue;
+            }
+            for (slot, &prototype) in &before {
+                if now.get(slot) != Some(&prototype) {
+                    changes.push((controlled.0, prototype, EVENT_WIELD_OFF));
+                }
+            }
+            for (slot, &prototype) in &now {
+                if before.get(slot) != Some(&prototype) {
+                    changes.push((controlled.0, prototype, EVENT_WIELD_ON));
+                }
+            }
+            now_worn.push((controlled.0, now));
+        }
+    }
+    if now_worn.is_empty() {
+        return;
+    }
+    if let Some(save) = world.0.as_mut() {
+        for (player, now) in now_worn {
+            if let Some(saved) = save.players.get_mut(&player) {
+                saved.worn = Some(now);
+            }
+        }
+    }
+    for (player, prototype, event) in changes {
+        host.item_hook(&mut world, &mut map, &mut outbox, player, prototype, event);
+    }
+}
+
 /// PCs whose sheet a script changed: [`sync_script_sheets`] sends them.
 #[derive(Resource, Debug, Default)]
 pub struct ScriptSheets(pub std::collections::BTreeSet<PlayerId>);
@@ -762,11 +826,24 @@ impl ScriptHost<'_, '_> {
             let sector = match object {
                 ScriptObject::Map(id) => id.sector,
                 ScriptObject::Mobile { sector, .. } => sector,
-                ScriptObject::Pc(_) => return result,
+                ScriptObject::Pc(_) | ScriptObject::Carried { .. } => return result,
             };
             crate::ground::save_change(world, map, sector);
         }
         result
+    }
+
+    /// Runs the script of an item `player`'s PC carries, for `event` (wield 24, unwield 25):
+    /// the item is the script's own object, the PC the triggerer (0x4677b0 / 0x467cb0). The
+    /// answer is ignored, as the original's is; the item's script counters are not kept.
+    pub fn item_hook(&mut self, world: &mut WorldState, map: &mut LoadedMap, outbox: &mut crate::Outbox, player: PlayerId, prototype: u32, event: u32) {
+        let Some(mut attachment) = map.prototypes.get(prototype).and_then(|p| attachments(p, &map.prototypes).get(&event).copied()) else { return };
+        if attachment.number == 0 {
+            return;
+        }
+        let item = ScriptObject::Carried { holder: player, prototype };
+        let invocation = Invocation { attachee: item, triggerer: ScriptObject::Pc(player), other: None, event, start_line: 0 };
+        self.execute(world, map, outbox, &mut attachment, invocation, player);
     }
 
     /// Runs the scripts whose time has come (action 0x36): each with a record of its own, for
@@ -815,6 +892,7 @@ impl ScriptHost<'_, '_> {
             rules: &self.rules.0,
             reputations,
             scheduled: Vec::new(),
+            cancelled: Vec::new(),
             library,
             map,
             player,
@@ -854,6 +932,9 @@ impl ScriptHost<'_, '_> {
             }
         }
         self.toggled_npcs.0.append(&mut ctx.npcs_toggled);
+        for (script, object) in std::mem::take(&mut ctx.cancelled) {
+            self.timed.0.retain(|t| !(t.script == script && (t.triggerer == object || t.attachee == object)));
+        }
         self.timed.0.append(&mut ctx.scheduled);
         let touched = std::mem::take(&mut ctx.sectors);
         for (object, map, to) in std::mem::take(&mut ctx.teleports) {

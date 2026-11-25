@@ -496,7 +496,7 @@ fn virgil_greets_the_pc_at_the_crash_site() {
     let mut save = WorldSave::new_game(&start);
     let sheet = CharacterSheet { name: "Virgil's Hero".into(), ..Default::default() };
     let here = TileLoc { x: at.x + 1, y: at.y };
-    save.players.insert(PlayerId(1), PlayerSave { blueprint: CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None }, position: here, inventory: None, script_state: Default::default() });
+    save.players.insert(PlayerId(1), PlayerSave { blueprint: CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None }, position: here, inventory: None, script_state: Default::default(), worn: None });
     let mut sim = SimApp::new(rules);
     sim.use_manual_clock();
     sim.app.insert_resource(SimVfs(Arc::new(RwLock::new(vfs))));
@@ -716,4 +716,38 @@ fn virgil_can_join_a_new_character() {
     eprintln!("Virgil: AI packet {packet} {ai:?}, level {level}, alignment {alignment}, npc_flags {:?}", map.prototypes.int(virgil, "npc_flags"));
     let check = JoinCheck { pc_charisma: 8, pc_level: 1, max_followers: 2, reaction: 50, npc_alignment: alignment, npc_level: level, ai, ..Default::default() };
     assert_eq!(can_join(&check, false), Ok(()));
+}
+
+/// Item prototypes carry wield scripts (events 24 / 25), and they run: from their first line,
+/// none stops on something unbuilt.
+#[test]
+fn item_wield_scripts_exist_and_run() {
+    use arcanum_sim::{Attachment, EVENT_WIELD_OFF, EVENT_WIELD_ON, Invocation, attachments, run_hook};
+    let Some(vfs) = vfs() else { return };
+    let (prototypes, _) = arcanum_sim::world::load_prototypes(&vfs);
+    let mut numbers = std::collections::BTreeSet::new();
+    for p in prototypes.0.values() {
+        let found = attachments(p, &prototypes);
+        for event in [EVENT_WIELD_ON, EVENT_WIELD_OFF] {
+            if let Some(a) = found.get(&event).filter(|a| a.number != 0) {
+                numbers.insert(a.number);
+            }
+        }
+    }
+    let library = arcanum_sim::ScriptLibrary::new(&vfs);
+    let mut world = Scripted { vfs: &vfs, library, globals: Default::default(), pc: Default::default(), shown: vec![] };
+    let stopped: Vec<u32> = numbers
+        .iter()
+        .copied()
+        .filter(|&n| {
+            let run = run_hook(&mut world, &mut Attachment::new(0, 0, n), Invocation { attachee: 50, triggerer: 1, other: None, event: EVENT_WIELD_ON, start_line: 0 });
+            if !run.unsupported.is_empty() {
+                eprintln!("script {n}: {:?}", run.unsupported);
+            }
+            !run.unsupported.is_empty()
+        })
+        .collect();
+    eprintln!("{} wield scripts; stopped: {stopped:?}", numbers.len());
+    assert!(numbers.len() >= 27, "{}", numbers.len());
+    assert!(stopped.is_empty(), "{stopped:?}");
 }

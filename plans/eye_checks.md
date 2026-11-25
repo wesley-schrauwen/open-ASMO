@@ -45,9 +45,8 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 
 ## Effects (script effects PR)
 
-- [ ] An effect a script gives changes the character screen (a stat, a resistance or the
-      pools). Most effects come from magic items' wield scripts, which do not run yet; until they
-      do, use a dialogue or use script that gives one.
+- [ ] Putting on a magic item (one with a wield script) changes the character screen (a stat,
+      a resistance or the pools); taking it off changes it back.
 - [ ] Other players' party bars show the new maximum hit points or fatigue.
 
 ## Switching objects off and on (script gaps 4 PR)

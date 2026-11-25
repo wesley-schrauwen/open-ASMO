@@ -286,6 +286,8 @@ pub trait ScriptContext {
     /// Runs script `script` from `line` for `triggerer` and `attachee` in `delay_ms` game
     /// milliseconds (action 0x36, time event type 4).
     fn schedule(&mut self, _script: u32, _line: i32, _triggerer: Self::Object, _attachee: Self::Object, _delay_ms: u64) {}
+    /// Cancels the runs of script `script` scheduled with `object` (action 0x7d, 0x45bff0 type 4).
+    fn cancel_scheduled(&mut self, _script: u32, _object: Self::Object) {}
     /// The area `object` is in (0x4cb6a0); 0 for none.
     fn area_of(&mut self, _object: Self::Object) -> i32 {
         0
@@ -911,6 +913,15 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
         0x44 => {
             if let Some(o) = objects(run, ops[0], line, unsupported)?.first().copied() {
                 ctx.destroy(o);
+            }
+            Step::Next
+        }
+        // Cancel script N's scheduled runs for one object (0x44a5f8: time events of type 4 whose
+        // record names that script and object, 0x44aff0).
+        0x7d => {
+            let script = value(ctx, attachment, run, 0);
+            if let (Ok(script), Some(o)) = (u32::try_from(script), objects(run, ops[1], line, unsupported)?.first().copied()) {
+                ctx.cancel_scheduled(script, o);
             }
             Step::Next
         }

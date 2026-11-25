@@ -328,8 +328,7 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      background effects go through the same loop. A changed sheet goes to its player, and the
      PC's status to everyone. Fatigue spent is kept as damage, so a new maximum moves the current
      value as the original's fix-ups (0x4e9f70) do.
-   - **Not built:** the item wield / unwield events, where most 0x4d / 0x4e calls are (245 of
-     251 give to the triggerer, cause 5); NPCs' effects (not kept; their stats are their prototype's base stats); the
+   - **Not built:** NPCs' effects (not kept; their stats are their prototype's base stats); the
      stats' own limits after the effects (0x4b0fc0 / 0x4b0fd0); `magicpts`, `techpts`,
      `aptitude` and `alignment` count only `+N` / `-N`; expertise and the other keys (reaction,
      criticals, `xpgain`) are read but nothing uses them yet.
@@ -386,6 +385,26 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      traced).
    - **Real data:** 2232 of 2399 scripts run to an end (2105 before). Next: 0x3a kill (17),
      set 0xd (9), traps (8), 0x11 / 0x15 (6).
+4i. **Item wield scripts** (built, `feat/item-scripts`).
+   - **Events** (0x441980's 72 callers): 0 examine, 1 use, 2 destroy, 3 unlock, 4 get, 5 drop,
+     6 throw, 7 / 8 hit / miss, 9 dialogue, 10 first heartbeat, 11 catching a thief, 12 dying,
+     13 / 14 enter / exit combat, 15 / 16 start / end combat, 17 buy, 18 resurrect, 19
+     heartbeat, 20 leader killing, 21 insert item, 22 will kill on sight, 23 taking damage, 24
+     / 25 wield on / off, 26 critter hits, 27 new sector, 28 remove item, 29 leader sleeping, 30
+     bust, 31 dialogue override, 32 transfer, 33 caught thief, 34 / 35 critical hit / miss
+     (several names from the standard list, not decoded).
+   - **Wield** (0x466640 → 0x4677b0: event 24 after the item is in slot 1000-1008; 0x467860 →
+     0x467cb0: event 25 after it left; triggerer the holder, attachee the item; the answer is
+     ignored). Rewielding all (0x465530: 25 then 24) happens only when base stats 22 / 23
+     change; condition 0x32 reads that flag. Loading a game runs nothing.
+   - **Here:** `run_wield_scripts` compares each PC's worn items with `PlayerSave::worn` and
+     runs the item prototype's scripts (`ScriptObject::Carried`), taken off first. A new
+     character's starting gear is put on once. NPCs' wield scripts, events 21 / 28 and the
+     rewield on stats 22 / 23 are not built.
+   - **Action 0x7d** (0x44a5f8): cancel script N's scheduled runs (0x36) for an object
+     (0x45bff0, type 4, 0x44aff0 compares the record's script and an object; which object was
+     not read: either here).
+   - **Real data:** 27 item scripts on events 24 / 25; all run to an end. 2235 of 2399 scripts.
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,
