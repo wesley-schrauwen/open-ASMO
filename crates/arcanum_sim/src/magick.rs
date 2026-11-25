@@ -3,7 +3,7 @@
 //! critter ([`cast_on_critters`]).
 //!
 //! - **On critters** (`rules/spelllist.mes`): Minor Healing (60, 5-30 by aptitude, a hurt
-//!   living target), Halt Poison (61, 50), Major Healing (62, 40-80, and scars and crippling),
+//!   living target), Halt Poison (61, 50 off the level, [`crate::poison`]), Major Healing (62, 40-80, and scars and crippling),
 //!   Resurrect (64, a dead target not the caster, `Full | Resurrect`; a PC or NPC gets up with
 //!   15 %, owner's call).
 //!
@@ -61,7 +61,7 @@ pub struct FatigueRecovery {
     pub due: u64,
 }
 
-fn game_ms(time: crate::GameTime) -> u64 {
+pub fn game_ms(time: crate::GameTime) -> u64 {
     time.days as u64 * crate::DAY_MS as u64 + time.ms as u64
 }
 
@@ -208,7 +208,7 @@ pub fn cast_on_critters(
                 let undead = map.mobiles.get(&n.sector).and_then(|m| m.get(n.index as usize)).and_then(|o| map.prototypes.int(o, "critter_flags")).unwrap_or(0) & crate::combat::OCF_UNDEAD != 0;
                 match effect {
                     CritterSpell::Heal { .. } => !dead && map.npc_hp(n.sector, n.index).is_some_and(|(left, max)| left < max),
-                    CritterSpell::CurePoison(_) => false,
+                    CritterSpell::CurePoison(_) => !dead,
                     CritterSpell::Resurrect => dead && !undead,
                 }
             }
@@ -258,7 +258,10 @@ pub fn cast_on_critters(
                             map.cure_npc_injuries(n.sector, n.index);
                         }
                     }
-                    CritterSpell::CurePoison(_) => {}
+                    CritterSpell::CurePoison(amount) => {
+                        let level = map.npc_poison(n.sector, n.index);
+                        map.set_npc_poison(n.sector, n.index, level - amount);
+                    }
                     CritterSpell::Resurrect => {
                         map.revive_npc(n.sector, n.index);
                         toggled.0.push((n.sector, n.index));

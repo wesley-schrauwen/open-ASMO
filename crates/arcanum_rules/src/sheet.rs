@@ -103,8 +103,8 @@ pub struct CharacterSheet {
     pub experience: i32,
     #[cfg_attr(feature = "serde", serde(default))]
     pub fate_points: i32,
-    /// Hit points lost (field 0x1d `hp_damage`) and the poison level (stat 0x18). Nothing
-    /// damages or poisons a PC yet; healing and rest take them away.
+    /// Hit points lost (field 0x1d `hp_damage`) and the poison level (stat 0x18). Attacks and
+    /// poison deal them; healing and rest take them away.
     #[cfg_attr(feature = "serde", serde(default))]
     pub hp_damage: i32,
     /// Fate point uses waiting for their moment (field 0xfe, bits by option: table 0x5bc48c).
