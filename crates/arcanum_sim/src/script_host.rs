@@ -971,6 +971,52 @@ pub fn sync_script_inventories(mut changed: ResMut<ScriptInventories>, world: Re
 /// Item events (0x441980's list): an item worn (24) and taken off (25).
 pub const EVENT_WIELD_ON: u32 = 24;
 pub const EVENT_WIELD_OFF: u32 = 25;
+/// An object's lock is tried (0x4aeb70 doors, 0x4aed80 containers), before the lock check: a
+/// "skip the default" answer denies the opening.
+pub const EVENT_UNLOCK: u32 = 3;
+/// An item is picked up off the ground (0x461810), before: "skip the default" cancels it.
+pub const EVENT_GET: u32 = 4;
+/// An item is dropped (0x461ab0), before: "skip the default" cancels it.
+pub const EVENT_DROP: u32 = 5;
+/// An item went into an inventory (0x466640) / came out of one (0x467860), after; the answer is
+/// ignored.
+pub const EVENT_INSERT_ITEM: u32 = 21;
+pub const EVENT_REMOVE_ITEM: u32 = 28;
+
+/// What each PC carried at the last look, by prototype and count (host only, not saved).
+#[derive(Resource, Debug, Default)]
+pub struct CarriedSeen(pub BTreeMap<PlayerId, BTreeMap<u32, usize>>);
+
+/// Runs the insert (21) and remove (28) scripts of the items each PC gained or lost since the
+/// last look, whatever moved them (pick-ups, loot, trade, scripts), with the PC as triggerer;
+/// lost first. Items are counted by prototype: a move inside the inventory runs nothing. A PC
+/// seen for the first time runs nothing (loading a game runs nothing). Builder's call: the
+/// original fires them inside each move (0x466640 / 0x467860); NPCs' and containers' are not
+/// run.
+pub fn run_carry_scripts(mut host: ScriptHost, mut seen: ResMut<CarriedSeen>, mut world: ResMut<WorldState>, mut map: ResMut<LoadedMap>, mut outbox: ResMut<crate::Outbox>, pcs: Query<(&crate::PlayerControlled, &crate::Inventory)>) {
+    let mut changes = Vec::new();
+    for (controlled, inventory) in &pcs {
+        let mut now = BTreeMap::new();
+        for item in &inventory.items {
+            *now.entry(item.prototype).or_insert(0usize) += 1;
+        }
+        let Some(before) = seen.0.insert(controlled.0, now.clone()) else { continue };
+        for (&prototype, &n) in &before {
+            for _ in now.get(&prototype).copied().unwrap_or(0)..n {
+                changes.push((controlled.0, prototype, EVENT_REMOVE_ITEM));
+            }
+        }
+        for (&prototype, &n) in &now {
+            for _ in before.get(&prototype).copied().unwrap_or(0)..n {
+                changes.push((controlled.0, prototype, EVENT_INSERT_ITEM));
+            }
+        }
+    }
+    changes.sort_by_key(|c| c.2 != EVENT_REMOVE_ITEM);
+    for (player, prototype, event) in changes {
+        host.item_hook(&mut world, &mut map, &mut outbox, player, prototype, event);
+    }
+}
 
 /// Runs the wield scripts of the items each PC puts on or takes off (0x466640 → 0x4677b0,
 /// 0x467860 → 0x467cb0), after the change, by comparing what it wears with what it wore (kept
@@ -1075,14 +1121,14 @@ impl ScriptHost<'_, '_> {
     /// Runs the script of an item `player`'s PC carries, for `event` (wield 24, unwield 25):
     /// the item is the script's own object, the PC the triggerer (0x4677b0 / 0x467cb0). The
     /// answer is ignored, as the original's is; the item's script counters are not kept.
-    pub fn item_hook(&mut self, world: &mut WorldState, map: &mut LoadedMap, outbox: &mut crate::Outbox, player: PlayerId, prototype: u32, event: u32) {
-        let Some(mut attachment) = map.prototypes.get(prototype).and_then(|p| attachments(p, &map.prototypes).get(&event).copied()) else { return };
+    pub fn item_hook(&mut self, world: &mut WorldState, map: &mut LoadedMap, outbox: &mut crate::Outbox, player: PlayerId, prototype: u32, event: u32) -> HookResult {
+        let Some(mut attachment) = map.prototypes.get(prototype).and_then(|p| attachments(p, &map.prototypes).get(&event).copied()) else { return HookResult::RunDefault };
         if attachment.number == 0 {
-            return;
+            return HookResult::RunDefault;
         }
         let item = ScriptObject::Carried { holder: player, prototype };
         let invocation = Invocation { attachee: item, triggerer: ScriptObject::Pc(player), other: None, event, start_line: 0 };
-        self.execute(world, map, outbox, &mut attachment, invocation, player);
+        self.execute(world, map, outbox, &mut attachment, invocation, player).unwrap_or(HookResult::RunDefault)
     }
 
     /// Runs the scripts whose time has come (action 0x36): each with a record of its own, for

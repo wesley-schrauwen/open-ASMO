@@ -508,8 +508,12 @@ pub fn pick_up_items(
         let player = controlled.0;
         // A container opens unless locked, jammed or held; its source rolls on the first opening.
         if map.container_object(want.item).is_some() {
-            // The container's "use" script first (0x428c17): it may handle the opening itself.
+            // The container's "unlock" script (0x4aed80: may deny the opening), then its "use"
+            // script (0x428c17 / 0x572370): it may handle the opening itself.
             let attachee = crate::ScriptObject::ground(want.item).expect("a container");
+            if scripts.hook(&mut world, &mut map, &mut outbox, attachee, crate::EVENT_UNLOCK, player) == crate::HookResult::SkipDefault {
+                continue;
+            }
             if scripts.hook(&mut world, &mut map, &mut outbox, attachee, crate::EVENT_USE, player) == crate::HookResult::SkipDefault {
                 continue;
             }
@@ -549,6 +553,16 @@ pub fn pick_up_items(
         if map.pile(want.item).is_some() {
             commands.entity(entity).insert(LootOpen(want.item));
             outbox.0.push((player, LedgerDelta::PileOpened { pile: want.item }));
+            continue;
+        }
+        let Some(ground) = map.ground_item(want.item) else { continue };
+        // The item's "get" script first (0x461810): it may keep the item where it is. A map
+        // item has its own attachments; a dropped one its prototype's.
+        let get = match crate::ScriptObject::ground(want.item) {
+            Some(object) => scripts.hook(&mut world, &mut map, &mut outbox, object, crate::EVENT_GET, player),
+            None => scripts.item_hook(&mut world, &mut map, &mut outbox, player, ground.prototype, crate::EVENT_GET),
+        };
+        if get == crate::HookResult::SkipDefault {
             continue;
         }
         let Some(ground) = map.ground_item(want.item) else { continue };

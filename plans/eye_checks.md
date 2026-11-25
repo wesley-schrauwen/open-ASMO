@@ -130,3 +130,8 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
       mask, hand, trap jaws, tools; pressing it again, or the spells button, swaps back.
 - [ ] The trap button, then a click on a door or chest with a spotted trap, walks the PC there
       and says "Trap successfully disarmed." or "Trap disarm failed.".
+
+## Item and lock events
+
+- [ ] Picking up, dropping and looting items behaves as before (items with get/drop scripts are
+      rare; nothing should be kept back without a reason).
