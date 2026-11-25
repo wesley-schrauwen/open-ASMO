@@ -14,6 +14,7 @@ pub mod big_move;
 pub mod areas;
 pub mod blocking;
 pub mod clock;
+pub mod combat;
 pub mod container;
 pub mod creation;
 pub mod delta;

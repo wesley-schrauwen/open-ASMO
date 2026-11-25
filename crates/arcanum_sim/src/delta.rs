@@ -198,6 +198,11 @@ pub enum LedgerDelta {
     Teleported { net_id: NetId, to: TileLoc },
     /// A PC's speed stat changed (it raised its dexterity): clients time its walk from it.
     Speed { net_id: NetId, speed: i32 },
+    /// The fight as it now stands ([`crate::combat`]): who fights in turn order, whose turn it
+    /// is and its action points; an empty order: the fight is over.
+    Combat { order: Vec<NetId>, turn: Option<NetId>, ap: i32 },
+    /// `attacker` attacked `target`: how it went.
+    Attacked { attacker: NetId, target: NetId, outcome: crate::combat::AttackOutcome },
     /// A PC started or stopped prowling ([`crate::prowl`]): clients show it in animation 5.
     Prowling { net_id: NetId, on: bool },
     /// An entity is gone.
