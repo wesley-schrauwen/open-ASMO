@@ -40,6 +40,9 @@ pub enum PlayerIntent {
     /// [`crate::USE_RANGE`] of it, with the lockpick at inventory location `tool` (if any).
     /// `seq` is the move sent with it (a newer move cancels it).
     PickLock { target: crate::LockTarget, tool: Option<i32>, seq: u32 },
+    /// Disarm the spotted trap on a door or container ([`crate::trap`]) once the PC is within
+    /// [`crate::USE_RANGE`] of it. `seq` is the move sent with it.
+    DisarmTrap { target: crate::LockTarget, seq: u32 },
     /// Cast `spell` on a door or container from where the PC stands ([`crate::magick`]).
     Cast { spell: usize, target: crate::LockTarget },
     /// Open the sleep window ([`crate::rest`]): the host answers with

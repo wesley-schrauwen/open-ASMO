@@ -595,6 +595,56 @@ mod tests {
         }
 
         #[test]
+        fn a_trapped_door_springs_once_and_a_spotted_trap_can_be_disarmed() {
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            // A mechanical trap of 4 to 4 damage on the door's use.
+            let trapped = crate::Attachment { flags: 0, counters: [4, 4, 0, 0], number: 30001 };
+            let mut changes = BTreeMap::new();
+            let delta: &mut crate::SectorDelta = changes.entry(DOOR.sector).or_default();
+            delta.object_scripts.insert(DOOR.index, BTreeMap::from([(crate::EVENT_USE, trapped)]));
+            let mut sim = booted(dir.path(), &[(7, t(71, 80))], changes);
+            let trap = arcanum_formats::script::Script { description: "Mechanical trap".into(), flags: crate::TRAP_MECHANICAL | arcanum_formats::script::RUN_ONCE, lines: vec![] };
+            sim.app.world_mut().resource_mut::<crate::Scripts>().0.get_or_insert_with(Default::default).insert(30001, trap);
+            sim.take_deltas();
+            // No Spot Trap: it springs, the door stays shut, and the trap is gone.
+            assert_eq!(changed(&use_door(&mut sim, 7, DOOR, 0), 7), None, "sprung: the use does not happen");
+            let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+            assert_eq!(save.players[&PlayerId(7)].blueprint.sheet.hp_damage, 4);
+            assert_eq!(save.sector_changes[&DOOR.sector].object_scripts[&DOOR.index][&crate::EVENT_USE].number, 0, "run once");
+            assert_eq!(changed(&use_door(&mut sim, 7, DOOR, 1), 7), Some(true), "then it opens");
+            // Trapped again, and spotted: a skilled PC disarms it.
+            {
+                let mut map = sim.app.world_mut().resource_mut::<LoadedMap>();
+                map.set_attachment(crate::ScriptObject::Map(DOOR), crate::EVENT_USE, trapped);
+                let flags = map.object_flags(DOOR.sector, DOOR.index, false).unwrap();
+                map.set_object_flags(DOOR.sector, DOOR.index, false, flags | crate::OF_TRAP_SPOTTED);
+            }
+            {
+                let world = sim.app.world_mut();
+                let mut sheet = world.query::<&mut crate::Sheet>().single_mut(world).unwrap();
+                sheet.0.base = [20; 8];
+                sheet.0.skills[crate::SKILL_DISARM_TRAPS] = 5;
+            }
+            let mut tries = 0;
+            loop {
+                tries += 1;
+                sim.receive([(PlayerId(7), PlayerIntent::DisarmTrap { target: crate::LockTarget::Door(DOOR), seq: 2 })]);
+                sim.update();
+                let deltas = sim.take_deltas();
+                if deltas.contains(&(PlayerId(7), LedgerDelta::SkillResult { message: crate::DISARM_SUCCEEDED })) {
+                    break;
+                }
+                assert!(tries < 5, "95 %: {deltas:?}");
+            }
+            assert_eq!(sim.app.world().resource::<LoadedMap>().attachment(crate::ScriptObject::Map(DOOR), crate::EVENT_USE).number, 0, "disarmed");
+            // Nothing there now: a disarm fails.
+            sim.receive([(PlayerId(7), PlayerIntent::DisarmTrap { target: crate::LockTarget::Door(DOOR), seq: 3 })]);
+            sim.update();
+            assert!(sim.take_deltas().contains(&(PlayerId(7), LedgerDelta::SkillResult { message: crate::DISARM_FAILED })));
+        }
+
+        #[test]
         fn a_bed_refuses_without_its_script_saying_so_then_sleeps_twice_as_well() {
             use crate::script::tests::{always, block};
             let dir = tempfile::tempdir().unwrap();

@@ -683,6 +683,40 @@ impl ScriptContext for HostWorld<'_> {
         }
     }
 
+    fn trap_spotted(&mut self, object: ScriptObject) -> bool {
+        map_place(object).and_then(|(sector, index, mobile)| self.map.object_flags(sector, index, mobile)).is_some_and(|f| f & crate::OF_TRAP_SPOTTED != 0)
+    }
+
+    fn spot_trap(&mut self, pc: ScriptObject, magical: bool) -> bool {
+        let ScriptObject::Pc(p) = pc else { return false };
+        let Some(sheet) = self.players.get(&p).map(|s| s.blueprint.sheet.clone()) else { return false };
+        crate::trap::roll_spot(self.rules, &sheet, magical, self.rng)
+    }
+
+    /// The object's flag is kept and sent to every player (the original keeps it per PC in
+    /// multiplayer, 0x4bd1e0; here the players are one team); the spotter is told.
+    fn mark_trap_spotted(&mut self, object: ScriptObject, by: ScriptObject) {
+        let Some((sector, index, mobile)) = map_place(object) else { return };
+        let Some(flags) = self.map.object_flags(sector, index, mobile) else { return };
+        let flags = flags | crate::OF_TRAP_SPOTTED;
+        self.map.set_object_flags(sector, index, mobile, flags);
+        self.sectors.insert(sector);
+        self.flag_changes.push(crate::LedgerDelta::ObjectFlags { sector, index, mobile, flags });
+        if let (ScriptObject::Pc(p), Some(text)) = (by, self.trap_text(crate::TRAP_LINE_SPOTTED)) {
+            self.messages.push((p, text));
+        }
+    }
+
+    fn trap_text(&mut self, line: u32) -> Option<String> {
+        let mes = arcanum_formats::mes::MesFile::parse(&self.vfs?.read(crate::trap::TRAP_MES).ok()?).ok()?;
+        mes.get(line).map(str::to_string)
+    }
+
+    fn critters_within(&mut self, centre: ScriptObject, radius: u32) -> Vec<ScriptObject> {
+        let Some(at) = self.tile_of(centre) else { return Vec::new() };
+        self.critters.iter().filter(|c| c.1.x.abs_diff(at.x).max(c.1.y.abs_diff(at.y)) <= radius).map(|c| c.0).collect()
+    }
+
     fn remove_effect(&mut self, object: ScriptObject, id: i32) {
         if let (ScriptObject::Pc(p), Ok(id)) = (object, u32::try_from(id))
             && let Some(saved) = self.players.get_mut(&p)
@@ -1170,6 +1204,18 @@ impl ScriptHost<'_, '_> {
             crate::ground::save_change(world, map, sector);
         }
         Some(run.result)
+    }
+
+    /// Whether script `number` is a trap ([`crate::is_trap`]).
+    pub fn is_trap(&mut self, number: u32) -> bool {
+        let vfs_guard = self.vfs.as_ref().and_then(|v| v.0.read().ok());
+        let vfs = vfs_guard.as_deref();
+        let library = self.scripts.0.get_or_insert_with(|| vfs.map(ScriptLibrary::new).unwrap_or_default());
+        let script = match vfs {
+            Some(vfs) => library.get(vfs, number),
+            None => library.get_loaded(number),
+        };
+        script.is_some_and(|s| crate::is_trap(number, &s))
     }
 
     /// The host's random numbers.
