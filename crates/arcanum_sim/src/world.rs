@@ -1093,7 +1093,8 @@ mod tests {
         sim.update();
         let s = sheet(&sim);
         assert!(!s.dead);
-        assert_eq!(max - s.hp_damage, crate::RESURRECTED_HP.min(max));
+        assert_eq!(max - s.hp_damage, crate::resurrected_hp(max).min(max));
+        assert_eq!((crate::resurrected_hp(40), crate::resurrected_hp(5)), (6, 1), "15 %, at least 1");
     }
 
     #[test]
