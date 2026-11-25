@@ -15,7 +15,7 @@
 //!   0x460780, and the game ends): a PC whose hit points run out is dead
 //!   (`CharacterSheet::dead`). It lies where it fell and takes no requests; healing, rest and
 //!   scripts' healing do not raise it. Only resurrection does ([`Resurrections`]: a healer's
-//!   Resurrect bought by another PC): it gets up with 1 hit point (builder's call).
+//!   Resurrect bought by another PC): it gets up with 15 % of its hit points (owner's call).
 //!
 //! Not built: the spells being cast and maintained ending (0x457450, 0x4cbbf0; none are
 //! maintained yet); the turn ending in turn-based combat (0x4b7c90); moving a dead PC to the
@@ -44,8 +44,14 @@ pub fn is_down(status: &crate::PcStatus) -> bool {
 #[derive(Resource, Debug, Default)]
 pub struct Resurrections(pub u32);
 
-/// Hit points a resurrected PC has (builder's call).
-pub const RESURRECTED_HP: i32 = 1;
+/// The share of its most hit points a resurrected PC gets up with, in percent (owner's call: the
+/// original never resurrects a PC, its death ends the game).
+pub const RESURRECTED_PERCENT: i32 = 15;
+
+/// Hit points a PC of `max` gets up with when resurrected: [`RESURRECTED_PERCENT`], at least 1.
+pub fn resurrected_hp(max: i32) -> i32 {
+    (max * RESURRECTED_PERCENT / 100).max(1)
+}
 
 /// Raises the dead PCs when a resurrection was bought ([`Resurrections`]).
 pub fn resurrect_pcs(mut asked: ResMut<Resurrections>, rules: Res<SimRules>, mut world: ResMut<crate::WorldState>, mut sheets: ResMut<crate::ScriptSheets>) {
@@ -56,7 +62,8 @@ pub fn resurrect_pcs(mut asked: ResMut<Resurrections>, rules: Res<SimRules>, mut
     for (&player, saved) in save.players.iter_mut().filter(|(_, s)| s.blueprint.sheet.dead) {
         let sheet = &mut saved.blueprint.sheet;
         sheet.dead = false;
-        sheet.hp_damage = (rules.0.derived(sheet).hit_points - RESURRECTED_HP).max(0);
+        let max = rules.0.derived(sheet).hit_points;
+        sheet.hp_damage = (max - resurrected_hp(max)).max(0);
         sheets.0.insert(player);
     }
 }

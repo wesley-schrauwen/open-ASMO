@@ -292,7 +292,8 @@ of `combat_design.md` come after the original's rules work.
      where it fell, takes no turns or requests (moves, uses, rests, talks, picks), and no
      healing (scripts, dialogue, rest) raises it.
    - Resurrection: a healer of college 5 offers Resurrect while a PC of the party is dead;
-     bought by another PC, every dead PC gets up with 1 hit point (builder's call).
+     bought by another PC, every dead PC gets up with 15 % of its hit points, at least 1
+     (owner's call: the original never resurrects a PC; first built with 1).
    - Owner's note, not built: moving a dead PC to the nearest inn (to be detailed).
    - Not built: the Resurrect spell cast by a PC, a dead PC's items and followers.
 12. **Script events** (built, `feat/combat-events`; hook 0x441980 args: triggerer, attachee,
