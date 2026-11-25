@@ -184,6 +184,12 @@ guard (race icon, level, 100% gauges) and the locked chest (icon, "Locked", 100/
       barter window opens on the NPC's things without prices; dragging one out steals it or
       says "You fail."; caught, the window closes.
 
+## Prowling
+
+Checked by screenshot (`DEBUG_ARCANUM_PANEL=prowl`): the PC stands crouched (animation 5).
+- [ ] Walking while prowling plays animation 5, at a believable pace; a right click stops it.
+- [ ] A second player sees the first one's PC crouch.
+
 ## Spotting traps while walking
 
 - [ ] Walking towards a trap object with Spot Trap, the PC sometimes stops a tile short with

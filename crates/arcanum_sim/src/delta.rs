@@ -198,6 +198,8 @@ pub enum LedgerDelta {
     Teleported { net_id: NetId, to: TileLoc },
     /// A PC's speed stat changed (it raised its dexterity): clients time its walk from it.
     Speed { net_id: NetId, speed: i32 },
+    /// A PC started or stopped prowling ([`crate::prowl`]): clients show it in animation 5.
+    Prowling { net_id: NetId, on: bool },
     /// An entity is gone.
     Despawn { net_id: NetId },
     /// The host finished this tick.

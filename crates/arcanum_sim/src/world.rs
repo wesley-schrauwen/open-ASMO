@@ -887,6 +887,32 @@ mod tests {
     }
 
     #[test]
+    fn prowling_switches_the_pcs_art_and_everyone_hears_of_it() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        sim.take_deltas();
+        let anim = |sim: &mut SimApp| {
+            let world = sim.app.world_mut();
+            let (look, prowling) = world.query::<(&crate::Appearance, Has<crate::Prowling>)>().iter(world).next().map(|(a, p)| (*a, p)).unwrap();
+            (arcanum_formats::art_id::CritterArt::from_id(look.art).anim, prowling)
+        };
+        sim.receive([(PlayerId(1), crate::PlayerIntent::Prowl { on: true })]);
+        sim.update();
+        assert_eq!(anim(&mut sim), (crate::prowl::ANIM_PROWL, true));
+        let net_id = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::PlayerControlled)>().iter(world).next().unwrap().0 };
+        assert!(sim.take_deltas().contains(&(PlayerId(1), LedgerDelta::Prowling { net_id, on: true })));
+        sim.receive([(PlayerId(1), crate::PlayerIntent::Prowl { on: false })]);
+        sim.update();
+        assert_eq!(anim(&mut sim), (arcanum_formats::art_id::ANIM_STAND, false));
+    }
+
+    #[test]
     fn a_thief_opens_an_npcs_pockets_and_steals_or_fails() {
         use arcanum_formats::object::{Array, Object, ObjectId, TYPE_GOLD, TYPE_WEAPON, Value};
         use arcanum_formats::test_util::{ObjectBuilder, object_id_bytes, prototype_id};

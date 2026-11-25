@@ -562,7 +562,7 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      knock-down pose 0x435b30), 0x71 unfog a town map (no town maps), 0x7f an item shown or
      hidden in inventories (field 0x57 bit 0x10; carried items keep no flags).
    - **Conditions:** 0x1d hears (0x4af470: within `(clamp(PE - 4, 1, 10) + 6) / 2` tiles;
-     prowling and obstruction not counted); 0x24 a portal or container is open.
+     obstruction not counted; prowling counted since `feat/prowling`, 4s); 0x24 a portal or container is open.
    - **Real data:** 2377 of 2399 scripts run to an end (2336 before). Left: 0x24 combat attack
      (6), 0x45 walk to (3), 0x55 newspaper queue (3), 0x4f use a skill (2), 0x5e written start
      (2), 0x84 end game (2), 0x3e animation, 0x56 headline, 0x5c rename, condition 0x13.
@@ -608,6 +608,17 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      falls by 10 / 5 / 1 / 0 % by training (`hp_adj`), and a Master mends a broken item (art bit
      0x400) for 5 %. Undamaged: `skill_ui` 505 "That is not in need of repair."; else 500 / 501.
    - Waits on item damage: carried items keep no hit points yet, and nothing damages objects.
+4s. **Prowling** (built, `feat/prowling`; `arcanum_sim::prowl`; 0x57a0a0 → 0x45ee30 →
+   0x45ee90).
+   - The skills view's Prowling button toggles it (`PlayerIntent::Prowl`); a right click in the
+     world stops it (0x54de50). The PC carries `Prowling` and its art takes animation 5 (0x45efa0;
+     off: 0), told to every player (`LedgerDelta::Prowling`, and later players by the `Spawn`'s
+     art). Not saved (builder's call).
+   - Its value (0x4c62e0 skill 6): 0 untrained by level, else level × 5 + 25. Condition 0x1d
+     (0x4af470): a listener's Perception loses the prowler's value in percent before the reach
+     `(clamp(PE - 4, 1, 10) + 6) / 2`.
+   - Not built: sight (0x4af260), NPCs noticing prowlers (0x4aa0d0), followers copying it, the
+     hover's prowling state, untrained prowlers' path flag 0x200.
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,
