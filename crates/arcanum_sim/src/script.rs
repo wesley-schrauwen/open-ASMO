@@ -44,6 +44,13 @@ use serde::{Deserialize, Serialize};
 /// call: the original's cause numbers for them, 0x4c4420's second argument 3, are not mapped).
 pub const EFFECT_CAUSE_BLESSING: i32 = 3;
 pub const EFFECT_CAUSE_CURSE: i32 = 4;
+/// The written window's kinds (0x56bc00): book, note, newspaper, telegram, image, plaque.
+pub const WRITTEN_BOOK: i32 = 0;
+pub const WRITTEN_NOTE: i32 = 1;
+pub const WRITTEN_NEWSPAPER: i32 = 2;
+pub const WRITTEN_TELEGRAM: i32 = 3;
+pub const WRITTEN_IMAGE: i32 = 4;
+pub const WRITTEN_PLAQUE: i32 = 6;
 /// Most lines one run steps through (0x4449b0's 1000).
 pub const MAX_STEPS: usize = 1000;
 /// Global variables (0x4446e0).
@@ -1123,10 +1130,17 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
         }
         // A plaque (0x44a15d, `mes/gameplaque.mes`) / a book (0x448ba4, `mes/gamebook.mes`) from
         // line N, to one player.
-        0x72 | 0x40 => {
+        // The written window (0x56bc00): 0x40 a book, 0x41 an image (the number is its
+        // interface art), 0x72 a plaque.
+        0x72 | 0x40 | 0x41 => {
             let line_id = value(ctx, attachment, run, 0);
             if let Some(to) = objects(run, ops[1], line, unsupported)?.first().copied() {
-                ctx.show_text(if block.kind == 0x72 { 6 } else { 0 }, line_id, to);
+                let kind = match block.kind {
+                    0x72 => WRITTEN_PLAQUE,
+                    0x41 => WRITTEN_IMAGE,
+                    _ => WRITTEN_BOOK,
+                };
+                ctx.show_text(kind, line_id, to);
             }
             Step::Next
         }

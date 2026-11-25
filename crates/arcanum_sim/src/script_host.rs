@@ -183,6 +183,8 @@ struct HostWorld<'a> {
     now: crate::GameTime,
     /// Lines for players' message boxes.
     messages: Vec<(PlayerId, String)>,
+    /// Written windows to open: player, kind, line.
+    written: Vec<(PlayerId, u8, i32)>,
     /// Conversations scripts started.
     dialogs: Vec<crate::StartedDialogue>,
     /// Teleports asked for: object, map, tile.
@@ -412,23 +414,11 @@ impl ScriptContext for HostWorld<'_> {
         }
     }
 
-    /// The text goes to the player's message box, a paragraph a line (builder's call: the
-    /// original's book and plaque windows, 0x56bc00, are not built). A plaque is one entry of
-    /// `mes/gameplaque.mes`; a book, the entries of `mes/gamebook.mes` from `line` on, up to the
-    /// first gap. Each entry starts with a font number and a justification letter, left out.
+    /// The player's written window opens on it ([`crate::LedgerDelta::Written`]); the client reads
+    /// the text.
     fn show_text(&mut self, kind: i32, line: i32, to: ScriptObject) {
-        let ScriptObject::Pc(p) = to else { return };
-        let (file, most) = if kind == 6 { ("mes/gameplaque.mes", 1) } else { ("mes/gamebook.mes", 50) };
-        let Some(mes) = self.vfs.and_then(|v| v.read(file).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()) else { return };
-        let Ok(first) = u32::try_from(line) else { return };
-        for id in first..first + most {
-            let Some(text) = mes.get(id) else { break };
-            let text = text.trim_start();
-            let body = text.split_once(|c: char| c.is_whitespace()).map_or("", |(_, rest)| rest);
-            for paragraph in body.lines().map(str::trim).filter(|l| !l.is_empty()) {
-                self.messages.push((p, paragraph.to_string()));
-            }
-        }
+        let (ScriptObject::Pc(p), Ok(kind)) = (to, u8::try_from(kind)) else { return };
+        self.written.push((p, kind, line));
     }
 
     /// Objects of the map: the number field of the art id by its type (0x502780), frame 0
@@ -1199,12 +1189,16 @@ impl ScriptHost<'_, '_> {
             rng: &mut self.rng,
             now: self.clock.now,
             messages: Vec::new(),
+            written: Vec::new(),
             dialogs: Vec::new(),
             teleports: Vec::new(),
         };
         let run = crate::run_hook(&mut ctx, attachment, invocation);
         for (to, text) in std::mem::take(&mut ctx.messages) {
             outbox.0.push((to, crate::LedgerDelta::ScriptMessage { text }));
+        }
+        for (to, kind, line) in std::mem::take(&mut ctx.written) {
+            outbox.0.push((to, crate::LedgerDelta::Written { kind, line }));
         }
         self.started.0.append(&mut ctx.dialogs);
         // Floats go to everyone in the world (the original to those who can see it).

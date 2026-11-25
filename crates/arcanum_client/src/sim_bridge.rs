@@ -247,7 +247,7 @@ fn receive_deltas(
     mut skill_results: Option<ResMut<crate::skill_use::SkillResults>>,
     mut rest: Option<ResMut<crate::rest_window::RestPanel>>,
     (mut dialogue, mut floats): (Option<ResMut<crate::dialogue_ui::DialogueState>>, Option<ResMut<crate::dialogue_ui::Floats>>),
-    mut votes: Option<ResMut<crate::vote_popup::Votes>>,
+    (mut votes, mut written): (Option<ResMut<crate::vote_popup::Votes>>, Option<ResMut<crate::written_window::WrittenPanel>>),
 ) {
     let Some(link) = link else { return };
     let deltas = link.0.recv_deltas();
@@ -294,6 +294,9 @@ fn receive_deltas(
         }
         if let Some(votes) = votes.as_mut() {
             votes.receive(delta);
+        }
+        if let (LedgerDelta::Written { kind, line }, Some(written)) = (delta, written.as_mut()) {
+            written.show(*kind, *line);
         }
         if let (LedgerDelta::FloatText { speaker, text, colour, voice }, Some(floats)) = (delta, floats.as_mut()) {
             floats.0.push((*speaker, text.clone(), *colour, voice.clone()));

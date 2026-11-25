@@ -17,6 +17,7 @@ pub mod create_character;
 pub mod dialogue_ui;
 pub mod vote_popup;
 pub mod fate_window;
+pub mod written_window;
 pub mod fonts;
 pub mod hotkey_bar;
 pub mod hud;

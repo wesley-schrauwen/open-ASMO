@@ -140,6 +140,9 @@ pub enum LedgerDelta {
     DialogueEnded,
     /// A line a script shows in the player's message box ([`crate::script`], action 0x18).
     ScriptMessage { text: String },
+    /// Open the written window (0x56bc00) on `kind` ([`crate::WRITTEN_BOOK`] and the rest) from
+    /// `line` of its `.mes` (an image: `line` is its interface art).
+    Written { kind: u8, line: i32 },
     /// The player may rest: the sleep window opens, sleeping or waiting ([`crate::rest`]).
     RestWindow { mode: crate::RestMode },
     /// Why the player may not rest: a `mes/SleepUI.mes` line for the message box.
