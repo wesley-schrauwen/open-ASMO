@@ -52,6 +52,9 @@ pub mod paths {
         pub const ARROW_RIGHT: &str = "art/interface/SldrButt_R_Arrow.ART";
         /// Pocket watch shown while loading: 30 frames at 15 fps.
         pub const LOAD_INDICATOR: &str = "art/interface/LoadIndicator.ART";
+        /// The bottom bar's skills view buttons, 32x32, two frames (interface art 279, 280,
+        /// 282, 278): Prowling, Pick Pocket, Disarm Traps, Repair.
+        pub const SKILL_BUTTONS: [&str; 4] = ["art/interface/SKL_Conceal.ART", "art/interface/SKL_PickPocket.ART", "art/interface/SKL_Traps.ART", "art/interface/SKL_Repair.ART"];
 
         // Load Game screen (interface art 745-748, 320-323, 32), laid out by the original's
         // screen table in Arcanum.exe (0x5c4560).
@@ -230,6 +233,10 @@ pub mod paths {
         backgrounds::LOADING[1],
         backgrounds::LOADING[2],
         interface::LOAD_INDICATOR,
+        interface::SKILL_BUTTONS[0],
+        interface::SKILL_BUTTONS[1],
+        interface::SKILL_BUTTONS[2],
+        interface::SKILL_BUTTONS[3],
         interface::TOP_BAR,
         interface::BOTTOM_BAR,
         interface::SAVE_LOAD_BACK,

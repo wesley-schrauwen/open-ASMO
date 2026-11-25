@@ -1,6 +1,7 @@
 //! Using a skill or casting a spell on something in the world: for now Pick Locks
-//! ([`arcanum_sim::lockpick`]) and the Unlocking Cantrip ([`arcanum_sim::magick`]) on a door or
-//! container.
+//! ([`arcanum_sim::lockpick`]), Disarm Traps ([`arcanum_sim::trap`], armed from the bottom bar's
+//! skills view, [`crate::spell_bar`]) and the Unlocking Cantrip ([`arcanum_sim::magick`]) on a
+//! door or container.
 //!
 //! - **Arming:** releasing a lockpick on the inventory screen's use box closes the screen and
 //!   arms Pick Locks with it as the tool (the original's use box; also its hotkey bar, not built).

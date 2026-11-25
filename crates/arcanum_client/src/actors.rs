@@ -170,8 +170,9 @@ pub struct WalkLocalPc {
     pub door: Option<(MapObjectId, TileLoc)>,
     /// An item to pick up off the ground, and its tile: the same.
     pub item: Option<(GroundItemId, TileLoc)>,
-    /// A lock to pick, and its tile: the same.
-    pub pick: Option<(arcanum_sim::LockTarget, Option<i32>, TileLoc)>,
+    /// A door or container to use a skill on (Pick Locks with its tool, Disarm Traps), and its
+    /// tile: the same.
+    pub pick: Option<(arcanum_sim::LockTarget, usize, Option<i32>, TileLoc)>,
     /// An NPC to talk to, and its tile: the same.
     pub talk: Option<(NetId, TileLoc)>,
 }
@@ -247,13 +248,14 @@ impl WalkLocalPc {
         self.talk = Some((npc, at));
     }
 
-    /// The player aimed Pick Locks at `target` on tile `at`.
-    pub fn click_pick(&mut self, target: arcanum_sim::LockTarget, tool: Option<i32>, at: TileLoc) {
+    /// The player aimed `skill` (Pick Locks, with `tool`, or Disarm Traps) at `target` on tile
+    /// `at`.
+    pub fn click_pick(&mut self, target: arcanum_sim::LockTarget, skill: usize, tool: Option<i32>, at: TileLoc) {
         self.goal = None;
         self.last_goal = None;
         self.door = None;
         self.item = None;
-        self.pick = Some((target, tool, at));
+        self.pick = Some((target, skill, tool, at));
         self.talk = None;
     }
 }
@@ -656,9 +658,9 @@ fn click_to_move(
             _ => None,
         });
         match (target, object, armed) {
-            (Some(target), Some(object), crate::skill_use::Armed::Skill { skill: arcanum_sim::SKILL_PICK_LOCKS, tool }) => {
-                debug!("pick lock {target:?}");
-                walk.click_pick(target, tool, object.location);
+            (Some(target), Some(object), crate::skill_use::Armed::Skill { skill: skill @ (arcanum_sim::SKILL_PICK_LOCKS | arcanum_sim::SKILL_DISARM_TRAPS), tool }) => {
+                debug!("skill {skill} on {target:?}");
+                walk.click_pick(target, skill, tool, object.location);
             }
             (Some(target), _, crate::skill_use::Armed::Spell(spell)) => {
                 debug!("cast {spell} on {target:?}");
@@ -717,7 +719,7 @@ fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>
     let Some(mut actor) = actors.iter_mut().find(|a| a.net_id == net_id) else { return };
     let goal = walk.goal.take();
     // A door or an item: walk near it, then use it or pick it up.
-    let target = walk.door.take().map(|(d, at)| (Target::Door(d), at)).or(walk.item.take().map(|(i, at)| (Target::Item(i), at))).or(walk.pick.take().map(|(p, tool, at)| (Target::Pick(p, tool), at))).or(walk.talk.take().map(|(n, at)| (Target::Talk(n), at)));
+    let target = walk.door.take().map(|(d, at)| (Target::Door(d), at)).or(walk.item.take().map(|(i, at)| (Target::Item(i), at))).or(walk.pick.take().map(|(p, skill, tool, at)| (Target::Pick(p, skill, tool), at))).or(walk.talk.take().map(|(n, at)| (Target::Talk(n), at)));
     // Mid-step, the path starts from the tile being stepped onto.
     let from = actor.steps.front().copied().unwrap_or(actor.at);
     let send = |intent: PlayerIntent| {
@@ -773,7 +775,7 @@ fn start_local_walk(mut walk: ResMut<WalkLocalPc>, client: Option<Res<ClientMap>
 enum Target {
     Door(MapObjectId),
     Item(GroundItemId),
-    Pick(arcanum_sim::LockTarget, Option<i32>),
+    Pick(arcanum_sim::LockTarget, usize, Option<i32>),
     Talk(NetId),
 }
 
@@ -782,7 +784,8 @@ impl Target {
         match self {
             Self::Door(door) => PlayerIntent::UsePortal { door, seq },
             Self::Item(item) => PlayerIntent::PickUp { item, seq },
-            Self::Pick(target, tool) => PlayerIntent::PickLock { target, tool, seq },
+            Self::Pick(target, arcanum_sim::SKILL_DISARM_TRAPS, _) => PlayerIntent::DisarmTrap { target, seq },
+            Self::Pick(target, _, tool) => PlayerIntent::PickLock { target, tool, seq },
             Self::Talk(npc) => PlayerIntent::Talk { npc, seq },
         }
     }
