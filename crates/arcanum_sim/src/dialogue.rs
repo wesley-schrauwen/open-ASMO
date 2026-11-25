@@ -299,7 +299,7 @@ pub struct DialogueReports(pub Vec<(u32, String)>);
 pub struct GenericLines(HashMap<String, Option<MesFile>>);
 
 impl GenericLines {
-    fn file(&mut self, vfs: Option<&arcanum_vfs::Vfs>, path: &str) -> Option<&MesFile> {
+    pub(crate) fn file(&mut self, vfs: Option<&arcanum_vfs::Vfs>, path: &str) -> Option<&MesFile> {
         self.0.entry(path.to_string()).or_insert_with(|| vfs.and_then(|v| v.read(path).ok()).and_then(|d| MesFile::parse(&d).ok())).as_ref()
     }
 }
@@ -402,6 +402,28 @@ pub struct Talk<'a> {
 impl Talk<'_> {
     pub fn gold(&self) -> i32 {
         self.inventory.gold()
+    }
+
+    /// The PC's gold and its followers' here (0x415335: the `$$` test).
+    pub fn party_gold(&self) -> i32 {
+        self.gold() + self.follow.followers_gold.iter().map(|(_, g)| g).sum::<i32>()
+    }
+
+    /// `$$ n` (0x415cc6): gives `n`, or takes `-n` from the PC, then the rest from its followers
+    /// in order.
+    fn pay_from_party(&mut self, n: i32) {
+        if n >= 0 {
+            self.change_gold(n);
+            return;
+        }
+        let from_pc = (-n).min(self.gold());
+        self.change_gold(-from_pc);
+        let mut rest = -n - from_pc;
+        for (_, gold) in &mut self.follow.followers_gold {
+            let take = rest.min(*gold);
+            *gold -= take;
+            rest -= take;
+        }
     }
 
     /// An item's `name` (obj_f_name, field 0x16), what `in` / `ni` name.
@@ -536,6 +558,7 @@ impl Talk<'_> {
             Change::AtMost => (n - now).min(0),
         };
         if delta != 0 {
+            self.follow.reaction_dropped |= delta < 0 && self.follow.mine;
             let stored = self.stored_reaction() + delta;
             self.pc.reactions.insert(self.npc_key.clone(), stored);
         }
@@ -573,7 +596,7 @@ impl Talk<'_> {
             "rp" => self.pc.reputations.contains(&a.unsigned_abs()) == (a > 0),
             "me" => self.has_met() == (a != 0),
             "re" => passes(self.reaction(), a),
-            "$$" => passes(self.gold(), a),
+            "$$" => passes(self.party_gold(), a),
             "in" if a > 0 => self.has(a),
             "in" => self.npc_has(-a),
             "ni" if a > 0 => !self.has(a),
@@ -630,7 +653,7 @@ impl Talk<'_> {
         for t in &tokens {
             let (a, b) = (t.a, t.b);
             match t.op() {
-                "$$" => self.change_gold(a),
+                "$$" => self.pay_from_party(a),
                 "gv" => self.globals.set_var(a, b),
                 "gf" => self.globals.set_flag(a, b != 0),
                 "pv" => set_or_remove(&mut self.pc.vars, a as u32, b),
@@ -692,6 +715,7 @@ impl Talk<'_> {
                         match crate::follow::can_join(&self.join_check(), a != 0) {
                             Ok(()) => {
                                 self.npc_flags &= !crate::follow::WAITING;
+                                self.follow.waits = None;
                                 self.follow.followers += i32::from(self.npc_flags & crate::follow::FORCED == 0);
                                 self.follow.changed = true;
                                 self.follow.goto = Some(b);
@@ -713,6 +737,8 @@ impl Talk<'_> {
                         self.follow.followers -= i32::from(self.npc_flags & crate::follow::FORCED == 0);
                         self.npc_flags |= crate::follow::WAITING;
                         self.follow.changed = true;
+                        let rank = self.sheet.training[crate::follow::PERSUASION];
+                        self.follow.waits = Some(crate::follow::wait_delay_ms(self.follow.npc_wait, rank, self.stat(7)));
                     }
                 }
                 "sc" | "so" => {
@@ -928,6 +954,10 @@ pub fn talk_to_npcs(
     }
 }
 
+/// What a conversation step writes to besides the world: the outbox, barters, areas, the
+/// experience earned, and the game clock it reads.
+type ConversationOut<'w> = (ResMut<'w, Outbox>, ResMut<'w, crate::barter::BarterStarts>, ResMut<'w, crate::areas::AreaTable>, ResMut<'w, crate::ExperienceAwards>, Res<'w, crate::GameClock>);
+
 /// Starts, steps and ends conversations: see the module docs.
 #[allow(clippy::too_many_arguments)]
 pub fn run_conversations(
@@ -941,7 +971,7 @@ pub fn run_conversations(
     mut reports: ResMut<DialogueReports>,
     (session, rules, vfs, acks): (Res<Session>, Res<SimRules>, Option<Res<crate::SimVfs>>, Res<crate::InventoryAcks>),
     (mut rng, mut reputations): (ResMut<crate::HostRng>, ResMut<ReputationTable>),
-    (mut outbox, mut barters, mut areas, mut awards): (ResMut<Outbox>, ResMut<crate::barter::BarterStarts>, ResMut<crate::areas::AreaTable>, ResMut<crate::ExperienceAwards>),
+    (mut outbox, mut barters, mut areas, mut awards, clock): ConversationOut,
     mut pcs: Query<TalkerQuery>,
     npcs: Query<(&NetId, &NpcSource)>,
 ) {
@@ -1020,7 +1050,17 @@ pub fn run_conversations(
                 let object = map.mobiles.get(&sector).and_then(|m| m.get(index as usize));
                 let stat = |i: usize| object.and_then(|o| o.ints("critter_stat_base_idx").or_else(|| map.prototypes.of(o)?.ints("critter_stat_base_idx"))).and_then(|v| v.get(i).copied()).unwrap_or(0);
                 let packet = object.and_then(|o| map.prototypes.int(o, "npc_ai_data")).unwrap_or(0);
+                // The followers' gold: those here, not waiting, of this PC.
+                let followers_gold = save
+                    .followers
+                    .iter()
+                    .filter(|f| f.leader == player && crate::follow::follower_flags(f, &map, &save.other_maps) & crate::follow::WAITING == 0)
+                    .filter_map(|f| map.place_of(&f.home()))
+                    .map(|(s, i)| ((s, i), map.npc_inventory(s, i).map_or(0, |inv| inv.gold())))
+                    .collect();
                 crate::follow::FollowTalk {
+                    followers_gold,
+                    npc_wait: object.and_then(|o| map.prototypes.int(o, "npc_wait")).unwrap_or(crate::follow::DEFAULT_NPC_WAIT),
                     mine: record.is_some_and(|f| f.leader == player),
                     other_leader_charisma: record.filter(|f| f.leader != player).map(|f| charisma.get(&f.leader).copied().unwrap_or(0)),
                     followers: counted as i32,
@@ -1089,6 +1129,9 @@ pub fn run_conversations(
         };
         let gold_changed = talk.gold_changed;
         let follow_change = talk.follow.changed.then_some((talk.follow.mine, talk.npc_flags));
+        let follow_waits = talk.follow.waits;
+        let reaction_dropped = talk.follow.reaction_dropped;
+        let followers_gold = std::mem::take(&mut talk.follow.followers_gold);
         let sheet_changes = std::mem::take(&mut talk.sheet_changes);
         let npc_changes = talk.npc_inventory_changed.then(|| (talk.npc_inventory.take(), talk.npc_stock.take()));
         for op in talk.unbuilt.drain(..) {
@@ -1121,12 +1164,19 @@ pub fn run_conversations(
         // record, else in this map's changes). A guest that leaves goes home at the next load.
         if let (Some((mine, flags)), ScriptObject::Mobile { sector, index }) = (follow_change, npc_object) {
             let home = map.home_of(sector, index);
-            let away = save.followers.iter().find(|f| f.is(&home)).and_then(|f| f.away.clone());
+            let before = save.followers.iter().find(|f| f.is(&home)).cloned();
             save.followers.retain(|f| !f.is(&home));
             let guest = map.guests.contains_key(&(sector, index));
             if mine {
-                let away = away.map(|a| crate::follow::Away { flags, ..a });
-                save.followers.push(crate::follow::Follower { map: home.0.clone(), sector: home.1, index: home.2, leader: player, away });
+                let away = before.as_ref().and_then(|f| f.away.clone()).map(|a| crate::follow::Away { flags, ..a });
+                // Told to wait: until when (0x4aa7a0); rejoined: no more.
+                let wait_until = match follow_waits {
+                    Some(delay) => delay.map(|ms| clock.now.plus_ms(ms)),
+                    None if flags & crate::follow::WAITING != 0 => before.as_ref().and_then(|f| f.wait_until),
+                    None => None,
+                };
+                let warn = before.as_ref().map_or(0, |f| f.warn);
+                save.followers.push(crate::follow::Follower { map: home.0.clone(), sector: home.1, index: home.2, leader: player, away, wait_until, warn });
             }
             if guest {
                 if let Some(object) = map.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize)) {
@@ -1134,6 +1184,23 @@ pub fn run_conversations(
                 }
             } else {
                 map.set_npc_flags(sector, index, flags);
+                touched.push(sector);
+            }
+        }
+        // A follower's reaction dropped: it warns at its next check (0x4c0de0 sets 0x10000).
+        if reaction_dropped && let ScriptObject::Mobile { sector, index } = npc_object {
+            let home = map.home_of(sector, index);
+            if let Some(f) = save.followers.iter_mut().find(|f| f.is(&home)) {
+                f.warn |= crate::follow::WARN_REACTION;
+            }
+        }
+        // The followers' gold paid out.
+        for ((sector, index), gold) in followers_gold {
+            if let Some(mut inventory) = map.npc_inventory(sector, index)
+                && inventory.gold() != gold
+            {
+                inventory.change_gold(gold - inventory.gold());
+                map.set_npc_inventory(sector, index, inventory);
                 touched.push(sector);
             }
         }
@@ -1152,6 +1219,15 @@ pub fn run_conversations(
         }
         if sheet_changes.experience != 0 {
             awards.0.push(sheet_changes.experience);
+        }
+        // The PC's alignment moved: every follower warns at its next check (0x4b0980 stat 0x13).
+        if let Some(new) = sheet_changes.alignment
+            && new != sheet.0.alignment
+        {
+            let bit = if new >= sheet.0.alignment { crate::follow::WARN_GOOD } else { crate::follow::WARN_EVIL };
+            for f in save.followers.iter_mut().filter(|f| f.leader == player) {
+                f.warn |= bit;
+            }
         }
         if !sheet_changes.is_empty() && sheet_changes != (SheetChanges { experience: sheet_changes.experience, ..Default::default() }) {
             sheet_changes.apply(&mut sheet.0);
@@ -1912,6 +1988,17 @@ mod tests {
         assert_eq!(talk.follow.refused.take(), Some(Refusal::TooMany));
         talk.run_result("jo 1 74");
         assert!(talk.follow.mine && talk.npc_flags & FORCED != 0 && talk.follow.followers == 2, "forced: not counted");
+        // Waiting: 2 hours (npc_wait 2, no Persuasion).
+        talk.follow.npc_wait = crate::follow::DEFAULT_NPC_WAIT;
+        talk.run_result("wa");
+        assert_eq!(talk.follow.waits, Some(Some(7_200_000)));
+        // Gold: the followers' counts for $$, and pays after the PC's.
+        talk.change_gold(30);
+        talk.follow.followers_gold = vec![((arcanum_formats::map::SectorId::new(1, 1), 0), 50), ((arcanum_formats::map::SectorId::new(1, 1), 1), 50)];
+        assert!(talk.passes_test("$$ 120") && !talk.passes_test("$$ 131"));
+        talk.run_result("$$ -100");
+        assert_eq!(talk.gold(), 0);
+        assert_eq!(talk.follow.followers_gold.iter().map(|g| g.1).collect::<Vec<_>>(), [0, 30], "30 from the PC, 50 and 20 from the followers");
         assert!(talk.unbuilt.is_empty(), "{:?}", talk.unbuilt);
     }
 

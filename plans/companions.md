@@ -42,6 +42,25 @@ Copied from the original first.
 - **Following** (0x4ac380 / 0x4346a0): farther than 4 tiles (7 spread out) the follower walks
   until within it. At 31 tiles or more it is put on the leader's tile (0x4ad4d0).
 - **Moves:** a teleport within the map puts the followers on the leader's tile.
+- **Waiting runs out** (`feat/follower-details`; 0x4aa7a0 / 0x4aa990).
+  - The wait lasts by `npc_wait` (field 0x12c, 2 by default, 0x49b5e7), plus one step for a
+    leader trained in Persuasion, in table 0x5b5088: 0, 15 min, 2 h, 1 day, 7 days, 30 days.
+    Six or more, or a leader with charisma 20: for ever.
+  - Then the follower leaves for good (`npc_flags` 0x20), and its reaction to the leader moves
+    by `2 × (charisma - 20)`.
+  - Kept as `Follower::wait_until` (game time).
+- **Re-checks** (0x4ac380; builder's call: every half second, the original's AI tick is
+  250 ms-5 s):
+  - A follower that would no longer join (0x4ad950, the count left out) leaves with its
+    refusal line, unless the leader's charisma is 20 (0x45dfc0).
+  - Otherwise, after its reaction to the leader dropped (dialogue `re`) or the leader's
+    alignment moved (dialogue `al`), it may warn (0x4adb50):
+    - `gd_npc` 5400 when its reaction is within 20 of D6;
+    - 5200 / 5300 when the alignment gap is within 100 of D7 / D8.
+  - A Master of Persuasion and forced followers get no warnings.
+- **Gold:** the `$$` test counts the followers' gold (0x415335); `$$ -N` takes from the PC, then
+  from its followers in order (0x415cc6). The service payments (0x418b30) and barter use the
+  PC's alone, as in the original.
 - **Map changes** (owner's rule, `feat/party-travel`): followers who are not waiting go with their
   leader, onto the same tile, as the original does (0x4d3760). Waiting ones stay where they are.
   - A follower away from its home map is a guest there. It is read from its home map's `.mob`
@@ -58,13 +77,8 @@ Copied from the original first.
   changes (`npc_flags`).
 - **Multiplayer:** each follower follows the PC who recruited it.
 - **Not built:**
-  - **The wait timer:** 15 min to 30 days by field 0x12c, after which the follower leaves for
-    good (0x4aa990).
-  - **Per-tick re-checks:** the original re-checks each tick and the NPC may leave (0x4ac380).
-    The warnings (`gd_npc` 5200-5400) are not built either.
   - **Hits:** the reaction lost when the leader hits a follower.
   - **Summoned and charmed** followers.
-  - **Gold:** followers' gold in `$$` tests and payments (0x415335 / 0x415cc6).
   - **The follower menu** (inventory exchange, character sheet).
   - **The level catch-up** (0x4a6cb0).
   - **`pa`:** the party test.
