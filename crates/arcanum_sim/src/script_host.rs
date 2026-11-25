@@ -1328,6 +1328,25 @@ impl ScriptHost<'_, '_> {
         Some(run.result)
     }
 
+    /// Line `line` of `mes/trap.mes`.
+    pub fn trap_line(&self, line: u32) -> Option<String> {
+        let guard = self.vfs.as_ref().and_then(|v| v.0.read().ok());
+        let mes = arcanum_formats::mes::MesFile::parse(&guard.as_deref()?.read(crate::trap::TRAP_MES).ok()?).ok()?;
+        mes.get(line).map(str::to_string)
+    }
+
+    /// Script `number`'s header flags, if it exists.
+    pub fn script_flags(&mut self, number: u32) -> Option<u32> {
+        let vfs_guard = self.vfs.as_ref().and_then(|v| v.0.read().ok());
+        let vfs = vfs_guard.as_deref();
+        let library = self.scripts.0.get_or_insert_with(|| vfs.map(ScriptLibrary::new).unwrap_or_default());
+        let script = match vfs {
+            Some(vfs) => library.get(vfs, number),
+            None => library.get_loaded(number),
+        };
+        script.map(|s| s.flags)
+    }
+
     /// Whether script `number` is a trap ([`crate::is_trap`]).
     pub fn is_trap(&mut self, number: u32) -> bool {
         let vfs_guard = self.vfs.as_ref().and_then(|v| v.0.read().ok());
