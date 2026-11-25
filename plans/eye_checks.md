@@ -78,3 +78,10 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 - [ ] The gold goes; Virgil (a follower) heals for nothing.
 - [ ] The party bar's hit points rise after healing once something can hurt the PC (nothing does
       yet).
+
+## Party travel (party travel PR)
+
+- [ ] With two players, a dialogue line that gives experience raises both; each sees their own
+      level-up line.
+- [ ] Virgil, following, comes along through a map change and arrives beside the PC; told to
+      wait first, he stays behind; going back, he is home again.

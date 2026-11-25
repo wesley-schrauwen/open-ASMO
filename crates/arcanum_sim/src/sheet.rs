@@ -147,3 +147,59 @@ mod tests {
         }
     }
 }
+
+/// Experience earned this tick, to share among the team ([`share_experience`]).
+#[derive(Resource, Debug, Default)]
+pub struct ExperienceAwards(pub Vec<i32>);
+
+/// Each PC's share of `amount` among `members` (0x45f110): an equal part, 1 when it rounds to 0.
+pub fn experience_share(amount: i32, members: usize) -> i32 {
+    let Ok(members) = i32::try_from(members) else { return 0 };
+    if members == 0 {
+        return 0;
+    }
+    match amount / members {
+        0 => 1,
+        share => share,
+    }
+}
+
+/// Shares the experience earned among every PC in the world (owner's rule: the whole party is
+/// one team, as the original's multiplayer splits it among the living members of the team,
+/// 0x45f110). Each share goes through the PC's `xpgain` effects and level-ups; each PC that
+/// rises hears "Congratulations! You are now level %d." (`mes/intgame.mes` 11).
+#[allow(clippy::too_many_arguments)]
+pub fn share_experience(
+    mut awards: ResMut<ExperienceAwards>,
+    mut world: ResMut<WorldState>,
+    rules: Res<SimRules>,
+    session: Res<Session>,
+    vfs: Option<Res<SimVfs>>,
+    mut outbox: ResMut<Outbox>,
+    mut pcs: Query<(&NetId, &PlayerControlled, &mut Sheet)>,
+) {
+    if awards.0.is_empty() {
+        return;
+    }
+    let members: Vec<PlayerId> = session.players.iter().filter(|(_, s)| matches!(s, crate::SessionPlayer::InWorld(_))).map(|(&p, _)| p).collect();
+    let level_up = vfs.as_ref().and_then(|v| v.0.read().ok()).and_then(|v| v.read("mes/intgame.mes").ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).and_then(|m| m.get(11).map(str::to_string));
+    for amount in std::mem::take(&mut awards.0) {
+        let share = experience_share(amount, members.len());
+        for (&net_id, controlled, mut sheet) in &mut pcs {
+            if !members.contains(&controlled.0) {
+                continue;
+            }
+            let levels = rules.0.gain_experience(&mut sheet.0, share);
+            if let Some(saved) = world.0.as_mut().and_then(|w| w.players.get_mut(&controlled.0)) {
+                saved.blueprint.sheet = sheet.0.clone();
+            }
+            outbox.0.push((controlled.0, LedgerDelta::SheetUpdate { ack: 0, sheet: sheet.0.clone() }));
+            for level in &levels {
+                if let Some(text) = &level_up {
+                    outbox.0.push((controlled.0, LedgerDelta::ScriptMessage { text: text.replace("%d", &level.to_string()) }));
+                }
+            }
+            crate::ground::broadcast(&session, &mut outbox, LedgerDelta::PcStatus { net_id, status: pc_status(&rules.0, &sheet.0) });
+        }
+    }
+}
