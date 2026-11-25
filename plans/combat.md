@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-6 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`).
+Status: steps 1-7 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`).
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -85,6 +85,16 @@ of `combat_design.md` come after the original's rules work.
     indirect hit, flag 1); a leader hitting its follower sets column 9 and may make it rebel
     (0x4ad950). Hit and death witnesses within 10 tiles like the attacker's leader 20 less
     (0x4aee50, not built).
+- **The AI tick** (0x4a84f0): 0x4a92d0 picks the state and target (its table 0x4a94a4: idle
+  looks for targets 0x4ab460; fighting keeps or drops its target; fleeing 0x4aaf50; surrendered
+  takes heart at 80 % hit points or more one tick in 500, 0x4a945a), then 0x4ac180 acts on it
+  (table 0x4ac238: idle 0x4ac380, fighting 0x4ac6e0, fleeing 0x4ac620, surrendered 0x4ac660)
+  unless a move is under way (`+0x14`). A fleeing NPC with no move left surrenders (0x4ac620 →
+  0x4aabe0 state 3); a surrendered one goes back to idle when its target is gone, dead or down
+  (0x4ac660), and only its target's attack makes it decide again (0x4aa620 case 3).
+- **Keeping away** (0x4ac6e0 → 0x4ac7b0): a fighter whose row has column 15 above 1 and is
+  nearer than that, one tick in 20, walks back to that distance. The rows' comments agree:
+  "Generic Bowman" 4, "close combat invis will move back 5 tiles" 5.
 - **States** (0x4aab00 reads them, 0x4aabe0 sets them; checked: 0x4aab00 is the getter): idle,
   fighting (`npc_flags` 0x1), fleeing (`critter_flags` 0x10, its target in 0xe6),
   surrendered (0x4000, the same target). Setting fighting raises event 13, leaving it 14. Fleeing and surrender by `rules/ai_params.mes` (41 rows of 17 numbers,
@@ -203,3 +213,17 @@ of `combat_design.md` come after the original's rules work.
    - Not built: the bark, followers who like the victim staying out, a leader hitting its
      follower, the witnesses' −20 (0x4aee50), the PC's reputation with a faction, prowling
      attackers noticed less.
+7. **Fleeing, surrender, keeping away** (built, `feat/combat-surrender`).
+   - `should_flee` is 0x4ab2f0 in full: never from a target below column 3 percent; at or
+     below column 0; else when the target's side is column 1 larger, or its levels column 2
+     higher (a side: a PC and its followers, an NPC alone).
+   - A fleeing NPC with nowhere to run (no path away within its points) surrenders
+     (`combat::Surrendered`): out of the fight, still. It takes heart when whom it gave up to is
+     gone, dead or down, or at 80 % hit points one tick in 500 (`recover_surrendered`); only
+     that critter's attack makes it fight again. It notices no foes, does not wander and is not
+     drawn into others' fights.
+   - Keeping away: at the start of its turn, one turn in 20 (builder's call: the original rolls
+     each AI tick), a fighter nearer than its column 15 distance walks back to it.
+   - Attackers out of reach walk towards the target until in reach (ranged ones too).
+   - Not built: the surrender bark and action 0x19, ammunition (not found in the attack), weapon
+     switching, the one-shot items of 0x4ac910.
