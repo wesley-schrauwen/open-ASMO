@@ -8,7 +8,9 @@ use serde::{Deserialize, Serialize};
 
 /// A host-issued entity tag. Two `NetId`s from the same session are equal iff they name the
 /// same entity.
-#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Component, Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
 pub struct NetId(pub u64);
 
 /// Hands out [`NetId`]s. The host owns exactly one of these.

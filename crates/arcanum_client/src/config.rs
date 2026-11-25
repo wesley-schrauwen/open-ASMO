@@ -103,14 +103,22 @@ pub fn load(path: Option<PathBuf>, overrides: EnvOverrides) -> (GameSettings, Co
             GameSettings::default()
         }
     };
-    let mut config = ConfigFile { path, saved: saved.clone(), overrides, load_warnings };
+    let mut config = ConfigFile {
+        path,
+        saved: saved.clone(),
+        overrides,
+        load_warnings,
+    };
     let mut settings = saved;
     if settings.player_id == 0 {
         settings.player_id = new_player_id();
         if let Some(path) = &config.path {
             match write_atomically(path, &to_toml(&settings)) {
                 Ok(()) => config.saved = settings.clone(),
-                Err(e) => config.load_warnings.push(format!("cannot save the new player id to {}: {e}", path.display())),
+                Err(e) => config.load_warnings.push(format!(
+                    "cannot save the new player id to {}: {e}",
+                    path.display()
+                )),
             }
         }
     }
@@ -122,7 +130,11 @@ pub fn load(path: Option<PathBuf>, overrides: EnvOverrides) -> (GameSettings, Co
 pub fn new_player_id() -> u64 {
     use std::hash::{BuildHasher, Hasher};
     let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
-    hasher.write_u128(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()));
+    hasher.write_u128(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos()),
+    );
     hasher.write_u32(std::process::id());
     (hasher.finish() >> 1).max(1)
 }
@@ -133,7 +145,10 @@ fn read_file(path: &Path, warnings: &mut Vec<String>) -> GameSettings {
         Ok(text) => parse_with_warnings(&text, &path.display().to_string(), warnings),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => GameSettings::default(),
         Err(e) => {
-            warnings.push(format!("cannot read {}: {e}; using default settings", path.display()));
+            warnings.push(format!(
+                "cannot read {}: {e}; using default settings",
+                path.display()
+            ));
             GameSettings::default()
         }
     }
@@ -155,11 +170,15 @@ pub fn parse_with_warnings(text: &str, source: &str, warnings: &mut Vec<String>)
     let file: toml::Table = match toml::from_str(text) {
         Ok(table) => table,
         Err(e) => {
-            warnings.push(format!("{source} is not valid TOML ({}); using default settings", e.message()));
+            warnings.push(format!(
+                "{source} is not valid TOML ({}); using default settings",
+                e.message()
+            ));
             return GameSettings::default();
         }
     };
-    let mut accepted = toml::Table::try_from(GameSettings::default()).expect("settings serialize to a table");
+    let mut accepted =
+        toml::Table::try_from(GameSettings::default()).expect("settings serialize to a table");
     for (key, value) in file {
         if !accepted.contains_key(&key) {
             warnings.push(format!("{source}: ignoring unknown setting {key:?}"));
@@ -172,16 +191,23 @@ pub fn parse_with_warnings(text: &str, source: &str, warnings: &mut Vec<String>)
             Err(e) => warnings.push(format!("{source}: ignoring {key}: {}", e.message())),
         }
     }
-    let mut settings: GameSettings = accepted.try_into().expect("every accepted setting was checked");
+    let mut settings: GameSettings = accepted
+        .try_into()
+        .expect("every accepted setting was checked");
     for name in settings.sanitize() {
-        warnings.push(format!("{source}: {name} was out of range and has been corrected"));
+        warnings.push(format!(
+            "{source}: {name} was out of range and has been corrected"
+        ));
     }
     settings
 }
 
 /// The file's contents for `settings`.
 pub fn to_toml(settings: &GameSettings) -> String {
-    format!("{HEADER}{}", toml::to_string(settings).expect("settings serialize to TOML"))
+    format!(
+        "{HEADER}{}",
+        toml::to_string(settings).expect("settings serialize to TOML")
+    )
 }
 
 /// Writes `contents` to a temporary file beside `path`, flushes it to disk, then renames it over
@@ -211,7 +237,8 @@ pub struct ConfigPlugin;
 
 impl Plugin for ConfigPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, log_load_warnings).add_systems(OnExit(AppState::Options), save_settings);
+        app.add_systems(Startup, log_load_warnings)
+            .add_systems(OnExit(AppState::Options), save_settings);
     }
 }
 
@@ -260,7 +287,13 @@ mod tests {
     #[test]
     fn missing_settings_keep_their_defaults() {
         let s = parse("music_volume = 0.2\n", "test");
-        assert_eq!(s, GameSettings { music_volume: 0.2, ..default() });
+        assert_eq!(
+            s,
+            GameSettings {
+                music_volume: 0.2,
+                ..default()
+            }
+        );
         assert_eq!(parse("", "test"), GameSettings::default());
     }
 
@@ -269,12 +302,22 @@ mod tests {
         let text = "resolution = \"1024x768\"\nfloats = \"loud\"\nauto_attack = \"maybe\"\n\
                     music_volume = 0.3\nfullscreen = true\nfuture_setting = 1\n";
         let s = parse(text, "test");
-        assert_eq!(s, GameSettings { music_volume: 0.3, fullscreen: true, ..default() });
+        assert_eq!(
+            s,
+            GameSettings {
+                music_volume: 0.3,
+                fullscreen: true,
+                ..default()
+            }
+        );
     }
 
     #[test]
     fn out_of_range_values_are_clamped() {
-        let s = parse("music_volume = 4.5\neffects_volume = -2\nbrightness = 0.4\n", "test");
+        let s = parse(
+            "music_volume = 4.5\neffects_volume = -2\nbrightness = 0.4\n",
+            "test",
+        );
         assert_eq!((s.music_volume, s.brightness), (1.0, 0.4));
         // An integer where a number is expected is accepted.
         assert_eq!(s.effects_volume, 0.0);
@@ -291,10 +334,20 @@ mod tests {
         let path = dir.path().join("config.toml");
         fs::write(&path, "resolution = \"huge\"\nmusic_volume = 9\nzoom = 2\n").unwrap();
         let (s, config) = load(Some(path), EnvOverrides::default());
-        assert_eq!(s, GameSettings { player_id: s.player_id, ..default() });
+        assert_eq!(
+            s,
+            GameSettings {
+                player_id: s.player_id,
+                ..default()
+            }
+        );
         let w = config.load_warnings.join("\n");
         assert_eq!(config.load_warnings.len(), 3, "{w}");
-        for expected in ["ignoring resolution", "unknown setting \"zoom\"", "music_volume was out of range"] {
+        for expected in [
+            "ignoring resolution",
+            "unknown setting \"zoom\"",
+            "music_volume was out of range",
+        ] {
             assert!(w.contains(expected), "{expected}: {w}");
         }
         let (_, config) = load(None, EnvOverrides::default());
@@ -308,16 +361,32 @@ mod tests {
 
         // No file: defaults, and a new player id, which is written at once.
         let (s, _) = load(Some(path.clone()), EnvOverrides::default());
-        assert_eq!(s, GameSettings { player_id: s.player_id, ..default() });
+        assert_eq!(
+            s,
+            GameSettings {
+                player_id: s.player_id,
+                ..default()
+            }
+        );
         assert_eq!(parse(&fs::read_to_string(&path).unwrap(), "test"), s);
 
         fs::write(&path, "resolution = \"2560x1440\"\nmusic_volume = 0.4\n").unwrap();
         let (s, _) = load(Some(path.clone()), EnvOverrides::default());
-        assert_eq!((s.resolution, s.music_volume), (DisplayResolution::Qhd, 0.4));
+        assert_eq!(
+            (s.resolution, s.music_volume),
+            (DisplayResolution::Qhd, 0.4)
+        );
 
-        let env = EnvOverrides { resolution: Some(DisplayResolution::Hd), fullscreen: None };
+        let env = EnvOverrides {
+            resolution: Some(DisplayResolution::Hd),
+            fullscreen: None,
+        };
         let (s, config) = load(Some(path.clone()), env);
-        assert_eq!((s.resolution, s.music_volume), (DisplayResolution::Hd, 0.4), "environment wins");
+        assert_eq!(
+            (s.resolution, s.music_volume),
+            (DisplayResolution::Hd, 0.4),
+            "environment wins"
+        );
         assert_eq!(config.saved.resolution, DisplayResolution::Qhd);
     }
 
@@ -343,12 +412,19 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.toml");
         fs::write(&path, "resolution = \"2560x1440\"\n").unwrap();
-        let env = EnvOverrides { resolution: Some(DisplayResolution::Hd), fullscreen: Some(true) };
+        let env = EnvOverrides {
+            resolution: Some(DisplayResolution::Hd),
+            fullscreen: Some(true),
+        };
         let (mut s, mut config) = load(Some(path.clone()), env);
         s.music_volume = 0.5;
         config.save(&s);
         let saved = parse(&fs::read_to_string(&path).unwrap(), "test");
-        assert_eq!(saved.resolution, DisplayResolution::Qhd, "not the ARCANUM_RES value");
+        assert_eq!(
+            saved.resolution,
+            DisplayResolution::Qhd,
+            "not the ARCANUM_RES value"
+        );
         assert!(!saved.fullscreen, "not the ARCANUM_FULLSCREEN value");
         assert_eq!(saved.music_volume, 0.5);
 
@@ -366,7 +442,10 @@ mod tests {
         write_atomically(&path, "first").unwrap();
         write_atomically(&path, "second").unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "second");
-        let names: Vec<_> = fs::read_dir(path.parent().unwrap()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        let names: Vec<_> = fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
         assert_eq!(names, ["config.toml"]);
     }
 
@@ -386,8 +465,15 @@ mod tests {
             overrides: EnvOverrides::default(),
             load_warnings: Vec::new(),
         };
-        config.save(&GameSettings { music_volume: 0.1, ..default() });
-        assert_eq!(config.saved, GameSettings::default(), "unchanged after a failed save");
+        config.save(&GameSettings {
+            music_volume: 0.1,
+            ..default()
+        });
+        assert_eq!(
+            config.saved,
+            GameSettings::default(),
+            "unchanged after a failed save"
+        );
     }
 
     #[test]

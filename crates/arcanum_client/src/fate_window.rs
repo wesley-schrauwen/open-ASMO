@@ -29,7 +29,10 @@ use crate::sim_bridge::HostLink;
 use crate::widgets::FrameButton;
 
 /// The window, in screen pixels.
-pub const WINDOW: Rect = Rect { min: Vec2::new(0.0, 41.0), max: Vec2::new(250.0, 278.0) };
+pub const WINDOW: Rect = Rect {
+    min: Vec2::new(0.0, 41.0),
+    max: Vec2::new(250.0, 278.0),
+};
 /// Rows are this far apart.
 pub const ROW_HEIGHT: f32 = 18.0;
 /// The options.
@@ -60,8 +63,15 @@ pub struct FateWindowPlugin;
 impl Plugin for FateWindowPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<FatePanel>()
-            .add_systems(OnExit(AppState::InGame), |mut panel: ResMut<FatePanel>| *panel = FatePanel::default())
-            .add_systems(PreUpdate, toggle_on_keys.run_if(in_state(AppState::InGame)).after(bevy::input::InputSystems))
+            .add_systems(OnExit(AppState::InGame), |mut panel: ResMut<FatePanel>| {
+                *panel = FatePanel::default()
+            })
+            .add_systems(
+                PreUpdate,
+                toggle_on_keys
+                    .run_if(in_state(AppState::InGame))
+                    .after(bevy::input::InputSystems),
+            )
             .add_systems(Update, show_window.run_if(in_state(AppState::InGame)))
             .add_observer(on_hud_button)
             .add_observer(on_row);
@@ -77,7 +87,11 @@ fn toggle_on_keys(mut keys: ResMut<ButtonInput<KeyCode>>, mut panel: ResMut<Fate
     }
 }
 
-fn on_hud_button(activate: On<Activate>, buttons: Query<&crate::hud::HudAction>, mut panel: ResMut<FatePanel>) {
+fn on_hud_button(
+    activate: On<Activate>,
+    buttons: Query<&crate::hud::HudAction>,
+    mut panel: ResMut<FatePanel>,
+) {
     if buttons.get(activate.entity) == Ok(&crate::hud::HudAction::Fate) {
         panel.open = !panel.open;
     }
@@ -89,10 +103,20 @@ fn pending(sheet: &SheetHost) -> u16 {
 }
 
 /// A row's button spends a point on its option, or takes a waiting one back.
-fn on_row(activate: On<Activate>, rows: Query<&FateRow>, sheet: Res<SheetHost>, link: Option<Res<HostLink>>) {
-    let (Ok(&FateRow(option)), Some(link)) = (rows.get(activate.entity), link) else { return };
+fn on_row(
+    activate: On<Activate>,
+    rows: Query<&FateRow>,
+    sheet: Res<SheetHost>,
+    link: Option<Res<HostLink>>,
+) {
+    let (Ok(&FateRow(option)), Some(link)) = (rows.get(activate.entity), link) else {
+        return;
+    };
     let waiting = pending(&sheet) & arcanum_sim::fate_bit(option) != 0;
-    let _ = link.0.send_intent(PlayerIntent::Fate { option, on: !waiting });
+    let _ = link.0.send_intent(PlayerIntent::Fate {
+        option,
+        on: !waiting,
+    });
 }
 
 fn art(name: &str) -> String {
@@ -121,24 +145,54 @@ fn show_window(
     }
     let Some(waiting) = want else { return };
     let fonts = fonts.map(|f| f.clone()).unwrap_or_default();
-    let local = |r: Rect| Rect { min: r.min + WINDOW.min, max: r.max + WINDOW.min };
+    let local = |r: Rect| Rect {
+        min: r.min + WINDOW.min,
+        max: r.max + WINDOW.min,
+    };
     commands
         .spawn((
             FateWindowRoot,
             DespawnOnExit(AppState::InGame),
             bevy::picking::Pickable::IGNORE,
-            Node { position_type: PositionType::Absolute, top: Val::Px(0.0), left: Val::Percent(50.0), margin: UiRect::left(px(-400.0)), width: px(800.0), height: px(600.0), ..default() },
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::Px(0.0),
+                left: Val::Percent(50.0),
+                margin: UiRect::left(px(-400.0)),
+                width: px(800.0),
+                height: px(600.0),
+                ..default()
+            },
         ))
         .with_children(|screen| {
-            screen.spawn((ImageNode::new(assets.load(art("Fate_Base.ART"))), at(WINDOW)));
+            screen.spawn((
+                ImageNode::new(assets.load(art("Fate_Base.ART"))),
+                at(WINDOW),
+            ));
             let frames = assets.load(art("FateBut.ART"));
             for row in 0..OPTIONS {
                 let y = row as f32 * ROW_HEIGHT;
-                let text = data.as_ref().and_then(|d| d.fate_ui.get(row as u32)).unwrap_or("").to_string();
-                screen.spawn((bevy::picking::Pickable::IGNORE, Node { align_items: AlignItems::Center, overflow: Overflow::clip(), ..at(local(rect(Vec2::new(11.0, 3.0 + y), Vec2::new(WINDOW.width() - 11.0, ROW_HEIGHT)))) })).with_children(|cell| {
-                    let mut t = cell.spawn(TextColor(SCREEN_WHITE));
-                    fonts.insert_text(&mut t, &text, UiFont::Body);
-                });
+                let text = data
+                    .as_ref()
+                    .and_then(|d| d.fate_ui.get(row as u32))
+                    .unwrap_or("")
+                    .to_string();
+                screen
+                    .spawn((
+                        bevy::picking::Pickable::IGNORE,
+                        Node {
+                            align_items: AlignItems::Center,
+                            overflow: Overflow::clip(),
+                            ..at(local(rect(
+                                Vec2::new(11.0, 3.0 + y),
+                                Vec2::new(WINDOW.width() - 11.0, ROW_HEIGHT),
+                            )))
+                        },
+                    ))
+                    .with_children(|cell| {
+                        let mut t = cell.spawn(TextColor(SCREEN_WHITE));
+                        fonts.insert_text(&mut t, &text, UiFont::Body);
+                    });
                 let held = waiting & arcanum_sim::fate_bit(row as u8) != 0;
                 let frame = usize::from(held);
                 screen.spawn((
@@ -146,9 +200,17 @@ fn show_window(
                     Button,
                     ActivateOnPress,
                     Hovered::default(),
-                    FrameButton { frames: frames.clone(), normal: frame, pressed: 1, hover: frame },
+                    FrameButton {
+                        frames: frames.clone(),
+                        normal: frame,
+                        pressed: 1,
+                        hover: frame,
+                    },
                     ImageNode::default(),
-                    at(local(rect(Vec2::new(223.0, 4.0 + y), Vec2::new(18.0, 13.0)))),
+                    at(local(rect(
+                        Vec2::new(223.0, 4.0 + y),
+                        Vec2::new(18.0, 13.0),
+                    ))),
                 ));
             }
         });
@@ -161,7 +223,11 @@ mod tests {
     #[test]
     fn the_window_sits_under_the_top_bar() {
         let panel = FatePanel { open: true };
-        assert!(panel.covers(Vec2::new(10.0, 50.0)) && !panel.covers(Vec2::new(10.0, 30.0)) && !panel.covers(Vec2::new(260.0, 50.0)));
+        assert!(
+            panel.covers(Vec2::new(10.0, 50.0))
+                && !panel.covers(Vec2::new(10.0, 30.0))
+                && !panel.covers(Vec2::new(260.0, 50.0))
+        );
         assert!(!FatePanel::default().covers(Vec2::new(10.0, 50.0)));
     }
 }

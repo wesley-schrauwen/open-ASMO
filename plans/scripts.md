@@ -428,6 +428,46 @@ Decoded so far, with confidence; the rest are named by the helper they call.
        the first beat (scripts 1781-1792: unless global flag 2350 is set). The other 4 beat
        with nothing unbuilt.
      - 2252 of 2399 scripts run to an end.
+4k. **Followers, parties, quests, blessings, pools** (built, `feat/script-gaps-6`).
+   - **Sets** (0x44b4e0): 2/3 the triggerer's followers (field 0xf1 by 0x4411c0: not those
+     waiting, not the triggerer); 0xd/0xe the same with the triggerer last; 4/5 its party
+     (0x441310; alone, the triggerer); 6/7 a PC's party with each member's followers (0x4413e0;
+     not a PC, itself). Here a PC's party is every PC in the world (owner's team rule). The sets
+     are read when the run starts (the original reads them at each use).
+   - **Conditions:** 6 on a non-PC reads the global state; 7 the global quest state; 8 / 9 has
+     blessing / curse N (a PC's list); 0x19 surrendered (an NPC with `critter_flags` 0x4000,
+     0x4af210); 0x1a in a conversation; 0x1c sees (0x4af260; here: alive and within its
+     perception, 1-10 tiles, the larger distance; light, invisibility and walls not copied);
+     0x22 within N tiles of X, Y (0x4b96f0: the larger of |dx|, |dy|); 0x23 under spell N
+     (0x459380; no spells are kept on critters: never); 0x2d the sector at X, Y is in the list
+     at 0x601794 (0x4d0ee0; who fills it is not traced: never, builder's call).
+   - **Actions:**
+     - 0x11 global quest state (0x4c51c0, table 0x5ff418): only 4 and 6 are written, and never
+       over either (`ScriptGlobals::quests`).
+     - 0x15 follow a leader by force (0x45de90 with 1: no checks; `npc_flags` +0x400, -0x20);
+       0x16 stop following (0x45dfc0 with 1). Both go through `follow::set_follower`, as
+       dialogue does.
+     - 0x19-0x1c add / remove a blessing or curse (0x4c42f0 / 0x4c4450 / 0x4c3e40 / 0x4c3fa0):
+       PCs only, ids from 50; the effect is entry `N × 10 + 1` of `mes/gamebless.mes` /
+       `gamecurse.mes` (0x4c4170). 16 of 18 blessings and 14 of 17 curses name an effect of
+       `rules/effect.mes`; the others name 0, 4 or 8, which are not there. Their times and
+       messages are not kept.
+     - 0x20 the art's armour nibble (0x504030: `current_aid` type 2 bits 20-23, type 0xc bits
+       20-22; PCs have no art id here: 0). Not armour class.
+     - 0x2d an NPC's day standpoint (field 0x121), kept (`SectorDelta::standpoints`); the NPC is
+       spawned again with it.
+     - 0x4b / 0x4c heal hit points / fatigue (0x4b58c0 / 0x4ed720): PCs' sheets; NPCs' damage
+       is not kept. 0x6b / 0x6c store current and maximum hit points / fatigue: PCs from the
+       rules; NPCs from their data (`hp_pts + hp_adj`, the critter part 0x43d630 not added;
+       fatigue `pts × 4 + adj + 4 + (level + CN) × 2 + WP`, 0x45d670).
+     - 0x75 one fate point (stat 0x14, PCs); 0x89 adjust a stat (0x4b0980) within tables
+       0x5b5194 / 0x5b5204: here PCs' primaries (1-20), alignment (±1000), fate (0-100), poison
+       (0-1000); other stats and NPCs are not changed.
+     - 0x77 unbotch (0x4c5070): only when the global state is 6; then it is 2 and the PC's
+       record loses its botched bit (`PcScriptState::botched`).
+     - 0x7b touch art (0x4ef190): an art-cache load; nothing.
+   - **Real data:** 2328 of 2399 scripts run to an end (2252 before). Next: traps (8), 0x24
+     combat attack (6), 0x88 (5), 0x34 / 0x5a / 0x5d / 0x7f (4).
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,

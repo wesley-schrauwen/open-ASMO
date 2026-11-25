@@ -39,7 +39,10 @@ impl AssetLoader for ArtAssetLoader {
         _load_context: &mut LoadContext<'_>,
     ) -> Result<Image, ArtLoadError> {
         let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).await.map_err(ArtLoadError::Io)?;
+        reader
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(ArtLoadError::Io)?;
         let (rgba, (width, height)) = ArtFile::parse(&bytes)
             .and_then(|art| art.decode_frame0())
             .map_err(ArtLoadError::Art)?;
@@ -54,7 +57,11 @@ impl AssetLoader for ArtAssetLoader {
 
 fn rgba_image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
     Image::new(
-        Extent3d { width, height, depth_or_array_layers: 1 },
+        Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
         TextureDimension::D2,
         rgba,
         TextureFormat::Rgba8UnormSrgb,
@@ -110,7 +117,9 @@ impl ArtFrames {
     /// frame if there are fewer).
     pub fn anchor(&self, index: usize) -> bevy::sprite::Anchor {
         let i = index.min(self.frames.len().saturating_sub(1));
-        let (Some(center), Some(size)) = (self.centers.get(i), self.sizes.get(i)) else { return bevy::sprite::Anchor::CENTER };
+        let (Some(center), Some(size)) = (self.centers.get(i), self.sizes.get(i)) else {
+            return bevy::sprite::Anchor::CENTER;
+        };
         hotspot_anchor(*center, *size)
     }
 }
@@ -121,7 +130,10 @@ pub fn hotspot_anchor(center: IVec2, size: UVec2) -> bevy::sprite::Anchor {
     if size.x == 0 || size.y == 0 {
         return bevy::sprite::Anchor::CENTER;
     }
-    bevy::sprite::Anchor(Vec2::new(center.x as f32 / size.x as f32 - 0.5, 0.5 - center.y as f32 / size.y as f32))
+    bevy::sprite::Anchor(Vec2::new(
+        center.x as f32 / size.x as f32 - 0.5,
+        0.5 - center.y as f32 / size.y as f32,
+    ))
 }
 
 /// Loads `.art` files as [`ArtFrames`]. Shares the extension with the other `.art` loaders;
@@ -141,18 +153,33 @@ impl AssetLoader for ArtFramesLoader {
         load_context: &mut LoadContext<'_>,
     ) -> Result<ArtFrames, ArtLoadError> {
         let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).await.map_err(ArtLoadError::Io)?;
+        reader
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(ArtLoadError::Io)?;
         let art = ArtFile::parse(&bytes).map_err(ArtLoadError::Art)?;
         let palette = art.default_palette().map_err(ArtLoadError::Art)?;
         let mut rotations = Vec::with_capacity(art.rotation_count);
         for rotation in 0..art.rotation_count {
-            let mut r = ArtRotation { frames: Vec::new(), centers: Vec::new(), sizes: Vec::new() };
+            let mut r = ArtRotation {
+                frames: Vec::new(),
+                centers: Vec::new(),
+                sizes: Vec::new(),
+            };
             for index in 0..art.frame_count {
-                let frame = art.decode_frame(rotation, index, palette).map_err(ArtLoadError::Art)?;
-                r.centers.push(IVec2::new(frame.info.center_x, frame.info.center_y));
-                r.sizes.push(UVec2::new(frame.info.width, frame.info.height));
+                let frame = art
+                    .decode_frame(rotation, index, palette)
+                    .map_err(ArtLoadError::Art)?;
+                r.centers
+                    .push(IVec2::new(frame.info.center_x, frame.info.center_y));
+                r.sizes
+                    .push(UVec2::new(frame.info.width, frame.info.height));
                 let image = rgba_image(frame.info.width, frame.info.height, frame.rgba);
-                let label = if rotation == 0 { format!("frame{index}") } else { format!("r{rotation}frame{index}") };
+                let label = if rotation == 0 {
+                    format!("frame{index}")
+                } else {
+                    format!("r{rotation}frame{index}")
+                };
                 r.frames.push(load_context.add_labeled_asset(label, image));
             }
             rotations.push(r);
@@ -160,7 +187,13 @@ impl AssetLoader for ArtFramesLoader {
         let Some(first) = rotations.first().filter(|r| !r.frames.is_empty()).cloned() else {
             return Err(ArtLoadError::Art(ArtError::NoFrames));
         };
-        Ok(ArtFrames { frames: first.frames, centers: first.centers, sizes: first.sizes, frame_rate: art.frame_rate, rotations })
+        Ok(ArtFrames {
+            frames: first.frames,
+            centers: first.centers,
+            sizes: first.sizes,
+            frame_rate: art.frame_rate,
+            rotations,
+        })
     }
 
     fn extensions(&self) -> &[&str] {

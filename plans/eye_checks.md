@@ -111,3 +111,9 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 - [ ] The top bar shows the fate points (two digits) beside the fate button; F or the button opens
       the fate window under the bar; "Full heal now" spends one and heals; a row clicked again
       gives the point back.
+
+## Script gaps 6
+
+- [ ] An NPC a script makes follow (action 0x15) walks after the PC; one told to stop (0x16)
+      stays where it is.
+- [ ] An NPC whose day standpoint a script moves (0x2d) walks to the new place in daytime.

@@ -45,7 +45,12 @@ impl DatBuilder {
 
     /// Any entry, for building malformed archives.
     pub fn entry(mut self, path: &str, flags: u32, stored: Vec<u8>, declared_size: u32) -> Self {
-        self.entries.push(Entry { path: path.to_string(), flags, stored, declared_size });
+        self.entries.push(Entry {
+            path: path.to_string(),
+            flags,
+            stored,
+            declared_size,
+        });
         self
     }
 
@@ -53,7 +58,11 @@ impl DatBuilder {
         let mut out = Vec::new();
         let mut offsets = Vec::new();
         for e in &self.entries {
-            offsets.push(if e.flags & 0x400 != 0 { 0 } else { out.len() as u32 });
+            offsets.push(if e.flags & 0x400 != 0 {
+                0
+            } else {
+                out.len() as u32
+            });
             out.extend_from_slice(&e.stored);
         }
         let index_start = out.len();

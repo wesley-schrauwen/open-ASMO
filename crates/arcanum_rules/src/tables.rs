@@ -43,7 +43,12 @@ pub struct SkillTable {
 impl SkillTable {
     pub fn from_mes(mes: &MesFile) -> Self {
         Self {
-            skills: (0..SKILLS).map(|i| Skill { name: text(mes, i), description: text(mes, 20 + i) }).collect(),
+            skills: (0..SKILLS)
+                .map(|i| Skill {
+                    name: text(mes, i),
+                    description: text(mes, 20 + i),
+                })
+                .collect(),
             ranks: std::array::from_fn(|i| text(mes, 17 + i)),
         }
     }
@@ -99,7 +104,12 @@ impl SpellTable {
     pub fn from_mes(mes: &MesFile) -> Self {
         Self {
             spells: (0..SPELLS)
-                .map(|i| Spell { name: text(mes, i), description: text(mes, 700 + i), college: i / SPELLS_PER_COLLEGE, cost: 0 })
+                .map(|i| Spell {
+                    name: text(mes, i),
+                    description: text(mes, 700 + i),
+                    college: i / SPELLS_PER_COLLEGE,
+                    cost: 0,
+                })
                 .collect(),
             colleges: (0..COLLEGES).map(|c| text(mes, 500 + c)).collect(),
         }
@@ -119,7 +129,9 @@ impl SpellTable {
 fn spell_option(options: &str, name: &str) -> Option<i32> {
     options.split(',').find_map(|o| {
         let (key, value) = o.split_once(':')?;
-        (key.trim().eq_ignore_ascii_case(name)).then(|| value.trim().parse().ok()).flatten()
+        (key.trim().eq_ignore_ascii_case(name))
+            .then(|| value.trim().parse().ok())
+            .flatten()
     })
 }
 
@@ -149,7 +161,11 @@ pub struct Schematic {
 }
 
 fn numbers(mes: &MesFile, id: u32) -> Vec<u32> {
-    mes.get(id).unwrap_or("").split_whitespace().filter_map(|t| t.parse().ok()).collect()
+    mes.get(id)
+        .unwrap_or("")
+        .split_whitespace()
+        .filter_map(|t| t.parse().ok())
+        .collect()
 }
 
 /// Every schematic in `rules/schematic.mes` (blocks from 2000 on).
@@ -162,9 +178,14 @@ pub fn parse_schematics(mes: &MesFile) -> Vec<Schematic> {
             let source = match id {
                 2000..=3999 => {
                     let off = (id - 2000) as usize;
-                    SchematicSource::Learned { discipline: off / 200, degree: off % 200 / 10 + 1 }
+                    SchematicSource::Learned {
+                        discipline: off / 200,
+                        degree: off % 200 / 10 + 1,
+                    }
                 }
-                4000..=5999 => SchematicSource::Found { discipline: Some((id as usize - 4000) / 200) },
+                4000..=5999 => SchematicSource::Found {
+                    discipline: Some((id as usize - 4000) / 200),
+                },
                 _ => SchematicSource::Found { discipline: None },
             };
             Schematic {
@@ -193,7 +214,15 @@ mod tests {
     fn spell_costs_come_from_the_spell_list() {
         let mut table = SpellTable::from_mes(&mes("{0}{Disarm}{1}{Unlocking Cantrip}"));
         table.read_costs(&mes("{1001}{Cost: 5, Resist: (stat_dexterity @ 0), Info: aggressive}{1051}{Cost: 10}{1201}{Cost: 50, ChargeBeginCost: 0}"));
-        assert_eq!((table.spells[0].cost, table.spells[1].cost, table.spells[4].cost, table.spells[2].cost), (5, 10, 50, 0));
+        assert_eq!(
+            (
+                table.spells[0].cost,
+                table.spells[1].cost,
+                table.spells[4].cost,
+                table.spells[2].cost
+            ),
+            (5, 10, 50, 0)
+        );
     }
 
     #[test]
@@ -204,18 +233,41 @@ mod tests {
         ));
         assert_eq!(list.len(), 2);
         let a = &list[0];
-        assert_eq!((a.id, a.name, a.text, a.drawing, a.amount), (2000, 10, 11, 532, 5));
-        assert_eq!(a.source, SchematicSource::Learned { discipline: 0, degree: 1 });
-        assert_eq!((a.ingredients.clone(), a.result.clone()), ([vec![10061], vec![10062]], vec![10059]));
+        assert_eq!(
+            (a.id, a.name, a.text, a.drawing, a.amount),
+            (2000, 10, 11, 532, 5)
+        );
+        assert_eq!(
+            a.source,
+            SchematicSource::Learned {
+                discipline: 0,
+                degree: 1
+            }
+        );
+        assert_eq!(
+            (a.ingredients.clone(), a.result.clone()),
+            ([vec![10061], vec![10062]], vec![10059])
+        );
         let b = &list[1];
-        assert_eq!(b.source, SchematicSource::Found { discipline: Some(1) });
+        assert_eq!(
+            b.source,
+            SchematicSource::Found {
+                discipline: Some(1)
+            }
+        );
         assert_eq!(b.ingredients[0], [1, 2, 3]);
     }
 
     #[test]
     fn learned_schematic_degrees_and_late_found_ones() {
         let list = parse_schematics(&mes("{3460}{1}{3466}{1}{6010}{2}{6016}{1}"));
-        assert_eq!(list[0].source, SchematicSource::Learned { discipline: 7, degree: 7 });
+        assert_eq!(
+            list[0].source,
+            SchematicSource::Learned {
+                discipline: 7,
+                degree: 7
+            }
+        );
         assert_eq!(list[1].source, SchematicSource::Found { discipline: None });
     }
 
@@ -228,27 +280,52 @@ mod tests {
 
     #[test]
     fn spells_belong_to_colleges_in_order() {
-        let t = SpellTable::from_mes(&mes("{0}{Disarm}{7}{Read Aura}{500}{Conveyance}{501}{Divination}{707}{Reveals auras.}"));
+        let t = SpellTable::from_mes(&mes(
+            "{0}{Disarm}{7}{Read Aura}{500}{Conveyance}{501}{Divination}{707}{Reveals auras.}",
+        ));
         assert_eq!(t.spells.len(), SPELLS);
-        assert_eq!((t.spells[7].name.as_str(), t.spells[7].college, t.spells[7].description.as_str()), ("Read Aura", 1, "Reveals auras."));
+        assert_eq!(
+            (
+                t.spells[7].name.as_str(),
+                t.spells[7].college,
+                t.spells[7].description.as_str()
+            ),
+            ("Read Aura", 1, "Reveals auras.")
+        );
         assert_eq!(&t.colleges[..2], ["Conveyance", "Divination"]);
     }
 
     #[test]
     fn skills_and_ranks_are_read() {
-        let t = SkillTable::from_mes(&mes("{0}{Bow}{12}{Repair}{17}{Apprentice}{18}{Expert}{19}{Master}{20}{Bows. (DX)}"));
+        let t = SkillTable::from_mes(&mes(
+            "{0}{Bow}{12}{Repair}{17}{Apprentice}{18}{Expert}{19}{Master}{20}{Bows. (DX)}",
+        ));
         assert_eq!(t.skills.len(), SKILLS);
-        assert_eq!((t.skills[0].name.as_str(), t.skills[0].description.as_str()), ("Bow", "Bows. (DX)"));
+        assert_eq!(
+            (t.skills[0].name.as_str(), t.skills[0].description.as_str()),
+            ("Bow", "Bows. (DX)")
+        );
         assert_eq!(t.skills[12].name, "Repair");
         assert_eq!(t.ranks, ["Apprentice", "Expert", "Master"]);
     }
 
     #[test]
     fn disciplines_and_degrees_are_read() {
-        let t = TechTable::from_mes(&mes("{0}{Herbology}{8}{Layman}{15}{Doctorate}{16}{Herbs.}{25}{Heal Lite text}"));
+        let t = TechTable::from_mes(&mes(
+            "{0}{Herbology}{8}{Layman}{15}{Doctorate}{16}{Herbs.}{25}{Heal Lite text}",
+        ));
         assert_eq!(t.disciplines.len(), DISCIPLINES);
-        assert_eq!((t.disciplines[0].name.as_str(), t.disciplines[0].description.as_str()), ("Herbology", "Herbs."));
+        assert_eq!(
+            (
+                t.disciplines[0].name.as_str(),
+                t.disciplines[0].description.as_str()
+            ),
+            ("Herbology", "Herbs.")
+        );
         assert_eq!(t.disciplines[0].degree_descriptions[1], "Heal Lite text");
-        assert_eq!((t.degrees[0].as_str(), t.degrees[7].as_str()), ("Layman", "Doctorate"));
+        assert_eq!(
+            (t.degrees[0].as_str(), t.degrees[7].as_str()),
+            ("Layman", "Doctorate")
+        );
     }
 }

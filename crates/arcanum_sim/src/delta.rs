@@ -77,7 +77,11 @@ impl Pool {
 
     /// How full, from 0 to 1 (0 when the highest value is not positive).
     pub fn fraction(self) -> f32 {
-        if self.max <= 0 { 0.0 } else { (self.current as f32 / self.max as f32).clamp(0.0, 1.0) }
+        if self.max <= 0 {
+            0.0
+        } else {
+            (self.current as f32 / self.max as f32).clamp(0.0, 1.0)
+        }
     }
 }
 
@@ -96,7 +100,11 @@ pub struct PcStatus {
 pub enum LedgerDelta {
     /// The host's copy of the player's character after the character request numbered `ack`
     /// (applied or refused). The client takes it and replays its later requests on top.
-    CharacterUpdate { player: PlayerId, ack: u32, creation: Creation },
+    CharacterUpdate {
+        player: PlayerId,
+        ack: u32,
+        creation: Creation,
+    },
     /// The player's character was accepted; the world is booting.
     CharacterAccepted { player: PlayerId },
     /// The player is now on `map` (a folder under `maps/`). Sent before the player's PC spawns:
@@ -104,36 +112,75 @@ pub enum LedgerDelta {
     EnterMap { map: String },
     /// An entity appeared. `art` is its art id (critters: standing, facing the camera) and
     /// `speed` its speed stat, from which clients time its walk ([`Gait`](crate::Gait)).
-    Spawn { net_id: NetId, kind: EntityKind, position: TileLoc, art: u32, speed: i32 },
+    Spawn {
+        net_id: NetId,
+        kind: EntityKind,
+        position: TileLoc,
+        art: u32,
+        speed: i32,
+    },
     /// Where every PC on the map is and where it is walking. Sent unreliably and often
     /// ([`crate::sync_state`]); `number` counts syncs, rolling over at [`SYNC_NUMBERS`], and a
     /// client keeps the newest ([`sync_is_newer`]) and drops older ones. It also answers moves:
     /// a PC's `seq` is the last move of its player the host took. `time` is the game clock.
-    StateSync { number: u32, time: crate::GameTime, actors: Vec<ActorState> },
+    StateSync {
+        number: u32,
+        time: crate::GameTime,
+        actors: Vec<ActorState>,
+    },
     /// The same as a `StateSync`, but sent reliably, to a client that reported it is far
     /// behind ([`PlayerIntent::SyncAck`](crate::PlayerIntent::SyncAck)).
-    Resync { number: u32, time: crate::GameTime, actors: Vec<ActorState> },
+    Resync {
+        number: u32,
+        time: crate::GameTime,
+        actors: Vec<ActorState>,
+    },
     /// Every change to the map's objects so far (doors opened or closed), sent to a player
     /// after `EnterMap`: the client applies them to its own copy of the map.
-    MapChanges { changes: BTreeMap<SectorId, SectorDelta> },
+    MapChanges {
+        changes: BTreeMap<SectorId, SectorDelta>,
+    },
     /// A door opened or closed ([`crate::doors`]).
     PortalChanged { door: MapObjectId, open: bool },
     /// A lock was picked or jammed: the door's or container's new flags ([`crate::lockpick`]).
-    LockChanged { target: crate::LockTarget, flags: i32 },
+    LockChanged {
+        target: crate::LockTarget,
+        flags: i32,
+    },
     /// A script switched an object off or on (actions 0x38 / 0x39): its new `flags`. `mobile`:
     /// `index` is in the sector's mobile objects, else in its own list.
-    ObjectFlags { sector: SectorId, index: u32, mobile: bool, flags: i32 },
+    ObjectFlags {
+        sector: SectorId,
+        index: u32,
+        mobile: bool,
+        flags: i32,
+    },
     /// A script changed an object's art (action 0x3b).
-    ObjectArt { sector: SectorId, index: u32, mobile: bool, art: u32 },
+    ObjectArt {
+        sector: SectorId,
+        index: u32,
+        mobile: bool,
+        art: u32,
+    },
     /// A script made an object into prototype `prototype` (action 0x28).
-    ObjectTransformed { sector: SectorId, index: u32, mobile: bool, prototype: u32 },
+    ObjectTransformed {
+        sector: SectorId,
+        index: u32,
+        mobile: bool,
+        prototype: u32,
+    },
     /// How the player's skill use went: a `mes/skill_ui.mes` line for the message box.
     SkillResult { message: u32 },
     /// Why the player's spell was not cast: a `mes/spell.mes` line for the message box.
     SpellResult { message: u32 },
     /// A line floating over `speaker`'s head ([`crate::dialogue`]): an NPC's (white) or a PC's
     /// chosen option (green), with the voice file to play, if any.
-    FloatText { speaker: NetId, text: String, colour: crate::FloatColour, voice: Option<String> },
+    FloatText {
+        speaker: NetId,
+        text: String,
+        colour: crate::FloatColour,
+        voice: Option<String>,
+    },
     /// The player's conversation with `npc` now offers these options.
     DialogueOptions { npc: NetId, options: Vec<String> },
     /// The player's conversation is over.
@@ -155,20 +202,36 @@ pub enum LedgerDelta {
     PcStatus { net_id: NetId, status: PcStatus },
     /// The host's copy of the player's own PC's sheet after the sheet request numbered `ack`
     /// (applied or refused). The client takes it and replays its later requests on top.
-    SheetUpdate { ack: u32, sheet: arcanum_rules::CharacterSheet },
+    SheetUpdate {
+        ack: u32,
+        sheet: arcanum_rules::CharacterSheet,
+    },
     /// What the player's own PC carries: sent with its spawn (`ack` 0), and after each inventory
     /// request numbered `ack`, taken or refused. The client replays its later requests on top.
-    Inventory { net_id: NetId, ack: u32, inventory: crate::Inventory },
+    Inventory {
+        net_id: NetId,
+        ack: u32,
+        inventory: crate::Inventory,
+    },
     /// An item was dropped on the ground ([`crate::ground`]).
-    GroundItemDropped { item: crate::GroundItemId, ground: crate::GroundItem },
+    GroundItemDropped {
+        item: crate::GroundItemId,
+        ground: crate::GroundItem,
+    },
     /// An item was picked up off the ground.
     GroundItemTaken { item: crate::GroundItemId },
     /// A pile changed, appeared (`Some`) or went (`None`).
-    PileChanged { pile: crate::GroundItemId, contents: Option<crate::Pile> },
+    PileChanged {
+        pile: crate::GroundItemId,
+        contents: Option<crate::Pile>,
+    },
     /// The player's PC reached the pile it was sent to: the loot window opens.
     PileOpened { pile: crate::GroundItemId },
     /// One of the map's containers shows open (frame 1) or shut ([`crate::container`]).
-    ContainerShown { container: crate::GroundItemId, open: bool },
+    ContainerShown {
+        container: crate::GroundItemId,
+        open: bool,
+    },
     /// The player's PC could not open a container: `mes/inven_ui.mes` `message` (locked, jammed,
     /// stuck).
     OpenRefused { message: u32 },
@@ -211,17 +274,56 @@ mod tests {
         assert!(sync_is_newer(2, 9_998), "after the roll-over");
         assert!(!sync_is_newer(9_998, 2));
         assert_eq!(sync_distance(9_998, 2), 4);
-        assert!(!LedgerDelta::StateSync { number: 1, time: Default::default(), actors: vec![] }.reliable());
-        assert!(LedgerDelta::Resync { number: 1, time: Default::default(), actors: vec![] }.reliable());
+        assert!(
+            !LedgerDelta::StateSync {
+                number: 1,
+                time: Default::default(),
+                actors: vec![]
+            }
+            .reliable()
+        );
+        assert!(
+            LedgerDelta::Resync {
+                number: 1,
+                time: Default::default(),
+                actors: vec![]
+            }
+            .reliable()
+        );
     }
 
     #[test]
     fn deltas_serialise_round_trip() {
         let deltas = [
-            LedgerDelta::CharacterUpdate { player: PlayerId(7), ack: 3, creation: Creation::default() },
-            LedgerDelta::Spawn { net_id: NetId(1), kind: EntityKind::Pc { player: PlayerId(7) }, position: TileLoc { x: 3, y: 4 }, art: 0x2800_2000, speed: 8 },
-            LedgerDelta::StateSync { number: 9, time: crate::GameTime::at_hour(15), actors: vec![ActorState { net_id: NetId(1), position: TileLoc { x: 3, y: 4 }, path: vec![TileLoc { x: 3, y: 5 }, TileLoc { x: 4, y: 6 }], seq: 2 }] },
-            LedgerDelta::Resync { number: 9_999, time: crate::GameTime { days: 3, ms: 7 }, actors: vec![] },
+            LedgerDelta::CharacterUpdate {
+                player: PlayerId(7),
+                ack: 3,
+                creation: Creation::default(),
+            },
+            LedgerDelta::Spawn {
+                net_id: NetId(1),
+                kind: EntityKind::Pc {
+                    player: PlayerId(7),
+                },
+                position: TileLoc { x: 3, y: 4 },
+                art: 0x2800_2000,
+                speed: 8,
+            },
+            LedgerDelta::StateSync {
+                number: 9,
+                time: crate::GameTime::at_hour(15),
+                actors: vec![ActorState {
+                    net_id: NetId(1),
+                    position: TileLoc { x: 3, y: 4 },
+                    path: vec![TileLoc { x: 3, y: 5 }, TileLoc { x: 4, y: 6 }],
+                    seq: 2,
+                }],
+            },
+            LedgerDelta::Resync {
+                number: 9_999,
+                time: crate::GameTime { days: 3, ms: 7 },
+                actors: vec![],
+            },
             LedgerDelta::Tick(12),
         ];
         for delta in deltas {

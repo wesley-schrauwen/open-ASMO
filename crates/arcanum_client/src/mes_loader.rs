@@ -46,8 +46,13 @@ impl AssetLoader for MesAssetLoader {
         _load_context: &mut LoadContext<'_>,
     ) -> Result<MesAsset, MesLoadError> {
         let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).await.map_err(MesLoadError::Io)?;
-        MesFile::parse(&bytes).map(MesAsset).map_err(MesLoadError::Mes)
+        reader
+            .read_to_end(&mut bytes)
+            .await
+            .map_err(MesLoadError::Io)?;
+        MesFile::parse(&bytes)
+            .map(MesAsset)
+            .map_err(MesLoadError::Mes)
     }
 
     fn extensions(&self) -> &[&str] {

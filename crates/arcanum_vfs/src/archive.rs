@@ -82,7 +82,9 @@ fn read_u32(r: &mut impl Read) -> io::Result<u32> {
 
 /// Case-insensitive, separator-insensitive key.
 pub(crate) fn normalize(path: &str) -> String {
-    path.replace('\\', "/").trim_matches('/').to_ascii_lowercase()
+    path.replace('\\', "/")
+        .trim_matches('/')
+        .to_ascii_lowercase()
 }
 
 fn build_children(entries: &[TocEntry]) -> HashMap<String, BTreeMap<String, String>> {
@@ -98,7 +100,11 @@ fn build_children(entries: &[TocEntry]) -> HashMap<String, BTreeMap<String, Stri
             end += part.len();
             let display = &full[..end];
             let key = normalize(display);
-            children.entry(parent_key.clone()).or_default().entry(key.clone()).or_insert_with(|| display.to_string());
+            children
+                .entry(parent_key.clone())
+                .or_default()
+                .entry(key.clone())
+                .or_insert_with(|| display.to_string());
             if end < full.len() || e.is_dir() {
                 children.entry(key.clone()).or_default();
             }
@@ -142,7 +148,12 @@ impl ArcanumArchive {
 
         let children = build_children(&entries);
 
-        Ok(Self { file, entries, lookup, children })
+        Ok(Self {
+            file,
+            entries,
+            lookup,
+            children,
+        })
     }
 
     fn parse_index(buf: &[u8], data_end: u64) -> io::Result<Vec<TocEntry>> {
@@ -174,7 +185,13 @@ impl ArcanumArchive {
             if flags & FLAG_DIR == 0 && offset as u64 + compressed_size as u64 > data_end {
                 return Err(invalid(format!("entry {path} extends past data section")));
             }
-            entries.push(TocEntry { path, offset, compressed_size, uncompressed_size, flags });
+            entries.push(TocEntry {
+                path,
+                offset,
+                compressed_size,
+                uncompressed_size,
+                flags,
+            });
         }
         Ok(entries)
     }
@@ -214,7 +231,9 @@ impl ArcanumArchive {
             // letting a corrupt or hostile entry inflate without bound.
             let limit = entry.uncompressed_size as u64 + 1;
             let mut out = Vec::new();
-            ZlibDecoder::new(raw.as_slice()).take(limit).read_to_end(&mut out)?;
+            ZlibDecoder::new(raw.as_slice())
+                .take(limit)
+                .read_to_end(&mut out)?;
             out
         } else if entry.flags & FLAG_RAW != 0 || entry.flags == 0 {
             raw
@@ -268,14 +287,21 @@ mod tests {
         let a = open(&sample()).unwrap();
         assert_eq!(a.entries().len(), 4);
         assert_eq!(a.read("art/interface/button.art").unwrap(), b"raw bytes");
-        assert_eq!(a.read("MES\\MAINMENU.MES").unwrap(), b"{1}{Hello}".repeat(50));
+        assert_eq!(
+            a.read("MES\\MAINMENU.MES").unwrap(),
+            b"{1}{Hello}".repeat(50)
+        );
         assert!(a.find("mes/MainMenu.mes").unwrap().is_compressed());
     }
 
     #[test]
     fn lookup_is_case_and_separator_insensitive() {
         let a = open(&sample()).unwrap();
-        for p in ["art/interface/button.art", "ART\\INTERFACE\\BUTTON.ART", "/art/Interface/Button.ART/"] {
+        for p in [
+            "art/interface/button.art",
+            "ART\\INTERFACE\\BUTTON.ART",
+            "/art/Interface/Button.ART/",
+        ] {
             assert!(a.find(p).is_some(), "{p}");
         }
         assert!(a.find("art/interface").is_none());
@@ -284,7 +310,10 @@ mod tests {
     #[test]
     fn missing_file_is_not_found() {
         let a = open(&sample()).unwrap();
-        assert_eq!(a.read("nope.art").unwrap_err().kind(), io::ErrorKind::NotFound);
+        assert_eq!(
+            a.read("nope.art").unwrap_err().kind(),
+            io::ErrorKind::NotFound
+        );
     }
 
     #[test]
@@ -300,7 +329,10 @@ mod tests {
 
         assert_eq!(a.list_dir("").unwrap(), vec!["art", "empty", "mes"]);
         assert_eq!(a.list_dir("art").unwrap(), vec!["art/Interface"]);
-        assert_eq!(a.list_dir("Art\\Interface").unwrap(), vec!["art/Interface/Button.ART"]);
+        assert_eq!(
+            a.list_dir("Art\\Interface").unwrap(),
+            vec!["art/Interface/Button.ART"]
+        );
         assert!(a.list_dir("empty").unwrap().is_empty());
         assert!(a.list_dir("art/interface/button.art").is_none());
     }
@@ -309,7 +341,10 @@ mod tests {
     fn reading_a_directory_fails() {
         let a = open(&sample()).unwrap();
         let dir = a.find("art").unwrap().clone();
-        assert_eq!(a.read_entry(&dir).unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            a.read_entry(&dir).unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
     }
 
     #[test]
@@ -360,7 +395,10 @@ mod tests {
         std::io::Write::write_all(&mut enc, &[7u8; 100_000]).unwrap();
         let bomb = enc.finish().unwrap();
         let a = open(&DatBuilder::new().entry("bomb", 0x2, bomb, 10)).unwrap();
-        assert_eq!(a.read("bomb").unwrap_err().kind(), io::ErrorKind::InvalidData);
+        assert_eq!(
+            a.read("bomb").unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
 
         // Raw entry whose declared size disagrees with its stored size.
         let a = open(&DatBuilder::new().entry("short", 0x1, vec![1, 2, 3], 4)).unwrap();
@@ -406,12 +444,23 @@ mod tests {
             return;
         }
         let archive = ArcanumArchive::open(&path).unwrap();
-        let files: Vec<_> = archive.entries().iter().filter(|e| !e.is_dir()).cloned().collect();
+        let files: Vec<_> = archive
+            .entries()
+            .iter()
+            .filter(|e| !e.is_dir())
+            .cloned()
+            .collect();
         assert!(!files.is_empty());
         for e in &files {
             archive.read_entry(e).unwrap();
         }
         assert!(archive.is_dir("ART/Interface"));
-        assert!(archive.list_dir("art\\interface").unwrap().iter().any(|p| p.eq_ignore_ascii_case("art/interface/mainmenuback.art")));
+        assert!(
+            archive
+                .list_dir("art\\interface")
+                .unwrap()
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case("art/interface/mainmenuback.art"))
+        );
     }
 }

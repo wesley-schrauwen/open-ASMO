@@ -57,7 +57,11 @@ pub enum SectorError {
     /// A version word outside `0x00AA0000..=0x00AA0004`.
     BadVersion { offset: usize, value: u32 },
     /// Object `index` (starting at `offset`) failed to parse.
-    Object { index: usize, offset: usize, error: ObjectError },
+    Object {
+        index: usize,
+        offset: usize,
+        error: ObjectError,
+    },
     /// The `u32` after the objects is not the object count at EOF-4.
     CountMismatch { declared: u32, after_objects: u32 },
     /// Bytes left over after the trailing object count; `total` is the whole file's length.
@@ -67,13 +71,31 @@ pub enum SectorError {
 impl fmt::Display for SectorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Truncated { offset, what } => write!(f, "truncated reading {what} at offset {offset}"),
-            Self::BadVersion { offset, value } => write!(f, "bad sector version {value:#x} at offset {offset}"),
-            Self::Object { index, offset, error } => write!(f, "object {index} at offset {offset}: {error}"),
-            Self::CountMismatch { declared, after_objects } => {
-                write!(f, "object count {declared} at the end of the file, but {after_objects} after the objects")
+            Self::Truncated { offset, what } => {
+                write!(f, "truncated reading {what} at offset {offset}")
             }
-            Self::TrailingBytes { offset, total } => write!(f, "{} bytes left over at offset {offset} (file is {total} bytes)", total - offset),
+            Self::BadVersion { offset, value } => {
+                write!(f, "bad sector version {value:#x} at offset {offset}")
+            }
+            Self::Object {
+                index,
+                offset,
+                error,
+            } => write!(f, "object {index} at offset {offset}: {error}"),
+            Self::CountMismatch {
+                declared,
+                after_objects,
+            } => {
+                write!(
+                    f,
+                    "object count {declared} at the end of the file, but {after_objects} after the objects"
+                )
+            }
+            Self::TrailingBytes { offset, total } => write!(
+                f,
+                "{} bytes left over at offset {offset} (file is {total} bytes)",
+                total - offset
+            ),
         }
     }
 }
@@ -220,20 +242,44 @@ pub struct Sector {
 impl Sector {
     pub fn parse(data: &[u8]) -> Result<Self, SectorError> {
         // The object count is read first, from the last 4 bytes, as the engine does.
-        let count_at = data.len().checked_sub(4).ok_or(SectorError::Truncated { offset: 0, what: "object count" })?;
-        let declared = Reader { data, pos: count_at }.u32("object count")?;
+        let count_at = data.len().checked_sub(4).ok_or(SectorError::Truncated {
+            offset: 0,
+            what: "object count",
+        })?;
+        let declared = Reader {
+            data,
+            pos: count_at,
+        }
+        .u32("object count")?;
 
         let mut r = Reader { data, pos: 0 };
         let light_count = r.u32("light count")? as usize;
         let light_bytes = r.bytes(light_count.saturating_mul(LIGHT_SIZE), "lights")?;
-        let lights = light_bytes.as_chunks::<LIGHT_SIZE>().0.iter().map(|c| read_light(c)).collect();
+        let lights = light_bytes
+            .as_chunks::<LIGHT_SIZE>()
+            .0
+            .iter()
+            .map(|c| read_light(c))
+            .collect();
 
         let tile_bytes = r.bytes(TILE_COUNT * 4, "tiles")?;
-        let tiles: Box<[Tile; TILE_COUNT]> = words(tile_bytes).map(Tile).collect::<Vec<_>>().into_boxed_slice().try_into().unwrap();
+        let tiles: Box<[Tile; TILE_COUNT]> = words(tile_bytes)
+            .map(Tile)
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+            .try_into()
+            .unwrap();
 
         let roofs = if r.u32("roof flag")? == 0 {
             let roof_bytes = r.bytes(ROOF_COUNT * 4, "roofs")?;
-            Some(words(roof_bytes).map(ArtId).collect::<Vec<_>>().into_boxed_slice().try_into().unwrap())
+            Some(
+                words(roof_bytes)
+                    .map(ArtId)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice()
+                    .try_into()
+                    .unwrap(),
+            )
         } else {
             None
         };
@@ -242,7 +288,10 @@ impl Sector {
         let value = r.u32("version")?;
         let version = value.wrapping_sub(VERSION_BASE);
         if version > MAX_VERSION {
-            return Err(SectorError::BadVersion { offset: version_at, value });
+            return Err(SectorError::BadVersion {
+                offset: version_at,
+                value,
+            });
         }
 
         let mut tile_scripts = Vec::new();
@@ -255,25 +304,48 @@ impl Sector {
                 .iter()
                 .map(|c| {
                     let w: Vec<u32> = words(c).collect();
-                    TileScript { node_flags: w[0], tile: w[1], script: ScriptHeader { flags: w[2], counters: w[3], number: w[4] } }
+                    TileScript {
+                        node_flags: w[0],
+                        tile: w[1],
+                        script: ScriptHeader {
+                            flags: w[2],
+                            counters: w[3],
+                            number: w[4],
+                        },
+                    }
                 })
                 .collect();
         }
         let mut script = ScriptHeader::default();
         if version >= 2 {
-            script = ScriptHeader { flags: r.u32("sector script")?, counters: r.u32("sector script")?, number: r.u32("sector script")? };
+            script = ScriptHeader {
+                flags: r.u32("sector script")?,
+                counters: r.u32("sector script")?,
+                number: r.u32("sector script")?,
+            };
         }
-        let (mut townmap_info, mut aptitude_adjustment, mut light_scheme, mut sound_list) = (0, 0, 0, [0; 3]);
+        let (mut townmap_info, mut aptitude_adjustment, mut light_scheme, mut sound_list) =
+            (0, 0, 0, [0; 3]);
         if version >= 3 {
             townmap_info = r.u32("townmap info")?;
             aptitude_adjustment = r.u32("aptitude adjustment")? as i32;
             light_scheme = r.u32("light scheme")?;
-            sound_list = [r.u32("sound list")?, r.u32("sound list")?, r.u32("sound list")?];
+            sound_list = [
+                r.u32("sound list")?,
+                r.u32("sound list")?,
+                r.u32("sound list")?,
+            ];
         }
         let mut blocked = None;
         if version >= 4 {
             let bytes = r.bytes(BLOCKED_WORDS * 4, "tile blocking")?;
-            blocked = Some(words(bytes).collect::<Vec<_>>().into_boxed_slice().try_into().unwrap());
+            blocked = Some(
+                words(bytes)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice()
+                    .try_into()
+                    .unwrap(),
+            );
         }
 
         // An object takes at least 58 bytes; do not trust a corrupt count for the allocation.
@@ -281,16 +353,28 @@ impl Sector {
         for index in 0..declared as usize {
             let offset = r.pos;
             let (object, used) =
-                Object::parse_instance_prefix(&data[offset..]).map_err(|error| SectorError::Object { index, offset, error })?;
+                Object::parse_instance_prefix(&data[offset..]).map_err(|error| {
+                    SectorError::Object {
+                        index,
+                        offset,
+                        error,
+                    }
+                })?;
             objects.push(object);
             r.pos += used;
         }
         let after_objects = r.u32("object count")?;
         if after_objects != declared {
-            return Err(SectorError::CountMismatch { declared, after_objects });
+            return Err(SectorError::CountMismatch {
+                declared,
+                after_objects,
+            });
         }
         if r.pos != data.len() {
-            return Err(SectorError::TrailingBytes { offset: r.pos, total: data.len() });
+            return Err(SectorError::TrailingBytes {
+                offset: r.pos,
+                total: data.len(),
+            });
         }
         Ok(Self {
             lights,
@@ -318,12 +402,18 @@ impl Sector {
     /// prototype flags block too and are not decoded yet, so `Some(false)` does not mean walkable.
     pub fn tile_mask_blocked(&self, x: u32, y: u32) -> Option<bool> {
         let i = tile_index(x, y);
-        self.blocked.as_ref().map(|m| m[i / 32] >> (i % 32) & 1 == 1)
+        self.blocked
+            .as_ref()
+            .map(|m| m[i / 32] >> (i % 32) & 1 == 1)
     }
 }
 
 fn words(bytes: &[u8]) -> impl Iterator<Item = u32> + '_ {
-    bytes.as_chunks::<4>().0.iter().map(|c| u32::from_le_bytes(*c))
+    bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| u32::from_le_bytes(*c))
 }
 
 fn read_light(b: &[u8]) -> Light {
@@ -347,7 +437,14 @@ struct Reader<'a> {
 
 impl<'a> Reader<'a> {
     fn bytes(&mut self, n: usize, what: &'static str) -> Result<&'a [u8], SectorError> {
-        let end = self.pos.checked_add(n).filter(|&e| e <= self.data.len()).ok_or(SectorError::Truncated { offset: self.pos, what })?;
+        let end = self
+            .pos
+            .checked_add(n)
+            .filter(|&e| e <= self.data.len())
+            .ok_or(SectorError::Truncated {
+                offset: self.pos,
+                what,
+            })?;
         let out = &self.data[self.pos..end];
         self.pos = end;
         Ok(out)
@@ -359,7 +456,10 @@ impl<'a> Reader<'a> {
 }
 
 fn tile_index(x: u32, y: u32) -> usize {
-    assert!(x < SECTOR_TILES && y < SECTOR_TILES, "tile ({x}, {y}) is outside the sector");
+    assert!(
+        x < SECTOR_TILES && y < SECTOR_TILES,
+        "tile ({x}, {y}) is outside the sector"
+    );
     (y * SECTOR_TILES + x) as usize
 }
 
@@ -371,7 +471,11 @@ mod tests {
 
     #[test]
     fn empty_sector_is_16440_bytes_and_parses() {
-        let data = SectorBuilder { version: 3, ..SectorBuilder::new() }.build();
+        let data = SectorBuilder {
+            version: 3,
+            ..SectorBuilder::new()
+        }
+        .build();
         assert_eq!(data.len(), 16440);
         let s = Sector::parse(&data).unwrap();
         assert_eq!(s.version, 3);
@@ -382,9 +486,24 @@ mod tests {
     #[test]
     fn each_version_has_its_blocks() {
         for (version, len) in [(0, 16400), (1, 16404), (2, 16416), (3, 16440), (4, 16952)] {
-            let mut b = SectorBuilder { version, ..SectorBuilder::new() };
-            b.script = ScriptHeader { flags: 1, counters: 2, number: 3 };
-            b.tile_scripts = vec![TileScript { node_flags: 5, tile: 4095, script: ScriptHeader { flags: 6, counters: 7, number: 8 } }];
+            let mut b = SectorBuilder {
+                version,
+                ..SectorBuilder::new()
+            };
+            b.script = ScriptHeader {
+                flags: 1,
+                counters: 2,
+                number: 3,
+            };
+            b.tile_scripts = vec![TileScript {
+                node_flags: 5,
+                tile: 4095,
+                script: ScriptHeader {
+                    flags: 6,
+                    counters: 7,
+                    number: 8,
+                },
+            }];
             b.townmap_info = 12;
             b.aptitude_adjustment = -20;
             b.light_scheme = 9;
@@ -398,8 +517,17 @@ mod tests {
             assert_eq!(s.tile_scripts.len(), usize::from(version >= 1));
             assert_eq!(s.script.number, if version >= 2 { 3 } else { 0 });
             assert_eq!(
-                (s.townmap_info, s.aptitude_adjustment, s.light_scheme, s.sound_list),
-                if version >= 3 { (12, -20, 9, [1, 2, 3]) } else { (0, 0, 0, [0; 3]) }
+                (
+                    s.townmap_info,
+                    s.aptitude_adjustment,
+                    s.light_scheme,
+                    s.sound_list
+                ),
+                if version >= 3 {
+                    (12, -20, 9, [1, 2, 3])
+                } else {
+                    (0, 0, 0, [0; 3])
+                }
             );
             assert_eq!(s.tile_mask_blocked(63, 63), (version >= 4).then_some(true));
             assert_eq!(s.blocked.is_some(), version >= 4);
@@ -409,15 +537,38 @@ mod tests {
     #[test]
     fn bad_version_is_rejected() {
         for value in [VERSION_BASE + 5, 0x1234_5678, 4] {
-            let data = SectorBuilder { version_word: Some(value), ..SectorBuilder::new() }.build();
-            assert_eq!(Sector::parse(&data), Err(SectorError::BadVersion { offset: 4 + 16384 + 4, value }));
+            let data = SectorBuilder {
+                version_word: Some(value),
+                ..SectorBuilder::new()
+            }
+            .build();
+            assert_eq!(
+                Sector::parse(&data),
+                Err(SectorError::BadVersion {
+                    offset: 4 + 16384 + 4,
+                    value
+                })
+            );
         }
     }
 
     #[test]
     fn lights_are_read() {
-        let light = Light { handle: 0, x: 194, y: 82, offset_x: -3, offset_y: 7, flags: 0x18, art_id: ArtId(0x9028_0000), color: [255, 128, 1] };
-        let data = SectorBuilder { lights: vec![light, Light::default()], ..SectorBuilder::new() }.build();
+        let light = Light {
+            handle: 0,
+            x: 194,
+            y: 82,
+            offset_x: -3,
+            offset_y: 7,
+            flags: 0x18,
+            art_id: ArtId(0x9028_0000),
+            color: [255, 128, 1],
+        };
+        let data = SectorBuilder {
+            lights: vec![light, Light::default()],
+            ..SectorBuilder::new()
+        }
+        .build();
         let s = Sector::parse(&data).unwrap();
         assert_eq!(s.lights, vec![light, Light::default()]);
     }
@@ -437,7 +588,14 @@ mod tests {
     #[test]
     fn roofs_follow_the_empty_flag() {
         let roofs: Vec<ArtId> = (0..256).map(|i| ArtId(0x1000 + i)).collect();
-        let s = Sector::parse(&SectorBuilder { roofs: Some(roofs.iter().map(|r| r.0).collect()), ..SectorBuilder::new() }.build()).unwrap();
+        let s = Sector::parse(
+            &SectorBuilder {
+                roofs: Some(roofs.iter().map(|r| r.0).collect()),
+                ..SectorBuilder::new()
+            }
+            .build(),
+        )
+        .unwrap();
         assert_eq!(s.roofs.as_deref().map(|r| r.to_vec()), Some(roofs));
     }
 
@@ -448,7 +606,10 @@ mod tests {
         b.blocked[2] = 1 << 5;
         let s = Sector::parse(&b.build()).unwrap();
         assert_eq!(s.tile_mask_blocked(5, 1), Some(true));
-        let blocked: Vec<_> = (0..64).flat_map(|y| (0..64).map(move |x| (x, y))).filter(|&(x, y)| s.tile_mask_blocked(x, y) == Some(true)).collect();
+        let blocked: Vec<_> = (0..64)
+            .flat_map(|y| (0..64).map(move |x| (x, y)))
+            .filter(|&(x, y)| s.tile_mask_blocked(x, y) == Some(true))
+            .collect();
         assert_eq!(blocked, vec![(5, 1)]);
     }
 
@@ -456,29 +617,64 @@ mod tests {
     fn tile_fields_decode() {
         // The commonest tile in the data (the void tile).
         let t = Tile(0x071c_01c0);
-        assert_eq!((t.art_type(), t.terrain_1(), t.terrain_2(), t.edge(), t.variation(), t.flags()), (0, 28, 28, 0, 0, 7));
+        assert_eq!(
+            (
+                t.art_type(),
+                t.terrain_1(),
+                t.terrain_2(),
+                t.edge(),
+                t.variation(),
+                t.flags()
+            ),
+            (0, 28, 28, 0, 0, 7)
+        );
         assert!(!t.is_flipped() && !t.is_facade());
         let t = Tile((1 << 22) | (2 << 16) | (0xa << 12) | (5 << 9) | 1);
-        assert_eq!((t.terrain_1(), t.terrain_2(), t.edge(), t.variation(), t.flags(), t.is_flipped()), (1, 2, 0xa, 5, 0, true));
+        assert_eq!(
+            (
+                t.terrain_1(),
+                t.terrain_2(),
+                t.edge(),
+                t.variation(),
+                t.flags(),
+                t.is_flipped()
+            ),
+            (1, 2, 0xa, 5, 0, true)
+        );
         assert!(Tile(0xB000_0000).is_facade());
     }
 
     fn three_objects() -> Vec<Vec<u8>> {
         vec![
-            ObjectBuilder::new(TYPE_WALL).field("current_aid", Value::Int32(10)).field("wall_flags", Value::Int32(1)).build(),
-            ObjectBuilder::new(TYPE_SCENERY).field("location", Value::Int64(Some(99))).build(),
-            ObjectBuilder::new(TYPE_PORTAL).field("portal_flags", Value::Int32(2)).field("scripts_idx", Value::Array(None)).build(),
+            ObjectBuilder::new(TYPE_WALL)
+                .field("current_aid", Value::Int32(10))
+                .field("wall_flags", Value::Int32(1))
+                .build(),
+            ObjectBuilder::new(TYPE_SCENERY)
+                .field("location", Value::Int64(Some(99)))
+                .build(),
+            ObjectBuilder::new(TYPE_PORTAL)
+                .field("portal_flags", Value::Int32(2))
+                .field("scripts_idx", Value::Array(None))
+                .build(),
         ]
     }
 
     #[test]
     fn object_extents_are_found() {
-        let data = SectorBuilder { objects: three_objects(), ..SectorBuilder::new() }.build();
+        let data = SectorBuilder {
+            objects: three_objects(),
+            ..SectorBuilder::new()
+        }
+        .build();
         let s = Sector::parse(&data).unwrap();
         let types: Vec<_> = s.objects.iter().map(|o| o.object_type).collect();
         assert_eq!(types, [TYPE_WALL, TYPE_SCENERY, TYPE_PORTAL]);
         assert_eq!(s.objects[0].art_id(), Some(ArtId(10)));
-        assert_eq!(s.objects[1].field("location"), Some(&Value::Int64(Some(99))));
+        assert_eq!(
+            s.objects[1].field("location"),
+            Some(&Value::Int64(Some(99)))
+        );
         assert_eq!(s.objects[2].int("portal_flags"), Some(2));
     }
 
@@ -487,11 +683,18 @@ mod tests {
         let mut objects = three_objects();
         let first_len = objects[0].len();
         objects[1][52] = 99;
-        let b = SectorBuilder { objects, ..SectorBuilder::new() };
+        let b = SectorBuilder {
+            objects,
+            ..SectorBuilder::new()
+        };
         let start = b.objects_offset();
         assert_eq!(
             Sector::parse(&b.build()),
-            Err(SectorError::Object { index: 1, offset: start + first_len, error: ObjectError::UnsupportedType(99) })
+            Err(SectorError::Object {
+                index: 1,
+                offset: start + first_len,
+                error: ObjectError::UnsupportedType(99)
+            })
         );
     }
 
@@ -499,8 +702,19 @@ mod tests {
     fn count_after_objects_must_match() {
         // The count at EOF-4 says 1, so the reader stops after one object and finds the second
         // object's version word where the repeated count should be.
-        let data = SectorBuilder { objects: three_objects(), count: Some(1), ..SectorBuilder::new() }.build();
-        assert_eq!(Sector::parse(&data), Err(SectorError::CountMismatch { declared: 1, after_objects: 0x77 }));
+        let data = SectorBuilder {
+            objects: three_objects(),
+            count: Some(1),
+            ..SectorBuilder::new()
+        }
+        .build();
+        assert_eq!(
+            Sector::parse(&data),
+            Err(SectorError::CountMismatch {
+                declared: 1,
+                after_objects: 0x77
+            })
+        );
     }
 
     #[test]
@@ -509,18 +723,43 @@ mod tests {
         let mut data = SectorBuilder::new().build();
         let len = data.len();
         data.extend(0u32.to_le_bytes());
-        assert_eq!(Sector::parse(&data), Err(SectorError::TrailingBytes { offset: len, total: len + 4 }));
+        assert_eq!(
+            Sector::parse(&data),
+            Err(SectorError::TrailingBytes {
+                offset: len,
+                total: len + 4
+            })
+        );
     }
 
     #[test]
     fn truncated_block_names_the_block() {
-        let b = SectorBuilder { lights: vec![Light::default()], ..SectorBuilder::new() };
+        let b = SectorBuilder {
+            lights: vec![Light::default()],
+            ..SectorBuilder::new()
+        };
         let data = b.build();
         // Cut inside the tiles.
-        assert_eq!(Sector::parse(&data[..4 + 48 + 100]), Err(SectorError::Truncated { offset: 4 + 48, what: "tiles" }));
-        assert_eq!(Sector::parse(&data[..2]), Err(SectorError::Truncated { offset: 0, what: "object count" }));
+        assert_eq!(
+            Sector::parse(&data[..4 + 48 + 100]),
+            Err(SectorError::Truncated {
+                offset: 4 + 48,
+                what: "tiles"
+            })
+        );
+        assert_eq!(
+            Sector::parse(&data[..2]),
+            Err(SectorError::Truncated {
+                offset: 0,
+                what: "object count"
+            })
+        );
         // Every truncation fails cleanly.
-        let data = SectorBuilder { objects: three_objects(), ..SectorBuilder::new() }.build();
+        let data = SectorBuilder {
+            objects: three_objects(),
+            ..SectorBuilder::new()
+        }
+        .build();
         for len in 0..data.len() {
             assert!(Sector::parse(&data[..len]).is_err(), "{len}");
         }

@@ -144,11 +144,35 @@ pub struct SectorDelta {
     /// NPCs killed (action 0x3a), by index in the sector's mobile objects.
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     pub dead: std::collections::BTreeSet<u32>,
+    /// NPCs' day standpoints a script moved (action 0x2d), by index in the sector's mobile
+    /// objects.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub standpoints: BTreeMap<u32, arcanum_formats::map::TileLoc>,
 }
 
 impl SectorDelta {
     pub fn is_empty(&self) -> bool {
-        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty() && self.npc_inventories.is_empty() && self.npc_restock.is_empty() && self.object_flags.is_empty() && self.mobile_flags.is_empty() && self.npc_flags.is_empty() && self.object_art.is_empty() && self.mobile_art.is_empty() && self.object_protos.is_empty() && self.mobile_protos.is_empty() && self.dead.is_empty()
+        self.object_scripts.is_empty()
+            && self.mobile_scripts.is_empty()
+            && self.portals.is_empty()
+            && self.taken.is_empty()
+            && self.dropped.is_empty()
+            && self.piles.is_empty()
+            && self.containers.is_empty()
+            && self.opened.is_empty()
+            && self.portal_flags.is_empty()
+            && self.container_flags.is_empty()
+            && self.npc_inventories.is_empty()
+            && self.npc_restock.is_empty()
+            && self.object_flags.is_empty()
+            && self.mobile_flags.is_empty()
+            && self.npc_flags.is_empty()
+            && self.object_art.is_empty()
+            && self.mobile_art.is_empty()
+            && self.object_protos.is_empty()
+            && self.mobile_protos.is_empty()
+            && self.dead.is_empty()
+            && self.standpoints.is_empty()
     }
 }
 
@@ -240,7 +264,11 @@ impl StartMap {
         let mes = MesFile::parse(&data).map_err(|e| format!("{MAP_LIST}: {e}"))?;
         let list = parse_map_list(&mes).map_err(|e| format!("{MAP_LIST}: {e}"))?;
         let start = start_map(&list).ok_or_else(|| format!("{MAP_LIST}: no START_MAP entry"))?;
-        Ok(Self { map: start.name.clone(), position: start.start, clock: crate::GameStart::load(vfs) })
+        Ok(Self {
+            map: start.name.clone(),
+            position: start.start,
+            clock: crate::GameStart::load(vfs),
+        })
     }
 }
 
@@ -251,10 +279,24 @@ pub struct WorldState(pub Option<WorldSave>);
 impl WorldState {
     /// Puts an accepted character into the world at the start position, starting the world on
     /// the start map if this is the first. Without a [`StartMap`] there is no world to join.
-    pub fn add_player(&mut self, start: Option<&StartMap>, player: PlayerId, blueprint: CharacterBlueprint) -> bool {
+    pub fn add_player(
+        &mut self,
+        start: Option<&StartMap>,
+        player: PlayerId,
+        blueprint: CharacterBlueprint,
+    ) -> bool {
         let Some(start) = start else { return false };
         let save = self.0.get_or_insert_with(|| WorldSave::new_game(start));
-        save.players.insert(player, PlayerSave { blueprint, position: start.position, inventory: None, script_state: Default::default(), worn: None });
+        save.players.insert(
+            player,
+            PlayerSave {
+                blueprint,
+                position: start.position,
+                inventory: None,
+                script_state: Default::default(),
+                worn: None,
+            },
+        );
         true
     }
 }
@@ -284,15 +326,31 @@ pub struct SaveListing {
 pub fn list_saves(dir: &Path) -> (Vec<SaveListing>, Vec<String>) {
     let mut saves = Vec::new();
     let mut errors = Vec::new();
-    let Ok(entries) = fs::read_dir(dir) else { return (saves, errors) };
-    for path in entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "save")) {
-        let modified = fs::metadata(&path).and_then(|m| m.modified()).unwrap_or(std::time::UNIX_EPOCH);
+    let Ok(entries) = fs::read_dir(dir) else {
+        return (saves, errors);
+    };
+    for path in entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().is_some_and(|e| e == "save"))
+    {
+        let modified = fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
         match WorldSave::read(&path) {
-            Ok(save) => saves.push(SaveListing { path, save, modified }),
+            Ok(save) => saves.push(SaveListing {
+                path,
+                save,
+                modified,
+            }),
             Err(e) => errors.push(format!("{}: {e}", path.display())),
         }
     }
-    saves.sort_by(|a, b| b.modified.cmp(&a.modified).then_with(|| a.path.cmp(&b.path)));
+    saves.sort_by(|a, b| {
+        b.modified
+            .cmp(&a.modified)
+            .then_with(|| a.path.cmp(&b.path))
+    });
     (saves, errors)
 }
 
@@ -304,12 +362,24 @@ pub struct SaveStatus {
 }
 
 /// Writes the save whenever the world state changed this tick.
-pub fn write_save(world: Res<WorldState>, file: Option<Res<SaveFile>>, tick: Res<SimTick>, clock: Res<crate::GameClock>, mut status: ResMut<SaveStatus>) {
-    let (Some(save), Some(file)) = (&world.0, file) else { return };
+pub fn write_save(
+    world: Res<WorldState>,
+    file: Option<Res<SaveFile>>,
+    tick: Res<SimTick>,
+    clock: Res<crate::GameClock>,
+    mut status: ResMut<SaveStatus>,
+) {
+    let (Some(save), Some(file)) = (&world.0, file) else {
+        return;
+    };
     if !world.is_changed() {
         return;
     }
-    let save = WorldSave { tick: tick.0, time: clock.now, ..save.clone() };
+    let save = WorldSave {
+        tick: tick.0,
+        time: clock.now,
+        ..save.clone()
+    };
     match save.write(&file.0) {
         Ok(()) => {
             status.writes += 1;
@@ -326,11 +396,23 @@ mod tests {
     use super::*;
 
     fn start() -> StartMap {
-        StartMap { map: "Arcanum1-024-fixed".into(), position: TileLoc { x: 92958, y: 82592 }, clock: Default::default() }
+        StartMap {
+            map: "Arcanum1-024-fixed".into(),
+            position: TileLoc { x: 92958, y: 82592 },
+            clock: Default::default(),
+        }
     }
 
     fn blueprint(name: &str) -> CharacterBlueprint {
-        CharacterBlueprint { sheet: CharacterSheet { name: name.into(), ..Default::default() }, gold: 3, items: vec![1, 2], prototype: None }
+        CharacterBlueprint {
+            sheet: CharacterSheet {
+                name: name.into(),
+                ..Default::default()
+            },
+            gold: 3,
+            items: vec![1, 2],
+            prototype: None,
+        }
     }
 
     #[test]
@@ -339,7 +421,13 @@ mod tests {
         assert!(state.add_player(Some(&start()), PlayerId(7), blueprint("Virgil")));
         let mut save = state.0.unwrap();
         save.tick = 42;
-        save.sector_changes.insert(SectorId::new(3, 4), SectorDelta { portals: BTreeMap::from([(7, true), (9, false)]), ..Default::default() });
+        save.sector_changes.insert(
+            SectorId::new(3, 4),
+            SectorDelta {
+                portals: BTreeMap::from([(7, true), (9, false)]),
+                ..Default::default()
+            },
+        );
         assert_eq!(WorldSave::from_bytes(&save.to_bytes()).unwrap(), save);
     }
 
@@ -347,20 +435,33 @@ mod tests {
     fn other_versions_are_refused() {
         let mut save = WorldSave::new_game(&start());
         save.version = SAVE_VERSION + 1;
-        assert!(matches!(WorldSave::from_bytes(&save.to_bytes()), Err(SaveError::Version(_))));
-        assert!(matches!(WorldSave::from_bytes(b"nonsense"), Err(SaveError::Format(_))));
+        assert!(matches!(
+            WorldSave::from_bytes(&save.to_bytes()),
+            Err(SaveError::Version(_))
+        ));
+        assert!(matches!(
+            WorldSave::from_bytes(b"nonsense"),
+            Err(SaveError::Format(_))
+        ));
     }
 
     #[test]
     fn players_join_at_the_start() {
         let mut state = WorldState::default();
-        assert!(!state.add_player(None, PlayerId(1), blueprint("A")), "no start map, no world");
+        assert!(
+            !state.add_player(None, PlayerId(1), blueprint("A")),
+            "no start map, no world"
+        );
         state.add_player(Some(&start()), PlayerId(1), blueprint("A"));
         state.add_player(Some(&start()), PlayerId(2), blueprint("B"));
         let save = state.0.unwrap();
         assert_eq!(save.map, "Arcanum1-024-fixed");
         assert_eq!(save.players.len(), 2);
-        assert!(save.players.values().all(|p| p.position == start().position));
+        assert!(
+            save.players
+                .values()
+                .all(|p| p.position == start().position)
+        );
     }
 
     #[test]
@@ -385,7 +486,10 @@ mod tests {
         fs::write(dir.path().join("3.save"), b"nonsense").unwrap();
         fs::write(dir.path().join("notes.txt"), b"x").unwrap();
         let (saves, errors) = list_saves(dir.path());
-        let names: Vec<_> = saves.iter().map(|s| s.path.file_name().unwrap().to_string_lossy().into_owned()).collect();
+        let names: Vec<_> = saves
+            .iter()
+            .map(|s| s.path.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
         assert_eq!(names, ["2.save", "1.save"]);
         assert_eq!(errors.len(), 1, "{errors:?}");
         assert!(list_saves(&dir.path().join("none")).0.is_empty());

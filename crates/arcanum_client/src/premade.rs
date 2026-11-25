@@ -63,7 +63,9 @@ impl std::fmt::Display for LoadError {
 }
 
 fn mes(vfs: &Vfs, path: &str) -> Result<MesFile, LoadError> {
-    let data = vfs.read(path).map_err(|e| LoadError(format!("{path}: {e}")))?;
+    let data = vfs
+        .read(path)
+        .map_err(|e| LoadError(format!("{path}: {e}")))?;
     MesFile::parse(&data).map_err(|e| LoadError(format!("{path}: {e}")))
 }
 
@@ -77,11 +79,18 @@ pub fn load(vfs: &Vfs) -> Result<Vec<Premade>, LoadError> {
     let mut out = Vec::new();
     for number in FIRST_PREMADE..=LAST_PREMADE {
         let prefix = format!("{PROTO_DIR}/{number:06} - ");
-        let Some(path) = files.iter().find(|f| f.to_ascii_lowercase().starts_with(&prefix.to_ascii_lowercase())) else {
+        let Some(path) = files.iter().find(|f| {
+            f.to_ascii_lowercase()
+                .starts_with(&prefix.to_ascii_lowercase())
+        }) else {
             warn!("pre-made character prototype {number} not found");
             continue;
         };
-        let object = match vfs.read(path).map_err(|e| e.to_string()).and_then(|d| Object::parse_prototype(&d).map_err(|e| e.to_string())) {
+        let object = match vfs
+            .read(path)
+            .map_err(|e| e.to_string())
+            .and_then(|d| Object::parse_prototype(&d).map_err(|e| e.to_string()))
+        {
             Ok(o) => o,
             Err(e) => {
                 warn!("{path}: {e}");
@@ -90,7 +99,13 @@ pub fn load(vfs: &Vfs) -> Result<Vec<Premade>, LoadError> {
         };
         let base = object.ints("critter_stat_base_idx").unwrap_or_default();
         let stat = |i: usize| base.get(i).copied().unwrap_or(0);
-        let text = |file: &MesFile, id: i32| u32::try_from(id).ok().and_then(|id| file.get(id)).unwrap_or("").to_string();
+        let text = |file: &MesFile, id: i32| {
+            u32::try_from(id)
+                .ok()
+                .and_then(|id| file.get(id))
+                .unwrap_or("")
+                .to_string()
+        };
         out.push(Premade {
             prototype: number,
             name: object.string("pc_player_name").unwrap_or("").to_string(),
@@ -115,7 +130,10 @@ pub fn load(vfs: &Vfs) -> Result<Vec<Premade>, LoadError> {
 pub fn split_story(story: &str) -> (&str, &str) {
     let story = story.trim_start_matches(['\r', '\n']);
     match story.split_once('\n') {
-        Some((head, body)) => (head.trim_end_matches('\r'), body.trim_start_matches(['\r', '\n'])),
+        Some((head, body)) => (
+            head.trim_end_matches('\r'),
+            body.trim_start_matches(['\r', '\n']),
+        ),
         None => (story, ""),
     }
 }
@@ -126,7 +144,10 @@ mod tests {
 
     #[test]
     fn stories_split_into_heading_and_body() {
-        assert_eq!(split_story("Lugard Bloodstone\r\n\r\n\tLugard is...\n\tMore."), ("Lugard Bloodstone", "\tLugard is...\n\tMore."));
+        assert_eq!(
+            split_story("Lugard Bloodstone\r\n\r\n\tLugard is...\n\tMore."),
+            ("Lugard Bloodstone", "\tLugard is...\n\tMore.")
+        );
         assert_eq!(split_story("Just a name"), ("Just a name", ""));
         assert_eq!(split_story(""), ("", ""));
     }

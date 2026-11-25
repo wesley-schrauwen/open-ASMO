@@ -137,13 +137,19 @@ pub const ART_INDEX_FILES: &[&str] = &[
 
 /// The item index files by look (bits 12-13 of an item art id): ground, inventory, paperdoll,
 /// schematic.
-const ITEM_INDEX_FILES: [&str; 4] = ["art/item/item_ground.mes", "art/item/item_inven.mes", "art/item/item_paper.mes", "art/item/item_schematic.mes"];
+const ITEM_INDEX_FILES: [&str; 4] = [
+    "art/item/item_ground.mes",
+    "art/item/item_inven.mes",
+    "art/item/item_paper.mes",
+    "art/item/item_schematic.mes",
+];
 
 /// Wall piece names, indexed by bits 14..19 (table at 0x5bb6b0).
 pub const WALL_PIECES: [&str; 46] = [
-    "bse", "lfc", "bse", "bcl", "bcr", "tcl", "tcr", "uec", "lec", "w3l", "w3a", "w3r", "w4l", "w4a", "w4b", "w4r",
-    "w5l", "w5a", "w5b", "w5c", "w5r", "d3l", "d3a", "d3r", "d4l", "d4a", "d4b", "d4r", "d6l", "d6a", "d6b", "d6c",
-    "d6d", "d6r", "p3l", "p3a", "p3r", "p4l", "p4a", "p4b", "p4r", "p5l", "p5a", "p5b", "p5c", "p5r",
+    "bse", "lfc", "bse", "bcl", "bcr", "tcl", "tcr", "uec", "lec", "w3l", "w3a", "w3r", "w4l",
+    "w4a", "w4b", "w4r", "w5l", "w5a", "w5b", "w5c", "w5r", "d3l", "d3a", "d3r", "d4l", "d4a",
+    "d4b", "d4r", "d6l", "d6a", "d6b", "d6c", "d6d", "d6r", "p3l", "p3a", "p3r", "p4l", "p4a",
+    "p4b", "p4r", "p5l", "p5a", "p5b", "p5c", "p5r",
 ];
 
 /// Edge letters of tile file names (0x5bb518), indexed by the 4-bit edge mask.
@@ -349,8 +355,14 @@ impl CritterArt {
     }
 
     fn raw_path(self) -> String {
-        let body = CRITTER_BODIES.get(self.body as usize).copied().unwrap_or("??");
-        let mut armour = CRITTER_ARMOUR.get(self.armour as usize).copied().unwrap_or("??");
+        let body = CRITTER_BODIES
+            .get(self.body as usize)
+            .copied()
+            .unwrap_or("??");
+        let mut armour = CRITTER_ARMOUR
+            .get(self.armour as usize)
+            .copied()
+            .unwrap_or("??");
         let mut gender = if self.male { 'm' } else { 'f' };
         if matches!(self.armour, 4 | 6) {
             gender = 'x';
@@ -359,7 +371,13 @@ impl CritterArt {
             (armour, gender) = ("xx", 'x');
         }
         let s = if self.flag_s { 's' } else { 'x' };
-        let weapon = if self.weapon == 7 && self.flag_s { 'd' } else { CRITTER_WEAPONS.get(self.weapon as usize).map_or('?', |&c| c as char) };
+        let weapon = if self.weapon == 7 && self.flag_s {
+            'd'
+        } else {
+            CRITTER_WEAPONS
+                .get(self.weapon as usize)
+                .map_or('?', |&c| c as char)
+        };
         let anim = (b'a' + self.anim as u8) as char;
         format!("art/critter/{body}{gender}/{body}{gender}{armour}{s}{weapon}{anim}.art")
     }
@@ -369,9 +387,15 @@ impl CritterArt {
 pub enum ArtIndexError {
     /// An index file is not in the archives.
     Missing(&'static str),
-    Mes { file: &'static str, error: MesError },
+    Mes {
+        file: &'static str,
+        error: MesError,
+    },
     /// An entry has the wrong shape.
-    Malformed { file: &'static str, key: u32 },
+    Malformed {
+        file: &'static str,
+        key: u32,
+    },
 }
 
 impl fmt::Display for ArtIndexError {
@@ -417,7 +441,13 @@ fn creature_tail(id: ArtId) -> String {
     let weapon = id.0 & 0xf;
     let anim = (id.0 >> 6) & 0x1f;
     let s = if flag_s { 's' } else { 'x' };
-    let weapon = if weapon == 7 && flag_s { 'd' } else { CRITTER_WEAPONS.get(weapon as usize).map_or('?', |&c| c as char) };
+    let weapon = if weapon == 7 && flag_s {
+        'd'
+    } else {
+        CRITTER_WEAPONS
+            .get(weapon as usize)
+            .map_or('?', |&c| c as char)
+    };
     format!("{s}{weapon}{}", (b'a' + anim as u8) as char)
 }
 
@@ -433,7 +463,9 @@ pub const TILE_FLYABLE: u8 = 0x4;
 /// further `/`s included, are skipped).
 fn tile_flags(text: &str) -> u8 {
     let token = text.trim().split(' ').next().unwrap_or("");
-    let Some((_, letters)) = token.split_once('/') else { return 0 };
+    let Some((_, letters)) = token.split_once('/') else {
+        return 0;
+    };
     letters.bytes().fold(0, |f, c| {
         f | match c {
             b's' => 0x2,
@@ -490,13 +522,21 @@ impl ArtIndex {
         }
 
         for (key, text) in sorted(&mes("art/portal/portal.mes")?) {
-            index.portals.insert(key, text.split(' ').next().unwrap_or("").to_string());
+            index
+                .portals
+                .insert(key, text.split(' ').next().unwrap_or("").to_string());
         }
         for (key, text) in sorted(&mes("art/scenery/scenery.mes")?) {
             index.scenery.insert(key, text.trim().to_string());
         }
-        index.facades = sorted(&mes("art/facade/facadename.mes")?).iter().map(|(_, t)| t.trim().to_string()).collect();
-        index.roofs = sorted(&mes("art/roof/roofname.mes")?).iter().map(|(_, t)| t.trim().to_string()).collect();
+        index.facades = sorted(&mes("art/facade/facadename.mes")?)
+            .iter()
+            .map(|(_, t)| t.trim().to_string())
+            .collect();
+        index.roofs = sorted(&mes("art/roof/roofname.mes")?)
+            .iter()
+            .map(|(_, t)| t.trim().to_string())
+            .collect();
         for (key, text) in sorted(&mes("art/light/light.mes")?) {
             index.lights.insert(key, text.trim().to_string());
         }
@@ -504,7 +544,9 @@ impl ArtIndex {
             index.monsters.insert(key, text.trim().to_ascii_lowercase());
         }
         for (key, text) in sorted(&mes("art/unique_npc/unique_npc.mes")?) {
-            index.unique_npcs.insert(key, text.trim().to_ascii_lowercase());
+            index
+                .unique_npcs
+                .insert(key, text.trim().to_ascii_lowercase());
         }
         for (look, file) in ITEM_INDEX_FILES.into_iter().enumerate() {
             for (key, text) in sorted(&mes(file)?) {
@@ -529,9 +571,14 @@ impl ArtIndex {
             ArtKind::Portal => self.portal_path(id),
             ArtKind::Scenery => {
                 let key = id.scenery_category() * 1000 + id.number();
-                self.scenery.get(&key).map(|name| format!("art/scenery/{name}"))
+                self.scenery
+                    .get(&key)
+                    .map(|name| format!("art/scenery/{name}"))
             }
-            ArtKind::Facade => self.facades.get(id.facade_number() as usize).map(|name| format!("art/Facade/{name}.art")),
+            ArtKind::Facade => self
+                .facades
+                .get(id.facade_number() as usize)
+                .map(|name| format!("art/Facade/{name}.art")),
             ArtKind::Roof => {
                 let n = id.number() as usize;
                 let n = if n < self.roofs.len() { n } else { 0 };
@@ -549,30 +596,52 @@ impl ArtIndex {
             // Number bits 23-27, armour 20-22 (`xx` for animation 24), then as critters.
             ArtKind::Monster => {
                 let name = self.monsters.get(&((id.0 >> 23) & 0x1f))?;
-                let armour = if (id.0 >> 6) & 0x1f == 24 { "xx" } else { CRITTER_ARMOUR.get(((id.0 >> 20) & 7) as usize).copied().unwrap_or("??") };
-                Some(format!("art/monster/{name}/{name}{armour}{}.art", creature_tail(id)))
+                let armour = if (id.0 >> 6) & 0x1f == 24 {
+                    "xx"
+                } else {
+                    CRITTER_ARMOUR
+                        .get(((id.0 >> 20) & 7) as usize)
+                        .copied()
+                        .unwrap_or("??")
+                };
+                Some(format!(
+                    "art/monster/{name}/{name}{armour}{}.art",
+                    creature_tail(id)
+                ))
             }
             // Item (builder 0x4ec290): number bits 17-27, sub-type 6-9, item type 0-3, look
             // 12-13; key number + 20 * sub-type + 1000 * type, plus 100 * f + 200 (bits 14-16)
             // for type 2 when f is set.
             ArtKind::Item => {
-                let (number, sub, ty, f) = ((id.0 >> 17) & 0x7ff, (id.0 >> 6) & 0xf, id.0 & 0xf, (id.0 >> 14) & 7);
+                let (number, sub, ty, f) = (
+                    (id.0 >> 17) & 0x7ff,
+                    (id.0 >> 6) & 0xf,
+                    id.0 & 0xf,
+                    (id.0 >> 14) & 7,
+                );
                 let mut key = number + 20 * sub + 1000 * ty;
                 if ty == 2 && f != 0 {
                     key += 100 * f + 200;
                 }
                 let look = ((id.0 >> 12) & 3) as usize;
-                self.items[look].get(&key).map(|name| format!("art/item/{name}"))
+                self.items[look]
+                    .get(&key)
+                    .map(|name| format!("art/item/{name}"))
             }
             // Container: number bits 19-27, category 6-10; key category * 1000 + number.
             ArtKind::Container => {
                 let key = ((id.0 >> 6) & 0x1f) * 1000 + id.number();
-                self.containers.get(&key).map(|name| format!("art/container/{name}"))
+                self.containers
+                    .get(&key)
+                    .map(|name| format!("art/container/{name}"))
             }
             // Number bits 20-27, no armour.
             ArtKind::UniqueNpc => {
                 let name = self.unique_npcs.get(&((id.0 >> 20) & 0xff))?;
-                Some(format!("art/unique_npc/{name}/{name}{}.art", creature_tail(id)))
+                Some(format!(
+                    "art/unique_npc/{name}/{name}{}.art",
+                    creature_tail(id)
+                ))
             }
             _ => None,
         }
@@ -590,7 +659,9 @@ impl ArtIndex {
                     (false, true) => 2,
                     (false, false) => 3,
                 };
-                self.tile_flags[list].get(((id.0 >> 22) & 0x3f) as usize).is_some_and(|f| f & TILE_BLOCKS != 0)
+                self.tile_flags[list]
+                    .get(((id.0 >> 22) & 0x3f) as usize)
+                    .is_some_and(|f| f & TILE_BLOCKS != 0)
             }
             0xB => id.0 & 1 == 0,
             _ => false,
@@ -604,13 +675,16 @@ impl ArtIndex {
             (false, true) => 2,
             (false, false) => 3,
         };
-        self.tile_lists[list].get(index as usize).map(String::as_str)
+        self.tile_lists[list]
+            .get(index as usize)
+            .map(String::as_str)
     }
 
     /// 0x4eb7d0: position in the outdoor flippable list, then in the outdoor fixed list after it.
     fn tile_order(&self, name: &str) -> Option<usize> {
         let find = |list: &[String]| list.iter().position(|n| n.eq_ignore_ascii_case(name));
-        find(&self.tile_lists[0]).or_else(|| find(&self.tile_lists[1]).map(|i| self.tile_lists[0].len() + i))
+        find(&self.tile_lists[0])
+            .or_else(|| find(&self.tile_lists[1]).map(|i| self.tile_lists[0].len() + i))
     }
 
     fn tile_path(&self, id: ArtId) -> Option<String> {
@@ -628,8 +702,12 @@ impl ArtIndex {
         if edge == 0 {
             return Some(base(b, 0));
         }
-        let Some(oa) = self.tile_order(a) else { return Some(base(a, edge)) };
-        let Some(ob) = self.tile_order(b) else { return Some(base(b, 15 - edge)) };
+        let Some(oa) = self.tile_order(a) else {
+            return Some(base(a, edge));
+        };
+        let Some(ob) = self.tile_order(b) else {
+            return Some(base(b, 15 - edge));
+        };
         Some(if oa < ob {
             format!("art/tile/{a}{b}{}{letter}.art", e(edge))
         } else {
@@ -642,7 +720,8 @@ impl ArtIndex {
         let mut piece = id.wall_piece();
         let mut flags = id.wall_flags();
         if matches!(rot, 2 | 3 | 6 | 7) {
-            flags = (if flags & 0x400 != 0 { 0x80 } else { 0 }) | (if flags & 0x80 != 0 { 0x400 } else { 0 });
+            flags = (if flags & 0x400 != 0 { 0x80 } else { 0 })
+                | (if flags & 0x80 != 0 { 0x400 } else { 0 });
         }
         if flags & 0x400 != 0 {
             flags = 0x400;
@@ -659,19 +738,31 @@ impl ArtIndex {
         }
         let (first, second) = self.walls.get(id.wall_number() as usize)?;
         let piece_name = WALL_PIECES.get(piece as usize)?;
-        let name = if matches!(rot >> 1, 0 | 3) { first } else { second };
+        let name = if matches!(rot >> 1, 0 | 3) {
+            first
+        } else {
+            second
+        };
         let side = match flags {
             0x400 => 1,
             0x80 if (1..=6).contains(&piece) => 1,
             0x80 => 2,
             _ => 0,
         };
-        Some(format!("art/wall/{name}{piece_name}{}{}.art", SIDE_LETTERS[side] as char, id.wall_variation()))
+        Some(format!(
+            "art/wall/{name}{piece_name}{}{}.art",
+            SIDE_LETTERS[side] as char,
+            id.wall_variation()
+        ))
     }
 
     fn portal_path(&self, id: ArtId) -> Option<String> {
         let number = id.number();
-        let key = if (id.0 >> 10) & 1 == 1 { number } else { number + 1001 };
+        let key = if (id.0 >> 10) & 1 == 1 {
+            number
+        } else {
+            number + 1001
+        };
         let name = self.portals.get(&key)?;
         let mut path = format!("art/portal/{name}");
         if id.0 & 0x200 != 0 {
@@ -738,25 +829,52 @@ mod tests {
     #[test]
     fn tile_id_to_path() {
         let i = index();
-        assert_eq!(p(&i, tile(1, 1, 15, 0, OUT_FLIP)).as_deref(), Some("art/tile/grsbse0a.art"));
-        assert_eq!(p(&i, tile(0, 1, 5, 2, OUT_FLIP)).as_deref(), Some("art/tile/drtgrs9c.art"));
-        assert_eq!(p(&i, tile(1, 0, 5, 2, OUT_FLIP)).as_deref(), Some("art/tile/drtgrsac.art"));
-        assert_eq!(p(&i, tile(0, 1, 0, 1, OUT_FLIP)).as_deref(), Some("art/tile/grsbse0b.art"));
+        assert_eq!(
+            p(&i, tile(1, 1, 15, 0, OUT_FLIP)).as_deref(),
+            Some("art/tile/grsbse0a.art")
+        );
+        assert_eq!(
+            p(&i, tile(0, 1, 5, 2, OUT_FLIP)).as_deref(),
+            Some("art/tile/drtgrs9c.art")
+        );
+        assert_eq!(
+            p(&i, tile(1, 0, 5, 2, OUT_FLIP)).as_deref(),
+            Some("art/tile/drtgrsac.art")
+        );
+        assert_eq!(
+            p(&i, tile(0, 1, 0, 1, OUT_FLIP)).as_deref(),
+            Some("art/tile/grsbse0b.art")
+        );
         // Same name in both slots (case-insensitive) is a base tile.
-        assert_eq!(p(&i, tile(0, 0, 7, 7, OUT_FLIP)).as_deref(), Some("art/tile/drtbse3h.art"));
+        assert_eq!(
+            p(&i, tile(0, 0, 7, 7, OUT_FLIP)).as_deref(),
+            Some("art/tile/drtbse3h.art")
+        );
         // Non-flippable outdoor name (bg2) sorts after the flippable ones: names swap, edge becomes 15 - edge.
-        assert_eq!(p(&i, tile(0, 0, 3, 0, 0b101)).as_deref(), Some("art/tile/drtbg2da.art"));
+        assert_eq!(
+            p(&i, tile(0, 0, 3, 0, 0b101)).as_deref(),
+            Some("art/tile/drtbg2da.art")
+        );
         // Flip bit does not change the name.
-        assert_eq!(p(&i, ArtId(tile(0, 1, 5, 2, OUT_FLIP).0 | 1)), p(&i, tile(0, 1, 5, 2, OUT_FLIP)));
+        assert_eq!(
+            p(&i, ArtId(tile(0, 1, 5, 2, OUT_FLIP).0 | 1)),
+            p(&i, tile(0, 1, 5, 2, OUT_FLIP))
+        );
     }
 
     #[test]
     fn tile_name_not_found_in_order_lists() {
         let i = index();
         // Indoor: n1 = ind (flippable, idx 0, not an outdoor name), n2 = flr: n1 not found -> n1 bse E[edge].
-        assert_eq!(p(&i, tile(0, 0, 3, 0, 0b010)).as_deref(), Some("art/tile/indbse4a.art"));
+        assert_eq!(
+            p(&i, tile(0, 0, 3, 0, 0b010)).as_deref(),
+            Some("art/tile/indbse4a.art")
+        );
         // n1 = drt (indoor idx 1, also an outdoor name), n2 = flr (not found): n2 bse E[15-edge].
-        assert_eq!(p(&i, tile(1, 0, 3, 0, 0b010)).as_deref(), Some("art/tile/flrbseda.art"));
+        assert_eq!(
+            p(&i, tile(1, 0, 3, 0, 0b010)).as_deref(),
+            Some("art/tile/flrbseda.art")
+        );
     }
 
     #[test]
@@ -767,7 +885,10 @@ mod tests {
         assert_eq!(tile_flags("WK1 3"), 0);
         assert_eq!(tile_flags("FOG/b"), 1);
         let files: HashMap<&str, &str> = HashMap::from([
-            ("art/tile/tilename.mes", "{0}{drt/n 0}\n{1}{dwr/f/n 4}\n{100}{rok/b 3}\n"),
+            (
+                "art/tile/tilename.mes",
+                "{0}{drt/n 0}\n{1}{dwr/f/n 4}\n{100}{rok/b 3}\n",
+            ),
             ("art/wall/structure.mes", ""),
             ("art/portal/portal.mes", ""),
             ("art/scenery/scenery.mes", ""),
@@ -783,9 +904,15 @@ mod tests {
             ("art/container/container.mes", ""),
         ]);
         let i = ArtIndex::load(|p| files.get(p).map(|s| s.as_bytes().to_vec())).unwrap();
-        assert!(!i.tile_blocks(tile(0, 1, 15, 0, OUT_FLIP)), "dirt, though its second name is deep water");
+        assert!(
+            !i.tile_blocks(tile(0, 1, 15, 0, OUT_FLIP)),
+            "dirt, though its second name is deep water"
+        );
         assert!(i.tile_blocks(tile(1, 0, 15, 0, OUT_FLIP)), "deep water");
-        assert!(i.tile_blocks(tile(0, 0, 15, 0, 0b100)), "outdoor fixed list: rock");
+        assert!(
+            i.tile_blocks(tile(0, 0, 15, 0, 0b100)),
+            "outdoor fixed list: rock"
+        );
         assert!(i.tile_blocks(ArtId(0xB000_0000)), "a facade");
         assert!(!i.tile_blocks(ArtId(0xB000_0001)), "a facade with bit 0");
     }
@@ -798,9 +925,15 @@ mod tests {
     #[test]
     fn facade_id_to_path() {
         let i = index();
-        assert_eq!(p(&i, ArtId(0xB000_0000 | (1 << 17))).as_deref(), Some("art/Facade/fa1.art"));
+        assert_eq!(
+            p(&i, ArtId(0xB000_0000 | (1 << 17))).as_deref(),
+            Some("art/Facade/fa1.art")
+        );
         // Bit 27 adds 0x100.
-        assert_eq!(p(&i, ArtId(0xB800_0000)).as_deref(), Some("art/Facade/fa256.art"));
+        assert_eq!(
+            p(&i, ArtId(0xB800_0000)).as_deref(),
+            Some("art/Facade/fa256.art")
+        );
         assert_eq!(p(&i, ArtId(0xB000_0000 | (200 << 17) | (1 << 27))), None);
     }
 
@@ -811,21 +944,51 @@ mod tests {
     #[test]
     fn wall_id_to_path() {
         let i = index();
-        assert_eq!(p(&i, wall(0, 22, 1, 0, 0)).as_deref(), Some("art/wall/BB1d3aU0.art"));
+        assert_eq!(
+            p(&i, wall(0, 22, 1, 0, 0)).as_deref(),
+            Some("art/wall/BB1d3aU0.art")
+        );
         // Rotations 2..5 use the second token; variation digit.
-        assert_eq!(p(&i, wall(0, 22, 4, 0, 3)).as_deref(), Some("art/wall/BB2d3aU3.art"));
+        assert_eq!(
+            p(&i, wall(0, 22, 4, 0, 3)).as_deref(),
+            Some("art/wall/BB2d3aU3.art")
+        );
         // Only the first three characters of the token.
-        assert_eq!(p(&i, wall(1, 1, 7, 0, 0)).as_deref(), Some("art/wall/CC1lfcU0.art"));
+        assert_eq!(
+            p(&i, wall(1, 1, 7, 0, 0)).as_deref(),
+            Some("art/wall/CC1lfcU0.art")
+        );
         // Flag 0x400 -> L; flag 0x80 -> L for pieces 1..6, else R.
-        assert_eq!(p(&i, wall(0, 22, 1, 0x400, 0)).as_deref(), Some("art/wall/BB1d3aL0.art"));
-        assert_eq!(p(&i, wall(0, 22, 1, 0x80, 0)).as_deref(), Some("art/wall/BB1d3aR0.art"));
-        assert_eq!(p(&i, wall(0, 3, 1, 0x80, 0)).as_deref(), Some("art/wall/BB1bclL0.art"));
+        assert_eq!(
+            p(&i, wall(0, 22, 1, 0x400, 0)).as_deref(),
+            Some("art/wall/BB1d3aL0.art")
+        );
+        assert_eq!(
+            p(&i, wall(0, 22, 1, 0x80, 0)).as_deref(),
+            Some("art/wall/BB1d3aR0.art")
+        );
+        assert_eq!(
+            p(&i, wall(0, 3, 1, 0x80, 0)).as_deref(),
+            Some("art/wall/BB1bclL0.art")
+        );
         // Rotations 2, 3, 6, 7 swap the two flags first.
-        assert_eq!(p(&i, wall(0, 22, 3, 0x400, 0)).as_deref(), Some("art/wall/BB2d3aR0.art"));
-        assert_eq!(p(&i, wall(0, 3, 3, 0x400, 0)).as_deref(), Some("art/wall/BB2bclL0.art"));
+        assert_eq!(
+            p(&i, wall(0, 22, 3, 0x400, 0)).as_deref(),
+            Some("art/wall/BB2d3aR0.art")
+        );
+        assert_eq!(
+            p(&i, wall(0, 3, 3, 0x400, 0)).as_deref(),
+            Some("art/wall/BB2bclL0.art")
+        );
         // Piece 7 with 0x400 and piece 8 with 0x80 become piece 0 (bse).
-        assert_eq!(p(&i, wall(0, 7, 1, 0x400, 0)).as_deref(), Some("art/wall/BB1bseL0.art"));
-        assert_eq!(p(&i, wall(0, 8, 1, 0x80, 0)).as_deref(), Some("art/wall/BB1bseR0.art"));
+        assert_eq!(
+            p(&i, wall(0, 7, 1, 0x400, 0)).as_deref(),
+            Some("art/wall/BB1bseL0.art")
+        );
+        assert_eq!(
+            p(&i, wall(0, 8, 1, 0x80, 0)).as_deref(),
+            Some("art/wall/BB1bseR0.art")
+        );
         // Out of range structure / piece.
         assert_eq!(p(&i, wall(2, 0, 1, 0, 0)), None);
         assert_eq!(p(&i, wall(0, 46, 1, 0, 0)), None);
@@ -835,28 +998,55 @@ mod tests {
     fn portal_id_to_path() {
         let i = index();
         // Bit 10 clear: key = number + 1001.
-        assert_eq!(p(&i, ArtId(3 << 28)).as_deref(), Some("art/portal/BB1F3aU0.ART"));
+        assert_eq!(
+            p(&i, ArtId(3 << 28)).as_deref(),
+            Some("art/portal/BB1F3aU0.ART")
+        );
         // Bit 10 set: key = number; bit 9 turns U into D.
-        assert_eq!(p(&i, ArtId((3 << 28) | (3 << 19) | (1 << 10))).as_deref(), Some("art/portal/BB1F3aU0.ART"));
-        assert_eq!(p(&i, ArtId((3 << 28) | (3 << 19) | (1 << 10) | (1 << 9))).as_deref(), Some("art/portal/BB1F3aD0.ART"));
+        assert_eq!(
+            p(&i, ArtId((3 << 28) | (3 << 19) | (1 << 10))).as_deref(),
+            Some("art/portal/BB1F3aU0.ART")
+        );
+        assert_eq!(
+            p(&i, ArtId((3 << 28) | (3 << 19) | (1 << 10) | (1 << 9))).as_deref(),
+            Some("art/portal/BB1F3aD0.ART")
+        );
         assert_eq!(p(&i, ArtId((3 << 28) | (4 << 19))), None);
     }
 
     #[test]
     fn scenery_id_to_path() {
         let i = index();
-        assert_eq!(p(&i, ArtId((4 << 28) | (5 << 19) | (1 << 6))).as_deref(), Some("art/scenery/tree.art"));
-        assert_eq!(p(&i, ArtId(4 << 28)).as_deref(), Some("art/scenery/proj.art"));
+        assert_eq!(
+            p(&i, ArtId((4 << 28) | (5 << 19) | (1 << 6))).as_deref(),
+            Some("art/scenery/tree.art")
+        );
+        assert_eq!(
+            p(&i, ArtId(4 << 28)).as_deref(),
+            Some("art/scenery/proj.art")
+        );
     }
 
     #[test]
     fn roof_and_light_id_to_path() {
         let i = index();
-        assert_eq!(p(&i, ArtId((0xA << 28) | (1 << 19))).as_deref(), Some("art/roof/rf1.art"));
+        assert_eq!(
+            p(&i, ArtId((0xA << 28) | (1 << 19))).as_deref(),
+            Some("art/roof/rf1.art")
+        );
         // Out of range roof number uses 0.
-        assert_eq!(p(&i, ArtId((0xA << 28) | (9 << 19))).as_deref(), Some("art/roof/rf0.art"));
-        assert_eq!(p(&i, ArtId((9 << 28) | (80 << 19))).as_deref(), Some("art/light/lgt.art"));
-        assert_eq!(p(&i, ArtId((9 << 28) | (80 << 19) | (16 << 4) | 1)).as_deref(), Some("art/light/lgt_s2.art"));
+        assert_eq!(
+            p(&i, ArtId((0xA << 28) | (9 << 19))).as_deref(),
+            Some("art/roof/rf0.art")
+        );
+        assert_eq!(
+            p(&i, ArtId((9 << 28) | (80 << 19))).as_deref(),
+            Some("art/light/lgt.art")
+        );
+        assert_eq!(
+            p(&i, ArtId((9 << 28) | (80 << 19) | (16 << 4) | 1)).as_deref(),
+            Some("art/light/lgt_s2.art")
+        );
     }
 
     #[test]
@@ -879,25 +1069,67 @@ mod tests {
     fn item_and_container_id_to_path() {
         let i = index();
         // From the start map's .mob files.
-        assert_eq!(p(&i, ArtId(0x6005_4002)).as_deref(), Some("art/item/g_jewelry_small00.ART"), "type 2 with f = 5");
-        assert_eq!(p(&i, ArtId(0x6000_0162)).as_deref(), Some("art/item/g_robe00.ART"), "bits 4-5 do not count");
-        assert_eq!(p(&i, ArtId(0x6004_0340)).as_deref(), Some("art/item/g_staff.ART"));
-        assert_eq!(p(&i, ArtId(0x60a0_0009)).as_deref(), Some("art/item/g_passport_ground_object.ART"));
-        assert_eq!(p(&i, ArtId(0x6004_0340 | 1 << 12)).as_deref(), Some("art/item/i_staff.ART"), "inventory look");
-        assert_eq!(p(&i, ArtId(0x7180_0040)).as_deref(), Some("art/container/crate_wooden_Flip.art"));
-        assert_eq!(p(&i, ArtId(0x7180_0040 | 3 << 11 | 1 << 14)).as_deref(), Some("art/container/crate_wooden_Flip.art"), "rotation and frame do not count");
+        assert_eq!(
+            p(&i, ArtId(0x6005_4002)).as_deref(),
+            Some("art/item/g_jewelry_small00.ART"),
+            "type 2 with f = 5"
+        );
+        assert_eq!(
+            p(&i, ArtId(0x6000_0162)).as_deref(),
+            Some("art/item/g_robe00.ART"),
+            "bits 4-5 do not count"
+        );
+        assert_eq!(
+            p(&i, ArtId(0x6004_0340)).as_deref(),
+            Some("art/item/g_staff.ART")
+        );
+        assert_eq!(
+            p(&i, ArtId(0x60a0_0009)).as_deref(),
+            Some("art/item/g_passport_ground_object.ART")
+        );
+        assert_eq!(
+            p(&i, ArtId(0x6004_0340 | 1 << 12)).as_deref(),
+            Some("art/item/i_staff.ART"),
+            "inventory look"
+        );
+        assert_eq!(
+            p(&i, ArtId(0x7180_0040)).as_deref(),
+            Some("art/container/crate_wooden_Flip.art")
+        );
+        assert_eq!(
+            p(&i, ArtId(0x7180_0040 | 3 << 11 | 1 << 14)).as_deref(),
+            Some("art/container/crate_wooden_Flip.art"),
+            "rotation and frame do not count"
+        );
     }
 
     #[test]
     fn monster_and_unique_npc_id_to_path() {
         let i = index();
         // From the start map's .mob files.
-        assert_eq!(p(&i, ArtId(0xd050_29c0)).as_deref(), Some("art/unique_npc/ghmst/ghmstxah.art"));
-        assert_eq!(p(&i, ArtId(0xd110_1810)).as_deref(), Some("art/unique_npc/hmfc2/hmfc2xaa.art"));
+        assert_eq!(
+            p(&i, ArtId(0xd050_29c0)).as_deref(),
+            Some("art/unique_npc/ghmst/ghmstxah.art")
+        );
+        assert_eq!(
+            p(&i, ArtId(0xd110_1810)).as_deref(),
+            Some("art/unique_npc/hmfc2/hmfc2xaa.art")
+        );
         // Monster 9, armour 0, walking (anim 1), with the s flag.
-        assert_eq!(p(&i, ArtId(0xC000_0000 | 9 << 23 | 1 << 19 | 1 << 6)).as_deref(), Some("art/monster/bun/bunuwsab.art"));
-        assert_eq!(p(&i, ArtId(0xC000_0000 | 24 << 6)).as_deref(), Some("art/monster/wlf/wlfxxxay.art"), "animation 24");
-        assert_eq!(p(&i, ArtId(0xC000_0000 | 3 << 23)), None, "not in monster.mes");
+        assert_eq!(
+            p(&i, ArtId(0xC000_0000 | 9 << 23 | 1 << 19 | 1 << 6)).as_deref(),
+            Some("art/monster/bun/bunuwsab.art")
+        );
+        assert_eq!(
+            p(&i, ArtId(0xC000_0000 | 24 << 6)).as_deref(),
+            Some("art/monster/wlf/wlfxxxay.art"),
+            "animation 24"
+        );
+        assert_eq!(
+            p(&i, ArtId(0xC000_0000 | 3 << 23)),
+            None,
+            "not in monster.mes"
+        );
     }
 
     #[test]
@@ -906,28 +1138,92 @@ mod tests {
         // Lugard Bloodstone's prototype (dwarf man): standing, facing the camera.
         let lugard = ArtId(0x2900_2000);
         let c = CritterArt::from_id(lugard);
-        assert_eq!((c.male, c.body, c.armour, c.rotation, c.anim, c.weapon), (true, 1, 0, 4, ANIM_STAND, 0));
+        assert_eq!(
+            (c.male, c.body, c.armour, c.rotation, c.anim, c.weapon),
+            (true, 1, 0, 4, ANIM_STAND, 0)
+        );
         assert_eq!(c.id(), lugard, "round trip");
-        assert_eq!(p(&i, lugard).as_deref(), Some("art/critter/dfm/dfmuwxaa.art"));
-        let walk = CritterArt { anim: ANIM_WALK, armour: 7, ..c };
+        assert_eq!(
+            p(&i, lugard).as_deref(),
+            Some("art/critter/dfm/dfmuwxaa.art")
+        );
+        let walk = CritterArt {
+            anim: ANIM_WALK,
+            armour: 7,
+            ..c
+        };
         assert_eq!(walk.path(), "art/critter/dfm/dfmbnxab.art");
-        assert_eq!(CritterArt { male: false, body: 0, ..walk }.path(), "art/critter/hmf/hmfbnxab.art");
-        assert_eq!(CritterArt { armour: 6, ..walk }.path(), "art/critter/dfx/dfxpcxab.art", "plate: gender x");
-        assert_eq!(CritterArt { flag_s: true, weapon: 7, ..walk }.path(), "art/critter/dfm/dfmbnsdb.art");
-        assert_eq!(CritterArt { anim: 24, ..walk }.path(), "art/critter/dfx/dfxxxxay.art");
+        assert_eq!(
+            CritterArt {
+                male: false,
+                body: 0,
+                ..walk
+            }
+            .path(),
+            "art/critter/hmf/hmfbnxab.art"
+        );
+        assert_eq!(
+            CritterArt { armour: 6, ..walk }.path(),
+            "art/critter/dfx/dfxpcxab.art",
+            "plate: gender x"
+        );
+        assert_eq!(
+            CritterArt {
+                flag_s: true,
+                weapon: 7,
+                ..walk
+            }
+            .path(),
+            "art/critter/dfm/dfmbnsdb.art"
+        );
+        assert_eq!(
+            CritterArt { anim: 24, ..walk }.path(),
+            "art/critter/dfx/dfxxxxay.art"
+        );
         // Elf women use the human woman's art; plate puts elves on the human body and gnomes
         // and halflings on the dwarf's.
-        let elf = CritterArt { body: 4, male: false, ..walk };
+        let elf = CritterArt {
+            body: 4,
+            male: false,
+            ..walk
+        };
         assert_eq!(elf.path(), "art/critter/hmf/hmfbnxab.art");
-        assert_eq!(CritterArt { male: true, ..elf }.path(), "art/critter/efm/efmbnxab.art");
-        assert_eq!(CritterArt { armour: 4, ..elf }.path(), "art/critter/hmx/hmxpmxab.art");
-        assert_eq!(CritterArt { body: 2, armour: 6, ..walk }.path(), "art/critter/dfx/dfxpcxab.art");
-        let all = CritterArt { male: true, body: 3, armour: 8, flag_s: true, frame: 31, rotation: 7, anim: 25, palette: 3, weapon: 14 };
+        assert_eq!(
+            CritterArt { male: true, ..elf }.path(),
+            "art/critter/efm/efmbnxab.art"
+        );
+        assert_eq!(
+            CritterArt { armour: 4, ..elf }.path(),
+            "art/critter/hmx/hmxpmxab.art"
+        );
+        assert_eq!(
+            CritterArt {
+                body: 2,
+                armour: 6,
+                ..walk
+            }
+            .path(),
+            "art/critter/dfx/dfxpcxab.art"
+        );
+        let all = CritterArt {
+            male: true,
+            body: 3,
+            armour: 8,
+            flag_s: true,
+            frame: 31,
+            rotation: 7,
+            anim: 25,
+            palette: 3,
+            weapon: 14,
+        };
         assert_eq!(CritterArt::from_id(all.id()), all);
     }
 
     #[test]
     fn load_reports_missing_and_malformed_files() {
-        assert!(matches!(ArtIndex::load(|_| None), Err(ArtIndexError::Missing(_))));
+        assert!(matches!(
+            ArtIndex::load(|_| None),
+            Err(ArtIndexError::Missing(_))
+        ));
     }
 }

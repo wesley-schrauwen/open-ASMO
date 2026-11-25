@@ -27,10 +27,22 @@ pub fn is_unconscious(current: i32) -> bool {
     current < 1
 }
 
-type ConsciousQuery<'a> = (Entity, &'a PlayerControlled, &'a Sheet, &'a crate::Position, Has<Unconscious>, Has<crate::Walking>);
+type ConsciousQuery<'a> = (
+    Entity,
+    &'a PlayerControlled,
+    &'a Sheet,
+    &'a crate::Position,
+    Has<Unconscious>,
+    Has<crate::Walking>,
+);
 
 /// Knocks down the PCs whose fatigue fell below 1 and gets up those above 0 again.
-pub fn update_consciousness(mut commands: Commands, rules: Res<SimRules>, mut world: ResMut<crate::WorldState>, pcs: Query<ConsciousQuery>) {
+pub fn update_consciousness(
+    mut commands: Commands,
+    rules: Res<SimRules>,
+    mut world: ResMut<crate::WorldState>,
+    pcs: Query<ConsciousQuery>,
+) {
     for (entity, player, sheet, position, down, walking) in &pcs {
         let now = is_unconscious(pc_status(&rules.0, &sheet.0).fatigue.current);
         if now == down {
@@ -38,7 +50,12 @@ pub fn update_consciousness(mut commands: Commands, rules: Res<SimRules>, mut wo
         }
         let mut pc = commands.entity(entity);
         if now {
-            pc.insert(Unconscious).remove::<(crate::Walking, crate::PendingUse, crate::PendingPick, crate::PendingPickUp)>();
+            pc.insert(Unconscious).remove::<(
+                crate::Walking,
+                crate::PendingUse,
+                crate::PendingPick,
+                crate::PendingPickUp,
+            )>();
             if walking {
                 crate::record_position(&mut world, player.0, position.0);
             }

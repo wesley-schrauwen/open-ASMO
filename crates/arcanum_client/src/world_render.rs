@@ -16,8 +16,13 @@ use std::collections::{HashMap, HashSet};
 
 use arcanum_formats::art_id::{ArtId, ArtIndex};
 use arcanum_formats::map::{SECTOR_TILES as SECTOR_SIZE, SectorId, TileLoc};
-use arcanum_formats::object::{TYPE_CONTAINER, TYPE_GENERIC, TYPE_PORTAL, TYPE_SCENERY, TYPE_WALL, TYPE_WEAPON};
-use arcanum_sim::{GroundItemId, KEEP_RADIUS, LedgerDelta, LoadedMap, MapObjectId, object_location, open_frames, portal_frame, sector_within, with_frame};
+use arcanum_formats::object::{
+    TYPE_CONTAINER, TYPE_GENERIC, TYPE_PORTAL, TYPE_SCENERY, TYPE_WALL, TYPE_WEAPON,
+};
+use arcanum_sim::{
+    GroundItemId, KEEP_RADIUS, LedgerDelta, LoadedMap, MapObjectId, object_location, open_frames,
+    portal_frame, sector_within, with_frame,
+};
 use bevy::image::{ImageFilterMode, ImageSampler};
 use bevy::prelude::*;
 
@@ -37,7 +42,18 @@ impl Plugin for WorldRenderPlugin {
             .init_resource::<MapDeltas>()
             .add_systems(
                 Update,
-                (load_sectors, rebase_depth, apply_map_deltas, drop_far_sectors, draw_sectors, animate_doors, show_tiles, follow_pc).chain().run_if(in_state(AppState::InGame)),
+                (
+                    load_sectors,
+                    rebase_depth,
+                    apply_map_deltas,
+                    drop_far_sectors,
+                    draw_sectors,
+                    animate_doors,
+                    show_tiles,
+                    follow_pc,
+                )
+                    .chain()
+                    .run_if(in_state(AppState::InGame)),
             );
     }
 }
@@ -99,7 +115,19 @@ pub struct MapDeltas(pub Vec<LedgerDelta>);
 impl MapDeltas {
     /// Whether this module handles `delta`.
     pub fn wants(delta: &LedgerDelta) -> bool {
-        matches!(delta, LedgerDelta::MapChanges { .. } | LedgerDelta::ObjectFlags { .. } | LedgerDelta::ObjectArt { .. } | LedgerDelta::ObjectTransformed { .. } | LedgerDelta::PortalChanged { .. } | LedgerDelta::GroundItemDropped { .. } | LedgerDelta::GroundItemTaken { .. } | LedgerDelta::PileChanged { .. } | LedgerDelta::ContainerShown { .. } | LedgerDelta::LockChanged { .. })
+        matches!(
+            delta,
+            LedgerDelta::MapChanges { .. }
+                | LedgerDelta::ObjectFlags { .. }
+                | LedgerDelta::ObjectArt { .. }
+                | LedgerDelta::ObjectTransformed { .. }
+                | LedgerDelta::PortalChanged { .. }
+                | LedgerDelta::GroundItemDropped { .. }
+                | LedgerDelta::GroundItemTaken { .. }
+                | LedgerDelta::PileChanged { .. }
+                | LedgerDelta::ContainerShown { .. }
+                | LedgerDelta::LockChanged { .. }
+        )
     }
 }
 
@@ -135,7 +163,10 @@ impl ObjectArt {
     pub fn of(id: ArtId) -> Self {
         let wall_or_portal = matches!(id.art_type(), 1 | 3);
         let rotation = id.rotation();
-        Self { half_tile: wall_or_portal && !(2..=5).contains(&rotation), mirrored: wall_or_portal && id.0 & 1 == 1 }
+        Self {
+            half_tile: wall_or_portal && !(2..=5).contains(&rotation),
+            mirrored: wall_or_portal && id.0 & 1 == 1,
+        }
     }
 
     /// The hotspot to anchor on, from the frame's stored one.
@@ -153,12 +184,20 @@ impl ObjectArt {
 /// The frame an object's art id shows (0x502b50): walls and items always 0 (an item's bits
 /// 14..16 are part of its key), portals, scenery and containers bits 14..18.
 pub fn object_frame(id: ArtId) -> usize {
-    if matches!(id.art_type(), 1 | 6) { 0 } else { ((id.0 >> 14) & 0x1f) as usize }
+    if matches!(id.art_type(), 1 | 6) {
+        0
+    } else {
+        ((id.0 >> 14) & 0x1f) as usize
+    }
 }
 
 /// The rotation an object's art id shows: bits 11..13, except items, which have one (0x502880).
 pub fn object_rotation(id: ArtId) -> usize {
-    if id.art_type() == 6 { 0 } else { id.rotation() as usize }
+    if id.art_type() == 6 {
+        0
+    } else {
+        id.rotation() as usize
+    }
 }
 
 /// Object flags the original's object pass skips (0x43b390): 0x1 and 0x2 (the default mask at
@@ -175,7 +214,9 @@ const DRAWN_OBJECTS: [u32; 3] = [TYPE_WALL, TYPE_PORTAL, TYPE_SCENERY];
 /// portals and scenery from the sectors, and containers and items lying on the ground from the
 /// `.mob` files. NPCs come from the host.
 fn drawn_here(object_type: u32) -> bool {
-    DRAWN_OBJECTS.contains(&object_type) || object_type == TYPE_CONTAINER || (TYPE_WEAPON..=TYPE_GENERIC).contains(&object_type)
+    DRAWN_OBJECTS.contains(&object_type)
+        || object_type == TYPE_CONTAINER
+        || (TYPE_WEAPON..=TYPE_GENERIC).contains(&object_type)
 }
 
 fn enter_world(
@@ -219,8 +260,17 @@ type MapSprite = Or<(With<GroundTile>, With<MapObject>)>;
 
 /// Opens the host's map and reads the sectors around the PC from the client's game data. A new
 /// map (a teleport, [`arcanum_sim::big_move`]) clears the old one's tiles and objects.
-fn load_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, map: Res<LocalMap>, pc: Res<LocalPc>, vfs: Option<Res<VfsResource>>, sprites: Query<Entity, MapSprite>) {
-    let (Some(name), Some((_, at))) = (&map.0, pc.0) else { return };
+fn load_sectors(
+    mut commands: Commands,
+    mut client: ResMut<ClientMap>,
+    map: Res<LocalMap>,
+    pc: Res<LocalPc>,
+    vfs: Option<Res<VfsResource>>,
+    sprites: Query<Entity, MapSprite>,
+) {
+    let (Some(name), Some((_, at))) = (&map.0, pc.0) else {
+        return;
+    };
     let Some(vfs) = vfs else { return };
     let Ok(vfs) = vfs.0.read() else { return };
     if client.map.name.as_deref() != Some(name.as_str()) {
@@ -232,7 +282,10 @@ fn load_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, map: Res<
         client.map.open(Some(&vfs), name);
         client.drawn.clear();
         let corner = at.sector();
-        client.origin = Some(TileLoc { x: corner.x() * SECTOR_SIZE, y: corner.y() * SECTOR_SIZE });
+        client.origin = Some(TileLoc {
+            x: corner.x() * SECTOR_SIZE,
+            y: corner.y() * SECTOR_SIZE,
+        });
         client.depth_origin = client.origin;
     }
     if client.art.is_none() {
@@ -259,10 +312,19 @@ fn drop_far_sectors(
 ) {
     let Some((_, at)) = pc.0 else { return };
     let centre = at.sector();
-    if client.map.sectors.keys().all(|&id| sector_within(id, centre, KEEP_RADIUS)) {
+    if client
+        .map
+        .sectors
+        .keys()
+        .all(|&id| sector_within(id, centre, KEEP_RADIUS))
+    {
         return;
     }
-    let gone: HashSet<SectorId> = client.map.unload_unless(|id| sector_within(id, centre, KEEP_RADIUS)).into_iter().collect();
+    let gone: HashSet<SectorId> = client
+        .map
+        .unload_unless(|id| sector_within(id, centre, KEEP_RADIUS))
+        .into_iter()
+        .collect();
     for id in &gone {
         client.drawn.remove(id);
     }
@@ -311,8 +373,12 @@ fn apply_map_deltas(
                     .iter()
                     .filter(|(id, _)| client.drawn.contains(id))
                     .flat_map(|(&sector, delta)| {
-                        let dropped = delta.dropped.iter().map(move |(&number, item)| (GroundItemId::Dropped { sector, number }, item.clone()));
-                        let piles = delta.piles.iter().map(move |(&number, p)| (GroundItemId::Pile { sector, number }, pile_look(p)));
+                        let dropped = delta.dropped.iter().map(move |(&number, item)| {
+                            (GroundItemId::Dropped { sector, number }, item.clone())
+                        });
+                        let piles = delta.piles.iter().map(move |(&number, p)| {
+                            (GroundItemId::Pile { sector, number }, pile_look(p))
+                        });
                         dropped.chain(piles)
                     })
                     .filter(|(id, _)| !objects.iter().any(|(_, o)| o.ground == Some(*id)))
@@ -322,21 +388,50 @@ fn apply_map_deltas(
                 }
                 // Containers show open or shut.
                 for (entity, mut object) in &mut objects {
-                    let Some(container @ GroundItemId::Container { .. }) = object.ground else { continue };
-                    let Some(base) = client.map.container_object(container).and_then(|o| client.map.prototypes.art_id(o)) else { continue };
+                    let Some(container @ GroundItemId::Container { .. }) = object.ground else {
+                        continue;
+                    };
+                    let Some(base) = client
+                        .map
+                        .container_object(container)
+                        .and_then(|o| client.map.prototypes.art_id(o))
+                    else {
+                        continue;
+                    };
                     let aid = container_art(&client.map, Some(container), base);
                     if aid != object.art {
                         object.art = aid;
-                        commands.entity(entity).insert(PendingArt { art: object.frames.clone(), rotation: object_rotation(aid), frame: object_frame(aid), hotspot: Some(ObjectArt::of(aid)) });
+                        commands.entity(entity).insert(PendingArt {
+                            art: object.frames.clone(),
+                            rotation: object_rotation(aid),
+                            frame: object_frame(aid),
+                            hotspot: Some(ObjectArt::of(aid)),
+                        });
                     }
                 }
                 // Loaded door sprites jump to their state.
                 for (entity, mut object) in &mut objects {
-                    let Some(door) = object.id.filter(|d| client.map.changes.contains_key(&d.sector)) else { continue };
-                    let Some(aid) = client.map.map_object(door).and_then(|o| client.map.prototypes.art_id(o)) else { continue };
+                    let Some(door) = object
+                        .id
+                        .filter(|d| client.map.changes.contains_key(&d.sector))
+                    else {
+                        continue;
+                    };
+                    let Some(aid) = client
+                        .map
+                        .map_object(door)
+                        .and_then(|o| client.map.prototypes.art_id(o))
+                    else {
+                        continue;
+                    };
                     if aid != object.art {
                         object.art = aid;
-                        commands.entity(entity).insert(PendingArt { art: object.frames.clone(), rotation: object_rotation(aid), frame: object_frame(aid), hotspot: Some(ObjectArt::of(aid)) });
+                        commands.entity(entity).insert(PendingArt {
+                            art: object.frames.clone(),
+                            rotation: object_rotation(aid),
+                            frame: object_frame(aid),
+                            hotspot: Some(ObjectArt::of(aid)),
+                        });
                     }
                 }
             }
@@ -346,7 +441,12 @@ fn apply_map_deltas(
                     if object.ground == Some(container) {
                         let aid = arcanum_sim::with_frame(object.art, u32::from(open));
                         object.art = aid;
-                        commands.entity(entity).insert(PendingArt { art: object.frames.clone(), rotation: object_rotation(aid), frame: object_frame(aid), hotspot: Some(ObjectArt::of(aid)) });
+                        commands.entity(entity).insert(PendingArt {
+                            art: object.frames.clone(),
+                            rotation: object_rotation(aid),
+                            frame: object_frame(aid),
+                            hotspot: Some(ObjectArt::of(aid)),
+                        });
                     }
                 }
             }
@@ -371,7 +471,10 @@ fn apply_map_deltas(
                         }
                     }
                     Some(look) if !drawn && client.drawn.contains(&pile.sector()) => {
-                        let on_tile = objects.iter().filter(|(_, o)| o.location == look.location).count();
+                        let on_tile = objects
+                            .iter()
+                            .filter(|(_, o)| o.location == look.location)
+                            .count();
                         spawn_dropped(&mut commands, &mut client, &assets, pile, look, on_tile);
                     }
                     Some(_) => {}
@@ -380,7 +483,10 @@ fn apply_map_deltas(
             LedgerDelta::GroundItemDropped { item, ground } => {
                 client.map.drop_ground_item(item, ground.clone());
                 if client.drawn.contains(&item.sector()) {
-                    let on_tile = objects.iter().filter(|(_, o)| o.location == ground.location).count();
+                    let on_tile = objects
+                        .iter()
+                        .filter(|(_, o)| o.location == ground.location)
+                        .count();
                     spawn_dropped(&mut commands, &mut client, &assets, item, ground, on_tile);
                 }
             }
@@ -389,14 +495,30 @@ fn apply_map_deltas(
             }
             // An object switched off or on, given new art or made another object: the sector is
             // drawn again.
-            LedgerDelta::ObjectFlags { sector, .. } | LedgerDelta::ObjectArt { sector, .. } | LedgerDelta::ObjectTransformed { sector, .. } => {
+            LedgerDelta::ObjectFlags { sector, .. }
+            | LedgerDelta::ObjectArt { sector, .. }
+            | LedgerDelta::ObjectTransformed { sector, .. } => {
                 match delta {
-                    LedgerDelta::ObjectFlags { index, mobile, flags, .. } => {
+                    LedgerDelta::ObjectFlags {
+                        index,
+                        mobile,
+                        flags,
+                        ..
+                    } => {
                         client.map.set_object_flags(sector, index, mobile, flags);
                     }
-                    LedgerDelta::ObjectArt { index, mobile, art, .. } => client.map.set_object_art(sector, index, mobile, art),
-                    LedgerDelta::ObjectTransformed { index, mobile, prototype, .. } => {
-                        client.map.transform_object(sector, index, mobile, prototype);
+                    LedgerDelta::ObjectArt {
+                        index, mobile, art, ..
+                    } => client.map.set_object_art(sector, index, mobile, art),
+                    LedgerDelta::ObjectTransformed {
+                        index,
+                        mobile,
+                        prototype,
+                        ..
+                    } => {
+                        client
+                            .map
+                            .transform_object(sector, index, mobile, prototype);
                     }
                     _ => {}
                 }
@@ -415,8 +537,12 @@ fn apply_map_deltas(
             }
             LedgerDelta::PortalChanged { door, open } => {
                 client.map.set_portal(door, open);
-                let Some((entity, _)) = objects.iter().find(|(_, o)| o.id == Some(door)) else { continue };
-                let Ok((_, object)) = objects.get(entity) else { continue };
+                let Some((entity, _)) = objects.iter().find(|(_, o)| o.id == Some(door)) else {
+                    continue;
+                };
+                let Ok((_, object)) = objects.get(entity) else {
+                    continue;
+                };
                 let mut sequence = open_frames(object.art);
                 if !open {
                     // Back through the open frames to 0, from the one before the current.
@@ -427,7 +553,11 @@ fn apply_map_deltas(
                 }
                 let rate = frames.get(&object.frames).map_or(0, |f| f.frame_rate);
                 let period = if rate > 0 { 1.0 / rate as f32 } else { 0.1 };
-                commands.entity(entity).insert(DoorAnimation { frames: sequence, period, elapsed: period });
+                commands.entity(entity).insert(DoorAnimation {
+                    frames: sequence,
+                    period,
+                    elapsed: period,
+                });
             }
             _ => {}
         }
@@ -437,13 +567,19 @@ fn apply_map_deltas(
 /// A container's art as shown: frame 1 while open, if it turns ([`arcanum_sim::container`]).
 fn container_art(map: &arcanum_sim::LoadedMap, ground: Option<GroundItemId>, aid: ArtId) -> ArtId {
     match ground {
-        Some(id @ GroundItemId::Container { .. }) if arcanum_sim::opens_to_frame(aid) => arcanum_sim::with_frame(aid, u32::from(map.container_open(id))),
+        Some(id @ GroundItemId::Container { .. }) if arcanum_sim::opens_to_frame(aid) => {
+            arcanum_sim::with_frame(aid, u32::from(map.container_open(id)))
+        }
         _ => aid,
     }
 }
 
 /// Steps door sprites through their frames.
-fn animate_doors(mut commands: Commands, time: Res<Time>, mut doors: Query<(Entity, &mut DoorAnimation, &mut MapObject)>) {
+fn animate_doors(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut doors: Query<(Entity, &mut DoorAnimation, &mut MapObject)>,
+) {
     for (entity, mut animation, mut object) in &mut doors {
         animation.elapsed += time.delta_secs();
         if animation.elapsed < animation.period {
@@ -457,7 +593,12 @@ fn animate_doors(mut commands: Commands, time: Res<Time>, mut doors: Query<(Enti
         let frame = animation.frames.remove(0);
         object.art = with_frame(object.art, frame);
         let aid = object.art;
-        commands.entity(entity).insert(PendingArt { art: object.frames.clone(), rotation: object_rotation(aid), frame: frame as usize, hotspot: Some(ObjectArt::of(aid)) });
+        commands.entity(entity).insert(PendingArt {
+            art: object.frames.clone(),
+            rotation: object_rotation(aid),
+            frame: frame as usize,
+            hotspot: Some(ObjectArt::of(aid)),
+        });
     }
 }
 
@@ -474,9 +615,17 @@ impl ClientMap {
 /// Spawns a sprite for every ground tile of each loaded sector not yet drawn.
 fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: Res<AssetServer>) {
     let client = &mut *client;
-    let (Some(Ok(art)), Some(origin)) = (&client.art, client.origin) else { return };
+    let (Some(Ok(art)), Some(origin)) = (&client.art, client.origin) else {
+        return;
+    };
     let depth_origin = client.depth_origin.unwrap_or(origin);
-    let new: Vec<SectorId> = client.map.sectors.keys().filter(|id| !client.drawn.contains(id)).copied().collect();
+    let new: Vec<SectorId> = client
+        .map
+        .sectors
+        .keys()
+        .filter(|id| !client.drawn.contains(id))
+        .copied()
+        .collect();
     // Dropped items, spawned once the sectors' own objects are.
     let mut later = Vec::new();
     for id in new {
@@ -485,20 +634,44 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
         for y in 0..SECTOR_SIZE {
             for x in 0..SECTOR_SIZE {
                 let tile = sector.tile(x, y);
-                let path = client.paths.entry(tile.0).or_insert_with(|| art.path(tile.art_id())).clone();
+                let path = client
+                    .paths
+                    .entry(tile.0)
+                    .or_insert_with(|| art.path(tile.art_id()))
+                    .clone();
                 let Some(path) = path else {
                     client.unresolved += 1;
                     continue;
                 };
-                let handle = client.frames.entry(path.clone()).or_insert_with(|| assets.load(path)).clone();
-                let loc = TileLoc { x: base_x + x, y: base_y + y };
-                let frame = if tile.is_facade() { facade_frame(tile.art_id()) } else { 0 };
+                let handle = client
+                    .frames
+                    .entry(path.clone())
+                    .or_insert_with(|| assets.load(path))
+                    .clone();
+                let loc = TileLoc {
+                    x: base_x + x,
+                    y: base_y + y,
+                };
+                let frame = if tile.is_facade() {
+                    facade_frame(tile.art_id())
+                } else {
+                    0
+                };
                 commands.spawn((
                     GroundTile(loc),
-                    Sprite { flip_x: tile.is_mirrored(), custom_size: Some(TILE_SIZE), ..default() },
+                    Sprite {
+                        flip_x: tile.is_mirrored(),
+                        custom_size: Some(TILE_SIZE),
+                        ..default()
+                    },
                     Transform::from_translation(tile_to_world(loc, origin).extend(0.0)),
                     Visibility::Hidden,
-                    PendingArt { art: handle, rotation: 0, frame, hotspot: None },
+                    PendingArt {
+                        art: handle,
+                        rotation: 0,
+                        frame,
+                        hotspot: None,
+                    },
                     DespawnOnExit(AppState::InGame),
                 ));
             }
@@ -509,12 +682,41 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
         let protos = &client.map.prototypes;
         // The sector's own objects, then the map's mobile objects on it (containers and items;
         // the original's order between the two is not traced).
-        let own = sector.objects.iter().enumerate().map(|(i, o)| (Some(MapObjectId { sector: id, index: i as u32 }), None, o));
-        let mobiles = client.map.mobiles.get(&id).into_iter().flatten().enumerate().map(|(i, o)| (None, Some(GroundItemId::Mobile { sector: id, index: i as u32 }), o));
+        let own = sector.objects.iter().enumerate().map(|(i, o)| {
+            (
+                Some(MapObjectId {
+                    sector: id,
+                    index: i as u32,
+                }),
+                None,
+                o,
+            )
+        });
+        let mobiles = client
+            .map
+            .mobiles
+            .get(&id)
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .map(|(i, o)| {
+                (
+                    None,
+                    Some(GroundItemId::Mobile {
+                        sector: id,
+                        index: i as u32,
+                    }),
+                    o,
+                )
+            });
         // Items can be picked up and containers opened: they carry their id.
         let mobiles = mobiles.map(|(a, b, o)| {
             let ground = match b {
-                Some(GroundItemId::Mobile { sector, index }) if o.object_type == arcanum_formats::object::TYPE_CONTAINER => Some(GroundItemId::Container { sector, index }),
+                Some(GroundItemId::Mobile { sector, index })
+                    if o.object_type == arcanum_formats::object::TYPE_CONTAINER =>
+                {
+                    Some(GroundItemId::Container { sector, index })
+                }
                 b => b.filter(|_| arcanum_sim::is_item(o.object_type)),
             };
             (a, ground, o)
@@ -537,26 +739,58 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
                 continue;
             };
             let aid = container_art(&client.map, ground, aid);
-            let Some(location) = object_location(object) else { continue };
+            let Some(location) = object_location(object) else {
+                continue;
+            };
             let tile_order = {
                 let n = on_tile.entry(location).or_default();
                 *n += 1;
                 *n - 1
             };
-            let path = client.paths.entry(aid.0).or_insert_with(|| art.path(aid)).clone();
+            let path = client
+                .paths
+                .entry(aid.0)
+                .or_insert_with(|| art.path(aid))
+                .clone();
             let Some(path) = path else {
                 client.unresolved += 1;
                 continue;
             };
-            let handle = client.frames.entry(path.clone()).or_insert_with(|| assets.load(path)).clone();
-            let offset = Vec2::new(int("offset_x").unwrap_or(0) as f32, -(int("offset_y").unwrap_or(0) as f32));
+            let handle = client
+                .frames
+                .entry(path.clone())
+                .or_insert_with(|| assets.load(path))
+                .clone();
+            let offset = Vec2::new(
+                int("offset_x").unwrap_or(0) as f32,
+                -(int("offset_y").unwrap_or(0) as f32),
+            );
             let at = tile_to_world(location, origin) + offset;
             commands.spawn((
-                MapObject { location, object_type: object.object_type, id: object_id, ground, art: aid, frames: handle.clone(), flat: flags & FLAT_FLAG != 0, tile_order },
+                MapObject {
+                    location,
+                    object_type: object.object_type,
+                    id: object_id,
+                    ground,
+                    art: aid,
+                    frames: handle.clone(),
+                    flat: flags & FLAT_FLAG != 0,
+                    tile_order,
+                },
                 Sprite::default(),
-                Transform::from_translation(at.extend(object_depth(location, depth_origin, flags & FLAT_FLAG != 0, tile_order))),
+                Transform::from_translation(at.extend(object_depth(
+                    location,
+                    depth_origin,
+                    flags & FLAT_FLAG != 0,
+                    tile_order,
+                ))),
                 Visibility::Hidden,
-                PendingArt { art: handle, rotation: object_rotation(aid), frame: object_frame(aid), hotspot: Some(ObjectArt::of(aid)) },
+                PendingArt {
+                    art: handle,
+                    rotation: object_rotation(aid),
+                    frame: object_frame(aid),
+                    hotspot: Some(ObjectArt::of(aid)),
+                },
                 DespawnOnExit(AppState::InGame),
             ));
         }
@@ -565,8 +799,15 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
             .changes
             .get(&id)
             .map(|d| {
-                let piles = d.piles.iter().map(|(&number, p)| (GroundItemId::Pile { sector: id, number }, pile_look(p)));
-                d.dropped.iter().map(|(&number, i)| (GroundItemId::Dropped { sector: id, number }, i.clone())).chain(piles).collect()
+                let piles = d
+                    .piles
+                    .iter()
+                    .map(|(&number, p)| (GroundItemId::Pile { sector: id, number }, pile_look(p)));
+                d.dropped
+                    .iter()
+                    .map(|(&number, i)| (GroundItemId::Dropped { sector: id, number }, i.clone()))
+                    .chain(piles)
+                    .collect()
             })
             .unwrap_or_default();
         for (ground_id, item) in dropped {
@@ -584,27 +825,75 @@ fn draw_sectors(mut commands: Commands, mut client: ResMut<ClientMap>, assets: R
 
 /// What a pile shows on the map: the junk pile's prototype on its tile.
 fn pile_look(pile: &arcanum_sim::Pile) -> arcanum_sim::GroundItem {
-    arcanum_sim::GroundItem { prototype: arcanum_sim::PILE, quantity: 0, location: pile.location, keys: vec![] }
+    arcanum_sim::GroundItem {
+        prototype: arcanum_sim::PILE,
+        quantity: 0,
+        location: pile.location,
+        keys: vec![],
+    }
 }
 
 /// A sprite for a dropped item or a pile: its prototype's ground art on its tile.
-fn spawn_dropped(commands: &mut Commands, client: &mut ClientMap, assets: &AssetServer, id: GroundItemId, item: arcanum_sim::GroundItem, tile_order: usize) {
-    let (Some(Ok(art)), Some(origin)) = (&client.art, client.origin) else { return };
+fn spawn_dropped(
+    commands: &mut Commands,
+    client: &mut ClientMap,
+    assets: &AssetServer,
+    id: GroundItemId,
+    item: arcanum_sim::GroundItem,
+    tile_order: usize,
+) {
+    let (Some(Ok(art)), Some(origin)) = (&client.art, client.origin) else {
+        return;
+    };
     let depth_origin = client.depth_origin.unwrap_or(origin);
-    let Some(prototype) = client.map.prototypes.get(item.prototype) else { return };
+    let Some(prototype) = client.map.prototypes.get(item.prototype) else {
+        return;
+    };
     let object_type = prototype.object_type;
     let flags = prototype.int("flags").unwrap_or(0);
-    let Some(aid) = prototype.int("current_aid").map(|v| ArtId(v as u32)) else { return };
-    let Some(path) = client.paths.entry(aid.0).or_insert_with(|| art.path(aid)).clone() else { return };
-    let handle = client.frames.entry(path.clone()).or_insert_with(|| assets.load(path)).clone();
+    let Some(aid) = prototype.int("current_aid").map(|v| ArtId(v as u32)) else {
+        return;
+    };
+    let Some(path) = client
+        .paths
+        .entry(aid.0)
+        .or_insert_with(|| art.path(aid))
+        .clone()
+    else {
+        return;
+    };
+    let handle = client
+        .frames
+        .entry(path.clone())
+        .or_insert_with(|| assets.load(path))
+        .clone();
     let flat = flags & FLAT_FLAG != 0;
     commands.spawn((
-        MapObject { location: item.location, object_type, id: None, ground: Some(id), art: aid, frames: handle.clone(), flat, tile_order },
+        MapObject {
+            location: item.location,
+            object_type,
+            id: None,
+            ground: Some(id),
+            art: aid,
+            frames: handle.clone(),
+            flat,
+            tile_order,
+        },
         Sprite::default(),
         // Dropped items sit on the tile centre (offsets cleared, 0x4415c0).
-        Transform::from_translation(tile_to_world(item.location, origin).extend(object_depth(item.location, depth_origin, flat, tile_order))),
+        Transform::from_translation(tile_to_world(item.location, origin).extend(object_depth(
+            item.location,
+            depth_origin,
+            flat,
+            tile_order,
+        ))),
         Visibility::Hidden,
-        PendingArt { art: handle, rotation: object_rotation(aid), frame: object_frame(aid), hotspot: Some(ObjectArt::of(aid)) },
+        PendingArt {
+            art: handle,
+            rotation: object_rotation(aid),
+            frame: object_frame(aid),
+            hotspot: Some(ObjectArt::of(aid)),
+        },
         DespawnOnExit(AppState::InGame),
     ));
 }
@@ -627,8 +916,14 @@ pub const DEPTH_RANGE: f32 = (1 << 24) as f32;
 /// Moves [`ClientMap::depth_origin`] to the local PC once the PC is half of [`DEPTH_REACH`]
 /// from it (in screen rows or places along a row), and gives every object its depth again, so
 /// the order holds however far the PC walks.
-fn rebase_depth(mut client: ResMut<ClientMap>, pc: Res<LocalPc>, mut objects: Query<(&MapObject, &mut Transform)>) {
-    let (Some((_, at)), Some(depth_origin)) = (pc.0, client.depth_origin) else { return };
+fn rebase_depth(
+    mut client: ResMut<ClientMap>,
+    pc: Res<LocalPc>,
+    mut objects: Query<(&MapObject, &mut Transform)>,
+) {
+    let (Some((_, at)), Some(depth_origin)) = (pc.0, client.depth_origin) else {
+        return;
+    };
     let dx = i64::from(at.x) - i64::from(depth_origin.x);
     let dy = i64::from(at.y) - i64::from(depth_origin.y);
     if (dx + dy).abs() < DEPTH_REACH / 2 && (dy - dx).abs() < DEPTH_REACH / 2 {
@@ -671,10 +966,15 @@ fn show_tiles(
 ) {
     for (entity, wait, mut sprite, mut visibility) in &mut pending {
         if let Some(art) = frames.get(&wait.art) {
-            if let Some((image, center, size)) = art.rotation(wait.rotation).and_then(|r| r.frame(wait.frame)) {
+            if let Some((image, center, size)) = art
+                .rotation(wait.rotation)
+                .and_then(|r| r.frame(wait.frame))
+            {
                 if let Some(object) = wait.hotspot {
                     sprite.flip_x = object.mirrored;
-                    commands.entity(entity).insert(hotspot_anchor(object.hotspot(center, size), size));
+                    commands
+                        .entity(entity)
+                        .insert(hotspot_anchor(object.hotspot(center, size), size));
                 }
                 // Nearest sampling: linear filtering blends the colour under transparent pixels
                 // into the tile edges, a visible line round every diamond.
@@ -687,7 +987,10 @@ fn show_tiles(
                 *visibility = Visibility::Inherited;
                 commands.entity(entity).remove::<PendingArt>();
             }
-        } else if matches!(assets.get_load_state(wait.art.id()), Some(bevy::asset::LoadState::Failed(_))) {
+        } else if matches!(
+            assets.get_load_state(wait.art.id()),
+            Some(bevy::asset::LoadState::Failed(_))
+        ) {
             commands.entity(entity).despawn();
         }
     }
@@ -700,8 +1003,13 @@ fn follow_pc(
     actors: Query<(&crate::actors::Actor, &Transform), Without<Camera2d>>,
     mut cameras: Query<&mut Transform, With<Camera2d>>,
 ) {
-    let (Some((id, at)), Some(origin)) = (pc.0, client.origin) else { return };
-    let target = actors.iter().find(|(a, _)| a.net_id == id).map_or_else(|| tile_to_world(at, origin), |(_, t)| t.translation.truncate());
+    let (Some((id, at)), Some(origin)) = (pc.0, client.origin) else {
+        return;
+    };
+    let target = actors.iter().find(|(a, _)| a.net_id == id).map_or_else(
+        || tile_to_world(at, origin),
+        |(_, t)| t.translation.truncate(),
+    );
     for mut transform in &mut cameras {
         transform.translation.x = target.x;
         transform.translation.y = target.y;
@@ -722,8 +1030,14 @@ mod tests {
         let d = |x, y, flat| object_depth(t(x, y), o, flat, 0);
         assert!(d(1000, 1000, false) < d(1001, 1000, false), "next row down");
         assert!(d(1000, 1000, false) < d(1000, 1001, false), "next row down");
-        assert!(d(1001, 1000, false) < d(1000, 1001, false), "same row, further right");
-        assert!(d(1300, 1300, true) < d(700, 700, false), "flat under everything");
+        assert!(
+            d(1001, 1000, false) < d(1000, 1001, false),
+            "same row, further right"
+        );
+        assert!(
+            d(1300, 1300, true) < d(700, 700, false),
+            "flat under everything"
+        );
         assert!(d(700, 700, true) > 0.0, "every object over the ground");
         assert!(d(1000, 1000, false) < DEPTH_RANGE);
         // Neighbouring rows stay apart in f32.
@@ -740,11 +1054,28 @@ mod tests {
         let wall = |rot: u32, flip: u32| ArtId((1 << 28) | (rot << 11) | flip);
         let (c, size) = (IVec2::new(10, 30), UVec2::new(80, 50));
         assert_eq!(ObjectArt::of(wall(3, 0)).hotspot(c, size), c);
-        assert_eq!(ObjectArt::of(wall(0, 0)).hotspot(c, size), IVec2::new(-30, 50), "half a tile");
-        assert_eq!(ObjectArt::of(wall(7, 0)).hotspot(c, size), IVec2::new(-30, 50));
-        assert_eq!(ObjectArt::of(wall(3, 1)).hotspot(c, size), IVec2::new(68, 30), "mirrored: 80 - 10 - 2");
+        assert_eq!(
+            ObjectArt::of(wall(0, 0)).hotspot(c, size),
+            IVec2::new(-30, 50),
+            "half a tile"
+        );
+        assert_eq!(
+            ObjectArt::of(wall(7, 0)).hotspot(c, size),
+            IVec2::new(-30, 50)
+        );
+        assert_eq!(
+            ObjectArt::of(wall(3, 1)).hotspot(c, size),
+            IVec2::new(68, 30),
+            "mirrored: 80 - 10 - 2"
+        );
         let scenery = ArtId((4 << 28) | (7 << 11) | 1);
-        assert_eq!(ObjectArt::of(scenery), ObjectArt { half_tile: false, mirrored: false });
+        assert_eq!(
+            ObjectArt::of(scenery),
+            ObjectArt {
+                half_tile: false,
+                mirrored: false
+            }
+        );
     }
 
     #[test]
@@ -757,7 +1088,11 @@ mod tests {
 
     #[test]
     fn frames_come_from_the_art_id() {
-        assert_eq!(object_frame(ArtId((1 << 28) | (5 << 14))), 0, "walls always 0");
+        assert_eq!(
+            object_frame(ArtId((1 << 28) | (5 << 14))),
+            0,
+            "walls always 0"
+        );
         assert_eq!(object_frame(ArtId((4 << 28) | (5 << 14))), 5);
         assert_eq!(object_frame(ArtId((3 << 28) | (31 << 14) | (7 << 11))), 31);
         assert_eq!(facade_frame(ArtId((0xb << 28) | (2 << 1))), 2);
@@ -770,14 +1105,30 @@ mod tests {
         let sector = Sector::parse(&SectorBuilder::new().build()).unwrap();
         let mut client = ClientMap::default();
         for x in 0..6 {
-            client.map.sectors.insert(SectorId::new(x, 1), sector.clone());
+            client
+                .map
+                .sectors
+                .insert(SectorId::new(x, 1), sector.clone());
             client.drawn.insert(SectorId::new(x, 1));
         }
         let mut app = App::new();
-        app.insert_resource(client).insert_resource(LocalPc(Some((arcanum_sim::NetId(0), t(5 * 64 + 1, 70)))));
+        app.insert_resource(client)
+            .insert_resource(LocalPc(Some((arcanum_sim::NetId(0), t(5 * 64 + 1, 70)))));
         let near = app.world_mut().spawn(GroundTile(t(4 * 64, 70))).id();
         let far = app.world_mut().spawn(GroundTile(t(64, 70))).id();
-        let far_object = app.world_mut().spawn(MapObject { location: t(2 * 64 + 5, 70), object_type: TYPE_SCENERY, id: None, ground: None, art: ArtId(0), frames: Handle::default(), flat: false, tile_order: 0 }).id();
+        let far_object = app
+            .world_mut()
+            .spawn(MapObject {
+                location: t(2 * 64 + 5, 70),
+                object_type: TYPE_SCENERY,
+                id: None,
+                ground: None,
+                art: ArtId(0),
+                frames: Handle::default(),
+                flat: false,
+                tile_order: 0,
+            })
+            .id();
         app.add_systems(Update, drop_far_sectors);
         app.update();
         let client = app.world().resource::<ClientMap>();
@@ -796,21 +1147,52 @@ mod tests {
         client.origin = Some(t(1000, 1000));
         client.depth_origin = client.origin;
         let mut app = App::new();
-        app.insert_resource(client).insert_resource(LocalPc(Some((arcanum_sim::NetId(0), t(1100, 1100)))));
-        let object = |at: TileLoc| MapObject { location: at, object_type: TYPE_SCENERY, id: None, ground: None, art: ArtId(0), frames: Handle::default(), flat: false, tile_order: 0 };
+        app.insert_resource(client)
+            .insert_resource(LocalPc(Some((arcanum_sim::NetId(0), t(1100, 1100)))));
+        let object = |at: TileLoc| MapObject {
+            location: at,
+            object_type: TYPE_SCENERY,
+            id: None,
+            ground: None,
+            art: ArtId(0),
+            frames: Handle::default(),
+            flat: false,
+            tile_order: 0,
+        };
         // Two objects near where the PC will be, in one column, one in front of the other.
-        let behind = app.world_mut().spawn((object(t(1300, 1300)), Transform::default())).id();
-        let front = app.world_mut().spawn((object(t(1301, 1301)), Transform::default())).id();
+        let behind = app
+            .world_mut()
+            .spawn((object(t(1300, 1300)), Transform::default()))
+            .id();
+        let front = app
+            .world_mut()
+            .spawn((object(t(1301, 1301)), Transform::default()))
+            .id();
         app.add_systems(Update, rebase_depth);
         app.update();
-        assert_eq!(app.world().resource::<ClientMap>().depth_origin, Some(t(1000, 1000)), "200 rows away: not yet");
+        assert_eq!(
+            app.world().resource::<ClientMap>().depth_origin,
+            Some(t(1000, 1000)),
+            "200 rows away: not yet"
+        );
         app.world_mut().resource_mut::<LocalPc>().0 = Some((arcanum_sim::NetId(0), t(1300, 1300)));
         app.update();
-        assert_eq!(app.world().resource::<ClientMap>().depth_origin, Some(t(1300, 1300)));
+        assert_eq!(
+            app.world().resource::<ClientMap>().depth_origin,
+            Some(t(1300, 1300))
+        );
         let z = |e| app.world().get::<Transform>(e).unwrap().translation.z;
-        assert!(z(behind) < z(front), "in order again: {} {}", z(behind), z(front));
+        assert!(
+            z(behind) < z(front),
+            "in order again: {} {}",
+            z(behind),
+            z(front)
+        );
         // From the old origin both would have been clamped to the same row.
         let o = t(1000, 1000);
-        assert_eq!(object_depth(t(1300, 1300), o, false, 0), object_depth(t(1301, 1301), o, false, 0));
+        assert_eq!(
+            object_depth(t(1300, 1300), o, false, 0),
+            object_depth(t(1301, 1301), o, false, 0)
+        );
     }
 }

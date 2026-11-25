@@ -25,7 +25,10 @@ use arcanum_formats::map::TileLoc;
 use arcanum_formats::object::Value;
 use bevy_ecs::prelude::*;
 
-use crate::{Active, GameClock, LoadedMap, Npc, PlayerControlled, Position, Walking, Walkable, ai_delay_ms, find_path, tile_distance, within_radius};
+use crate::{
+    Active, GameClock, LoadedMap, Npc, PlayerControlled, Position, Walkable, Walking, ai_delay_ms,
+    find_path, tile_distance, within_radius,
+};
 
 /// `npc_flags`: wanders round its standpoint.
 pub const ONF_WANDERS: i32 = 0x1000;
@@ -49,18 +52,31 @@ pub struct Standpoints {
 impl Standpoints {
     /// From an NPC's `npc_standpoint_day`/`_night` and `npc_flags` (its prototype's where it has
     /// none); a missing standpoint is where it stands, as the original sets it on placing.
-    pub fn of(object: &arcanum_formats::object::Object, prototypes: &arcanum_formats::object::Prototypes, at: TileLoc) -> Self {
+    pub fn of(
+        object: &arcanum_formats::object::Object,
+        prototypes: &arcanum_formats::object::Prototypes,
+        at: TileLoc,
+    ) -> Self {
         let point = |name| match object.field(name) {
             Some(Value::Int64(Some(packed))) if *packed != 0 => TileLoc::from_packed(*packed),
             _ => at,
         };
         let flags = prototypes.int(object, "npc_flags").unwrap_or(0);
-        Self { day: point("npc_standpoint_day"), night: point("npc_standpoint_night"), wanders: flags & (ONF_WANDERS | ONF_WANDERS_IN_DARK) != 0, next_think_ms: 0 }
+        Self {
+            day: point("npc_standpoint_day"),
+            night: point("npc_standpoint_night"),
+            wanders: flags & (ONF_WANDERS | ONF_WANDERS_IN_DARK) != 0,
+            next_think_ms: 0,
+        }
     }
 
     /// The anchor at `hour`: the day standpoint from 6:00 to 20:59.
     pub fn anchor(&self, hour: u32) -> TileLoc {
-        if (6..21).contains(&hour) { self.day } else { self.night }
+        if (6..21).contains(&hour) {
+            self.day
+        } else {
+            self.night
+        }
     }
 
     /// How far from its anchor it may be before walking back.
@@ -107,7 +123,13 @@ pub enum Thought {
 }
 
 /// The idle decision of an NPC at `at` with `standpoints` at `hour` (0x4acdb0).
-pub fn think(map: &impl Walkable, rng: &mut HostRng, standpoints: &Standpoints, at: TileLoc, hour: u32) -> Thought {
+pub fn think(
+    map: &impl Walkable,
+    rng: &mut HostRng,
+    standpoints: &Standpoints,
+    at: TileLoc,
+    hour: u32,
+) -> Thought {
     if matches!(hour, 6 | 21) && rng.range(1, 1000) != 1 {
         return Thought::Stay;
     }
@@ -116,7 +138,10 @@ pub fn think(map: &impl Walkable, rng: &mut HostRng, standpoints: &Standpoints, 
         // Back to within 1 of the anchor (ag_move_near_tile).
         return match find_path(map, at, anchor) {
             Ok(path) => {
-                let end = path.iter().position(|&t| within_radius(t, anchor, 1)).map_or(path.len(), |i| i + 1);
+                let end = path
+                    .iter()
+                    .position(|&t| within_radius(t, anchor, 1))
+                    .map_or(path.len(), |i| i + 1);
                 Thought::Walk(path[..end].to_vec())
             }
             Err(_) => Thought::Stay,
@@ -127,7 +152,11 @@ pub fn think(map: &impl Walkable, rng: &mut HostRng, standpoints: &Standpoints, 
     }
     let r = WANDER_RANGE as i32;
     let (dx, dy) = (rng.range(-r, r), rng.range(-r, r));
-    let Some(target) = at_offset(anchor, dx, dy).filter(|&t| within_radius(t, anchor, WANDER_RANGE)) else { return Thought::Retry };
+    let Some(target) =
+        at_offset(anchor, dx, dy).filter(|&t| within_radius(t, anchor, WANDER_RANGE))
+    else {
+        return Thought::Retry;
+    };
     match find_path(map, at, target) {
         Ok(path) if !path.is_empty() && path.len() <= WANDER_RANGE as usize => Thought::Walk(path),
         _ => Thought::Retry,
@@ -135,10 +164,19 @@ pub fn think(map: &impl Walkable, rng: &mut HostRng, standpoints: &Standpoints, 
 }
 
 fn at_offset(at: TileLoc, dx: i32, dy: i32) -> Option<TileLoc> {
-    Some(TileLoc { x: at.x.checked_add_signed(dx)?, y: at.y.checked_add_signed(dy)? })
+    Some(TileLoc {
+        x: at.x.checked_add_signed(dx)?,
+        y: at.y.checked_add_signed(dy)?,
+    })
 }
 
-type ThinkerQuery<'a> = (Entity, &'a mut Position, &'a mut Standpoints, Has<Active>, Has<Walking>);
+type ThinkerQuery<'a> = (
+    Entity,
+    &'a mut Position,
+    &'a mut Standpoints,
+    Has<Active>,
+    Has<Walking>,
+);
 
 /// Runs each NPC's heartbeat (one tick of time), as described in the module docs.
 pub fn npc_idle(
@@ -156,7 +194,10 @@ pub fn npc_idle(
         if !active {
             // Nobody near: home at once if away (0x43e770), once its sector is loaded.
             let anchor = standpoints.anchor(hour);
-            if !walking && !within_radius(position.0, anchor, standpoints.range()) && map.sectors.contains_key(&anchor.sector()) {
+            if !walking
+                && !within_radius(position.0, anchor, standpoints.range())
+                && map.sectors.contains_key(&anchor.sector())
+            {
                 position.0 = anchor;
                 commands.entity(entity).insert(crate::JustStopped);
             }
@@ -166,12 +207,19 @@ pub fn npc_idle(
         if standpoints.next_think_ms > 0 || walking {
             continue;
         }
-        let nearest = pcs.iter().map(|&pc| tile_distance(pc, position.0)).min().unwrap_or(u32::MAX);
+        let nearest = pcs
+            .iter()
+            .map(|&pc| tile_distance(pc, position.0))
+            .min()
+            .unwrap_or(u32::MAX);
         standpoints.next_think_ms = ai_delay_ms(nearest);
         match think(&*map, &mut rng, &standpoints, position.0, hour) {
             Thought::Stay => {}
             Thought::Walk(path) => {
-                commands.entity(entity).insert(Walking { steps: path.into(), progress: 0.0 });
+                commands.entity(entity).insert(Walking {
+                    steps: path.into(),
+                    progress: 0.0,
+                });
             }
             Thought::Retry => standpoints.next_think_ms = RETRY_MS,
         }
@@ -184,7 +232,15 @@ mod tests {
     use crate::pathfinding::tests::{Grid, t};
 
     fn wanderer(at: TileLoc) -> Standpoints {
-        Standpoints { day: at, night: TileLoc { x: at.x + 10, y: at.y }, wanders: true, next_think_ms: 0 }
+        Standpoints {
+            day: at,
+            night: TileLoc {
+                x: at.x + 10,
+                y: at.y,
+            },
+            wanders: true,
+            next_think_ms: 0,
+        }
     }
 
     #[test]
@@ -198,7 +254,10 @@ mod tests {
                 Thought::Walk(path) => {
                     walked += 1;
                     assert!(path.len() <= WANDER_RANGE as usize);
-                    assert!(within_radius(*path.last().unwrap(), t(8, 8), WANDER_RANGE), "{path:?}");
+                    assert!(
+                        within_radius(*path.last().unwrap(), t(8, 8), WANDER_RANGE),
+                        "{path:?}"
+                    );
                 }
                 Thought::Retry | Thought::Stay => {}
             }
@@ -212,12 +271,23 @@ mod tests {
         let mut rng = HostRng::default();
         let s = wanderer(t(2, 8));
         // By night the anchor is (12, 8): from (2, 8) it walks back to within 1 of it.
-        let Thought::Walk(path) = think(&map, &mut rng, &s, t(2, 8), 23) else { panic!() };
-        assert!(within_radius(*path.last().unwrap(), t(12, 8), 1), "{path:?}");
+        let Thought::Walk(path) = think(&map, &mut rng, &s, t(2, 8), 23) else {
+            panic!()
+        };
+        assert!(
+            within_radius(*path.last().unwrap(), t(12, 8), 1),
+            "{path:?}"
+        );
         // One who does not wander stays put within 1 tile.
-        let still = Standpoints { wanders: false, ..s };
+        let still = Standpoints {
+            wanders: false,
+            ..s
+        };
         assert_eq!(think(&map, &mut rng, &still, t(3, 8), 12), Thought::Stay);
-        assert!(matches!(think(&map, &mut rng, &still, t(5, 8), 12), Thought::Walk(_)), "2 tiles off: back");
+        assert!(
+            matches!(think(&map, &mut rng, &still, t(5, 8), 12), Thought::Walk(_)),
+            "2 tiles off: back"
+        );
     }
 
     #[test]
@@ -225,7 +295,9 @@ mod tests {
         let map = Grid::parse(&["...................."; 20]);
         let mut rng = HostRng::default();
         let s = wanderer(t(8, 8));
-        let moved = (0..1000).filter(|_| think(&map, &mut rng, &s, t(8, 8), 21) != Thought::Stay).count();
+        let moved = (0..1000)
+            .filter(|_| think(&map, &mut rng, &s, t(8, 8), 21) != Thought::Stay)
+            .count();
         assert!(moved < 10, "{moved}");
     }
 }

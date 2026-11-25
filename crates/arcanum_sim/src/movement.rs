@@ -33,7 +33,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use arcanum_formats::map::TileLoc;
 use bevy_ecs::prelude::*;
 
-use crate::{Gait, LedgerDelta, LoadedMap, NetId, Outbox, ActorState, PlayerControlled, PlayerId, Position, Session, SessionPlayer, TICK_HZ, Walkable, WorldState, adjacent, step_allowed, walk_fps};
+use crate::{
+    ActorState, Gait, LedgerDelta, LoadedMap, NetId, Outbox, PlayerControlled, PlayerId, Position,
+    Session, SessionPlayer, TICK_HZ, Walkable, WorldState, adjacent, step_allowed, walk_fps,
+};
 
 /// Ticks between state syncs while any PC walks (10 a second).
 pub const SYNC_TICKS_MOVING: u32 = 3;
@@ -80,8 +83,11 @@ impl SyncClock {
     /// Whether `player` should get a resync now: it is [`RESYNC_BEHIND`] syncs behind, and no
     /// resync was sent in the last [`RESYNC_BEHIND`] syncs.
     fn needs_resync(&self, player: PlayerId) -> bool {
-        let Some(&(last, resent)) = self.players.get(&player) else { return false };
-        crate::sync_distance(last, self.number) >= RESYNC_BEHIND && resent.is_none_or(|r| crate::sync_distance(r, self.number) >= RESYNC_BEHIND)
+        let Some(&(last, resent)) = self.players.get(&player) else {
+            return false;
+        };
+        crate::sync_distance(last, self.number) >= RESYNC_BEHIND
+            && resent.is_none_or(|r| crate::sync_distance(r, self.number) >= RESYNC_BEHIND)
     }
 }
 
@@ -117,14 +123,22 @@ pub enum MoveRefusal {
 ///
 /// The path may start on `from` (that tile is dropped) or one step from it: the client walks at
 /// once and may be a tile ahead of the host.
-pub fn check_path(map: &impl Walkable, from: TileLoc, path: &[TileLoc]) -> Result<Vec<TileLoc>, MoveRefusal> {
+pub fn check_path(
+    map: &impl Walkable,
+    from: TileLoc,
+    path: &[TileLoc],
+) -> Result<Vec<TileLoc>, MoveRefusal> {
     if path.is_empty() || path.len() > MAX_PATH_STEPS {
         return Err(MoveRefusal::BadLength);
     }
     if path[0] != from && !adjacent(from, path[0]) {
         return Err(MoveRefusal::TooFar);
     }
-    let steps: Vec<TileLoc> = if path[0] == from { path[1..].to_vec() } else { path.to_vec() };
+    let steps: Vec<TileLoc> = if path[0] == from {
+        path[1..].to_vec()
+    } else {
+        path.to_vec()
+    };
     let mut prev = from;
     for &to in &steps {
         if !step_allowed(map, prev, to) {
@@ -137,7 +151,11 @@ pub fn check_path(map: &impl Walkable, from: TileLoc, path: &[TileLoc]) -> Resul
 
 /// A path that starts on `route` (the steps a walking PC still has): the route up to that tile,
 /// then the path's checked steps. `None` if it does not start on the route or is refused.
-pub fn continue_route(map: &impl Walkable, route: Option<&VecDeque<TileLoc>>, path: &[TileLoc]) -> Option<Vec<TileLoc>> {
+pub fn continue_route(
+    map: &impl Walkable,
+    route: Option<&VecDeque<TileLoc>>,
+    path: &[TileLoc],
+) -> Option<Vec<TileLoc>> {
     let route = route?;
     let i = route.iter().position(|&t| Some(&t) == path.first())?;
     let rest = check_path(map, route[i], path).ok()?;
@@ -157,10 +175,26 @@ pub struct Walking {
 #[derive(Resource, Debug, Default)]
 pub struct MoveRequests(pub Vec<(PlayerId, u32, Vec<TileLoc>)>);
 
-type MoverQuery<'a> = (Entity, &'a NetId, &'a Position, &'a PlayerControlled, Option<&'a Walking>, Option<&'a mut LastMove>, Option<&'a crate::PendingUse>);
+type MoverQuery<'a> = (
+    Entity,
+    &'a NetId,
+    &'a Position,
+    &'a PlayerControlled,
+    Option<&'a Walking>,
+    Option<&'a mut LastMove>,
+    Option<&'a crate::PendingUse>,
+);
 /// PCs and NPCs.
 type Actor = Or<(With<PlayerControlled>, With<crate::Npc>)>;
-type SyncedQuery<'a> = (Entity, &'a NetId, &'a Position, Option<&'a Walking>, Option<&'a LastMove>, Has<PlayerControlled>, Has<JustStopped>);
+type SyncedQuery<'a> = (
+    Entity,
+    &'a NetId,
+    &'a Position,
+    Option<&'a Walking>,
+    Option<&'a LastMove>,
+    Has<PlayerControlled>,
+    Has<JustStopped>,
+);
 
 /// Checks each move request against the player's PC. Accepted: the PC walks the path.
 /// Refused: the PC stops where it is. Either way the move is the PC's [`LastMove`] and a sync
@@ -178,8 +212,14 @@ pub fn apply_moves(
     mut pcs: Query<MoverQuery>,
 ) {
     for (player, seq, path) in requests.0.drain(..) {
-        let Some(SessionPlayer::InWorld(net_id)) = session.players.get(&player) else { continue };
-        let Some((entity, _, &Position(at), _, walking, last, pending)) = pcs.iter_mut().find(|pc| pc.1 == net_id) else { continue };
+        let Some(SessionPlayer::InWorld(net_id)) = session.players.get(&player) else {
+            continue;
+        };
+        let Some((entity, _, &Position(at), _, walking, last, pending)) =
+            pcs.iter_mut().find(|pc| pc.1 == net_id)
+        else {
+            continue;
+        };
         if last.as_ref().is_some_and(|l| seq <= l.0) {
             continue;
         }
@@ -202,11 +242,18 @@ pub fn apply_moves(
             map.load_sector(vfs_guard.as_deref(), id);
         }
         drop(vfs_guard);
-        match check_path(&*map, at, &path).or_else(|refusal| continue_route(&*map, walking.map(|w| &w.steps), &path).ok_or(refusal)) {
+        match check_path(&*map, at, &path).or_else(|refusal| {
+            continue_route(&*map, walking.map(|w| &w.steps), &path).ok_or(refusal)
+        }) {
             Ok(steps) if !steps.is_empty() => {
                 // The step under way goes on where it was if the new path takes it too.
-                let progress = walking.filter(|w| w.steps.front() == steps.first()).map_or(0.0, |w| w.progress);
-                commands.entity(entity).insert(Walking { steps: steps.into(), progress });
+                let progress = walking
+                    .filter(|w| w.steps.front() == steps.first())
+                    .map_or(0.0, |w| w.progress);
+                commands.entity(entity).insert(Walking {
+                    steps: steps.into(),
+                    progress,
+                });
             }
             // Standing still, or refused.
             _ => {
@@ -217,7 +264,13 @@ pub fn apply_moves(
     }
 }
 
-type WalkerQuery<'a> = (Entity, &'a mut Position, Option<&'a PlayerControlled>, Option<&'a Gait>, Option<&'a mut Walking>);
+type WalkerQuery<'a> = (
+    Entity,
+    &'a mut Position,
+    Option<&'a PlayerControlled>,
+    Option<&'a Gait>,
+    Option<&'a mut Walking>,
+);
 
 /// An NPC that stopped walking since the last state sync: the next sync includes it once.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -227,7 +280,14 @@ pub struct JustStopped;
 /// just before it is taken (see the module docs). One that reaches the end or cannot go on
 /// stops and a sync is due; a PC's position goes into the save. PCs out of combat move at the
 /// party's pace.
-pub fn walk(mut commands: Commands, map: Res<LoadedMap>, pace: Res<crate::PartyPace>, mut clock: ResMut<SyncClock>, mut world: ResMut<WorldState>, mut pcs: Query<WalkerQuery>) {
+pub fn walk(
+    mut commands: Commands,
+    map: Res<LoadedMap>,
+    pace: Res<crate::PartyPace>,
+    mut clock: ResMut<SyncClock>,
+    mut world: ResMut<WorldState>,
+    mut pcs: Query<WalkerQuery>,
+) {
     for (entity, mut position, player, gait, walking) in &mut pcs {
         let Some(mut walking) = walking else { continue };
         let own = gait.copied().unwrap_or(Gait::human(walk_fps(8, 0)));
@@ -282,7 +342,11 @@ pub fn sync_state(
     clock.since += 1;
     clock.since_keyframe += 1;
     let moving = pcs.iter().any(|pc| pc.3.is_some());
-    let period = if moving { SYNC_TICKS_MOVING } else { SYNC_TICKS_IDLE };
+    let period = if moving {
+        SYNC_TICKS_MOVING
+    } else {
+        SYNC_TICKS_IDLE
+    };
     let keyframe = clock.since_keyframe >= KEYFRAME_TICKS;
     if !clock.due && !keyframe && clock.since < period {
         return;
@@ -296,13 +360,24 @@ pub fn sync_state(
     // keyframe, so a client that missed a stop catches up.
     let mut states: Vec<ActorState> = pcs
         .iter()
-        .filter(|(_, _, _, walking, _, pc, stopped)| *pc || keyframe || walking.is_some() || *stopped)
-        .map(|(entity, &net_id, &Position(position), walking, last, _, stopped)| {
-            if stopped {
-                commands.entity(entity).remove::<JustStopped>();
-            }
-            ActorState { net_id, position, path: walking.map(|w| w.steps.iter().copied().collect()).unwrap_or_default(), seq: last.map_or(0, |l| l.0) }
+        .filter(|(_, _, _, walking, _, pc, stopped)| {
+            *pc || keyframe || walking.is_some() || *stopped
         })
+        .map(
+            |(entity, &net_id, &Position(position), walking, last, _, stopped)| {
+                if stopped {
+                    commands.entity(entity).remove::<JustStopped>();
+                }
+                ActorState {
+                    net_id,
+                    position,
+                    path: walking
+                        .map(|w| w.steps.iter().copied().collect())
+                        .unwrap_or_default(),
+                    seq: last.map_or(0, |l| l.0),
+                }
+            },
+        )
         .collect();
     if states.is_empty() {
         return;
@@ -310,15 +385,28 @@ pub fn sync_state(
     states.sort_by_key(|s| s.net_id);
     let number = (clock.number + 1) % crate::SYNC_NUMBERS;
     clock.number = number;
-    let mut players: Vec<PlayerId> = session.players.iter().filter(|(_, s)| matches!(s, SessionPlayer::InWorld(_))).map(|(&p, _)| p).collect();
+    let mut players: Vec<PlayerId> = session
+        .players
+        .iter()
+        .filter(|(_, s)| matches!(s, SessionPlayer::InWorld(_)))
+        .map(|(&p, _)| p)
+        .collect();
     players.sort();
     for player in players {
         clock.players.entry(player).or_insert((number, None));
         let sync = if keyframe || clock.needs_resync(player) {
             clock.players.get_mut(&player).expect("inserted above").1 = Some(number);
-            LedgerDelta::Resync { number, time: clock_time.now, actors: states.clone() }
+            LedgerDelta::Resync {
+                number,
+                time: clock_time.now,
+                actors: states.clone(),
+            }
         } else {
-            LedgerDelta::StateSync { number, time: clock_time.now, actors: states.clone() }
+            LedgerDelta::StateSync {
+                number,
+                time: clock_time.now,
+                actors: states.clone(),
+            }
         };
         outbox.0.push((player, sync));
     }
@@ -327,7 +415,11 @@ pub fn sync_state(
 /// Puts a stopped PC's position into the save, which then writes it. An unchanged position
 /// does not mark the save changed.
 pub(crate) fn record_position(world: &mut ResMut<WorldState>, player: PlayerId, at: TileLoc) {
-    let moved = world.0.as_ref().and_then(|s| s.players.get(&player)).is_some_and(|saved| saved.position != at);
+    let moved = world
+        .0
+        .as_ref()
+        .and_then(|s| s.players.get(&player))
+        .is_some_and(|saved| saved.position != at);
     if moved && let Some(saved) = world.0.as_mut().and_then(|s| s.players.get_mut(&player)) {
         saved.position = at;
     }
@@ -341,22 +433,60 @@ mod tests {
     #[test]
     fn a_path_from_the_pc_is_accepted() {
         let map = Grid::parse(&["....", "....", "...."]);
-        assert_eq!(check_path(&map, t(0, 0), &[t(0, 0), t(1, 1), t(2, 1)]), Ok(vec![t(1, 1), t(2, 1)]));
-        assert_eq!(check_path(&map, t(0, 0), &[t(1, 0), t(2, 0)]), Ok(vec![t(1, 0), t(2, 0)]), "a tile ahead");
-        assert_eq!(check_path(&map, t(0, 0), &[t(0, 0)]), Ok(vec![]), "standing still");
+        assert_eq!(
+            check_path(&map, t(0, 0), &[t(0, 0), t(1, 1), t(2, 1)]),
+            Ok(vec![t(1, 1), t(2, 1)])
+        );
+        assert_eq!(
+            check_path(&map, t(0, 0), &[t(1, 0), t(2, 0)]),
+            Ok(vec![t(1, 0), t(2, 0)]),
+            "a tile ahead"
+        );
+        assert_eq!(
+            check_path(&map, t(0, 0), &[t(0, 0)]),
+            Ok(vec![]),
+            "standing still"
+        );
     }
 
     #[test]
     fn bad_paths_are_refused() {
         let map = Grid::parse(&["..#.", "..#.", "...."]);
         assert_eq!(check_path(&map, t(0, 0), &[]), Err(MoveRefusal::BadLength));
-        assert_eq!(check_path(&map, t(0, 0), &vec![t(0, 0); MAX_PATH_STEPS + 1]), Err(MoveRefusal::BadLength));
-        assert_eq!(check_path(&map, t(0, 0), &[t(2, 2), t(3, 2)]), Err(MoveRefusal::TooFar));
-        assert_eq!(check_path(&map, t(0, 0), &[t(1, 0), t(2, 0)]), Err(MoveRefusal::Blocked(t(2, 0))));
-        assert_eq!(check_path(&map, t(0, 0), &[t(1, 0), t(3, 0)]), Err(MoveRefusal::Blocked(t(3, 0))), "a jump");
-        assert_eq!(check_path(&map, t(1, 2), &[t(2, 2), t(3, 1)]), Ok(vec![t(2, 2), t(3, 1)]), "past (2, 1): only edges stop diagonals");
-        assert_eq!(check_path(&map, t(1, 1), &[t(1, 2), t(2, 2), t(3, 2), t(3, 1)]), Ok(vec![t(1, 2), t(2, 2), t(3, 2), t(3, 1)]));
-        assert_eq!(check_path(&map, t(1, 2), &[t(2, 1)]), Err(MoveRefusal::Blocked(t(2, 1))));
-        assert_eq!(check_path(&map, t(1, 1), &[t(2, 2)]), Ok(vec![t(2, 2)]), "past (2, 1)");
+        assert_eq!(
+            check_path(&map, t(0, 0), &vec![t(0, 0); MAX_PATH_STEPS + 1]),
+            Err(MoveRefusal::BadLength)
+        );
+        assert_eq!(
+            check_path(&map, t(0, 0), &[t(2, 2), t(3, 2)]),
+            Err(MoveRefusal::TooFar)
+        );
+        assert_eq!(
+            check_path(&map, t(0, 0), &[t(1, 0), t(2, 0)]),
+            Err(MoveRefusal::Blocked(t(2, 0)))
+        );
+        assert_eq!(
+            check_path(&map, t(0, 0), &[t(1, 0), t(3, 0)]),
+            Err(MoveRefusal::Blocked(t(3, 0))),
+            "a jump"
+        );
+        assert_eq!(
+            check_path(&map, t(1, 2), &[t(2, 2), t(3, 1)]),
+            Ok(vec![t(2, 2), t(3, 1)]),
+            "past (2, 1): only edges stop diagonals"
+        );
+        assert_eq!(
+            check_path(&map, t(1, 1), &[t(1, 2), t(2, 2), t(3, 2), t(3, 1)]),
+            Ok(vec![t(1, 2), t(2, 2), t(3, 2), t(3, 1)])
+        );
+        assert_eq!(
+            check_path(&map, t(1, 2), &[t(2, 1)]),
+            Err(MoveRefusal::Blocked(t(2, 1)))
+        );
+        assert_eq!(
+            check_path(&map, t(1, 1), &[t(2, 2)]),
+            Ok(vec![t(2, 2)]),
+            "past (2, 1)"
+        );
     }
 }

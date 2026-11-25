@@ -49,7 +49,10 @@ impl AssetReader for VfsAssetReader {
         Err::<VecReader, _>(AssetReaderError::NotFound(path.to_path_buf()))
     }
 
-    async fn read_directory<'a>(&'a self, path: &'a Path) -> Result<Box<PathStream>, AssetReaderError> {
+    async fn read_directory<'a>(
+        &'a self,
+        path: &'a Path,
+    ) -> Result<Box<PathStream>, AssetReaderError> {
         let children = self
             .vfs
             .read()
