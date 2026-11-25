@@ -408,13 +408,16 @@ pub fn sync_followers(
     }
 }
 
+/// Followers out of a fight.
+type FollowerFilter = (With<crate::Npc>, Without<crate::combat::Fighting>);
+
 /// Followers keep up with their leaders (0x4ac380): farther than [`follow_distance`] they walk
 /// until within it; [`LEASH_TILES`] or more away they are put on the leader's tile (0x4ad4d0).
 pub fn follow_leaders(
     mut commands: Commands,
     map: Res<crate::LoadedMap>,
     pcs: Query<(&crate::PlayerControlled, &crate::Position), Without<crate::Npc>>,
-    mut followers: Query<(Entity, &Following, &mut crate::Position, Has<crate::Walking>), With<crate::Npc>>,
+    mut followers: Query<(Entity, &Following, &mut crate::Position, Has<crate::Walking>), FollowerFilter>,
 ) {
     for (entity, following, mut position, walking) in &mut followers {
         let Some(leader) = pcs.iter().find(|pc| pc.0.0 == following.leader).map(|pc| pc.1.0) else { continue };

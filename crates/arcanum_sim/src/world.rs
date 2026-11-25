@@ -948,6 +948,52 @@ mod tests {
     }
 
     #[test]
+    fn allies_of_the_victim_join_and_neutrals_flee() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let npc = |x: u32, y: u32, faction: i32, n: u8| {
+            let mut b = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(x, y)).field("npc_faction", Value::Int32(faction));
+            b.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [n; 16] };
+            b.build()
+        };
+        std::fs::write(folder.join("G_0F.mob"), npc(72, 70, 7, 3)).unwrap();
+        std::fs::write(folder.join("G_10.mob"), npc(74, 70, 7, 4)).unwrap();
+        std::fs::write(folder.join("G_11.mob"), npc(72, 72, 0, 5)).unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        let ids = {
+            let world = sim.app.world_mut();
+            let map = world.resource::<LoadedMap>();
+            let index_at = |x: u32, y: u32| map.mobiles[&SectorId::new(1, 1)].iter().position(|o| o.object_type == TYPE_NPC && crate::object_location(o) == Some(TileLoc { x, y })).unwrap() as u32;
+            let (foe, ally, neutral) = (index_at(72, 70), index_at(74, 70), index_at(72, 72));
+            let id = |world: &mut World, i: u32| *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == i).unwrap().0;
+            [id(world, foe), id(world, ally), id(world, neutral)]
+        };
+        let [foe, ally, neutral] = ids;
+        let pc = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::PlayerControlled)>().iter(world).next().unwrap().0 };
+        sim.take_deltas();
+        sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: foe, seq: 0 })]);
+        sim.update();
+        let orders: Vec<Vec<NetId>> = sim.take_deltas().into_iter().filter_map(|(_, d)| match d { LedgerDelta::Combat { order, .. } => Some(order), _ => None }).collect();
+        assert_eq!(orders.last().unwrap(), &vec![pc, foe, ally], "the foe's faction joins; the neutral does not");
+        let world = sim.app.world_mut();
+        let mut q = world.query::<(&NetId, Option<&crate::combat::Fighting>, Has<crate::Walking>)>();
+        let mut state = |id: NetId| q.iter(world).find(|c| *c.0 == id).map(|c| (c.1.map(|f| f.target), c.2)).unwrap();
+        assert_eq!(state(ally).0, Some(pc));
+        assert_eq!(state(neutral), (None, true), "the neutral walks away");
+        let save = world.resource::<WorldState>().0.clone().unwrap();
+        assert!(save.players[&PlayerId(1)].script_state.reactions.values().all(|&r| r <= 0), "the victim likes the PC no more than column 10 (0 with no rows)");
+    }
+
+    #[test]
     fn prowling_switches_the_pcs_art_and_everyone_hears_of_it() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());
