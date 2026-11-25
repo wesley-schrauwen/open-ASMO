@@ -177,6 +177,57 @@ impl LoadedMap {
         true
     }
 
+    fn object_mut(&mut self, sector: arcanum_formats::map::SectorId, index: u32, mobile: bool) -> Option<&mut arcanum_formats::object::Object> {
+        if mobile { self.mobiles.get_mut(&sector)?.get_mut(index as usize) } else { self.sectors.get_mut(&sector)?.objects.get_mut(index as usize) }
+    }
+
+    /// An object (its sector's or a mobile one), if it is loaded.
+    pub fn object_at(&self, sector: arcanum_formats::map::SectorId, index: u32, mobile: bool) -> Option<&arcanum_formats::object::Object> {
+        if mobile { self.mobiles.get(&sector)?.get(index as usize) } else { self.sectors.get(&sector)?.objects.get(index as usize) }
+    }
+
+    /// Sets an object's art (`current_aid`, action 0x3b), kept in [`LoadedMap::changes`].
+    pub fn set_object_art(&mut self, sector: arcanum_formats::map::SectorId, index: u32, mobile: bool, art: u32) {
+        let delta = self.changes.entry(sector).or_default();
+        if mobile { delta.mobile_art.insert(index, art) } else { delta.object_art.insert(index, art) };
+        if let Some(o) = self.object_mut(sector, index, mobile) {
+            o.set_int("current_aid", art as i32);
+        }
+    }
+
+    /// Makes an object a new instance of prototype `prototype` in its place (action 0x28), kept
+    /// in [`LoadedMap::changes`]. False if there is no such prototype or object.
+    pub fn transform_object(&mut self, sector: arcanum_formats::map::SectorId, index: u32, mobile: bool, prototype: u32) -> bool {
+        let delta = self.changes.entry(sector).or_default();
+        // The old object's changes go with it.
+        if mobile {
+            delta.mobile_protos.insert(index, prototype);
+            delta.mobile_flags.remove(&index);
+            delta.mobile_art.remove(&index);
+            delta.npc_flags.remove(&index);
+        } else {
+            delta.object_protos.insert(index, prototype);
+            delta.object_flags.remove(&index);
+            delta.object_art.remove(&index);
+        }
+        self.apply_transform(sector, index, mobile, prototype)
+    }
+
+    fn apply_transform(&mut self, sector: arcanum_formats::map::SectorId, index: u32, mobile: bool, prototype: u32) -> bool {
+        let Some(proto) = self.prototypes.get(prototype).cloned() else { return false };
+        let Some(old) = self.object_mut(sector, index, mobile) else { return false };
+        let location = match old.field("location") {
+            Some(arcanum_formats::object::Value::Int64(Some(l))) => *l,
+            _ => return false,
+        };
+        let Some(new) = arcanum_formats::object::Object::instance_of(&proto, old.id, location) else { return false };
+        *old = new;
+        if self.sectors.contains_key(&sector) {
+            self.rebuild_blocking(sector);
+        }
+        true
+    }
+
     /// An NPC's `npc_flags` (its own or its prototype's), if it is loaded.
     pub fn npc_flags(&self, sector: arcanum_formats::map::SectorId, index: u32) -> Option<i32> {
         let object = self.mobiles.get(&sector)?.get(index as usize)?;
@@ -194,11 +245,28 @@ impl LoadedMap {
     /// Applies the saved changes of sector `id` (just loaded) to its objects.
     pub fn apply_changes(&mut self, id: arcanum_formats::map::SectorId) {
         let Some(delta) = self.changes.get(&id).cloned() else { return };
+        // A new object first: the other changes apply to it.
+        for (index, prototype) in delta.object_protos.clone() {
+            self.apply_transform(id, index, false, prototype);
+        }
+        for (index, prototype) in delta.mobile_protos.clone() {
+            self.apply_transform(id, index, true, prototype);
+        }
         for (index, flags) in delta.object_flags {
             self.apply_object_flags(id, index, false, flags);
         }
         for (index, flags) in delta.mobile_flags {
             self.apply_object_flags(id, index, true, flags);
+        }
+        for (index, art) in delta.object_art {
+            if let Some(o) = self.object_mut(id, index, false) {
+                o.set_int("current_aid", art as i32);
+            }
+        }
+        for (index, art) in delta.mobile_art {
+            if let Some(o) = self.object_mut(id, index, true) {
+                o.set_int("current_aid", art as i32);
+            }
         }
         for (index, flags) in delta.npc_flags {
             if let Some(object) = self.mobiles.get_mut(&id).and_then(|m| m.get_mut(index as usize)) {

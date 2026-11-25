@@ -126,11 +126,22 @@ pub struct SectorDelta {
     /// mobile objects.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub npc_flags: BTreeMap<u32, i32>,
+    /// Objects' art a script changed (action 0x3b), by index in the sector's list / mobile
+    /// objects.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub object_art: BTreeMap<u32, u32>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mobile_art: BTreeMap<u32, u32>,
+    /// Objects a script made into another prototype (action 0x28), the same way.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub object_protos: BTreeMap<u32, u32>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mobile_protos: BTreeMap<u32, u32>,
 }
 
 impl SectorDelta {
     pub fn is_empty(&self) -> bool {
-        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty() && self.npc_inventories.is_empty() && self.npc_restock.is_empty() && self.object_flags.is_empty() && self.mobile_flags.is_empty() && self.npc_flags.is_empty()
+        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty() && self.npc_inventories.is_empty() && self.npc_restock.is_empty() && self.object_flags.is_empty() && self.mobile_flags.is_empty() && self.npc_flags.is_empty() && self.object_art.is_empty() && self.mobile_art.is_empty() && self.object_protos.is_empty() && self.mobile_protos.is_empty()
     }
 }
 

@@ -75,7 +75,8 @@ pub struct PopulatedSectors(pub BTreeSet<SectorId>);
 /// The walking speed NPCs are announced with until their stats are read (they do not move yet).
 pub const NPC_SPEED: i32 = 8;
 
-/// NPCs a script switched off or on (action 0x38), for [`spawn_npcs`] to despawn or spawn.
+/// NPCs a script changed (switched off or on, destroyed, transformed, new art): [`spawn_npcs`]
+/// spawns them again as they are now.
 #[derive(Resource, Debug, Default)]
 pub struct ToggledNpcs(pub Vec<(SectorId, u32)>);
 
@@ -102,7 +103,7 @@ pub fn spawn_npcs(
     new.sort_by_key(|id| (id.y(), id.x()));
     let players: Vec<PlayerId> = session.players.iter().filter(|(_, s)| matches!(s, SessionPlayer::InWorld(_))).map(|(&p, _)| p).collect();
     let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
-    let off = |object: &Object| map.prototypes.int(object, "flags").unwrap_or(0) & crate::OF_OFF != 0;
+    let off = |object: &Object| map.prototypes.int(object, "flags").unwrap_or(0) & (crate::OF_OFF | crate::OF_DESTROYED) != 0;
     let spawn = |commands: &mut Commands, ids: &mut NetIds, outbox: &mut Outbox, sector: SectorId, index: usize, object: &Object| {
         let (Some(position), Some(art), Some(prototype)) = (crate::object_location(object), map.prototypes.art_id(object), object.prototype.prototype()) else { return };
         let net_id = ids.0.allocate();
@@ -124,14 +125,13 @@ pub fn spawn_npcs(
     }
     for (sector, index) in std::mem::take(&mut toggled.0) {
         let Some(object) = map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).filter(|o| o.object_type == TYPE_NPC) else { continue };
-        let entity = npcs.iter().find(|(_, _, s)| s.sector == sector && s.index == index);
-        match (entity, off(object)) {
-            (Some((entity, &net_id, _)), true) => {
-                commands.entity(entity).despawn();
-                outbox.0.extend(players.iter().map(|&p| (p, LedgerDelta::Despawn { net_id })));
-            }
-            (None, false) if populated.0.contains(&sector) => spawn(&mut commands, &mut ids, &mut outbox, sector, index as usize, object),
-            _ => {}
+        // Spawned again as it is now: gone if off or destroyed, with its new look if changed.
+        if let Some((entity, &net_id, _)) = npcs.iter().find(|(_, _, s)| s.sector == sector && s.index == index) {
+            commands.entity(entity).despawn();
+            outbox.0.extend(players.iter().map(|&p| (p, LedgerDelta::Despawn { net_id })));
+        }
+        if !off(object) && populated.0.contains(&sector) {
+            spawn(&mut commands, &mut ids, &mut outbox, sector, index as usize, object);
         }
     }
 }
@@ -2104,6 +2104,71 @@ mod tests {
         sim.app.world_mut().resource_mut::<crate::big_move::ScriptTeleports>().0.push(teleport);
         sim.update();
         assert_eq!(sim.app.world().get::<Position>(entity).unwrap().0, to);
+    }
+
+    #[test]
+    fn scripts_hurt_heal_show_plaques_transform_destroy_and_flip_switches() {
+        use crate::script::tests::{always, block, line, n, op};
+        use arcanum_formats::object::{Object, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, prototype_id};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        std::fs::create_dir_all(dir.path().join("mes")).unwrap();
+        std::fs::write(dir.path().join("mes/gameplaque.mes"), "{1000}{28c\nOffer to him\nWho cannot see}\n").unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        let mut wolf = Object::parse_instance(&ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).build()).unwrap();
+        wolf.id = prototype_id(9000);
+        let mut prototypes = Prototypes::default();
+        prototypes.insert(wolf);
+        sim.app.world_mut().resource_mut::<LoadedMap>().prototypes = Arc::new(prototypes);
+        sim.boot(save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]));
+        sim.update();
+        sim.update();
+        let sector = SectorId::new(1, 1);
+        let npc_object = crate::ScriptObject::Mobile { sector, index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 705));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            let (pc, npc) = (op(0, 0), op(1, 0));
+            let lines = vec![
+                always(block(0x3c, &[pc, n(100), n(0)])),  // more than the 30 hit points
+                always(block(0x3c, &[pc, n(7), n(1)])),    // poison
+                always(block(0x3c, &[pc, n(3), n(4)])),    // fatigue
+                always(block(0x3d, &[n(61), pc])),         // Halt Poison
+                always(block(0x3d, &[n(60), pc])),         // Minor Healing: 5
+                always(block(0x72, &[n(1000), pc])),
+                always(block(0x6e, &[n(7)])),
+                line(block(0x2e, &[n(7)]), block(0x64, &[n(6)]), block(0, &[])),
+                always(block(0x28, &[n(9000)])),           // the NPC becomes prototype 9000
+                always(block(0x44, &[npc])),               // then it is destroyed
+                always(block(1, &[])),
+            ];
+            library.insert(705, arcanum_formats::script::Script { description: String::new(), flags: 0, lines });
+        }
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0 && s.sector == sector).unwrap().0
+        };
+        sim.take_deltas();
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        let sheet = &save.players[&PlayerId(7)].blueprint.sheet;
+        let max = RulesData::default().derived(sheet).hit_points;
+        assert_eq!((sheet.hp_damage, sheet.poison, sheet.fatigue_damage), (max - 5, 0, 3), "down to 0 hit points, then healed 5");
+        let messages: Vec<&str> = deltas.iter().filter_map(|(_, d)| match d { LedgerDelta::ScriptMessage { text } => Some(text.as_str()), _ => None }).collect();
+        assert_eq!(messages, ["Offer to him", "Who cannot see"]);
+        assert!(save.scripts.switches.contains(&7) && save.scripts.flag(6));
+        assert_eq!(save.sector_changes[&sector].mobile_protos[&0], 9000);
+        assert_eq!(save.sector_changes[&sector].mobile_flags[&0] & crate::OF_DESTROYED, crate::OF_DESTROYED);
+        assert!(deltas.contains(&(PlayerId(7), LedgerDelta::Despawn { net_id: npc })));
+        assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::ObjectTransformed { prototype: 9000, .. })));
+        let world = sim.app.world_mut();
+        assert_eq!(world.query::<&crate::NpcSource>().iter(world).filter(|s| s.sector == sector && s.index == 0).count(), 0, "destroyed: not spawned again");
     }
 
     #[test]

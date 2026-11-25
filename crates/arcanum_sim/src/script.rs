@@ -65,6 +65,11 @@ pub struct ScriptGlobals {
     /// Rumours quelled (dialogue `rq`, 0x4c5690).
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub quelled: BTreeSet<u32>,
+    /// Entries of the 256-entry table at 0x5fc350 switched on (bit 0x80): action 0x6e flips
+    /// one, condition 0x2e tests one. Its other users (0x4ba5xx) read an object field's bits
+    /// 21+: probably monster generators (not traced).
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub switches: BTreeSet<u8>,
 }
 
 impl ScriptGlobals {
@@ -288,6 +293,28 @@ pub trait ScriptContext {
     /// "The player" (set 0x15, 0x40da50): the acting player's PC.
     fn player(&mut self) -> Option<Self::Object> {
         None
+    }
+    /// Damages `object` by `amount` of kind `kind` (0x3c → 0x4b2210 / 0x4b4390): 0 normal, 2
+    /// electrical, 3 fire (hit points), 1 poison (stat 0x18), 4 fatigue (0x45d5a0).
+    fn damage(&mut self, _object: Self::Object, _amount: i32, _kind: i32) {}
+    /// Casts spell `spell` on `target` with no caster (0x3d → 0x455a20 / 0x455ac0).
+    fn cast_on(&mut self, _spell: i32, _target: Self::Object) {}
+    /// Makes `object` a new object of prototype `prototype` in its place, keeping how hurt it is
+    /// (0x28).
+    fn transform(&mut self, _object: Self::Object, _prototype: i32) {}
+    /// Shows text window `kind` (0 book, 6 plaque) from line `line` to `to`'s player (0x4ee290).
+    fn show_text(&mut self, _kind: i32, _line: i32, _to: Self::Object) {}
+    /// Sets the number in `object`'s art id (0x3b → 0x502780), frame 0, if that art exists.
+    fn set_art_number(&mut self, _object: Self::Object, _number: i32) {}
+    /// Skill `k`'s level, 0-15 (0x2f → 0x4c5eb0 / 0x4c65e0); 0 for objects that are not critters.
+    fn skill_level(&mut self, _object: Self::Object, _k: i32) -> i32 {
+        0
+    }
+    /// Destroys `object` (0x44 → 0x43cca0).
+    fn destroy(&mut self, _object: Self::Object) {}
+    /// Whether `object` wears an item whose `name` is `name` (slots 1000-1008, 0x4649c0).
+    fn wears_item_named(&mut self, _object: Self::Object, _name: i32) -> bool {
+        false
     }
     /// Flips `mask` in `object`'s `flags` (actions 0x38 / 0x39: 0x4efee0 clears a set bit,
     /// 0x4eff50 sets a clear one), any type.
@@ -528,6 +555,13 @@ fn condition<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &m
             let name = number(ctx, run, 1);
             return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.has_item_named(o, name));
         }
+        // Wears an item named N (0x445d77: slots 1000-1008).
+        0x15 => {
+            let name = number(ctx, run, 1);
+            return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.wears_item_named(o, name));
+        }
+        // A critter with `critter_flags` 0x40000 (0x4b3d50; meaning not traced).
+        0x1f => return over_set(ctx, run, unsupported, &mut |ctx, o| matches!(ctx.object_type(o), 15 | 16) && ctx.object_int(o, "critter_flags").unwrap_or(0) & 0x4_0000 != 0),
         // Named, and not flagged 0x8000000 (`flags`; probably destroyed).
         0x14 => {
             let name = number(ctx, run, 1);
@@ -589,6 +623,17 @@ fn condition<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &m
         0x2b => {
             let flag = value(0);
             ctx.globals().flag(flag)
+        }
+        // A global quest state (0x4c51a0: table 0x5ff418 from quest 1000) is N; nothing keeps
+        // global quest states yet, so they are 0.
+        7 => {
+            let (_quest, state) = (value(0), value(1));
+            state == 0
+        }
+        // Entry N of the switch table is on (0x4baba0).
+        0x2e => {
+            let n = value(0);
+            u8::try_from(n).is_ok_and(|n| ctx.globals().switches.contains(&n))
         }
         _ => return None,
     })
@@ -810,6 +855,71 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
                     } else {
                         pc.reputations.remove(&r);
                     }
+                }
+            }
+            Step::Next
+        }
+        // Damage (0x4489f9): each object takes N of kind K (0, 2, 3 hit points, 1 poison, 4
+        // fatigue); no attacker.
+        0x3c => {
+            let (amount, kind) = (value(ctx, attachment, run, 1), value(ctx, attachment, run, 2));
+            for o in objects(run, ops[0], line, unsupported)? {
+                ctx.damage(o, amount, kind);
+            }
+            Step::Next
+        }
+        // A spell with no caster on one object (0x448ab7).
+        0x3d => {
+            let spell = value(ctx, attachment, run, 0);
+            if let Some(target) = objects(run, ops[1], line, unsupported)?.first().copied() {
+                ctx.cast_on(spell, target);
+            }
+            Step::Next
+        }
+        // The script's own object becomes prototype N (0x447e89).
+        0x28 => {
+            let prototype = value(ctx, attachment, run, 0);
+            ctx.transform(run.invocation.attachee, prototype);
+            Step::Next
+        }
+        // A plaque (0x44a15d, `mes/gameplaque.mes`) / a book (0x448ba4, `mes/gamebook.mes`) from
+        // line N, to one player.
+        0x72 | 0x40 => {
+            let line_id = value(ctx, attachment, run, 0);
+            if let Some(to) = objects(run, ops[1], line, unsupported)?.first().copied() {
+                ctx.show_text(if block.kind == 0x72 { 6 } else { 0 }, line_id, to);
+            }
+            Step::Next
+        }
+        // The art number of each object (0x448947).
+        0x3b => {
+            let n = value(ctx, attachment, run, 1);
+            for o in objects(run, ops[0], line, unsupported)? {
+                ctx.set_art_number(o, n);
+            }
+            Step::Next
+        }
+        // Skill N's level (0x448374).
+        0x2f => {
+            let k = value(ctx, attachment, run, 0);
+            let o = objects(run, ops[1], line, unsupported)?.first().copied();
+            let v = o.map_or(0, |o| ctx.skill_level(o, k));
+            set(ctx, attachment, run, ops[2], v);
+            Step::Next
+        }
+        // Destroy one object (0x448d19).
+        0x44 => {
+            if let Some(o) = objects(run, ops[0], line, unsupported)?.first().copied() {
+                ctx.destroy(o);
+            }
+            Step::Next
+        }
+        // Flip entry N of the switch table (0x44a067).
+        0x6e => {
+            if let Ok(n) = u8::try_from(value(ctx, attachment, run, 0)) {
+                let switches = &mut ctx.globals().switches;
+                if !switches.remove(&n) {
+                    switches.insert(n);
                 }
             }
             Step::Next

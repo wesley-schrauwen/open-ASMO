@@ -346,12 +346,28 @@ impl Object {
     /// Sets 32-bit field `name`, adding it if the object does not store it (it then no longer
     /// falls back to the prototype). Returns false if the type has no such 32-bit field.
     pub fn set_int(&mut self, name: &str, value: i32) -> bool {
-        if let Some((_, v)) = self.fields.iter_mut().find(|(d, _)| d.name == name) {
-            *v = Value::Int32(value);
+        self.set_value(name, Value::Int32(value))
+    }
+
+    /// Sets field `name` to `value`, adding it if the object does not store it. Returns false if
+    /// the type has no such field or its storage is not `value`'s.
+    pub fn set_value(&mut self, name: &str, value: Value) -> bool {
+        let storage = match value {
+            Value::Int32(_) => Storage::Int32,
+            Value::Int64(_) => Storage::Int64,
+            Value::Array(_) => Storage::Array,
+            Value::ObjectRef(_) => Storage::ObjectRef,
+            Value::String(_) => Storage::String,
+        };
+        if let Some((d, v)) = self.fields.iter_mut().find(|(d, _)| d.name == name) {
+            if d.storage != storage {
+                return false;
+            }
+            *v = value;
             return true;
         }
         let Some((bit, def)) = field_bits(self.object_type).and_then(|b| b.into_iter().find(|(_, d)| d.name == name)) else { return false };
-        if def.storage != Storage::Int32 {
+        if def.storage != storage {
             return false;
         }
         if let Some(word) = self.bitmap.get_mut(bit as usize / 32) {
@@ -359,8 +375,17 @@ impl Object {
         }
         // Keep the fields in enum order, as parsed.
         let at = self.fields.iter().position(|(d, _)| d.id > def.id).unwrap_or(self.fields.len());
-        self.fields.insert(at, (def, Value::Int32(value)));
+        self.fields.insert(at, (def, value));
         true
+    }
+
+    /// A new instance of `prototype` (a prototype object), with id `id`, storing only its
+    /// location: every other field is the prototype's (as 0x4ed8b0 makes one).
+    pub fn instance_of(prototype: &Object, id: ObjectId, location: i64) -> Option<Self> {
+        let words = bitmap_words(prototype.object_type)?;
+        let mut object = Self { version: prototype.version, prototype: prototype.id, id, object_type: prototype.object_type, bitmap: vec![0; words], fields: Vec::new() };
+        object.set_value("location", Value::Int64(Some(location)));
+        Some(object)
     }
 
     pub fn ints(&self, name: &str) -> Option<Vec<i32>> {
