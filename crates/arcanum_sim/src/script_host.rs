@@ -144,7 +144,7 @@ pub struct ScriptHost<'w, 's> {
 pub const VICINITY: u32 = 10;
 
 /// What the script host needs of the critters: their ids, tiles, and who they are.
-type CritterQuery<'a> = (&'a crate::NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::follow::Following>);
+type CritterQuery<'a> = (&'a crate::NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::follow::Following>, Has<crate::Prowling>);
 
 /// The world as a running script sees it.
 struct HostWorld<'a> {
@@ -158,6 +158,8 @@ struct HostWorld<'a> {
     following: Vec<(ScriptObject, PlayerId)>,
     /// Who is talking: PCs and the NPCs they talk to.
     talking: Vec<ScriptObject>,
+    /// PCs prowling ([`crate::prowl`]).
+    prowling: Vec<ScriptObject>,
     /// NPCs made to follow (a leader) or to stop (`None`).
     follow_changes: Vec<((arcanum_formats::map::SectorId, u32), Option<PlayerId>)>,
     /// Lines floated over objects.
@@ -771,7 +773,11 @@ impl ScriptContext for HostWorld<'_> {
             return false;
         }
         let (Some(a), Some(b)) = (self.tile_of(listener), self.tile_of(target)) else { return false };
-        let reach = i64::from(((self.stat(listener, 5) - 4).clamp(1, 10) + 6) / 2);
+        let prowler = match target {
+            ScriptObject::Pc(p) if self.prowling.contains(&target) => self.players.get(&p).map(|s| crate::prowl::prowl_value(self.rules.skill_level(&s.blueprint.sheet, crate::SKILL_PROWLING))),
+            _ => None,
+        };
+        let reach = crate::prowl::hearing_reach(self.stat(listener, 5), prowler);
         (i64::from(a.x) - i64::from(b.x)).abs().max((i64::from(a.y) - i64::from(b.y)).abs()) <= reach
     }
 
@@ -1292,12 +1298,13 @@ impl ScriptHost<'_, '_> {
         let vfs = vfs_guard.as_deref();
         let library = self.scripts.0.get_or_insert_with(|| vfs.map(ScriptLibrary::new).unwrap_or_default());
         let number = attachment.number;
-        let following = self.critters.iter().filter_map(|(_, _, _, npc, f)| Some((npc?.object(), f?.leader))).collect();
+        let following = self.critters.iter().filter_map(|(_, _, _, npc, f, _)| Some((npc?.object(), f?.leader))).collect();
+        let prowling = self.critters.iter().filter_map(|(_, _, pc, _, _, p)| p.then_some(ScriptObject::Pc(pc?.0))).collect();
         let talking = self.talks.iter().flat_map(|(pc, talk)| [ScriptObject::Pc(pc.0), talk.npc_object]).collect();
         let critters = self
             .critters
             .iter()
-            .filter_map(|(&net_id, position, pc, npc, _)| {
+            .filter_map(|(&net_id, position, pc, npc, _, _)| {
                 let object = match (pc, npc) {
                     (Some(pc), _) => ScriptObject::Pc(pc.0),
                     (_, Some(npc)) => npc.object(),
@@ -1322,6 +1329,7 @@ impl ScriptHost<'_, '_> {
             critters,
             following,
             talking,
+            prowling,
             follow_changes: Vec::new(),
             floats: Vec::new(),
             inventories: Default::default(),

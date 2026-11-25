@@ -51,6 +51,7 @@ impl Plugin for ActorsPlugin {
                 Update,
                 (click_to_move, apply_actor_deltas, pace_party, run_clock, start_local_walk, resend_move, ack_syncs, walk_actors, place_actors).chain().run_if(in_state(AppState::InGame)),
             )
+            .add_systems(Update, stop_prowling.run_if(in_state(AppState::InGame)))
             .add_systems(
                 Update,
                 update_postures.after(place_actors).after(crate::animation::PlayAnimations).run_if(in_state(AppState::InGame)),
@@ -65,7 +66,7 @@ pub struct ActorDeltas(pub Vec<LedgerDelta>);
 impl ActorDeltas {
     /// Whether this module handles `delta`.
     pub fn wants(delta: &LedgerDelta) -> bool {
-        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. } | LedgerDelta::PartyLeader { .. } | LedgerDelta::PcStatus { .. } | LedgerDelta::Speed { .. } | LedgerDelta::Teleported { .. })
+        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. } | LedgerDelta::PartyLeader { .. } | LedgerDelta::PcStatus { .. } | LedgerDelta::Speed { .. } | LedgerDelta::Teleported { .. } | LedgerDelta::Prowling { .. })
     }
 }
 
@@ -291,6 +292,8 @@ pub struct Actor {
     pub slide: Vec2,
     /// Up, falling or lying unconscious, or getting up ([`update_postures`]).
     pub posture: Posture,
+    /// Prowling ([`arcanum_sim::prowl`]): it stands and walks in animation 5.
+    pub prowling: bool,
 }
 
 /// Whether an actor stands, lies unconscious or gets up (Arcanum.exe 0x435a90 / 0x434de0).
@@ -446,7 +449,7 @@ impl Actor {
         };
         match self.art.kind() {
             ArtKind::Critter => {
-                let art = if self.walking() { walk_art(self.art) } else { self.art };
+                let art = if self.walking() && !self.prowling { walk_art(self.art) } else { self.art };
                 let critter = CritterArt { rotation: self.rotation as u32, ..CritterArt::from_id(art) };
                 CritterArt { anim: lying.unwrap_or(critter.anim), frame: if lying.is_some() { 0 } else { critter.frame }, ..critter }.id()
             }
@@ -508,7 +511,8 @@ fn apply_actor_deltas(
                 };
                 let rotation = CritterArt::from_id(art).rotation as usize;
                 let pc = matches!(kind, arcanum_sim::EntityKind::Pc { .. });
-                let actor = Actor { net_id, art, gait, own_gait: gait, pc, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing };
+                let prowling = pc && CritterArt::from_id(art).anim == arcanum_sim::prowl::ANIM_PROWL;
+                let actor = Actor { net_id, art, gait, own_gait: gait, pc, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling };
                 // The art is set once the art index is in (`place_actors`).
                 let entity = commands
                     .spawn((
@@ -525,6 +529,12 @@ fn apply_actor_deltas(
             }
             LedgerDelta::PcStatus { net_id, status } => {
                 party.status.insert(net_id, status);
+            }
+            LedgerDelta::Prowling { net_id, on } => {
+                if let Some(Ok((_, mut a))) = by_id.get(&net_id).map(|&e| actors.get_mut(e)) {
+                    a.prowling = on;
+                    a.art = arcanum_sim::with_anim(a.art, if on { arcanum_sim::prowl::ANIM_PROWL } else { arcanum_formats::art_id::ANIM_STAND });
+                }
             }
             LedgerDelta::Speed { net_id, speed } => {
                 let Some(known) = party.known.get_mut(&net_id) else { continue };
@@ -721,6 +731,21 @@ fn click_to_move(
     if let Some(goal) = world_to_tile(world, origin) {
         debug!("click at {cursor} goes to {goal:?}");
         walk.click(goal);
+    }
+}
+
+/// A right click in the world while prowling stops it (0x54de50).
+fn stop_prowling(buttons: Res<ButtonInput<MouseButton>>, windows: Query<&Window>, inventory: Option<Res<crate::inventory_screen::InventoryPanel>>, panel: Option<Res<crate::character_editor::CharacterPanel>>, (link, local): (Option<Res<HostLink>>, Res<LocalPc>), actors: Query<&Actor>) {
+    if !buttons.just_pressed(MouseButton::Right) {
+        return;
+    }
+    let Some((cursor, size)) = windows.iter().find_map(|w| w.cursor_position().map(|c| (c, w.size()))) else { return };
+    if crate::hud::covers(size, cursor, panel.is_some_and(|p| p.open) || inventory.is_some_and(|p| p.open)) {
+        return;
+    }
+    let prowling = local.0.and_then(|(id, _)| actors.iter().find(|a| a.net_id == id)).is_some_and(|a| a.prowling);
+    if prowling && let Some(link) = link {
+        let _ = link.0.send_intent(PlayerIntent::Prowl { on: false });
     }
 }
 
@@ -973,7 +998,7 @@ mod tests {
 
     fn actor() -> Actor {
         let art = arcanum_sim::pc_art(0, true);
-        Actor { net_id: NetId(0), art, gait: Gait::human(17), own_gait: Gait::human(17), pc: true, at: t(10, 10), rotation: 4, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing }
+        Actor { net_id: NetId(0), art, gait: Gait::human(17), own_gait: Gait::human(17), pc: true, at: t(10, 10), rotation: 4, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling: false }
     }
 
     #[test]

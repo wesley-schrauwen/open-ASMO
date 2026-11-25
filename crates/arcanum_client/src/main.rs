@@ -171,6 +171,20 @@ fn main() {
         app.add_systems(OnEnter(AppState::InGame), |mut view: ResMut<arcanum_client::spell_bar::BarView>| view.skills = true);
     }
 
+    // Debugging aid: `DEBUG_ARCANUM_PANEL=prowl` starts prowling once the PC is in.
+    if std::env::var("DEBUG_ARCANUM_PANEL").is_ok_and(|v| v == "prowl") {
+        app.add_systems(
+            Update,
+            (|link: Option<Res<arcanum_client::sim_bridge::HostLink>>, pc: Res<arcanum_client::sim_bridge::LocalPc>, mut done: Local<bool>| {
+                if !*done && pc.0.is_some() && let Some(link) = link {
+                    *done = true;
+                    let _ = link.0.send_intent(arcanum_sim::PlayerIntent::Prowl { on: true });
+                }
+            })
+            .run_if(in_state(AppState::InGame)),
+        );
+    }
+
     // Debugging aid: `DEBUG_ARCANUM_PANEL=book:1010` (or `note:`, `plaque:`, `image:`) opens the
     // written window on that line.
     if let Some((kind, line)) = std::env::var("DEBUG_ARCANUM_PANEL").ok().and_then(|v| {

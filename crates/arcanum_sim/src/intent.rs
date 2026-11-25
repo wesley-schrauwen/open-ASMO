@@ -46,6 +46,8 @@ pub enum PlayerIntent {
     /// Pick NPC `npc`'s pocket ([`crate::pickpocket`]) once the PC is within
     /// [`crate::USE_RANGE`] of it: the host opens the window. `seq` is the move sent with it.
     PickPocket { npc: crate::NetId, seq: u32 },
+    /// Start or stop prowling ([`crate::prowl`]).
+    Prowl { on: bool },
     /// Cast `spell` on a door or container from where the PC stands ([`crate::magick`]).
     Cast { spell: usize, target: crate::LockTarget },
     /// Open the sleep window ([`crate::rest`]): the host answers with
