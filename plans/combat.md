@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-12 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`, `feat/combat-events`).
+Status: steps 1-13 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`, `feat/combat-events`, `feat/ammunition`).
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -310,3 +310,15 @@ of `combat_design.md` come after the original's rules work.
      their order unclear), 2 destroy (0x43cd0e), 23 on PCs, 22 in hostility checks other than
      noticing.
    - Real data: prototypes attach 7 (10), 8 (7), 26 (9), 23 (3), 22 (1).
+13. **Ammunition** (built, `feat/ammunition`).
+   - Findings: ammunition is carried items of type 6 (`ammo_quantity` field 0x8e, `ammo_type`
+     0x8f: 0 arrows, 1 bullets, 2 charges, 3 fuel); a weapon's `weapon_ammo_type` (0x7d, 10000
+     none) and `weapon_ammo_consumption` (0x7e). The ranged attack animation checks the rounds
+     (0x432cf0: count ≥ consumption, else no shot, no message); weapon choice skips weapons short
+     of rounds (0x465170). The per-shot decrement was not found. Real data: 59 weapons use
+     ammunition (consumption 1-6), 97 none.
+   - Built: a shot needs and spends `weapon_ammo_consumption` rounds of its type (builder's call
+     for the spending), emptied stacks gone. A PC short of rounds cannot shoot; an NPC fights
+     bare-handed.
+   - Not built: a message for the PC, NPCs switching to another weapon, the critical miss's
+     ammunition loss (step 14).
