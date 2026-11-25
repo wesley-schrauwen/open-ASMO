@@ -1760,7 +1760,7 @@ mod tests {
         std::fs::write(dir.path().join("Rules/MapList.mes"), format!("{{5000}}{{{MAP}, 70, 70}}\n{{5001}}{{Other, 75, 75}}\n")).unwrap();
         let home = SectorId::new(1, 1);
         let mut s = save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]);
-        s.followers.push(Follower { map: MAP.into(), sector: home, index: 0, leader: PlayerId(7), away: None });
+        s.followers.push(Follower { map: MAP.into(), sector: home, index: 0, leader: PlayerId(7), away: None, wait_until: None, warn: 0 });
         let mut sim = booted(dir.path(), s);
         let go = |sim: &mut SimApp, map: i32, at: TileLoc| {
             let teleport = crate::big_move::ScriptTeleport { causer: PlayerId(7), object: crate::ScriptObject::Pc(PlayerId(7)), map, to: at };
@@ -2300,6 +2300,42 @@ mod tests {
         sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc: again, seq: 1 })]);
         sim.update();
         assert!(!sim.take_deltas().iter().any(|(_, d)| matches!(d, LedgerDelta::DialogueOptions { .. } | LedgerDelta::FloatText { .. })), "the dead say nothing");
+    }
+
+    #[test]
+    fn followers_give_up_waiting_and_leave_a_leader_they_dislike() {
+        use crate::follow::{Follower, LEFT, WAITING};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let sector = SectorId::new(1, 1);
+        let mut s = save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]);
+        let now = s.time;
+        // NPC 0 waits until a moment from now.
+        s.followers.push(Follower { map: MAP.into(), sector, index: 0, leader: PlayerId(7), away: None, wait_until: Some(now.plus_ms(1)), warn: 0 });
+        s.sector_changes.insert(sector, crate::SectorDelta { npc_flags: [(0, WAITING)].into(), ..Default::default() });
+        let mut sim = booted(dir.path(), s);
+        for _ in 0..3 {
+            sim.update();
+        }
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert!(!save.followers.iter().any(|f| f.sector == sector && f.index == 0), "gave up");
+        assert_eq!(save.sector_changes[&sector].npc_flags[&0], LEFT);
+        let key = crate::met_key(crate::ScriptObject::Mobile { sector, index: 0 });
+        assert_eq!(save.players[&PlayerId(7)].script_state.reactions[&key], crate::BASE_REACTION + 2 * (8 - 20), "charisma 8");
+        // A follower who loathes its leader leaves at its next check.
+        {
+            let mut world = sim.app.world_mut().resource_mut::<WorldState>();
+            let save = world.0.as_mut().unwrap();
+            save.followers.push(Follower { map: MAP.into(), sector, index: 0, leader: PlayerId(7), away: None, wait_until: None, warn: 0 });
+            save.players.get_mut(&PlayerId(7)).unwrap().script_state.reactions.insert(key.clone(), -100);
+        }
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_npc_flags(sector, 0, 0);
+        for _ in 0..(crate::follow::CHECK_TICKS + 2) {
+            sim.update();
+        }
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert!(!save.followers.iter().any(|f| f.sector == sector && f.index == 0), "left");
+        assert_eq!(sim.app.world().resource::<LoadedMap>().npc_flags(sector, 0).unwrap() & LEFT, LEFT);
     }
 
     #[test]

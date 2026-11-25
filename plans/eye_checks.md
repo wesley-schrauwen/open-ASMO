@@ -96,3 +96,11 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 - [ ] At the crash site the bodies lie dead (death animation, last frame) instead of standing.
 - [ ] NPCs with heartbeat scripts do their thing (switching on or off, barks) while the PC is
       near; nothing stutters.
+
+## Follower details
+
+- [ ] Virgil told to wait leaves for good after two game hours (rest to check); rejoined before
+      then, he stays.
+- [ ] A follower whose reaction falls near its limit says a warning line; past it, it leaves with
+      its refusal line.
+- [ ] A `$$` price in dialogue counts followers' gold.

@@ -55,6 +55,61 @@ pub struct Follower {
     /// Where it is when it went with its leader to another map.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub away: Option<Away>,
+    /// Told to wait: when it gives up and leaves for good (0x4aa7a0 / 0x4aa990).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wait_until: Option<crate::GameTime>,
+    /// Why to warn at the next check (0x4adb50): [`WARN_REACTION`], [`WARN_GOOD`],
+    /// [`WARN_EVIL`] (npc_flags 0x10000 with critter bits 0x1000000 / 0x2000000 / 0x4000000).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub warn: u8,
+}
+
+fn is_zero(v: &u8) -> bool {
+    *v == 0
+}
+
+/// The leader's reaction from the follower dropped.
+pub const WARN_REACTION: u8 = 1;
+/// The leader's alignment rose / fell.
+pub const WARN_GOOD: u8 = 2;
+pub const WARN_EVIL: u8 = 4;
+
+/// How long a follower told to wait waits before leaving, by its `npc_wait` (field 0x12c, 2 by
+/// default, 0x49b5e7) plus one for a leader trained in Persuasion (table 0x5b5088: days and
+/// milliseconds). Six or more: it waits for ever.
+pub const WAIT_DELAYS_MS: [u64; 6] = [0, 900_000, 7_200_000, 86_400_000, 7 * 86_400_000, 30 * 86_400_000];
+/// The default `npc_wait`.
+pub const DEFAULT_NPC_WAIT: i32 = 2;
+/// A leader this charismatic is never left (0x4b0ee0 stat 7 at its maximum, 20).
+pub const LOYAL_CHARISMA: i32 = 20;
+
+/// How long a follower waits (0x4aa7a0), `None` for ever.
+pub fn wait_delay_ms(npc_wait: i32, leader_persuasion_rank: u8, leader_charisma: i32) -> Option<u64> {
+    if leader_charisma >= LOYAL_CHARISMA {
+        return None;
+    }
+    let index = usize::try_from(npc_wait + i32::from(leader_persuasion_rank > 0)).ok()?;
+    WAIT_DELAYS_MS.get(index).copied()
+}
+
+/// What a follower warns of (0x4adb50), in order: reaction near the limit (`gd_npc` 5400,
+/// within 20 of D6), alignment too good (5200, within 100 of D7) or too evil (5300, within
+/// 100 of D8). A Master of Persuasion and forced followers get no warnings.
+pub fn warning(c: &JoinCheck, warn: u8) -> Option<u32> {
+    if c.pc_persuasion_rank >= 3 || c.forced {
+        return None;
+    }
+    if warn & WARN_REACTION != 0 && c.reaction <= c.ai.min_reaction + 20 {
+        return Some(5400);
+    }
+    let (npc, pc) = (c.npc_alignment, c.pc_alignment);
+    if pc > npc && warn & WARN_GOOD != 0 && pc - npc > c.ai.above - 100 {
+        return Some(5200);
+    }
+    if pc <= npc && warn & WARN_EVIL != 0 && npc - pc > c.ai.below - 100 {
+        return Some(5300);
+    }
+    None
 }
 
 /// A follower away from its home map (owner's rule: followers change maps with their leader,
@@ -277,6 +332,15 @@ pub struct FollowTalk {
     pub goto: Option<i32>,
     /// Would not join: why.
     pub refused: Option<Refusal>,
+    /// The NPC's `npc_wait` (field 0x12c), for `wa`.
+    pub npc_wait: i32,
+    /// Told to wait this step: for how long (`None`: for ever).
+    pub waits: Option<Option<u64>>,
+    /// The reaction to this PC dropped this step (a warning at the next check).
+    pub reaction_dropped: bool,
+    /// The gold of this PC's followers here (not waiting), by their place, as it is now in the
+    /// step: `$$` tests count it and payments take from it after the PC's (0x415335 / 0x415cc6).
+    pub followers_gold: Vec<((SectorId, u32), i32)>,
 }
 
 /// How far a follower lets its leader get before walking after it.
@@ -342,6 +406,140 @@ pub fn follow_leaders(
     }
 }
 
+/// Sets a follower's `npc_flags` wherever it is kept: on its record when away, on the loaded
+/// map (and the save) at home, else in its home map's kept changes.
+fn set_follower_flags(f: &mut Follower, map: &mut crate::LoadedMap, save: &mut crate::WorldSave, flags: i32) {
+    if let Some(a) = &mut f.away {
+        a.flags = flags;
+        if let Some((s, i)) = map.place_of(&f.home())
+            && let Some(o) = map.mobiles.get_mut(&s).and_then(|m| m.get_mut(i as usize))
+        {
+            o.set_int("npc_flags", flags);
+        }
+        return;
+    }
+    if map.name.as_deref() == Some(f.map.as_str()) {
+        map.set_npc_flags(f.sector, f.index, flags);
+        if let Some(delta) = map.changes.get(&f.sector).cloned() {
+            save.sector_changes.insert(f.sector, delta);
+        }
+    } else {
+        save.other_maps.entry(f.map.clone()).or_default().entry(f.sector).or_default().npc_flags.insert(f.index, flags);
+    }
+}
+
+/// Followers told to wait give up when their time is up (0x4aa990): they leave for good
+/// (flag [`LEFT`]), and their reaction to the leader drops by `2 × (charisma - 20)` (0x4b0fd0's
+/// maximum for stat 7 is 20).
+pub fn expire_waits(mut world: ResMut<crate::WorldState>, mut map: ResMut<crate::LoadedMap>, clock: Res<crate::GameClock>, rules: Res<crate::SimRules>) {
+    let now = clock.now;
+    let Some(save) = world.0.as_ref() else { return };
+    if !save.followers.iter().any(|f| f.wait_until.is_some_and(|t| t <= now)) {
+        return;
+    }
+    let Some(save) = world.0.as_mut() else { return };
+    let (gone, kept): (Vec<Follower>, Vec<Follower>) = std::mem::take(&mut save.followers).into_iter().partition(|f| f.wait_until.is_some_and(|t| t <= now));
+    save.followers = kept;
+    for mut f in gone {
+        let flags = follower_flags(&f, &map, &save.other_maps);
+        f.away = None;
+        set_follower_flags(&mut f, &mut map, save, (flags & !(WAITING | FORCED)) | LEFT);
+        if let Some(leader) = save.players.get_mut(&f.leader) {
+            let charisma = rules.0.stats(&leader.blueprint.sheet)[7];
+            let key = crate::met_key(crate::ScriptObject::Mobile { sector: f.sector, index: f.index });
+            let stored = leader.script_state.reactions.get(&key).copied().unwrap_or(crate::BASE_REACTION);
+            leader.script_state.reactions.insert(key, stored + 2 * (charisma - LOYAL_CHARISMA));
+        }
+    }
+}
+
+/// How often a follower checks whether it still follows (builder's call: every half second;
+/// the original's AI tick, 0x4ac380, comes every 250 ms to 5 s by distance).
+pub const CHECK_TICKS: u64 = 15;
+
+/// Followers check whether they still follow (0x4ac380): one that would no longer join
+/// (0x4ad950, the count left out) leaves with its refusal line, unless its leader's charisma
+/// is 20 or more (0x45dfc0); otherwise, if something worried it, it may warn (0x4adb50).
+#[allow(clippy::too_many_arguments)]
+pub fn recheck_followers(
+    mut world: ResMut<crate::WorldState>,
+    mut map: ResMut<crate::LoadedMap>,
+    rules: Res<crate::SimRules>,
+    session: Res<crate::Session>,
+    mut generic: ResMut<crate::GenericLines>,
+    mut scripts: ResMut<crate::Scripts>,
+    reputations: Res<crate::ReputationTable>,
+    vfs: Option<Res<crate::SimVfs>>,
+    mut rng: ResMut<crate::HostRng>,
+    mut outbox: ResMut<crate::Outbox>,
+    tick: Res<crate::SimTick>,
+    npcs: Query<(&crate::NetId, &crate::NpcSource), With<Following>>,
+) {
+    if !tick.0.is_multiple_of(CHECK_TICKS) || npcs.is_empty() {
+        return;
+    }
+    let vfs_guard = vfs.as_ref().and_then(|v| v.0.read().ok());
+    let vfs = vfs_guard.as_deref();
+    let no_reputations = crate::ReputationEffects::default();
+    let reputations = reputations.0.as_ref().unwrap_or(&no_reputations);
+    let Some(save) = world.0.as_mut() else { return };
+    let mut leaving = Vec::new();
+    for (&net_id, source) in &npcs {
+        let home = map.home_of(source.sector, source.index);
+        let Some(pos) = save.followers.iter().position(|f| f.is(&home)) else { continue };
+        let f = save.followers[pos].clone();
+        let Some(leader) = save.players.get(&f.leader) else { continue };
+        let Some(object) = map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { continue };
+        let sheet = &leader.blueprint.sheet;
+        let stat = |i: usize| object.ints("critter_stat_base_idx").or_else(|| map.prototypes.of(object)?.ints("critter_stat_base_idx")).and_then(|v| v.get(i).copied()).unwrap_or(0);
+        let key = crate::met_key(crate::ScriptObject::Mobile { sector: source.sector, index: source.index });
+        let reaction = crate::reaction_to(&leader.script_state, &key, &crate::NpcReaction::of(object, &map.prototypes), &rules.0, sheet, reputations);
+        let packet = map.prototypes.int(object, "npc_ai_data").unwrap_or(0);
+        let flags = map.prototypes.int(object, "npc_flags").unwrap_or(0);
+        let check = JoinCheck {
+            pc_persuasion_rank: sheet.training[PERSUASION],
+            pc_charisma: rules.0.stats(sheet)[7],
+            pc_alignment: sheet.alignment,
+            pc_level: sheet.level,
+            forced: flags & FORCED != 0,
+            reaction,
+            npc_alignment: stat(0x13),
+            npc_level: stat(0x11),
+            ai: ai_follow(generic.file(vfs, GAME_AI), packet),
+            ..Default::default()
+        };
+        let line = match can_join(&check, true) {
+            Err(r) if check.pc_charisma < LOYAL_CHARISMA => {
+                leaving.push(pos);
+                Some(refusal_line(r))
+            }
+            _ if f.warn != 0 => {
+                save.followers[pos].warn = 0;
+                warning(&check, f.warn)
+            }
+            _ => None,
+        };
+        let Some(base) = line else { continue };
+        let mut info = crate::npc_details(&map, crate::ScriptObject::Mobile { sector: source.sector, index: source.index }, &mut generic, vfs);
+        let overrides = map.attachment(crate::ScriptObject::Mobile { sector: source.sector, index: source.index }, crate::EVENT_OVERRIDE).number;
+        if overrides != 0 {
+            let library = scripts.0.get_or_insert_with(|| vfs.map(crate::ScriptLibrary::new).unwrap_or_default());
+            info.overrides = vfs.and_then(|v| library.dialog(v, overrides)).map(|d| (overrides, d));
+        }
+        let who = crate::Speaker { npc: &info, pc_name: &sheet.name, pc_female: sheet.gender == arcanum_rules::FEMALE, pc_race: sheet.race };
+        if let Some((text, voice)) = crate::npc_line(&mut generic, vfs, &mut rng, &who, crate::Block::Npc, base) {
+            crate::ground::broadcast(&session, &mut outbox, crate::LedgerDelta::FloatText { speaker: net_id, text, colour: crate::FloatColour::White, voice });
+        }
+    }
+    // Those who leave: no leader, flag LEFT (0x45dfc0 / 0x45e040), where they stand.
+    leaving.sort_unstable();
+    for pos in leaving.into_iter().rev() {
+        let mut f = save.followers.remove(pos);
+        let flags = follower_flags(&f, &map, &save.other_maps);
+        set_follower_flags(&mut f, &mut map, save, (flags & !(WAITING | FORCED)) | LEFT);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -369,5 +567,20 @@ mod tests {
         assert_eq!(can_join(&JoinCheck { other_leader_charisma: Some(7), ..check() }, false), Ok(()), "more charismatic");
         assert_eq!(can_join(&JoinCheck { pc_persuasion_rank: 3, reaction: 0, ..check() }, false), Ok(()), "a Master of Persuasion");
         assert_eq!(refusal_line(Refusal::TooMany), 2700);
+    }
+
+    #[test]
+    fn waits_last_by_npc_wait_and_persuasion_and_warnings_come_before_leaving() {
+        assert_eq!(wait_delay_ms(DEFAULT_NPC_WAIT, 0, 8), Some(7_200_000), "2 h");
+        assert_eq!(wait_delay_ms(DEFAULT_NPC_WAIT, 1, 8), Some(86_400_000), "trained: a day");
+        assert_eq!(wait_delay_ms(5, 1, 8), None, "past the table: for ever");
+        assert_eq!(wait_delay_ms(2, 0, 20), None, "a leader of charisma 20 is waited for");
+        let c = JoinCheck { reaction: 35, ai: AiFollow { min_reaction: 20, above: 300, below: 300, levels: 2 }, ..Default::default() };
+        assert_eq!(warning(&c, WARN_REACTION), Some(5400), "35 is within 20 of 20");
+        assert_eq!(warning(&JoinCheck { reaction: 41, ..c }, WARN_REACTION), None);
+        assert_eq!(warning(&JoinCheck { pc_alignment: 250, ..c }, WARN_GOOD), Some(5200), "250 above, within 100 of 300");
+        assert_eq!(warning(&JoinCheck { pc_alignment: -250, ..c }, WARN_EVIL), Some(5300));
+        assert_eq!(warning(&JoinCheck { pc_alignment: -250, ..c }, WARN_GOOD), None, "only what happened");
+        assert_eq!(warning(&JoinCheck { pc_persuasion_rank: 3, ..c }, WARN_REACTION), None, "a Master");
     }
 }
