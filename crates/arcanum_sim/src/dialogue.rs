@@ -61,7 +61,9 @@
 //!
 //! - **Directions** (`D:` / `X:`, [`crate::areas`]): a list of unknown areas, then the way there.
 //!
-//! Not built: the other prefixes (`H: P: L: U: Z:`; left out and reported); the
+//! - **Newspapers** (`P:`, `plans/dialogue.md` 10): today's headline, older papers, buying one.
+//!
+//! Not built: the other prefixes (`L: Z:`; left out and reported); the
 //! `G:` special cases and the reputation greetings (0x4c1f80, one in five); the NPC's can-talk
 //! checks (0x4ad800) and hostility at choice time (0x4ae120); alignment, aptitude, training and the
 //! rest of the tests and results; turning to face each other.
@@ -151,7 +153,18 @@ pub enum OptionAct {
     HealPage { page: u8, ret: i32 },
     /// A healing chosen (actions 0xe / 0xf): free from a follower, else priced.
     Heal { healing: Healing, ret: i32 },
+    /// Today's headline read out (action 0x1a, 0x41a620).
+    Headline { ret: i32 },
+    /// The older papers listed (action 0x1b, 0x41a700).
+    OldPapers { ret: i32 },
+    /// A paper chosen: its price asked (action 0x1c, 0x41a880).
+    BuyPaper { paper: i32, ret: i32 },
 }
+
+/// A newspaper's price before the reaction factor (0x418a40 with 2).
+pub const NEWSPAPER_PRICE: i32 = 2;
+/// The newspaper item: basic prototype 14064 (0x41a8c0).
+pub const NEWSPAPER_PROTOTYPE: u32 = 14064 + crate::BASIC_TO_PROTOTYPE;
 
 /// What an NPC is paid for (the price dialogue's stored action).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -164,6 +177,8 @@ pub enum Service {
     Directions { area: u32, mark: bool },
     /// Healing with a skill or a spell (actions 0x10 / 0x11, 0x419cb0 / 0x419d50).
     Heal(Healing),
+    /// Newspaper `n` (action 0x1d, 0x41a8c0).
+    Newspaper(i32),
 }
 
 /// What an NPC heals the PC with.
@@ -1132,6 +1147,9 @@ pub fn run_conversations(
                         OptionAct::MoreDirections { option, offset, ret } => say.directions(&file, option, offset, ret, &mut talk),
                         OptionAct::HealPage { page, ret } => say.heal_menu(&file, page, ret, &mut talk),
                         OptionAct::Heal { healing, ret } => say.heal(&file, healing, ret, &mut talk),
+                        OptionAct::Headline { ret } => say.headline(&file, ret, &mut talk),
+                        OptionAct::OldPapers { ret } => say.old_papers(&file, ret, &mut talk),
+                        OptionAct::BuyPaper { paper, ret } => say.ask_price(&file, NEWSPAPER_PRICE, Service::Newspaper(paper), ret, &mut talk),
                     }
                 }
                 None => Shown::Stay,
@@ -1587,6 +1605,8 @@ impl Say<'_> {
             // Directions and map marks (gd_pc2 1300 / 1400).
             Some('D') => self.pc_line(1300, 1399, talk),
             Some('X') => self.pc_line(1400, 1499, talk),
+            // Newspapers (gd_pc2 1900).
+            Some('P') => self.pc_line(1900, 1999, talk),
             Some('I') if text.len() == 2 => self.pc_class_line(3000, talk),
             Some('C') => {
                 let line = 1700 + talk.globals.story_state.max(0) as u32;
@@ -1637,6 +1657,7 @@ impl Say<'_> {
                 return self.heal(file, Healing::Skill(skill), entry.response(), talk);
             }
             Some('D' | 'X') => return self.directions(file, line, 0, entry.response(), talk),
+            Some('P') => return self.newspaper_menu(file, entry.response(), talk),
             // The story question (0x41a3e0): the answer, then one "thanks" to go on.
             Some('C') => {
                 if let Some((said, voice)) = self.story_line(talk) {
@@ -1836,6 +1857,62 @@ impl Say<'_> {
         self.say_then_back(file, Block::Class, 15000, &[], thanks, ret, talk)
     }
 
+    /// The newspaper menu (`P:`, 0x41a520): `gd_npc` 4200, then buy today's paper (`gd_pc2`
+    /// 2200), today's headline (2000), older papers (2100) and "forget it" (800) back to `ret`.
+    fn newspaper_menu(&mut self, file: &DialogFile, ret: i32, talk: &mut Talk) -> Shown {
+        self.npc_says(Block::Npc, 4200, talk);
+        let today = talk.globals.newspapers.today();
+        let mut options = Vec::new();
+        for (lo, act) in [(2200, OptionAct::BuyPaper { paper: today, ret }), (2000, OptionAct::Headline { ret }), (2100, OptionAct::OldPapers { ret }), (800, OptionAct::Respond(ret))] {
+            if let Some(text) = self.pc_line(lo, lo + 99, talk) {
+                options.push(Offered { text, act });
+            }
+        }
+        if options.is_empty() { self.back(file, ret, talk) } else { Shown::Line(0, options) }
+    }
+
+    /// Paper `n`'s headline ([`crate::newspaper::headline`]).
+    fn paper_headline(&mut self, n: i32) -> Option<String> {
+        let entry = self.generic.file(self.vfs, crate::newspaper::NEWSPAPER_MES)?.get(u32::try_from(n).ok()?)?.to_string();
+        Some(crate::newspaper::headline(&entry))
+    }
+
+    /// Today's headline (0x41a620): the headline and a `gd_npc` 4300 line, then yes (`gd_pc2`
+    /// 1-99) to buy it or no (100-199) back.
+    fn headline(&mut self, file: &DialogFile, ret: i32, talk: &mut Talk) -> Shown {
+        let today = talk.globals.newspapers.today();
+        let who = Speaker { npc: self.npc, pc_name: self.pc_name, pc_female: talk.female(), pc_race: talk.sheet.race };
+        let ask = npc_line(self.generic, self.vfs, self.rng, &who, Block::Npc, 4300).map(|l| l.0);
+        let said = [self.paper_headline(today), ask].into_iter().flatten().collect::<Vec<_>>().join(" ");
+        if !said.is_empty() {
+            self.float(self.npc_net, said, FloatColour::White, None);
+        }
+        let mut options = Vec::new();
+        for (lo, act) in [(1, OptionAct::BuyPaper { paper: today, ret }), (100, OptionAct::Respond(ret))] {
+            if let Some(text) = self.pc_line(lo, lo + 99, talk) {
+                options.push(Offered { text, act });
+            }
+        }
+        if options.is_empty() { self.back(file, ret, talk) } else { Shown::Line(0, options) }
+    }
+
+    /// The older papers (0x41a700): the queue's first four that are set. None: `gd_npc` 4400 and
+    /// a "more" (`gd_pc2` 600) back; else 4500 and one option per paper, its headline, and
+    /// "forget it" (800; builder's call: the original offers no way back).
+    fn old_papers(&mut self, file: &DialogFile, ret: i32, talk: &mut Talk) -> Shown {
+        let papers: Vec<i32> = talk.globals.newspapers.queue.iter().take(crate::newspaper::TODAY).copied().filter(|&n| n != -1).collect();
+        if papers.is_empty() {
+            let more = self.pc_line(600, 699, talk);
+            return self.say_then_back(file, Block::Npc, 4400, &[], more, ret, talk);
+        }
+        self.npc_says(Block::Npc, 4500, talk);
+        let mut options: Vec<Offered> = papers.into_iter().filter_map(|paper| Some(Offered { text: self.paper_headline(paper)?, act: OptionAct::BuyPaper { paper, ret } })).collect();
+        if let Some(back) = self.pc_line(800, 899, talk) {
+            options.push(Offered { text: back, act: OptionAct::Respond(ret) });
+        }
+        Shown::Line(0, options)
+    }
+
     /// The price dialogue (0x418a40): `base` × the reaction factor, at least 2; the NPC names it
     /// (`gd_cls` 1000) and the PC says yes (`gd_pc2` 1-99) or no (100-199).
     fn ask_price(&mut self, file: &DialogFile, base: i32, service: Service, ret: i32, talk: &mut Talk) -> Shown {
@@ -1863,6 +1940,20 @@ impl Say<'_> {
             Service::Rumour(n) => self.tell_rumour(file, n, ret, talk),
             Service::Directions { area, mark } => self.direct(file, area, mark, ret, talk),
             Service::Heal(healing) => self.perform_heal(file, healing, ret, talk),
+            Service::Newspaper(paper) => {
+                // The paper (basic prototype 14064, 0x4bf210) with its number as its first line.
+                let item = crate::CarriedItem { prototype: NEWSPAPER_PROTOTYPE, location: 0, quantity: 0, keys: vec![], written: paper };
+                let (carry, aptitude) = (talk.rules.derived(talk.sheet).carry_weight, talk.rules.aptitude(talk.sheet));
+                let mut mine = talk.inventory.clone();
+                if mine.insert_item(item, talk.item_info, carry, aptitude).is_ok() {
+                    *talk.inventory = mine;
+                } else {
+                    // No room: the gold back (builder's call; the original drops it at the PC's feet).
+                    talk.change_gold(price);
+                }
+                let thanks = self.pc_class_line(1000, talk);
+                self.say_then_back(file, Block::Class, 15000, &[], thanks, ret, talk)
+            }
             Service::Train(skill) => {
                 talk.sheet_changes.training.push((skill, APPRENTICE));
                 let thanks = self.pc_line(1000, 1099, talk);
@@ -2317,6 +2408,49 @@ mod tests {
         say.pay(&file, price, service, ret, &mut talk);
         assert_eq!(talk.sheet_changes.training, [(9, APPRENTICE)]);
         assert_eq!(floats(&say.deltas).last().unwrap().0, "There, done.");
+    }
+
+    #[test]
+    fn newspaper_sellers_read_the_headline_and_sell_papers() {
+        let file = DialogFile::parse(b"{1}{News?}{}{}{}{}{}\n{2}{P:}{}{1}{}{1}{}");
+        let rules = RulesData::default();
+        let sheet = CharacterSheet { gender: arcanum_rules::MALE, ..Default::default() };
+        let (mut inventory, mut pc, mut globals, mut attachment): (Inventory, PcScriptState, ScriptGlobals, Attachment) = Default::default();
+        let one_cell = |_: u32| Some(crate::ItemInfo { kind: arcanum_formats::object::TYPE_WRITTEN, inventory_art: 0, cells: (1, 1), weight: 1, magic_weight_adj: 0, complexity: 0, generic_flags: 0, weapon_flags: 0, armor_flags: 0, item_flags: 0, worth: 0 });
+        let mut talk = talk_with(&rules, &sheet, &mut inventory, &mut pc, &mut globals, &mut attachment);
+        talk.item_info = &one_cell;
+        talk.change_gold(10);
+        talk.globals.newspapers.queue = vec![-1, 1010, -1, -1, 5000];
+        let mut generic = generic_with(&[
+            ("mes/gd_npc_m2m.mes", "{4200}{What paper?}{4300}{Want it?}{4400}{No old papers.}{4500}{These old ones.}"),
+            ("mes/gd_cls_m2m.mes", "{1000}{That will be %d coins.}{15000}{Here.}"),
+            ("mes/gd_cls_pc2m.mes", "{1000}{Thanks.}"),
+            ("mes/gd_pc2m.mes", "{1}{Yes.}{100}{No.}{800}{Forget it.}{1900}{A paper, please.}{2000}{Headline?}{2100}{Older ones?}{2200}{Today's.}"),
+            ("mes/gamenewspaper.mes", "{1010}{490c BRIDGE FALLS}{5000}{490c GNOMES REJOICE}"),
+        ]);
+        let info = npc(0);
+        let mut rng = crate::HostRng::default();
+        let mut say = Say { npc_net: NetId(7), dialog: 1, pc_name: "Vel", npc: &info, generic: &mut generic, vfs: None, rng: &mut rng, deltas: Vec::new(), jumps: 0, areas: &crate::areas::NO_AREAS, pc_at: arcanum_formats::map::TileLoc { x: 0, y: 0 } };
+        let Shown::Line(_, options) = say.show(&file, 1, &mut talk) else { panic!() };
+        assert_eq!(options[0].text, "A paper, please.");
+        say.deltas.clear();
+        let Shown::Line(_, options) = say.chosen(&file, 2, &mut talk, 0) else { panic!() };
+        assert_eq!(floats(&say.deltas)[0].0, "What paper?");
+        assert_eq!(options.iter().map(|o| o.text.as_str()).collect::<Vec<_>>(), ["Today's.", "Headline?", "Older ones?", "Forget it."]);
+        say.deltas.clear();
+        let Shown::Line(_, options) = say.headline(&file, 1, &mut talk) else { panic!() };
+        assert_eq!(floats(&say.deltas)[0].0, "GNOMES REJOICE. Want it?");
+        assert_eq!(options[0].act, OptionAct::BuyPaper { paper: 5000, ret: 1 });
+        say.deltas.clear();
+        let Shown::Line(_, options) = say.old_papers(&file, 1, &mut talk) else { panic!() };
+        assert_eq!(options[0], Offered { text: "BRIDGE FALLS.".into(), act: OptionAct::BuyPaper { paper: 1010, ret: 1 } });
+        let Shown::Line(_, options) = say.ask_price(&file, NEWSPAPER_PRICE, Service::Newspaper(1010), 1, &mut talk) else { panic!() };
+        let OptionAct::Pay { price, service, ret } = options[0].act else { panic!() };
+        assert_eq!(price, 2, "the least price");
+        say.pay(&file, price, service, ret, &mut talk);
+        assert_eq!(talk.gold(), 8);
+        let paper = talk.inventory.items.iter().find(|i| i.prototype == NEWSPAPER_PROTOTYPE).expect("bought");
+        assert_eq!(paper.written, 1010);
     }
 
     #[test]

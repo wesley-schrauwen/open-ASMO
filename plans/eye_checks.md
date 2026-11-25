@@ -172,6 +172,12 @@ guard (race icon, level, 100% gauges) and the locked chest (icon, "Locked", 100/
 - [ ] A telegram shows the Tarant Union Telegraph form with its message.
 - [ ] Days later (rest), a script's headline float shows the day's paper.
 
+## Newspaper sellers
+
+- [ ] A newspaper seller's "I would like to buy a newspaper." offers today's paper, the
+      headline, older papers; buying one for 2-4 coins puts a newspaper in the inventory that
+      reads as that day's paper.
+
 ## Spotting traps while walking
 
 - [ ] Walking towards a trap object with Spot Trap, the PC sometimes stops a tile short with
