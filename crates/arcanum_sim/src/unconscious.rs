@@ -121,6 +121,7 @@ pub fn gate_unconscious(
     pickups.0.retain(|r| !down.contains(&r.0));
     picks.0.retain(|r| !down.contains(&r.0));
     casts.0.retain(|r| !down.contains(&r.0));
+    casts.1.retain(|r| !down.contains(&r.0));
     disarms.0.retain(|r| !down.contains(&r.0));
     rests.0.retain(|r| !down.contains(&r.0));
     talks.talk.retain(|r| !down.contains(&r.0));

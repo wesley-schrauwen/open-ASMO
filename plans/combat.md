@@ -295,7 +295,11 @@ of `combat_design.md` come after the original's rules work.
      bought by another PC, every dead PC gets up with 15 % of its hit points, at least 1
      (owner's call: the original never resurrects a PC; first built with 1).
    - Owner's note, not built: moving a dead PC to the nearest inn (to be detailed).
-   - Not built: the Resurrect spell cast by a PC, a dead PC's items and followers.
+   - The Resurrect spell (`feat/healing-spells`): any PC knowing it raises a dead PC (15 %) or a
+     dead NPC (all its hit points: the list's `Full | Resurrect`).
+   - Note: the list gives Resurrect `Dmg_Flags: Full | Resurrect`; the original's NPCs come back
+     whole. The 15 % for PCs is the owner's call.
+   - Not built: a dead PC's items and followers.
 12. **Script events** (built, `feat/combat-events`; hook 0x441980 args: triggerer, attachee,
     extra, event, checked at 0x45da20).
    - Hit 7 / miss 8 on the PC's weapon (triggerer the attacker; 0x4b37a3 / 0x4b3972), then
