@@ -162,3 +162,8 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
       columns, filler stories after.
 - [ ] A telegram shows the Tarant Union Telegraph form with its message.
 - [ ] Days later (rest), a script's headline float shows the day's paper.
+
+## Spotting traps while walking
+
+- [ ] Walking towards a trap object with Spot Trap, the PC sometimes stops a tile short with
+      "You have spotted a trap!".

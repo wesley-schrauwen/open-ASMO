@@ -1689,6 +1689,42 @@ mod tests {
     }
 
     #[test]
+    fn a_pc_with_spot_trap_stops_before_a_trap_object() {
+        use arcanum_formats::object::{Object, TYPE_TRAP, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "Virgil", TileLoc { x: 70, y: 70 })]));
+        // A mechanical trap on (73, 70).
+        let sector = SectorId::new(1, 1);
+        let trap_at = |x: u32| Value::Int64(Some(i64::from(x) | (70i64 << 32)));
+        let index = {
+            let mut map = sim.app.world_mut().resource_mut::<LoadedMap>();
+            let trap = Object::parse_instance(&ObjectBuilder::new(TYPE_TRAP).field("location", trap_at(73)).build()).unwrap();
+            let list = map.mobiles.entry(sector).or_default();
+            list.push(trap);
+            let index = list.len() as u32 - 1;
+            map.set_attachment(crate::ScriptObject::Mobile { sector, index }, crate::EVENT_USE, crate::Attachment { flags: 0, counters: [2, 2, 0, 0], number: 30001 });
+            index
+        };
+        let trap = arcanum_formats::script::Script { description: "Mechanical trap".into(), flags: crate::TRAP_MECHANICAL | arcanum_formats::script::RUN_ONCE, lines: vec![] };
+        sim.app.world_mut().resource_mut::<crate::Scripts>().0.get_or_insert_with(Default::default).insert(30001, trap);
+        {
+            let world = sim.app.world_mut();
+            let mut sheet = world.query::<&mut crate::Sheet>().single_mut(world).unwrap();
+            sheet.0.base = [20, 20, 20, 20, 8, 20, 20, 20];
+            sheet.0.skills[crate::SKILL_SPOT_TRAP] = 5;
+        }
+        send_move(&mut sim, 7, 1, &[(71, 70), (72, 70), (73, 70), (74, 70)]);
+        for _ in 0..ticks_for(4) {
+            sim.update();
+        }
+        let flags = sim.app.world().resource::<LoadedMap>().object_flags(sector, index, true).unwrap();
+        assert_eq!(flags & crate::OF_TRAP_SPOTTED, crate::OF_TRAP_SPOTTED, "spotted (95 %)");
+        assert_eq!(position(&mut sim, 7), TileLoc { x: 72, y: 70 }, "stopped before it");
+    }
+
+    #[test]
     fn players_learn_which_npcs_their_pc_has_met() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());

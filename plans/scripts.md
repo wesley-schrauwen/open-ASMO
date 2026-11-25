@@ -489,7 +489,12 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      adds `trap_difficulty` only for trap objects); a Master who fails without a critical
      failure rolls again. Success: the script number becomes 0 (0x4bc220); a critical failure
      springs it on the PC (0x441980 event 1). `mes/skill_ui.mes` 560 / 561.
-   - **Not built:** spotting while walking (0x427110: trap objects, mask 0x20000); the arrow
+   - **Spotting while walking** (built, `feat/walk-spotting`; 0x427110 each step): a walking PC
+     rolls Spot Trap for the unspotted trap objects (type 17; not doors or containers) on the
+     tile its next step enters, once a tile per walk; spotting one marks it, says
+     `mes/trap.mes` 0 and stops the walk before the step. Traps a PC set (`flags` 0x1000000)
+     are known. Followers do not roll yet.
+   - **Not built:** stepping onto a trap object (what springs it was not found); the arrow
      trap's attack roll (0x4b3170 from its source object, 30007); recovered parts on a critical
      success (0x4bc9c0, table 0x5b5f80); setting traps (0x4bc480, table 0x5b5f60); the eye candy
      (`rules/TrapEyeCandy.mes` N × 10 + 0-2); the client's way to arm Disarm Traps (the bottom

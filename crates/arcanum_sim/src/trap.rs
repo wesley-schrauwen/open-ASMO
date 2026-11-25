@@ -13,8 +13,13 @@
 //!   attachment's script number becomes 0); a critical failure springs it on the PC (0x441980
 //!   event 1). `mes/skill_ui.mes` 560 / 561 tell the result.
 //!
-//! Not built: spotting while walking (0x427110, trap objects on tiles, mask 0x20000); the
-//! recovered trap parts on a critical success for an Expert or Master (0x4bc9c0, table
+//! - **Spotting while walking** (0x427110, each step): a PC about to step onto a tile with a
+//!   trap object (type 17, list mask 0x20000) it has not spotted rolls Spot Trap, once a tile;
+//!   spotting it stops the walk before the step. Doors and containers are not checked this way.
+//!   NPCs know their traps (0x4bbfe0); the original's followers roll too (not built).
+//!
+//! Not built: stepping onto a trap object (what springs it was not found); the recovered trap
+//! parts on a critical success for an Expert or Master (0x4bc9c0, table
 //! 0x5b5f80; the critical success roll 0x4c81a0 is not decoded); setting traps (0x4bc480);
 //! the eye candy (`rules/TrapEyeCandy.mes` N × 10 + 2 on a spotted trap); scenery and trap
 //! objects as targets (doors and containers only).
@@ -25,6 +30,8 @@ use crate::{LedgerDelta, LoadedMap, LockTarget, Outbox, PlayerControlled, Player
 
 /// `flags`: the object's trap has been spotted (0x4bc090).
 pub const OF_TRAP_SPOTTED: i32 = 0x200_0000;
+/// `flags`: a trap a PC set (0x4bc480): PCs know it.
+pub const OF_TRAP_PLACED_BY_PC: i32 = 0x100_0000;
 /// The Spot Trap and Disarm Traps skills (`mes/skill.mes` order).
 pub const SKILL_SPOT_TRAP: usize = 7;
 pub const SKILL_DISARM_TRAPS: usize = 15;
@@ -52,6 +59,79 @@ pub fn roll_spot(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::Charac
 pub fn roll_disarm(chance: i32, training: u8, rng: &mut crate::HostRng) -> crate::PickOutcome {
     let outcome = crate::roll_pick(chance, 0, rng);
     if outcome == crate::PickOutcome::Failure && training >= MASTER { crate::roll_pick(chance, 0, rng) } else { outcome }
+}
+
+/// The tile a walking PC last rolled for.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpotChecked(pub arcanum_formats::map::TileLoc);
+
+/// The trap objects (type 17) on `at` whose trap is not spotted: sector, index, magical.
+fn unspotted_traps(map: &LoadedMap, host: &mut crate::script_host::ScriptHost, at: arcanum_formats::map::TileLoc) -> Vec<(arcanum_formats::map::SectorId, u32, bool)> {
+    let sector = at.sector();
+    let candidates: Vec<(u32, u32)> = map
+        .mobiles
+        .get(&sector)
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter(|(_, o)| o.object_type == arcanum_formats::object::TYPE_TRAP && crate::object_location(o) == Some(at))
+        .filter(|(_, o)| map.prototypes.int(o, "flags").unwrap_or(0) & (OF_TRAP_SPOTTED | OF_TRAP_PLACED_BY_PC | crate::OF_OFF | crate::OF_DESTROYED) == 0)
+        .map(|(i, _)| (i as u32, map.attachment(crate::ScriptObject::Mobile { sector, index: i as u32 }, crate::EVENT_USE).number))
+        .collect();
+    candidates
+        .into_iter()
+        .filter_map(|(index, number)| {
+            let flags = host.script_flags(number)?;
+            crate::is_trap(number, &arcanum_formats::script::Script { description: String::new(), flags, lines: vec![] }).then_some((sector, index, flags & crate::TRAP_MAGICAL != 0))
+        })
+        .collect()
+}
+
+type SpotterQuery<'a> = (Entity, &'a PlayerControlled, &'a mut crate::Walking, &'a Sheet, Option<&'a SpotChecked>);
+
+/// A walking PC rolls Spot Trap for each trap object on the tile its next step enters, once a
+/// tile; spotting one marks it, tells the player and stops the walk where the PC stands.
+#[allow(clippy::too_many_arguments)]
+pub fn spot_traps_walking(
+    mut commands: Commands,
+    mut map: ResMut<LoadedMap>,
+    mut world: ResMut<WorldState>,
+    mut host: crate::script_host::ScriptHost,
+    rules: Res<SimRules>,
+    session: Res<crate::Session>,
+    mut outbox: ResMut<Outbox>,
+    mut pcs: Query<SpotterQuery>,
+    idle: Query<Entity, (With<SpotChecked>, Without<crate::Walking>)>,
+) {
+    // A PC that stopped rolls again on its next walk.
+    for entity in &idle {
+        commands.entity(entity).remove::<SpotChecked>();
+    }
+    for (entity, controlled, mut walking, sheet, checked) in &mut pcs {
+        let Some(&next) = walking.steps.front() else { continue };
+        if checked.is_some_and(|c| c.0 == next) {
+            continue;
+        }
+        commands.entity(entity).insert(SpotChecked(next));
+        let mut spotted = false;
+        for (sector, index, magical) in unspotted_traps(&map, &mut host, next) {
+            if !roll_spot(&rules.0, &sheet.0, magical, host.rng()) {
+                continue;
+            }
+            spotted = true;
+            let flags = map.object_flags(sector, index, true).unwrap_or(0) | OF_TRAP_SPOTTED;
+            map.set_object_flags(sector, index, true, flags);
+            crate::ground::save_change(&mut world, &map, sector);
+            crate::ground::broadcast(&session, &mut outbox, LedgerDelta::ObjectFlags { sector, index, mobile: true, flags });
+        }
+        if spotted {
+            walking.steps.clear();
+            let text = host.trap_line(crate::TRAP_LINE_SPOTTED);
+            if let Some(text) = text {
+                outbox.0.push((controlled.0, LedgerDelta::ScriptMessage { text }));
+            }
+        }
+    }
 }
 
 /// Players' requests to disarm a trap: the target and the move sent with it.
