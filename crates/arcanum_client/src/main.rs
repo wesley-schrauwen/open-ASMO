@@ -117,6 +117,15 @@ fn main() {
         app.add_systems(OnEnter(AppState::InGame), move |mut commands: Commands| commands.insert_resource(arcanum_client::actors::DebugClick { at, frames: 90 }));
     }
 
+    // Debugging aid: `DEBUG_ARCANUM_HOVER=x,y` keeps the cursor at that window position (logical
+    // pixels from the top left) in the world, for the hover text.
+    if let Some(at) = std::env::var("DEBUG_ARCANUM_HOVER").ok().and_then(|v| {
+        let (x, y) = v.split_once(',')?;
+        Some(Vec2::new(x.trim().parse().ok()?, y.trim().parse().ok()?))
+    }) {
+        app.add_systems(Update, (move |mut windows: Query<&mut Window>| windows.iter_mut().for_each(|mut w| w.set_cursor_position(Some(at)))).run_if(in_state(AppState::InGame)));
+    }
+
     // Debugging aid: `DEBUG_ARCANUM_PANEL=character` (or `tech`, `spells` for those tabs) opens
     // the character screen once the PC's sheet is in.
     let panel_tab = match std::env::var("DEBUG_ARCANUM_PANEL").as_deref() {

@@ -89,6 +89,9 @@ pub struct PcStatus {
     pub portrait: Option<String>,
     pub hit_points: Pool,
     pub fatigue: Pool,
+    /// Its level (the hover text shows it).
+    #[serde(default)]
+    pub level: i32,
 }
 
 /// A change to shared state, sent from the host to clients.

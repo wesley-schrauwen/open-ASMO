@@ -151,6 +151,15 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 - [ ] An NPC not yet talked to shows its unknown name ("Man", "Elf"…); after talking, its own.
 - [ ] Magick or tech items not identified show their unknown name.
 
+## Hover details
+
+Checked by screenshot (`DEBUG_ARCANUM_HOVER`): the PC (level, gauges, 30/30), the half-ogre
+guard (race icon, level, 100% gauges) and the locked chest (icon, "Locked", 100/100).
+- [ ] Compare with the original: the half-ogre icon (`RaceHOgreIcon.ART`, 382) shows a gun.
+- [ ] A weapon on the ground shows its stats row (`D:2-8  TH:+5`), weight and hit points; a
+      magick one's name in light red.
+- [ ] A door shows the door icon; a window the window icon.
+
 ## Reading items
 
 - [ ] A book or note picked up opens in the written window when dropped on the inventory's use
