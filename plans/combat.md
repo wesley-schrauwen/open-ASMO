@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-10 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`).
+Status: steps 1-11 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`).
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -214,8 +214,8 @@ of `combat_design.md` come after the original's rules work.
    - Script events on the NPC, the PC the triggerer: 13 entering a fight (attacked or set on),
      14 leaving it (fleeing), 12 dying (after the kill: builder's call, the original runs it
      first and a script may stop the death).
-   - A PC at 0 hit points lies down as an unconscious one does until healed (builder's call:
-     the original's PC dies and the game ends; the owner decides what death is in co-op).
+   - A PC at 0 hit points lies down as an unconscious one does until healed (builder's call,
+     replaced by step 11's owner's call).
    - Real data: all 2399 scripts run to an end.
    - Not built: hit / miss events (7 / 8 not traced), the fate points that wait on attacks.
 5. **Noticing** (built, `feat/combat-notice`).
@@ -287,3 +287,11 @@ of `combat_design.md` come after the original's rules work.
    - Not built: the hit's timing at the action frame (the host resolves at once), speed-scaled
      frame times, hit effects, projectiles, the weapon code in the art (wielded weapons), thrown
      weapons' animation 14.
+11. **PC death** (built, `feat/pc-death`; owner's call: the original ends the game).
+   - A PC whose hit points run out is dead (`CharacterSheet::dead`, `PcStatus::dead`): it lies
+     where it fell, takes no turns or requests (moves, uses, rests, talks, picks), and no
+     healing (scripts, dialogue, rest) raises it.
+   - Resurrection: a healer of college 5 offers Resurrect while a PC of the party is dead;
+     bought by another PC, every dead PC gets up with 1 hit point (builder's call).
+   - Owner's note, not built: moving a dead PC to the nearest inn (to be detailed).
+   - Not built: the Resurrect spell cast by a PC, a dead PC's items and followers.
