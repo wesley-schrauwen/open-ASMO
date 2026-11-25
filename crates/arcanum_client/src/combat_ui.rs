@@ -15,7 +15,8 @@
 //! - **Animations:** the attacker faces its target and plays its attack once ([`attack_anim`],
 //!   0x42b9c0: 20 or 21 by body); an NPC an attack killed plays its death from the first frame
 //!   when the host spawns it again dead ([`Dying`]; the host picks the death, 0x4b5306); one
-//!   knocked down falls (7) and gets up (8).
+//!   knocked down falls (7) and gets up (8); one knocked out falls when spawned again lying and
+//!   gets up (8) when spawned again standing ([`Lying`]).
 //!
 //! - **Planning** ([`plan_move`], 0x56f430): on the PC's turn, the tile or NPC under the cursor
 //!   gives the planned cost (2 a step; an NPC: the steps into reach and the attack): the bar
@@ -132,6 +133,27 @@ pub struct NpcHealth(pub std::collections::HashMap<NetId, (arcanum_sim::Pool, ar
 #[derive(Resource, Debug, Default)]
 pub struct Dying(pub std::collections::HashSet<NetId>);
 
+/// NPCs last spawned lying (knocked out or dead: [`LYING_ANIMS`]): spawned again standing, they
+/// play the get-up ([`crate::actors::ANIM_GET_UP`]; builder's call for one raised from the dead).
+#[derive(Resource, Debug, Default)]
+pub struct Lying(pub std::collections::HashSet<NetId>);
+
+/// The animations a critter lies in: knocked down 7 (also the light death), the deaths 17-19
+/// (0x4b5306).
+pub const LYING_ANIMS: [u32; 4] = [crate::actors::ANIM_KNOCKED_DOWN, 17, 18, 19];
+
+impl Lying {
+    /// Notes NPC `net_id` spawned with `art`: true when it lay before and stands now.
+    pub fn gets_up(&mut self, net_id: NetId, art: arcanum_formats::art_id::ArtId) -> bool {
+        if LYING_ANIMS.contains(&((art.0 >> 6) & 0x1f)) {
+            self.0.insert(net_id);
+            false
+        } else {
+            self.0.remove(&net_id)
+        }
+    }
+}
+
 /// The attack animation of critter art `art` (0x42b9c0 → 0x503f60): 20 when its body's (table
 /// 0x5be980: human, elf 1, half-ogre 2) or monster's (0x5be994, by bits 23-27) entry is set, else
 /// 21; unique NPCs 20. Not built: 14 for thrown weapons, 21 forced by `flags` 0x80 or while
@@ -216,12 +238,14 @@ fn apply_combat_deltas(
                     a.rotation = r;
                 }
             }
-            if outcome.killed {
+            // Killed or knocked out: the fall plays when the host spawns it again lying.
+            use arcanum_sim::combat::{KNOCKED_DOWN, KNOCKED_OUT};
+            let out = outcome.effects & KNOCKED_OUT != 0;
+            if outcome.killed || out {
                 dying.0.insert(*target);
             }
             // Knocked down (goal 62, animation 7), then up again (goal 63, animation 8).
-            use arcanum_sim::combat::KNOCKED_DOWN;
-            for (who, fell) in [(*target, outcome.effects & KNOCKED_DOWN != 0 && !outcome.killed), (*attacker, outcome.fumble_effects & KNOCKED_DOWN != 0)] {
+            for (who, fell) in [(*target, outcome.effects & KNOCKED_DOWN != 0 && !outcome.killed && !out), (*attacker, outcome.fumble_effects & KNOCKED_DOWN != 0)] {
                 if fell && let Some(mut a) = actors.iter_mut().find(|a| a.net_id == who) {
                     a.action = Some((crate::actors::ANIM_KNOCKED_DOWN, 0.0));
                     a.then = Some(crate::actors::ANIM_GET_UP);
@@ -248,6 +272,7 @@ impl Plugin for CombatUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CombatView>()
             .init_resource::<Dying>()
+            .init_resource::<Lying>()
             .init_resource::<NpcHealth>()
             .init_resource::<CombatDeltas>()
             .add_systems(OnExit(AppState::InGame), |mut v: ResMut<CombatView>| *v = CombatView::default())
@@ -413,6 +438,19 @@ pub fn apply(delta: &LedgerDelta, view: &mut CombatView, floats: Option<&mut cra
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_npc_that_lay_gets_up_when_spawned_standing() {
+        use arcanum_formats::art_id::CritterArt;
+        let art = |anim| CritterArt { anim, male: true, ..Default::default() }.id();
+        let mut lying = Lying::default();
+        let id = NetId(7);
+        assert!(!lying.gets_up(id, art(0)), "standing from the start");
+        assert!(!lying.gets_up(id, art(crate::actors::ANIM_KNOCKED_DOWN)), "knocked out");
+        assert!(lying.gets_up(id, art(0)), "awake");
+        assert!(!lying.gets_up(id, art(0)), "once");
+        assert!(!lying.gets_up(id, art(18)) && lying.gets_up(id, art(0)), "raised from the dead");
+    }
 
     #[test]
     fn attackers_swing_by_their_body_facing_the_target() {

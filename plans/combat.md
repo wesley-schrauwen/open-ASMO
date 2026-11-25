@@ -380,8 +380,10 @@ of `combat_design.md` come after the original's rules work.
    - Below 1 an NPC is down (0x45d800): it lies on animation 7's last frame, loses its turns,
      counts for no side, notices nothing and does not wander. Its fatigue recovers by
      `(CO + 1) / 3` every 80 000 game ms (as PCs', 0x45e610); above 0 it gets up.
-   - Not built: the get-up animation for NPCs (they are spawned again standing), the turn
-     ending for a PC knocked out on its turn (0x4b7c90).
+   - The client (`feat/npc-get-up`, `combat_ui::Lying`): a knocked-out NPC falls (7) when
+     spawned again lying, and gets up (8) when spawned again standing; one raised from the dead
+     gets up too (builder's call).
+   - Not built: the turn ending for a PC knocked out on its turn (0x4b7c90).
 18. **NPCs' health in the hover** (built, `feat/npc-health`).
    - Every 5 ticks the host compares each NPC's hit points and fatigue with what it last told,
      and sends `LedgerDelta::NpcHealth` on a change (at first sight only when not whole); the
