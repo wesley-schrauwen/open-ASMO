@@ -92,6 +92,9 @@ pub struct RulesData {
     pub schematics: Vec<Schematic>,
     /// The pre-made characters, built from their PC prototypes.
     pub premades: Vec<crate::blueprint::Premade>,
+    /// Experience to reach each level: entry L is `Rules/xp_level.mes` line L + 1, the
+    /// experience needed to leave level L (entry 0 is 0; loader 0x4a6600, table 0x5f5c94).
+    pub xp_levels: Vec<i32>,
 }
 
 pub(crate) fn read_mes(vfs: &Vfs, path: &str) -> Result<MesFile, String> {
@@ -125,6 +128,9 @@ impl RulesData {
         }
         if let Some(m) = optional("rules/schematic.mes") {
             data.schematics = parse_schematics(&m);
+        }
+        if let Some(m) = optional("Rules/xp_level.mes") {
+            data.xp_levels = parse_xp_levels(&m);
         }
         data.load_premades(vfs);
         Ok(data)
@@ -204,6 +210,14 @@ impl RulesData {
         }
         v
     }
+}
+
+/// The experience table from `Rules/xp_level.mes`: 51 entries, entry i line i + 1, entry 0
+/// always 0.
+pub fn parse_xp_levels(mes: &MesFile) -> Vec<i32> {
+    let mut out: Vec<i32> = (1..=crate::LEVEL_LIMIT as u32).map(|id| mes.get(id).and_then(|t| t.trim().parse().ok()).unwrap_or(0)).collect();
+    out[0] = 0;
+    out
 }
 
 /// What a change in an effect line acts on: the five key tables of 0x4e9c20.
