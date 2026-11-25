@@ -949,6 +949,36 @@ mod tests {
     }
 
     #[test]
+    fn an_unconscious_pc_loses_its_turn() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let mut foe = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(72, 70)).field("hp_pts", Value::Int32(500));
+        foe.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
+        std::fs::write(folder.join("G_0F.mob"), foe.build()).unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        let npc = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::NpcSource)>().iter(world).next().unwrap().0 };
+        let pc = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::PlayerControlled)>().iter(world).next().unwrap().0 };
+        sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: npc, seq: 0 })]);
+        sim.update();
+        let turn = |deltas: &[(PlayerId, LedgerDelta)]| deltas.iter().rev().find_map(|(_, d)| match d { LedgerDelta::Combat { turn, .. } => Some(*turn), _ => None });
+        let first = turn(&sim.take_deltas());
+        assert_eq!(first, Some(Some(pc)), "the PC's turn, points left");
+        // Knocked out on its own turn: the turn passes to the NPC.
+        sim.app.world_mut().resource_mut::<WorldState>().0.as_mut().unwrap().players.get_mut(&PlayerId(1)).unwrap().blueprint.sheet.fatigue_damage = 1000;
+        sim.update();
+        assert_eq!(turn(&sim.take_deltas()), Some(Some(npc)), "the NPC's turn");
+    }
+
+    #[test]
     fn allies_of_the_victim_join_and_neutrals_flee() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;

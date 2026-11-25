@@ -1061,6 +1061,13 @@ impl CombatWorld<'_, '_> {
         self.world.0.as_ref().and_then(|w| w.players.get(&p)).is_some_and(|s| s.blueprint.sheet.hp_damage >= self.rules.0.derived(&s.blueprint.sheet).hit_points)
     }
 
+    /// A PC out of fatigue (0x45d800: fatigue below 1): its turns pass (0x4b7580 → 0x45d790;
+    /// one knocked out on its own turn ends it, 0x45d5a0 → 0x4b7c90).
+    fn pc_out(&self, c: &Seen) -> bool {
+        let Some(p) = c.player else { return false };
+        self.world.0.as_ref().and_then(|w| w.players.get(&p)).is_some_and(|s| crate::is_unconscious(self.rules.0.derived(&s.blueprint.sheet).fatigue - s.blueprint.sheet.fatigue_damage))
+    }
+
     /// A PC takes an attack's damage on its sheet (0x4b4390): hit points (at most all of them),
     /// poison, fatigue; the sheet is sent on ([`crate::sync_script_sheets`]).
     fn hurt_pc(&mut self, player: PlayerId, outcome: &AttackOutcome) {
@@ -1362,7 +1369,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
                 changed |= acted;
                 !acted
             }
-            Some(c) => e.ap <= 0 || w.pc_down(c),
+            Some(c) => e.ap <= 0 || w.pc_down(c) || w.pc_out(c),
         };
         if done {
             next_turn(&mut w, &all);
@@ -1577,9 +1584,9 @@ fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[See
     };
     let target = npc.target.and_then(|t| all.iter().find(|c| c.net_id == t)).filter(|c| standing(c)).cloned();
     // Else the nearest of the other side: a follower's foes are the fighting NPCs, a foe's the
-    // PCs.
+    // PCs; unconscious PCs last (0x4ab460 adds 1000 to a downed critter's score).
     let other_side = |c: &&Seen| if npc.leader.is_some() { c.foe() && c.fighting } else { c.player.is_some() };
-    let target = target.or_else(|| all.iter().filter(in_fight).filter(other_side).filter(|c| standing(c)).min_by_key(|c| crate::tile_distance(c.at, npc.at)).cloned());
+    let target = target.or_else(|| all.iter().filter(in_fight).filter(other_side).filter(|c| standing(c)).min_by_key(|c| (w.pc_out(c), crate::tile_distance(c.at, npc.at))).cloned());
     let Some(target) = target else { return false };
     if npc.target != Some(target.net_id) {
         commands.entity(npc.entity).insert(Fighting { target: target.net_id });
