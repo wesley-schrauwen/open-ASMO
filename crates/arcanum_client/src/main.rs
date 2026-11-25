@@ -169,6 +169,8 @@ fn main() {
         let kind = match kind {
             "book" => arcanum_sim::WRITTEN_BOOK,
             "note" => arcanum_sim::WRITTEN_NOTE,
+            "newspaper" => arcanum_sim::WRITTEN_NEWSPAPER,
+            "telegram" => arcanum_sim::WRITTEN_TELEGRAM,
             "image" => arcanum_sim::WRITTEN_IMAGE,
             "plaque" => arcanum_sim::WRITTEN_PLAQUE,
             _ => return None,

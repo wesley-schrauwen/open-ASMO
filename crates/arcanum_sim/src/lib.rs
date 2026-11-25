@@ -28,6 +28,7 @@ pub mod inventory;
 pub mod keys;
 pub mod lockpick;
 pub mod trap;
+pub mod newspaper;
 pub mod magick;
 pub mod intent;
 pub mod movement;

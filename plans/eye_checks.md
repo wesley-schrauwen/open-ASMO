@@ -155,3 +155,10 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 
 - [ ] A book or note picked up opens in the written window when dropped on the inventory's use
       box, or right-clicked; the inventory closes.
+
+## Newspapers and telegrams
+
+- [ ] A newspaper item read from the inventory shows the Tarantian: header, headline, stories in
+      columns, filler stories after.
+- [ ] A telegram shows the Tarant Union Telegraph form with its message.
+- [ ] Days later (rest), a script's headline float shows the day's paper.

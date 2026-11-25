@@ -689,6 +689,11 @@ impl ScriptContext for HostWorld<'_> {
         }
     }
 
+    fn newspaper_text(&mut self, key: i32) -> Option<String> {
+        let mes = arcanum_formats::mes::MesFile::parse(&self.vfs?.read(crate::newspaper::NEWSPAPER_MES).ok()?).ok()?;
+        mes.get(u32::try_from(key).ok()?).map(str::to_string)
+    }
+
     /// Carried items only: the first such item the holder has (items are kept by prototype
     /// here); a map item's field is not kept.
     fn set_written_line(&mut self, item: ScriptObject, line: i32) {
