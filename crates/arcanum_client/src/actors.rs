@@ -628,7 +628,7 @@ fn click_to_move(
     armed: Option<ResMut<crate::skill_use::SkillTargeting>>,
     (link, party, local): (Option<Res<HostLink>>, Res<Party>, Res<LocalPc>),
     (rest, dialogue, actors): (Option<Res<crate::rest_window::RestPanel>>, Option<Res<crate::dialogue_ui::DialogueState>>, Query<PickedActor>),
-    (fate, written): (Option<Res<crate::fate_window::FatePanel>>, Option<Res<crate::written_window::WrittenPanel>>),
+    (fate, written, combat): LaterWindows,
 ) {
     // An unconscious PC does nothing (0x4348e0).
     if local.0.is_some_and(|(id, _)| unconscious(&party, id)) {
@@ -652,6 +652,10 @@ fn click_to_move(
             }
             // The sleep window takes its clicks; while resting, nothing reaches the world.
             if rest.is_some_and(|r| r.resting || r.covers(crate::inventory_screen::screen_point(size, cursor))) || fate.is_some_and(|f| f.covers(crate::inventory_screen::screen_point(size, cursor))) || written.is_some_and(|w| w.open.is_some()) {
+                return;
+            }
+            // The AP bar takes its clicks.
+            if combat.as_ref().is_some_and(|c| crate::combat_ui::covers(c, local.0.map(|(id, _)| id), crate::inventory_screen::screen_point(size, cursor))) {
                 return;
             }
             // While talking, the options panel takes the clicks (builder's call: the world none).
@@ -700,9 +704,16 @@ fn click_to_move(
         }
         return;
     }
-    // An NPC under the cursor: walk to it and talk (0x42af00).
+    // An NPC under the cursor: walk to it and talk (0x42af00); in combat mode or a fight, attack
+    // it (the host walks a melee attacker there).
     let npcs = actors.iter().filter(|a| !a.4.pc).map(|(e, s, a, t, _)| (e, s, a, t));
     if let Some((_, _, _, _, npc)) = crate::picking::pick(world, npcs, &images).and_then(|e| actors.get(e).ok()) {
+        if combat.as_ref().is_some_and(|c| c.attacks(local.0.map(|(id, _)| id))) {
+            if let Some(link) = link.as_ref() {
+                let _ = link.0.send_intent(PlayerIntent::Attack { target: npc.net_id, seq: 0 });
+            }
+            return;
+        }
         debug!("click at {cursor} is on NPC {:?}", npc.net_id);
         walk.click_talk(npc.net_id, npc.at);
         return;
@@ -748,6 +759,9 @@ fn stop_prowling(buttons: Res<ButtonInput<MouseButton>>, windows: Query<&Window>
         let _ = link.0.send_intent(PlayerIntent::Prowl { on: false });
     }
 }
+
+/// The fate and written windows and the fight, as `click_to_move` takes them.
+type LaterWindows<'w> = (Option<Res<'w, crate::fate_window::FatePanel>>, Option<Res<'w, crate::written_window::WrittenPanel>>, Option<Res<'w, crate::combat_ui::CombatView>>);
 
 /// Plans the local PC's path to [`WalkLocalPc::goal`] on the client's map, walks it and sends it
 /// to the host.

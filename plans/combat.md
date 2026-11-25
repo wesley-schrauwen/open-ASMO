@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-2 built (`feat/combat-turns`, `feat/combat-npcs`); the rest planned.
+Status: steps 1-3 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`); the rest planned.
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -125,8 +125,17 @@ of `combat_design.md` come after the original's rules work.
      (a 25 % roll missed 46 times in a row).
    - Not built: allies joining, surrender, ranged NPCs keeping their distance, fleeing weighed
      against the target.
-3. **The client:** the combat button, the AP bar and End Turn, clicking a critter to attack,
-   the floats, the attack, hit and death animations, the battle cursor.
+3. **The client** (built, `feat/combat-ui`; client `combat_ui`).
+   - The combat button toggles combat mode; in it, or while the player's PC fights, a click on
+     an NPC sends `PlayerIntent::Attack`.
+   - The AP bar (art 294 at (222, 412)) while the PC fights: green lights (295) for its points
+     on its turn, End Turn (297) sends `PlayerIntent::EndTurn`; the bar takes its clicks.
+   - Floats from `combat.mes` for each attack: "HT n", "FT n", "Dodge!", "Critical hit",
+     "Damage +x%", "Critical miss"; white over NPCs, red over PCs (`FloatColour::Red`).
+   - Checked by screenshot (`DEBUG_ARCANUM_PANEL=fight`): the bar with two lights left after
+     the walk to the half-ogre guard.
+   - Not built: the orange and red lights of a planned move, the battle cursor and
+     `hoverattack.art`, the attack / hit / death animations, the button's pressed look.
 4. **Hooks:** script events 12-14 and hit / miss, action 0x24, dialogue `co`, PC death and the
    fate points that wait on attacks.
 5. **Noticing:** kill-on-sight NPCs and monsters starting fights; the hover's to-hit panel.

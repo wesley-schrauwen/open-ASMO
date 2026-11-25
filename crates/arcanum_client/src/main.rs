@@ -97,7 +97,7 @@ fn main() {
             arcanum_client::vote_popup::VotePopupPlugin,
             arcanum_client::cursor::CursorPlugin,
         ));
-    app.add_plugins(arcanum_client::world_hover::WorldHoverPlugin);
+    app.add_plugins((arcanum_client::world_hover::WorldHoverPlugin, arcanum_client::combat_ui::CombatUiPlugin));
 
     // Debugging aid (screenshots take no clicks): `DEBUG_ARCANUM_WALK=x,y` walks the PC to that
     // tile once it is in the world.
@@ -169,6 +169,25 @@ fn main() {
     // Debugging aid: `DEBUG_ARCANUM_PANEL=skillsbar` shows the bottom bar's skills view.
     if std::env::var("DEBUG_ARCANUM_PANEL").is_ok_and(|v| v == "skillsbar") {
         app.add_systems(OnEnter(AppState::InGame), |mut view: ResMut<arcanum_client::spell_bar::BarView>| view.skills = true);
+    }
+
+    // Debugging aid: `DEBUG_ARCANUM_PANEL=fight` attacks the nearest NPC once the PC is in.
+    if std::env::var("DEBUG_ARCANUM_PANEL").is_ok_and(|v| v == "fight") {
+        app.add_systems(
+            Update,
+            (|link: Option<Res<arcanum_client::sim_bridge::HostLink>>, pc: Res<arcanum_client::sim_bridge::LocalPc>, actors: Query<&arcanum_client::actors::Actor>, mut done: Local<u32>| {
+                let Some((_, at)) = pc.0 else { return };
+                *done += 1;
+                if *done != 30 {
+                    return;
+                }
+                let nearest = actors.iter().filter(|a| !a.pc).min_by_key(|a| a.at.x.abs_diff(at.x).max(a.at.y.abs_diff(at.y)));
+                if let (Some(npc), Some(link)) = (nearest, link) {
+                    let _ = link.0.send_intent(arcanum_sim::PlayerIntent::Attack { target: npc.net_id, seq: 0 });
+                }
+            })
+            .run_if(in_state(AppState::InGame)),
+        );
     }
 
     // Debugging aid: `DEBUG_ARCANUM_PANEL=prowl` starts prowling once the PC is in.
@@ -355,9 +374,11 @@ fn screenshot_and_exit(
     *frames += 1;
     // Grace frames so the layout has been applied and the renderer has finished preparing its
     // pipelines (a screen that is ready very early would otherwise be captured black).
-    if *frames == 60 {
+    // `DEBUG_ARCANUM_SCREENSHOT_FRAMES` waits longer (for something to happen first).
+    let wait = std::env::var("DEBUG_ARCANUM_SCREENSHOT_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(60);
+    if *frames == wait {
         commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path.0.clone()));
-    } else if *frames == 150 {
+    } else if *frames == wait + 90 {
         exit.write(AppExit::Success);
     }
 }

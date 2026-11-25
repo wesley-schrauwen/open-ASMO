@@ -40,6 +40,7 @@ pub mod screens;
 pub mod settings;
 pub mod sim_bridge;
 pub mod skill_use;
+pub mod combat_ui;
 pub mod spell_bar;
 pub mod text_field;
 pub mod vfs_asset;
