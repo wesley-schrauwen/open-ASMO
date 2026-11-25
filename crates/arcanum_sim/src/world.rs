@@ -1180,6 +1180,14 @@ mod tests {
         let map = sim.app.world().resource::<LoadedMap>();
         let (left, max) = map.npc_hp(SectorId::new(1, 1), 0).unwrap();
         assert_eq!(left, max, "healed whole");
+        // Resurrect on the NPC once dead: 15 % too (owner's call).
+        sim.app.world_mut().resource_mut::<LoadedMap>().kill_npc(None, SectorId::new(1, 1), 0, 7);
+        sim.receive([(PlayerId(1), crate::PlayerIntent::CastOn { spell: crate::RESURRECT as usize, target: npc_id })]);
+        sim.update();
+        let map = sim.app.world().resource::<LoadedMap>();
+        let (left, max) = map.npc_hp(SectorId::new(1, 1), 0).unwrap();
+        assert!(!map.is_dead(SectorId::new(1, 1), 0), "raised");
+        assert_eq!(left, crate::resurrected_hp(max));
     }
 
     #[test]
