@@ -370,7 +370,8 @@ of `combat_design.md` come after the original's rules work.
      `hoverattack.art` (555), with the art's hotspot (builder's call).
    - Checked by screenshot (`DEBUG_ARCANUM_HOVER=700,600`, the fight at the crash site): 3
      orange and 9 red lights for a 12-point walk with 3 points left.
-   - Not built: the planned path drawn on the ground.
+   - Finding: the original draws no planned path on the ground (0x56f430 draws only the AP
+     bar's 20 slots into window 0x5caa18 through 0x51da80; no path or marker art found).
 17. **NPC fatigue and knocking out** (built, `feat/knock-out`).
    - NPCs' fatigue is kept (`critter_fatigue_damage`, `SectorDelta::npc_fatigue`; most as
      0x45d670: `pts × 4 + adj + 4 + (level + CO) × 2 + WP`). Hits' fatigue damage lands on it
@@ -383,7 +384,14 @@ of `combat_design.md` come after the original's rules work.
    - The client (`feat/npc-get-up`, `combat_ui::Lying`): a knocked-out NPC falls (7) when
      spawned again lying, and gets up (8) when spawned again standing; one raised from the dead
      gets up too (builder's call).
-   - Not built: the turn ending for a PC knocked out on its turn (0x4b7c90).
+   - PCs out of fatigue (`feat/pc-out-turn`): 0x4b7c90 ends the current actor's turn (AP to 0,
+     0x4b7cbd → 0x4b7690); fatigue damage that knocks a critter out calls it (0x45d5a0, at
+     0x45d653), and turn starts skip critters that cannot act (0x4b7580 → 0x45d790: hit points
+     or fatigue below 1, flags 0x60). Built: an unconscious PC's turn passes; NPCs pick
+     unconscious PCs last (0x4ab460 adds 1000 to a downed target's score, does not exclude it).
+   - Finding: the original has no "all PCs down" end of the fight in the functions read; here a
+     fight still ends when no PC has hit points (unchanged). 0x4b6c90, 0x4af260 / 0x4af470's
+     tests of downed targets not read.
 18. **NPCs' health in the hover** (built, `feat/npc-health`).
    - Every 5 ticks the host compares each NPC's hit points and fatigue with what it last told,
      and sends `LedgerDelta::NpcHealth` on a change (at first sight only when not whole); the
