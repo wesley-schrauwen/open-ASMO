@@ -85,3 +85,9 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
       level-up line.
 - [ ] Virgil, following, comes along through a map change and arrives beside the PC; told to
       wait first, he stays behind; going back, he is home again.
+
+## Script gaps 5
+
+- [ ] A plaque's text appears in the message box when a script shows it.
+- [ ] An object a script transforms or gives new art is redrawn for every player; one destroyed
+      disappears.

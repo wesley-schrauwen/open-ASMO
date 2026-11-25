@@ -353,6 +353,39 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      updates.
    - **Real data:** 2105 of 2399 scripts run to an end (2085 before). Next: 0x3c (29), 0x3d (26),
      0x3a kill (17), 0x28 (12), 0x72 (12).
+4h. **Damage, spells, transforms, text, art, skills, destroy, switches** (built,
+   `feat/script-gaps-5`).
+   - **0x3c damage** (0x4489f9 → 0x4b2210 / 0x4b4390): objects, amount, kind (0 normal, 2
+     electrical, 3 fire: hit points; 1 poison, stat 0x18; 4 fatigue). PCs take it on the sheet,
+     hit points down to 0. Not built: armour and resistances, death, NPCs' damage.
+   - **0x3d spell on a target, no caster** (0x448ab7 → 0x455a20 / 0x455ac0): here Minor /
+     Major Healing (5 / 40, no aptitude) and Halt Poison on PCs; other spells not built (the
+     script goes on).
+   - **0x28 transform** (0x447e89): the script's own object becomes a new object of prototype N
+     in its place (0x4ed8b0: only its location stored). Kept (`object_protos` / `mobile_protos`,
+     applied before the other changes, which it clears), sent (`ObjectTransformed`), the sector
+     redrawn, an NPC spawned again. Not built: keeping the hurt fraction, rotation, the carrier
+     of an item.
+   - **0x72 plaque / 0x40 book** (0x44a15d / 0x448ba4 → 0x4ee290 → 0x56bc00): to the PC's
+     player's message box, a paragraph a line (builder's call: no book or plaque window yet);
+     `gameplaque.mes` one entry, `gamebook.mes` entries to the first gap; the font and
+     justification token left out.
+   - **0x3b art number** (0x448947 → 0x502780, frame 0, kept only if the art exists): unique
+     NPCs 8 bits at 20, items 11 at 17 (the limit 0x502830 not read: 2048), interface 12 at 16,
+     others 9 at 19; tiles, walls, critters, monsters none. Kept (`object_art` / `mobile_art`),
+     sent (`ObjectArt`), redrawn.
+   - **0x2f skill level** (0x448374): PCs the rules' level; NPCs points × 4 up to 20 (their stat
+     cap not applied).
+   - **0x44 destroy** (0x448d19 → 0x43cca0): flag 0x1 (hidden, not blocking, NPCs gone). The
+     destroy event (2) is not run.
+   - **0x6e / condition 0x2e**: flip / test entry N of the 256-entry table 0x5fc350 (bit 0x80),
+     kept as `ScriptGlobals::switches`. Its other users read objects' bits 21+ (probably monster
+     generators; not traced).
+   - **Conditions:** 0x7 a global quest state is N (0x4c51a0; none are kept: 0); 0x15 wears an
+     item named N (slots 1000-1008); 0x1f a critter with `critter_flags` 0x40000 (meaning not
+     traced).
+   - **Real data:** 2232 of 2399 scripts run to an end (2105 before). Next: 0x3a kill (17),
+     set 0xd (9), traps (8), 0x11 / 0x15 (6).
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,

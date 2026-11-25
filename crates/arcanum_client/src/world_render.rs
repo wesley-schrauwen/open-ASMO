@@ -99,7 +99,7 @@ pub struct MapDeltas(pub Vec<LedgerDelta>);
 impl MapDeltas {
     /// Whether this module handles `delta`.
     pub fn wants(delta: &LedgerDelta) -> bool {
-        matches!(delta, LedgerDelta::MapChanges { .. } | LedgerDelta::ObjectFlags { .. } | LedgerDelta::PortalChanged { .. } | LedgerDelta::GroundItemDropped { .. } | LedgerDelta::GroundItemTaken { .. } | LedgerDelta::PileChanged { .. } | LedgerDelta::ContainerShown { .. } | LedgerDelta::LockChanged { .. })
+        matches!(delta, LedgerDelta::MapChanges { .. } | LedgerDelta::ObjectFlags { .. } | LedgerDelta::ObjectArt { .. } | LedgerDelta::ObjectTransformed { .. } | LedgerDelta::PortalChanged { .. } | LedgerDelta::GroundItemDropped { .. } | LedgerDelta::GroundItemTaken { .. } | LedgerDelta::PileChanged { .. } | LedgerDelta::ContainerShown { .. } | LedgerDelta::LockChanged { .. })
     }
 }
 
@@ -387,9 +387,19 @@ fn apply_map_deltas(
             LedgerDelta::LockChanged { target, flags } => {
                 client.map.set_lock_flags(target, flags);
             }
-            // An object switched off or on: the sector is drawn again with it hidden or shown.
-            LedgerDelta::ObjectFlags { sector, index, mobile, flags } => {
-                client.map.set_object_flags(sector, index, mobile, flags);
+            // An object switched off or on, given new art or made another object: the sector is
+            // drawn again.
+            LedgerDelta::ObjectFlags { sector, .. } | LedgerDelta::ObjectArt { sector, .. } | LedgerDelta::ObjectTransformed { sector, .. } => {
+                match delta {
+                    LedgerDelta::ObjectFlags { index, mobile, flags, .. } => {
+                        client.map.set_object_flags(sector, index, mobile, flags);
+                    }
+                    LedgerDelta::ObjectArt { index, mobile, art, .. } => client.map.set_object_art(sector, index, mobile, art),
+                    LedgerDelta::ObjectTransformed { index, mobile, prototype, .. } => {
+                        client.map.transform_object(sector, index, mobile, prototype);
+                    }
+                    _ => {}
+                }
                 if client.drawn.remove(&sector) {
                     for (entity, object) in &objects {
                         if object.location.sector() == sector {

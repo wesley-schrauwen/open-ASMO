@@ -352,6 +352,122 @@ impl ScriptContext for HostWorld<'_> {
         }
     }
 
+    /// PCs take it on their sheet (hit points at most to 0: death is not built); NPCs' damage
+    /// is not kept (builder's call: they have no hit point state yet). Armour and resistances
+    /// are not applied.
+    fn damage(&mut self, object: ScriptObject, amount: i32, kind: i32) {
+        let ScriptObject::Pc(p) = object else { return };
+        let Some(saved) = self.players.get_mut(&p) else { return };
+        let sheet = &mut saved.blueprint.sheet;
+        let amount = amount.max(0);
+        match kind {
+            1 => sheet.poison += amount,
+            4 => sheet.fatigue_damage += amount,
+            _ => {
+                let max = self.rules.derived(sheet).hit_points;
+                sheet.hp_damage = (sheet.hp_damage + amount).min(max);
+            }
+        }
+        self.sheets.insert(p);
+    }
+
+    /// The healing spells on a PC, with no caster's aptitude: Minor / Major Healing heal 5 / 40,
+    /// Halt Poison takes 50 poison. Other spells cast this way are not built (the script goes
+    /// on).
+    fn cast_on(&mut self, spell: i32, target: ScriptObject) {
+        let ScriptObject::Pc(p) = target else { return };
+        let Some(saved) = self.players.get_mut(&p) else { return };
+        let sheet = &mut saved.blueprint.sheet;
+        match u32::try_from(spell).unwrap_or(u32::MAX) {
+            crate::HALT_POISON => sheet.poison = (sheet.poison - 50).max(0),
+            s @ (crate::MINOR_HEALING | crate::MAJOR_HEALING) => sheet.hp_damage = (sheet.hp_damage - crate::spell_heal(s, 0)).max(0),
+            _ => return,
+        }
+        self.sheets.insert(p);
+    }
+
+    /// Objects of the map only: kept in the sector's changes, sent to every player; an NPC is
+    /// spawned again as the new prototype, unhurt (its damage is not kept).
+    fn transform(&mut self, object: ScriptObject, prototype: i32) {
+        let (Some((sector, index, mobile)), Ok(prototype)) = (map_place(object), u32::try_from(prototype)) else { return };
+        if self.map.transform_object(sector, index, mobile, prototype) {
+            self.sectors.insert(sector);
+            self.flag_changes.push(crate::LedgerDelta::ObjectTransformed { sector, index, mobile, prototype });
+            if mobile {
+                self.npcs_toggled.push((sector, index));
+            }
+        }
+    }
+
+    /// The text goes to the player's message box, a paragraph a line (builder's call: the
+    /// original's book and plaque windows, 0x56bc00, are not built). A plaque is one entry of
+    /// `mes/gameplaque.mes`; a book, the entries of `mes/gamebook.mes` from `line` on, up to the
+    /// first gap. Each entry starts with a font number and a justification letter, left out.
+    fn show_text(&mut self, kind: i32, line: i32, to: ScriptObject) {
+        let ScriptObject::Pc(p) = to else { return };
+        let (file, most) = if kind == 6 { ("mes/gameplaque.mes", 1) } else { ("mes/gamebook.mes", 50) };
+        let Some(mes) = self.vfs.and_then(|v| v.read(file).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()) else { return };
+        let Ok(first) = u32::try_from(line) else { return };
+        for id in first..first + most {
+            let Some(text) = mes.get(id) else { break };
+            let text = text.trim_start();
+            let body = text.split_once(|c: char| c.is_whitespace()).map_or("", |(_, rest)| rest);
+            for paragraph in body.lines().map(str::trim).filter(|l| !l.is_empty()) {
+                self.messages.push((p, paragraph.to_string()));
+            }
+        }
+    }
+
+    /// Objects of the map: the number field of the art id by its type (0x502780), frame 0
+    /// (0x502c40); kept only when that art exists (0x502220), and sent to every player.
+    fn set_art_number(&mut self, object: ScriptObject, number: i32) {
+        let Some((sector, index, mobile)) = map_place(object) else { return };
+        let Some(old) = self.map.object_at(sector, index, mobile).and_then(|o| self.map.prototypes.art_id(o)) else { return };
+        let Some(art) = with_art_number(old, number) else { return };
+        let art = crate::with_frame(art, 0);
+        let exists = self.map.art.as_deref().and_then(|a| a.path(art)).is_some_and(|p| self.vfs.is_some_and(|v| v.exists(&p)));
+        if !exists {
+            return;
+        }
+        self.map.set_object_art(sector, index, mobile, art.0);
+        self.sectors.insert(sector);
+        self.flag_changes.push(crate::LedgerDelta::ObjectArt { sector, index, mobile, art: art.0 });
+        if mobile {
+            self.npcs_toggled.push((sector, index));
+        }
+    }
+
+    /// PCs: the rules' level; NPCs: points × 4, at most 20 (their stats do not cap it here).
+    fn skill_level(&mut self, object: ScriptObject, k: i32) -> i32 {
+        let Ok(k) = usize::try_from(k) else { return 0 };
+        if k >= arcanum_rules::SKILLS {
+            return 0;
+        }
+        match object {
+            ScriptObject::Pc(p) => self.players.get(&p).map_or(0, |s| self.rules.skill_level(&s.blueprint.sheet, k)),
+            ScriptObject::Mobile { sector, index } => {
+                let Some(o) = self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)) else { return 0 };
+                let (field, i) = if k < 12 { ("critter_basic_skill_idx", k) } else { ("critter_tech_skill_idx", k - 12) };
+                let raw = o.ints(field).or_else(|| self.map.prototypes.of(o)?.ints(field)).and_then(|v| v.get(i).copied()).unwrap_or(0);
+                ((raw & 0x3f) * arcanum_rules::LEVELS_PER_POINT).min(arcanum_rules::MAX_SKILL_LEVEL)
+            }
+            ScriptObject::Map(_) => 0,
+        }
+    }
+
+    /// Objects of the map: flagged destroyed (0x1), so hidden, not blocking, NPCs gone. The
+    /// destroy event (2) is not run.
+    fn destroy(&mut self, object: ScriptObject) {
+        let Some((sector, index, mobile)) = map_place(object) else { return };
+        let Some(flags) = self.map.object_flags(sector, index, mobile) else { return };
+        self.toggle_flags(object, !flags & crate::OF_DESTROYED);
+    }
+
+    fn wears_item_named(&mut self, object: ScriptObject, name: i32) -> bool {
+        let Some(inventory) = self.inventory(object) else { return false };
+        inventory.items.iter().any(|i| (crate::FIRST_SLOT..=crate::LAST_SLOT).contains(&i.location) && self.item_name(i.prototype) == Some(name))
+    }
+
     /// Objects of the map: kept in the sector's changes and sent to every player; NPCs go or
     /// come. PCs are not switched (builder's call: no script switches one).
     fn toggle_flags(&mut self, object: ScriptObject, mask: i32) {
@@ -458,6 +574,30 @@ impl ScriptContext for HostWorld<'_> {
     fn player(&mut self) -> Option<ScriptObject> {
         Some(ScriptObject::Pc(self.player))
     }
+}
+
+/// A map object's place: sector, index, whether it is a mobile one.
+fn map_place(object: ScriptObject) -> Option<(arcanum_formats::map::SectorId, u32, bool)> {
+    match object {
+        ScriptObject::Map(id) => Some((id.sector, id.index, false)),
+        ScriptObject::Mobile { sector, index } => Some((sector, index, true)),
+        ScriptObject::Pc(_) => None,
+    }
+}
+
+/// `art` with its number set to `n` by the art's type (0x502780): unique NPCs 8 bits at 20,
+/// items 11 at 17, interface 12 at 16, the others 9 at 19; tiles, walls, critters and monsters
+/// have none. Out of range: no change.
+pub fn with_art_number(art: arcanum_formats::art_id::ArtId, n: i32) -> Option<arcanum_formats::art_id::ArtId> {
+    let (limit, mask, shift) = match art.art_type() {
+        0 | 1 | 2 | 0xc => return None,
+        0xd => (0x100, 0x0ff0_0000u32, 20),
+        6 => (0x800, 0x0ffe_0000, 17),
+        5 => (0x1000, 0x0fff_0000, 16),
+        _ => (0x200, 0x0ff8_0000, 19),
+    };
+    let n = u32::try_from(n).ok().filter(|&n| n < limit)?;
+    Some(arcanum_formats::art_id::ArtId((art.0 & !mask) | (n << shift)))
 }
 
 impl HostWorld<'_> {
@@ -750,6 +890,16 @@ mod tests {
         fn build_instance(&self) -> Object {
             Object::parse_instance(&self.build()).unwrap()
         }
+    }
+
+    #[test]
+    fn art_numbers_sit_where_the_art_type_keeps_them() {
+        use arcanum_formats::art_id::ArtId;
+        let scenery = ArtId(0x4000_0000 | 5 << 19 | 3 << 11);
+        assert_eq!(with_art_number(scenery, 73), Some(ArtId(0x4000_0000 | 73 << 19 | 3 << 11)), "rotation kept");
+        assert_eq!(with_art_number(scenery, 512), None, "9 bits");
+        assert_eq!(with_art_number(ArtId(0x6000_0000), 1500), Some(ArtId(0x6000_0000 | 1500 << 17)), "items: 11 bits at 17");
+        assert_eq!(with_art_number(ArtId(0x2000_0000), 1), None, "critters have no number");
     }
 
     #[test]
