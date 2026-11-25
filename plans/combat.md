@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-5 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`).
+Status: steps 1-6 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`).
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -70,10 +70,24 @@ of `combat_design.md` come after the original's rules work.
 ### NPCs (0x4a9650, 0x4ab460, 0x4aabe0)
 
 - **Hostility** (0x4a9650): an attack makes the victim fight the attacker (its target in field
-  0x11b, who hit it in 0x11c); allies within 2 / 8 / 15 tiles who notice it join (same faction,
-  party); neutrals flee; a PC attacker's reaction drops (-10 at least).
-- **States** (0x4aab00): idle, fighting (`npc_flags` 0x1), fleeing (`critter_flags` 0x10),
-  surrendered (0x4000). Fleeing and surrender by `rules/ai_params.mes` (41 rows of 17 numbers,
+  0x11b, who hit it in 0x11c; setter 0x4aabe0 state 1).
+  - Followers of both sides (0x4a9b80 → 0x4a9c00) fight the other side; one that likes the
+    victim stays out (0x4adcc0) and likes its leader 5 less.
+  - Witnesses (0x4a9e10): NPCs within a square of the radius (table 0x5b50c0 `{2, 8, 15, 1}`; a
+    hit passes index 2) round the victim, through 0x4a9f10. Sides by 0x4ae3a0: itself, its
+    leader, the same side (0x45d110: the same top leader or an equal non-zero `npc_faction`,
+    0x45d080; with a PC, leading it or the PC's reputation with its faction, 0x4c21e0). An ally
+    of the victim who notices it fights the attacker; an ally of the attacker who notices it
+    fights the victim; one of neither side, idle, not `OCF_NO_FLEE`, who notices the attacker
+    flees (0x4aabe0 state 2).
+  - Noticing: sight 0x4af260 (`clamp(PE, 1, 10)` tiles, cut by stealth) or hearing 0x4af470.
+  - The victim's reaction to a PC attacker: lowered to column 10 if above it (−10 for an
+    indirect hit, flag 1); a leader hitting its follower sets column 9 and may make it rebel
+    (0x4ad950). Hit and death witnesses within 10 tiles like the attacker's leader 20 less
+    (0x4aee50, not built).
+- **States** (0x4aab00 reads them, 0x4aabe0 sets them; checked: 0x4aab00 is the getter): idle,
+  fighting (`npc_flags` 0x1), fleeing (`critter_flags` 0x10, its target in 0xe6),
+  surrendered (0x4000, the same target). Setting fighting raises event 13, leaving it 14. Fleeing and surrender by `rules/ai_params.mes` (41 rows of 17 numbers,
   row by field 0x11a): flee at the row's HP percent (0), against the target's strength (1-3).
 - **Targets** (0x4ab460): critters within `clamp(PE, 1, 10)` tiles it sees or hears, nearest
   first, hostile by (0x4ae120): `npc_flags` 0x100 (kill on sight) without 0x800; a PC whose
@@ -98,6 +112,24 @@ of `combat_design.md` come after the original's rules work.
   followers.
 - **Cursor:** art 353 `battlecur.art` in combat mode; a hovered critter gets `hoverattack.art`
   (555). A click on a critter attacks (0x54ed30 → 0x4445a0).
+
+### `ai_params.mes` columns (agent's reading of the row's stack offsets; 0, 10, 11 checked)
+
+| Col | Use |
+|---|---|
+| 0 | flee at or below this hit point percent (0x4ab2f0) |
+| 1, 2 | flee when the target's group is col 1 larger, or its summed level col 2 higher (0x4ab2f0, 0x4ae0a0) |
+| 3 | do not flee from a target whose hit point percent is below it |
+| 4 | a new target farther than this is ignored while fleeing (0x4ab030) |
+| 5-8 | reaction, alignment gaps and level for 0x4ad950 / 0x4adb50 |
+| 9 | the reaction a leader's hit sets on its follower |
+| 10 | hostile at or below this reaction; a hit lowers the reaction to it |
+| 11 | hostile at this alignment gap |
+| 12 | alignment ceiling of liking (0x4adcc0) |
+| 13 | idle behaviour roll (0x4abc70) |
+| 14 | a percent chance in combat (0x4a8940) |
+| 15 | keep-away distance of a fighter (0x4ac6e0 / 0x4ac7b0) |
+| 16 | unknown (0x4aeb10) |
 
 ## Steps
 
@@ -157,3 +189,17 @@ of `combat_design.md` come after the original's rules work.
      difficulty in the icon's place; the dodge and 0x461620 terms not counted.
    - Checked by screenshot: no fight starts at the house of the start tile `90330,84122` nor at
      the crash site.
+6. **Others join** (built, `feat/combat-allies`; `combat::rally`).
+   - Each attack (0x4a9650): NPCs within 15 tiles of the victim, not fighting yet: followers of
+     either side, and NPCs allied to a side (`combat::allied`: a PC they follow, the same leader,
+     the same non-zero `npc_faction`) who notice that side's critter (`notice_reach`), fight the
+     other side and join the encounter (event 13); NPCs of neither side who notice the attacker,
+     idle and not `OCF_NO_FLEE`, walk up to 8 tiles away (builder's call, as fleeing).
+   - A PC attacker's victim likes it no more than its row's column 10.
+   - The order: PCs, their fighting followers, the others (0x4b7eb0). Followers in a fight stop
+     following and attack the nearest fighting NPC when their target is gone; a fight goes on
+     while an NPC that follows no PC fights.
+   - Distances are radii (owner's rule), not the original's square.
+   - Not built: the bark, followers who like the victim staying out, a leader hitting its
+     follower, the witnesses' −20 (0x4aee50), the PC's reputation with a faction, prowling
+     attackers noticed less.

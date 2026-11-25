@@ -14,13 +14,17 @@
 //!   walking next to it first, until out of points.
 //! - **The attack** ([`resolve`], 0x4b3170): see the function. A hit makes an NPC victim fight
 //!   its attacker (0x4a9650) and join the encounter (0x4b7e00).
+//! - **Others join** ([`rally`], 0x4a9650 → 0x4a9b80 / 0x4a9e10): followers of either side;
+//!   NPCs within [`ENGAGE_RADIUS`] tiles of the victim (radius table 0x5b50c0 `{2, 8, 15, 1}`,
+//!   index 2) on a side ([`allied`], 0x4ae3a0) who notice that side's critter; neutrals who notice
+//!   the attacker flee. A PC attacker's victim likes it no more than its row's column 10.
 //! - **Damage to NPCs** is kept as `hp_damage` in the sector's changes; at 0 hit points they die
 //!   as action 0x3a kills (0x45da20), and the experience is shared (team rule).
 //!
 //! - **PCs hurt:** an NPC's hit goes on the PC's sheet (hit points, poison, fatigue) as script
 //!   damage does; a PC with no hit points left takes no turns.
 //!
-//! Not built yet: allies joining (0x4a9e10), surrender, fleeing weighed against the target
+//! Not built yet: surrender, fleeing weighed against the target
 //! (columns 1-3), critical effects other than the multiplier, called shots, the light, range and
 //! cover terms, ammunition, PC death.
 
@@ -430,7 +434,7 @@ impl crate::LoadedMap {
 
 /// What the combat systems need of the world.
 #[derive(bevy_ecs::system::SystemParam)]
-pub struct CombatWorld<'w> {
+pub struct CombatWorld<'w, 's> {
     pub combat: ResMut<'w, Combat>,
     pub requests: ResMut<'w, CombatRequests>,
     pub map: ResMut<'w, crate::LoadedMap>,
@@ -446,10 +450,13 @@ pub struct CombatWorld<'w> {
     pub ai: ResMut<'w, AiParams>,
     pub starts: ResMut<'w, CombatStarts>,
     pub events: ResMut<'w, CombatEvents>,
+    pub reputations: ResMut<'w, crate::ReputationTable>,
+    /// NPCs made to fight this tick (their `Fighting` lands after the system).
+    pub joined: Local<'s, Vec<NetId>>,
 }
 
 /// A critter as the combat systems see it.
-type CombatantQuery<'a> = (Entity, &'a NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::Sheet>, Option<&'a crate::Inventory>, Option<&'a Fighting>, Has<crate::Walking>, Option<&'a PendingAttack>);
+type CombatantQuery<'a> = (Entity, &'a NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::Sheet>, Option<&'a crate::Inventory>, Option<&'a Fighting>, Has<crate::Walking>, Option<&'a PendingAttack>, Option<&'a crate::follow::Following>);
 
 /// One critter of the query, copied out.
 #[derive(Clone)]
@@ -466,11 +473,21 @@ struct Seen {
     target: Option<NetId>,
     walking: bool,
     pending: Option<PendingAttack>,
+    /// The PC it follows.
+    leader: Option<PlayerId>,
+}
+
+impl Seen {
+    /// An NPC fighting for no PC.
+    fn foe(&self) -> bool {
+        self.npc.is_some() && self.leader.is_none()
+    }
 }
 
 fn seen(q: &Query<CombatantQuery>) -> Vec<Seen> {
     q.iter()
-        .map(|(entity, &net_id, at, pc, npc, sheet, inventory, fighting, walking, pending)| Seen {
+        .map(|(entity, &net_id, at, pc, npc, sheet, inventory, fighting, walking, pending, following)| Seen {
+            leader: following.map(|f| f.leader),
             target: fighting.map(|f| f.target),
             entity,
             net_id,
@@ -486,7 +503,7 @@ fn seen(q: &Query<CombatantQuery>) -> Vec<Seen> {
         .collect()
 }
 
-impl CombatWorld<'_> {
+impl CombatWorld<'_, '_> {
     /// A critter's fighting side.
     fn fighter(&self, c: &Seen) -> Fighter {
         let prototypes = &self.map.prototypes;
@@ -550,6 +567,44 @@ impl CombatWorld<'_> {
         self.sheets.0.insert(player);
     }
 
+    /// An NPC's `ai_params.mes` row (by `npc_ai_data`, 0x4aaa60), the file read on first use.
+    fn ai_row(&mut self, source: crate::NpcSource) -> Option<[i32; 17]> {
+        if self.ai.0.is_none() {
+            let vfs = self.vfs.as_ref().map(|v| v.0.clone());
+            let guard = vfs.as_ref().and_then(|v| v.read().ok());
+            let mes = guard.as_deref().and_then(|v| v.read(AI_PARAMS).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).unwrap_or_default();
+            self.ai.0 = Some(parse_ai_params(&mes));
+        }
+        let row = self.npc_int(source, "npc_ai_data").max(0) as usize;
+        self.ai.0.as_ref()?.get(row).copied()
+    }
+
+    /// An NPC's field, its prototype's where it has none.
+    fn npc_int(&self, source: crate::NpcSource, field: &str) -> i32 {
+        self.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)).and_then(|o| self.map.prototypes.int(o, field)).unwrap_or(0)
+    }
+
+    /// NPC `source`'s reaction to PC `player`, everything counted.
+    fn reaction(&mut self, source: crate::NpcSource, player: PlayerId) -> Option<i32> {
+        if self.reputations.0.is_none() {
+            let vfs = self.vfs.as_ref().map(|v| v.0.clone());
+            let guard = vfs.as_ref().and_then(|v| v.read().ok());
+            self.reputations.0 = Some(guard.as_deref().and_then(|v| v.read(crate::GAME_REP).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).map(|m| crate::ReputationEffects::parse(&m)).unwrap_or_default());
+        }
+        let o = self.map.mobiles.get(&source.sector)?.get(source.index as usize)?;
+        let saved = self.world.0.as_ref()?.players.get(&player)?;
+        Some(crate::reaction_to(&saved.script_state, &crate::met_key(source.object()), &crate::NpcReaction::of(o, &self.map.prototypes), &self.rules.0, &saved.blueprint.sheet, self.reputations.0.as_ref()?))
+    }
+
+    /// Adds `delta` to the reaction NPC `source` keeps for PC `player` (as script action 0x2b).
+    fn change_reaction(&mut self, source: crate::NpcSource, player: PlayerId, delta: i32) {
+        let Some(base) = self.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)).map(|o| crate::NpcReaction::of(o, &self.map.prototypes).base) else { return };
+        let Some(saved) = self.world.0.as_mut().and_then(|w| w.players.get_mut(&player)) else { return };
+        let key = crate::met_key(source.object());
+        let stored = saved.script_state.reactions.get(&key).copied().unwrap_or(base);
+        saved.script_state.reactions.insert(key, stored + delta);
+    }
+
     fn tell(&mut self) {
         let delta = match &self.combat.0 {
             Some(e) => e.delta(),
@@ -559,13 +614,15 @@ impl CombatWorld<'_> {
     }
 }
 
-/// Who fights around `centre` (0x4b71e0 / 0x4b73a0): the PCs within the radius first, then the
-/// fighting NPCs, each in the order given; `first` leads.
+/// Who fights around `centre` (0x4b71e0 / 0x4b73a0): the PCs within the radius first, then
+/// their fighting followers (0x4b7eb0), then the other fighting NPCs, each in the order given;
+/// `first` leads.
 fn gather(all: &[Seen], centre: TileLoc, first: Option<NetId>) -> Vec<NetId> {
     let near = |c: &&Seen| crate::within_radius(c.at, centre, ENGAGE_RADIUS);
     let mut order: Vec<NetId> = first.into_iter().collect();
     order.extend(all.iter().filter(near).filter(|c| c.player.is_some()).map(|c| c.net_id).filter(|n| Some(*n) != first));
-    order.extend(all.iter().filter(near).filter(|c| c.npc.is_some() && c.fighting).map(|c| c.net_id).filter(|n| Some(*n) != first));
+    order.extend(all.iter().filter(near).filter(|c| c.leader.is_some() && c.fighting).map(|c| c.net_id).filter(|n| Some(*n) != first));
+    order.extend(all.iter().filter(near).filter(|c| c.foe() && c.fighting).map(|c| c.net_id).filter(|n| Some(*n) != first));
     order
 }
 
@@ -575,8 +632,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
     let all = seen(&critters);
     let find = |id: NetId| all.iter().find(|c| c.net_id == id).cloned();
     let mut changed = false;
-    // NPCs made to fight this tick (their `Fighting` lands after the system).
-    let mut joined: Vec<NetId> = Vec::new();
+    w.joined.clear();
     // Fights started by dialogue or scripts: the NPC fights its target (0x4a9650).
     for (npc, target) in std::mem::take(&mut w.starts.0) {
         let (Some(attacker), Some(victim)) = (find(npc), find(target)) else { continue };
@@ -585,7 +641,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
             continue;
         }
         commands.entity(attacker.entity).insert(Fighting { target });
-        joined.push(npc);
+        w.joined.push(npc);
         if !attacker.fighting && let Some(player) = victim.player {
             w.events.0.push((source.object(), EVENT_ENTER_COMBAT, player));
         }
@@ -618,7 +674,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
         }
         if !victim.fighting {
             commands.entity(victim.entity).insert(Fighting { target: pc.net_id });
-            joined.push(target);
+            w.joined.push(target);
             w.events.0.push((source.object(), EVENT_ENTER_COMBAT, player));
         }
         if w.combat.0.is_none() {
@@ -636,7 +692,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
             changed = true;
         }
         if e.current() == Some(pc.net_id) {
-            changed |= attack_or_approach(&mut commands, &mut w, &pc, &victim);
+            changed |= attack_or_approach(&mut commands, &mut w, &all, &pc, &victim);
         }
     }
     for player in std::mem::take(&mut w.requests.end_turn) {
@@ -653,7 +709,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
     {
         commands.entity(c.entity).remove::<PendingAttack>();
         if let Some(victim) = find(p.target) {
-            changed |= attack_or_approach(&mut commands, &mut w, &c, &victim);
+            changed |= attack_or_approach(&mut commands, &mut w, &all, &c, &victim);
         }
     }
     // An NPC's turn: flee or fight; a PC out of points, down or gone ends its turn.
@@ -681,7 +737,7 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
     // No NPC left fighting, or no PC standing: the fight is over at once (0x4b7580 finds no
     // active critter).
     if let Some(e) = &w.combat.0 {
-        let fights = e.order.iter().filter_map(|id| find(*id)).any(|c| c.npc.is_some_and(|n| !w.map.is_dead(n.sector, n.index)) && (c.fighting || joined.contains(&c.net_id)));
+        let fights = e.order.iter().filter_map(|id| find(*id)).any(|c| c.foe() && c.npc.is_some_and(|n| !w.map.is_dead(n.sector, n.index)) && (c.fighting || w.joined.contains(&c.net_id)));
         let stands = e.order.iter().filter_map(|id| find(*id)).any(|c| c.player.is_some() && !w.pc_down(&c));
         if !fights || !stands {
             w.combat.0 = None;
@@ -706,7 +762,7 @@ fn next_turn(w: &mut CombatWorld, all: &[Seen]) {
     if turn >= len {
         let alive: Vec<Seen> = all.iter().filter(|c| c.npc.is_none_or(|n| !w.map.is_dead(n.sector, n.index))).cloned().collect();
         let order = centre.map(|at| gather(&alive, at, None)).unwrap_or_default();
-        let fights = order.iter().any(|id| alive.iter().any(|c| c.net_id == *id && c.npc.is_some()));
+        let fights = order.iter().any(|id| alive.iter().any(|c| c.net_id == *id && c.foe()));
         let stands = order.iter().any(|id| alive.iter().any(|c| c.net_id == *id && c.player.is_some() && !w.pc_down(c)));
         if !fights || !stands {
             w.combat.0 = None;
@@ -728,7 +784,7 @@ fn next_turn(w: &mut CombatWorld, all: &[Seen]) {
 
 /// The attacker strikes if the target is in reach and the points last; a melee attacker out of
 /// reach walks next to it first, as far as its points go (0x4b78d0). True if something changed.
-fn attack_or_approach(commands: &mut Commands, w: &mut CombatWorld, attacker: &Seen, victim: &Seen) -> bool {
+fn attack_or_approach(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen) -> bool {
     let fighter = w.fighter(attacker);
     let cost = fighter.attack_cost();
     let ap = w.combat.0.as_ref().map_or(0, |e| e.ap);
@@ -740,7 +796,7 @@ fn attack_or_approach(commands: &mut Commands, w: &mut CombatWorld, attacker: &S
         if let Some(e) = w.combat.0.as_mut() {
             e.ap = (e.ap - cost).max(0);
         }
-        strike(commands, w, attacker, victim, &fighter);
+        strike(commands, w, all, attacker, victim, &fighter);
         return true;
     }
     if fighter.reach() > 1 {
@@ -801,15 +857,8 @@ fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[See
         return false;
     }
     if fresh {
-        if w.ai.0.is_none() {
-            let vfs = w.vfs.as_ref().map(|v| v.0.clone());
-            let guard = vfs.as_ref().and_then(|v| v.read().ok());
-            let mes = guard.as_deref().and_then(|v| v.read(AI_PARAMS).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).unwrap_or_default();
-            w.ai.0 = Some(parse_ai_params(&mes));
-        }
-        let o = w.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize));
-        let row = o.and_then(|o| w.ai.0.as_ref()?.get(w.map.prototypes.int(o, "npc_ai_data").unwrap_or(0).max(0) as usize).copied());
-        let flags = o.and_then(|o| w.map.prototypes.int(o, "critter_flags")).unwrap_or(0);
+        let row = w.ai_row(source);
+        let flags = w.npc_int(source, "critter_flags");
         let percent = w.map.npc_hp(source.sector, source.index).map_or(100, |(left, max)| if max > 0 { left * 100 / max } else { 100 });
         if let Some(row) = row
             && should_flee(percent, &row, flags)
@@ -835,13 +884,21 @@ fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[See
         }
     }
     let in_fight = |c: &&Seen| w.combat.0.as_ref().is_some_and(|e| e.order.contains(&c.net_id));
-    let target = npc.target.and_then(|t| all.iter().find(|c| c.net_id == t)).filter(|c| c.player.is_none() || !w.pc_down(c)).cloned();
-    let target = target.or_else(|| all.iter().filter(in_fight).filter(|c| c.player.is_some() && !w.pc_down(c)).min_by_key(|c| crate::tile_distance(c.at, npc.at)).cloned());
+    let standing = |c: &Seen| match (c.player, c.npc) {
+        (Some(_), _) => !w.pc_down(c),
+        (None, Some(n)) => !w.map.is_dead(n.sector, n.index),
+        _ => false,
+    };
+    let target = npc.target.and_then(|t| all.iter().find(|c| c.net_id == t)).filter(|c| standing(c)).cloned();
+    // Else the nearest of the other side: a follower's foes are the fighting NPCs, a foe's the
+    // PCs.
+    let other_side = |c: &&Seen| if npc.leader.is_some() { c.foe() && c.fighting } else { c.player.is_some() };
+    let target = target.or_else(|| all.iter().filter(in_fight).filter(other_side).filter(|c| standing(c)).min_by_key(|c| crate::tile_distance(c.at, npc.at)).cloned());
     let Some(target) = target else { return false };
     if npc.target != Some(target.net_id) {
         commands.entity(npc.entity).insert(Fighting { target: target.net_id });
     }
-    attack_or_approach(commands, w, npc, &target)
+    attack_or_approach(commands, w, all, npc, &target)
 }
 
 /// `rules/ai_params.mes`.
@@ -952,10 +1009,11 @@ pub fn neighbours(at: TileLoc) -> Vec<TileLoc> {
 
 /// One attack and what it does: an NPC victim fights back; its damage, death and the
 /// experience; everyone is told.
-fn strike(commands: &mut Commands, w: &mut CombatWorld, attacker: &Seen, victim: &Seen, fighter: &Fighter) {
+fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen, fighter: &Fighter) {
     let defender = w.fighter(victim);
     let outcome = resolve(fighter, &defender, &mut w.rng);
     crate::ground::broadcast(&w.session, &mut w.outbox, LedgerDelta::Attacked { attacker: attacker.net_id, target: victim.net_id, outcome });
+    rally(commands, w, all, attacker, victim);
     if let Some(player) = victim.player {
         if outcome.hit {
             w.hurt_pc(player, &outcome);
@@ -996,6 +1054,82 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, attacker: &Seen, victim:
         w.awards.0.push(xp);
     }
     crate::ground::save_change(&mut w.world, &w.map, source.sector);
+}
+
+/// Whether NPC `w` takes `x`'s side (0x4ae3a0 / 0x45d110): `x` itself; a PC it follows; an NPC
+/// following the same PC; an NPC of its own (non-zero) `npc_faction` (0x45d080). Not counted: a
+/// PC's reputation with its faction (0x4c21e0), leaders among NPCs.
+pub fn allied(w_leader: Option<PlayerId>, w_faction: i32, x_player: Option<PlayerId>, x_leader: Option<PlayerId>, x_faction: Option<i32>) -> bool {
+    match (x_player, x_faction) {
+        (Some(p), _) => w_leader == Some(p),
+        (None, Some(f)) => (w_leader.is_some() && w_leader == x_leader) || (w_leader.is_none() && x_leader.is_none() && f != 0 && f == w_faction),
+        (None, None) => false,
+    }
+}
+
+/// Who else an attack draws in (0x4a9650, the hit's radius index 2: [`ENGAGE_RADIUS`] tiles,
+/// table 0x5b50c0). Each NPC near the victim that is not fighting yet, alive and not the attacker
+/// or victim:
+/// - a follower of either side, or an NPC allied to the victim that notices it ([`notice_reach`]:
+///   sight or hearing), fights the other side (0x4a9b80 / 0x4a9f10 → 0x4aa620) and joins the
+///   encounter;
+/// - an NPC of neither side that notices the attacker, idle and not `OCF_NO_FLEE`, flees
+///   ([`FLEE_TILES`] away from it, out of the fight).
+///
+/// A PC attacker's NPC victim then likes it no more than its row's column 10 (0x4a9650: lowered
+/// to it, never raised; 0x4aabe0 again). Not built: the bark, a leader hitting its follower
+/// (column 9, rebellion 0x4ad950), indirect hits (-10), followers who like the victim staying out
+/// (0x4adcc0), prowling attackers noticed less.
+fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen) {
+    let faction = |w: &CombatWorld, c: &Seen| c.npc.map(|n| w.npc_int(n, "npc_faction"));
+    let (a_faction, v_faction) = (faction(w, attacker), faction(w, victim));
+    let player = attacker.player.or(victim.player);
+    for c in all {
+        let Some(source) = c.npc else { continue };
+        if c.net_id == attacker.net_id || c.net_id == victim.net_id || c.fighting || w.joined.contains(&c.net_id) || w.map.is_dead(source.sector, source.index) || !crate::within_radius(c.at, victim.at, ENGAGE_RADIUS) {
+            continue;
+        }
+        let own = w.npc_int(source, "npc_faction");
+        let Some(o) = w.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { continue };
+        let reach = notice_reach(npc_stat(o, &w.map.prototypes, 5), None);
+        let notices = |x: &Seen| crate::tile_distance(c.at, x.at) <= reach;
+        let for_victim = allied(c.leader, own, victim.player, victim.leader, v_faction) && (c.leader.is_some() || notices(victim));
+        let for_attacker = allied(c.leader, own, attacker.player, attacker.leader, a_faction) && (c.leader.is_some() || notices(attacker));
+        let foe = match (for_victim, for_attacker) {
+            (true, false) => attacker,
+            (false, true) => victim,
+            (false, false) => {
+                if c.leader.is_none() && !c.walking && w.npc_int(source, "critter_flags") & OCF_NO_FLEE == 0 && notices(attacker) {
+                    let away = flee_goal(c.at, attacker.at, FLEE_TILES);
+                    if let Ok(path) = crate::find_path(&*w.map, c.at, away)
+                        && !path.is_empty()
+                    {
+                        commands.entity(c.entity).insert(crate::Walking { steps: path.into(), progress: 0.0 });
+                    }
+                }
+                continue;
+            }
+            (true, true) => continue,
+        };
+        commands.entity(c.entity).insert(Fighting { target: foe.net_id });
+        w.joined.push(c.net_id);
+        if let Some(e) = w.combat.0.as_mut()
+            && !e.order.contains(&c.net_id)
+        {
+            e.order.push(c.net_id);
+        }
+        if let Some(player) = player {
+            w.events.0.push((source.object(), EVENT_ENTER_COMBAT, player));
+        }
+    }
+    // The victim's reaction to a PC attacker falls to its row's column 10.
+    if let (Some(player), Some(source)) = (attacker.player, victim.npc)
+        && let Some(row) = w.ai_row(source)
+        && let Some(now) = w.reaction(source, player)
+        && now > row[10]
+    {
+        w.change_reaction(source, player, row[10] - now);
+    }
 }
 
 #[cfg(test)]
@@ -1054,3 +1188,4 @@ mod tests {
         assert!(misses > 100, "25 %: {misses}");
     }
 }
+
