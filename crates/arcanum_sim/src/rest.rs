@@ -305,16 +305,16 @@ pub fn rest_steps(
         if resting.mode == RestMode::Sleep {
             let heal_rate = rules.0.derived(&sheet.0).heal_rate;
             let times = if resting.bed.is_some() { 2 } else { 1 };
-            let (_, fatigue) = heal_at_rest(0, sheet.0.fatigue_damage, heal_rate, times);
-            if fatigue != sheet.0.fatigue_damage {
-                sheet.0.fatigue_damage = fatigue;
+            let (hp, fatigue) = heal_at_rest(sheet.0.hp_damage, sheet.0.fatigue_damage, heal_rate, times);
+            if (hp, fatigue) != (sheet.0.hp_damage, sheet.0.fatigue_damage) {
+                (sheet.0.hp_damage, sheet.0.fatigue_damage) = (hp, fatigue);
                 if let Some(saved) = world.0.as_mut().and_then(|w| w.players.get_mut(&player.0)) {
                     saved.blueprint.sheet = sheet.0.clone();
                 }
                 crate::ground::broadcast(&session, &mut outbox, LedgerDelta::PcStatus { net_id, status: pc_status(&rules.0, &sheet.0) });
             }
         }
-        if resting.go_on(clock.now.hour(), 0) {
+        if resting.go_on(clock.now.hour(), sheet.0.hp_damage) {
             resting.ticks = STEP_TICKS;
         } else {
             commands.entity(entity).remove::<Resting>();

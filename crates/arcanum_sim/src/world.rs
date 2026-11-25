@@ -436,7 +436,7 @@ pub fn pc_status(rules: &arcanum_rules::RulesData, sheet: &CharacterSheet) -> Pc
     PcStatus {
         name: sheet.name.clone(),
         portrait: rules.portrait(sheet).map(str::to_string),
-        hit_points: Pool::full(derived.hit_points),
+        hit_points: Pool { current: derived.hit_points - sheet.hp_damage, max: derived.hit_points },
         fatigue: Pool { current: derived.fatigue - sheet.fatigue_damage, max: derived.fatigue },
     }
 }

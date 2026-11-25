@@ -145,6 +145,10 @@ pub enum OptionAct {
     Direct { area: u32, price: i32, mark: bool, ret: i32 },
     /// The next page of the directions list of option line `option` (actions 0x12 / 0x15).
     MoreDirections { option: i32, offset: usize, ret: i32 },
+    /// A page of the healing menu (actions 0xb-0xd: 0 all, 1 healing spells, 2 poison).
+    HealPage { page: u8, ret: i32 },
+    /// A healing chosen (actions 0xe / 0xf): free from a follower, else priced.
+    Heal { healing: Healing, ret: i32 },
 }
 
 /// What an NPC is paid for (the price dialogue's stored action).
@@ -156,6 +160,61 @@ pub enum Service {
     Train(usize),
     /// Directions to an area, and with `mark` marking it on the map (0x41a150 / 0x41a290).
     Directions { area: u32, mark: bool },
+    /// Healing with a skill or a spell (actions 0x10 / 0x11, 0x419cb0 / 0x419d50).
+    Heal(Healing),
+}
+
+/// What an NPC heals the PC with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Healing {
+    /// Skill N used on the PC (`U:N`, 10 Heal).
+    Skill(usize),
+    /// A white necromancy spell cast on the PC (60-64).
+    Spell(u32),
+}
+
+/// What an NPC can heal with (0x419830 / 0x419a00).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Healer {
+    /// Spells known in college 12, white necromancy (field 0xdf `critter_spell_tech_idx` 12).
+    pub college: i32,
+    /// Skills as stored (fields 0xdd / 0xde: points in bits 0-5, training rank in bits 6-7),
+    /// basic then tech.
+    pub skills: [i32; arcanum_rules::SKILLS],
+    /// Carries a healing kit: a generic item with `generic_flags` 8 (0x4c91f0 / 0x4ae570).
+    pub kit: bool,
+    /// The magick/tech aptitude (stat 0x10) from its spells and tech degrees.
+    pub aptitude: i32,
+}
+
+impl Healer {
+    /// Skill `k`'s level (0x4c5eb0: points × 4, at most 20; the NPC's stats and effects do not
+    /// cap or move it here) and rank (0x4c60c0).
+    pub fn skill(&self, k: usize) -> (i32, i32) {
+        let raw = self.skills.get(k).copied().unwrap_or(0);
+        (((raw & 0x3f) * arcanum_rules::LEVELS_PER_POINT).min(arcanum_rules::MAX_SKILL_LEVEL), (raw >> 6) & 3)
+    }
+}
+
+/// The Heal skill.
+pub const HEAL_SKILL: usize = 10;
+/// The healing spells (`mes/spell.mes`): Minor Healing, Halt Poison, Major Healing, Resurrect.
+pub const MINOR_HEALING: u32 = 60;
+pub const HALT_POISON: u32 = 61;
+pub const MAJOR_HEALING: u32 = 62;
+pub const RESURRECT: u32 = 64;
+/// What a spell costs before the reaction factor (0x4b1740).
+pub const SPELL_PRICE: i32 = 100;
+
+/// Hit points a healing spell restores for a caster of `aptitude` (`Rules/SpellList.mes`
+/// "Heal Dmg lo-hi, Scaled", 0x4521a0: `lo + (hi - lo) × aptitude / 100` above 0, else `lo`).
+pub fn spell_heal(spell: u32, aptitude: i32) -> i32 {
+    let (lo, hi) = match spell {
+        MINOR_HEALING => (5, 30),
+        MAJOR_HEALING => (40, 80),
+        _ => return 0,
+    };
+    if aptitude > 0 { lo + (hi - lo) * aptitude / 100 } else { lo }
 }
 
 /// The Apprentice rank: the only one an NPC trains (0x418f30 grants rank 1).
@@ -271,6 +330,9 @@ pub struct SheetChanges {
     pub alignment: Option<i32>,
     pub experience: i32,
     pub fate_points: i32,
+    /// Hit points healed and poison taken away.
+    pub heal: i32,
+    pub cure_poison: i32,
 }
 
 impl SheetChanges {
@@ -287,6 +349,8 @@ impl SheetChanges {
             sheet.alignment = a;
         }
         sheet.fate_points += self.fate_points;
+        sheet.hp_damage = (sheet.hp_damage - self.heal.max(0)).max(0);
+        sheet.poison = (sheet.poison - self.cure_poison.max(0)).max(0);
         rules.gain_experience(sheet, self.experience)
     }
 }
@@ -1009,6 +1073,8 @@ pub fn run_conversations(
                             }
                         }
                         OptionAct::MoreDirections { option, offset, ret } => say.directions(&file, option, offset, ret, &mut talk),
+                        OptionAct::HealPage { page, ret } => say.heal_menu(&file, page, ret, &mut talk),
+                        OptionAct::Heal { healing, ret } => say.heal(&file, healing, ret, &mut talk),
                     }
                 }
                 None => Shown::Stay,
@@ -1081,9 +1147,7 @@ pub fn run_conversations(
                     outbox.0.push((player, LedgerDelta::ScriptMessage { text: text.replace("%d", &level.to_string()) }));
                 }
             }
-            if !levels.is_empty() {
-                crate::ground::broadcast(&session, &mut outbox, LedgerDelta::PcStatus { net_id: pc_net, status: crate::pc_status(&rules.0, &sheet.0) });
-            }
+            crate::ground::broadcast(&session, &mut outbox, LedgerDelta::PcStatus { net_id: pc_net, status: crate::pc_status(&rules.0, &sheet.0) });
         }
         if gold_changed {
             saved.inventory = Some(inventory.clone());
@@ -1135,6 +1199,8 @@ pub struct NpcInfo {
     pub dumb: bool,
     /// The override dialogue (its number and file).
     pub overrides: Option<(u32, std::sync::Arc<DialogFile>)>,
+    /// What it heals with.
+    pub healer: Healer,
 }
 
 /// The NPC's key in a PC's stored reactions and NPCs met.
@@ -1154,7 +1220,7 @@ pub fn npc_details(map: &LoadedMap, npc: ScriptObject, generic: &mut GenericLine
         ScriptObject::Pc(_) => None,
     };
     let none = crate::NpcReaction { base: crate::BASE_REACTION, race: 0, origin: 0, faction: 0, only_reputation: false };
-    let Some(object) = object else { return NpcInfo { name: String::new(), male: true, reaction: none, class: 0, dumb: false, overrides: None } };
+    let Some(object) = object else { return NpcInfo { name: String::new(), male: true, reaction: none, class: 0, dumb: false, overrides: None, healer: Healer::default() } };
     let description = map.prototypes.int(object, "description");
     let name = description.and_then(|d| generic.file(vfs, "mes/description.mes")?.get(d as u32).map(str::to_string)).unwrap_or_default();
     let stats = object.ints("critter_stat_base_idx").or_else(|| map.prototypes.of(object)?.ints("critter_stat_base_idx"));
@@ -1162,7 +1228,24 @@ pub fn npc_details(map: &LoadedMap, npc: ScriptObject, generic: &mut GenericLine
     // Intelligence is stat 4 (the base here: the NPC's effects are not built).
     let dumb = stats.and_then(|s| s.get(4).copied()).is_some_and(|i| i <= 4);
     let class = map.prototypes.int(object, "npc_social_class").unwrap_or(0);
-    NpcInfo { name, male, reaction: crate::NpcReaction::of(object, &map.prototypes), class, dumb, overrides: None }
+    let array = |field: &str| object.ints(field).or_else(|| map.prototypes.of(object)?.ints(field)).unwrap_or_default();
+    let (basic, tech, magic) = (array("critter_basic_skill_idx"), array("critter_tech_skill_idx"), array("critter_spell_tech_idx"));
+    let at = |v: &Vec<i32>, i: usize| v.get(i).copied().unwrap_or(0);
+    let spells: i32 = (0..16).map(|c| at(&magic, c)).sum();
+    let degrees: i32 = (17..25).map(|d| at(&magic, d)).sum();
+    let kit = match npc {
+        ScriptObject::Mobile { sector, index } => map.npc_inventory(sector, index).is_some_and(|inv| {
+            inv.items.iter().any(|i| map.prototypes.get(i.prototype).is_some_and(|p| p.object_type == arcanum_formats::object::TYPE_GENERIC && p.int("generic_flags").unwrap_or(0) & 8 != 0))
+        }),
+        _ => false,
+    };
+    let healer = Healer {
+        college: at(&magic, 12),
+        skills: std::array::from_fn(|k| if k < 12 { at(&basic, k) } else { at(&tech, k - 12) }),
+        kit,
+        aptitude: ((50 * spells - 55 * degrees) / 10).clamp(-100, 100),
+    };
+    NpcInfo { name, male, reaction: crate::NpcReaction::of(object, &map.prototypes), class, dumb, overrides: None, healer }
 }
 
 /// What one step says, to whom.
@@ -1384,6 +1467,9 @@ impl Say<'_> {
             // Rumours (gd_cls_pc2 2000) and training (gd_pc2 500): the arguments stay hidden.
             Some('R') => self.pc_class_line(2000, talk),
             Some('T') => self.pc_line(500, 599, talk),
+            // Healing (gd_pc2 700) and a skill used on the PC ("[%s Skill]", 900).
+            Some('H') => self.pc_line(700, 799, talk),
+            Some('U') => self.skill_option(arcanum_formats::dialog::atoi(text[2..].trim().as_bytes()) as usize, talk),
             // Directions and map marks (gd_pc2 1300 / 1400).
             Some('D') => self.pc_line(1300, 1399, talk),
             Some('X') => self.pc_line(1400, 1499, talk),
@@ -1431,6 +1517,11 @@ impl Say<'_> {
             }
             Some('R') => return self.rumours(file, &text[2..], entry.response(), talk),
             Some('T') => return self.training_list(file, &text[2..], entry.response(), talk),
+            Some('H') => return self.heal_menu(file, 0, entry.response(), talk),
+            Some('U') => {
+                let skill = arcanum_formats::dialog::atoi(text[2..].trim().as_bytes()) as usize;
+                return self.heal(file, Healing::Skill(skill), entry.response(), talk);
+            }
             Some('D' | 'X') => return self.directions(file, line, 0, entry.response(), talk),
             // The story question (0x41a3e0): the answer, then one "thanks" to go on.
             Some('C') => {
@@ -1533,6 +1624,104 @@ impl Say<'_> {
         self.ask_price(file, TRAINING_PRICE, Service::Train(skill), ret, talk)
     }
 
+    /// "[%s Skill]" for skill `k` (gd_pc2 900, 0x419a00).
+    fn skill_option(&mut self, k: usize, talk: &Talk) -> Option<String> {
+        let name = self.generic.file(self.vfs, "mes/skill.mes")?.get(k as u32)?.to_string();
+        Some(self.pc_line(900, 999, talk)?.replace("%s", &name))
+    }
+
+    /// "[%s Spell]" for spell `spell` (gd_pc2 1000, 0x419ac0).
+    fn spell_option(&mut self, spell: u32, talk: &Talk) -> Option<String> {
+        let name = self.generic.file(self.vfs, "mes/spell.mes")?.get(spell)?.to_string();
+        Some(self.pc_line(1000, 1099, talk)?.replace("%s", &name))
+    }
+
+    /// The healing menu (0x419830): `gd_cls` 14000, then by page what the NPC can do, and a
+    /// "forget it" (800) back to `ret`. Page 0: the Heal skill (with a kit), "[Magickal
+    /// Healing]" (1100, 1 spell or more), "[Magickal Poison Healing]" (1200, 2 or more),
+    /// Resurrect (all 5); page 1: Minor Healing (1), Major Healing (3); page 2: Halt Poison (2).
+    /// Nothing asks whether the PC is hurt.
+    fn heal_menu(&mut self, file: &DialogFile, page: u8, ret: i32, talk: &mut Talk) -> Shown {
+        self.npc_says(Block::Class, 14000, talk);
+        let h = self.npc.healer;
+        let mut options = Vec::new();
+        let heal = |healing| OptionAct::Heal { healing, ret };
+        match page {
+            0 => {
+                if h.kit && let Some(text) = self.skill_option(HEAL_SKILL, talk) {
+                    options.push(Offered { text, act: heal(Healing::Skill(HEAL_SKILL)) });
+                }
+                if h.college >= 1 && let Some(text) = self.pc_line(1100, 1199, talk) {
+                    options.push(Offered { text, act: OptionAct::HealPage { page: 1, ret } });
+                }
+                if h.college >= 2 && let Some(text) = self.pc_line(1200, 1299, talk) {
+                    options.push(Offered { text, act: OptionAct::HealPage { page: 2, ret } });
+                }
+                if h.college == 5 && let Some(text) = self.spell_option(RESURRECT, talk) {
+                    options.push(Offered { text, act: heal(Healing::Spell(RESURRECT)) });
+                }
+            }
+            1 => {
+                for (spell, needs) in [(MINOR_HEALING, 1), (MAJOR_HEALING, 3)] {
+                    if h.college >= needs && let Some(text) = self.spell_option(spell, talk) {
+                        options.push(Offered { text, act: heal(Healing::Spell(spell)) });
+                    }
+                }
+            }
+            _ => {
+                if h.college >= 2 && let Some(text) = self.spell_option(HALT_POISON, talk) {
+                    options.push(Offered { text, act: heal(Healing::Spell(HALT_POISON)) });
+                }
+            }
+        }
+        if let Some(back) = self.pc_line(800, 899, talk) {
+            options.push(Offered { text: back, act: OptionAct::Respond(ret) });
+        }
+        if options.is_empty() { self.back(file, ret, talk) } else { Shown::Line(0, options) }
+    }
+
+    /// A healing chosen (0x419b50 / 0x419c30): free from the PC's follower, else priced: a
+    /// skill `(level + 2) × (rank + 1)` (0x4c62d0), a spell 100 (0x4b1740).
+    pub fn heal(&mut self, file: &DialogFile, healing: Healing, ret: i32, talk: &mut Talk) -> Shown {
+        if talk.follow.mine {
+            return self.perform_heal(file, healing, ret, talk);
+        }
+        let base = match healing {
+            Healing::Skill(k) => {
+                let (level, rank) = self.npc.healer.skill(k);
+                (level + 2) * (rank + 1)
+            }
+            Healing::Spell(_) => SPELL_PRICE,
+        };
+        self.ask_price(file, base, Service::Heal(healing), ret, talk)
+    }
+
+    /// The healing done (0x419cb0 / 0x419d50), then `gd_cls` 15000 and one "thanks"
+    /// (`gd_cls_pc2` 1000) back to `ret`.
+    /// - The Heal skill (0x4c7160 case 10; a healer that follows nobody never fails): its level,
+    ///   × 1.5 when trained, at least 1; a Master heals all of it, others 1 to it at random.
+    /// - Minor / Major Healing: [`spell_heal`] by the NPC's aptitude; Halt Poison: 50 poison.
+    /// - Not built: other skills, Resurrect (the PC is not dead), the kit's charges, a Master's
+    ///   cured conditions.
+    fn perform_heal(&mut self, file: &DialogFile, healing: Healing, ret: i32, talk: &mut Talk) -> Shown {
+        match healing {
+            Healing::Skill(HEAL_SKILL) => {
+                let (level, rank) = self.npc.healer.skill(HEAL_SKILL);
+                let mut amount = if rank != 0 { level * 3 / 2 } else { level };
+                amount = amount.max(1);
+                if rank != 3 {
+                    amount = self.rng.range(1, amount);
+                }
+                talk.sheet_changes.heal += amount;
+            }
+            Healing::Spell(HALT_POISON) => talk.sheet_changes.cure_poison += 50,
+            Healing::Spell(spell) => talk.sheet_changes.heal += spell_heal(spell, self.npc.healer.aptitude),
+            Healing::Skill(_) => {}
+        }
+        let thanks = self.pc_class_line(1000, talk);
+        self.say_then_back(file, Block::Class, 15000, &[], thanks, ret, talk)
+    }
+
     /// The price dialogue (0x418a40): `base` × the reaction factor, at least 2; the NPC names it
     /// (`gd_cls` 1000) and the PC says yes (`gd_pc2` 1-99) or no (100-199).
     fn ask_price(&mut self, file: &DialogFile, base: i32, service: Service, ret: i32, talk: &mut Talk) -> Shown {
@@ -1559,6 +1748,7 @@ impl Say<'_> {
         match service {
             Service::Rumour(n) => self.tell_rumour(file, n, ret, talk),
             Service::Directions { area, mark } => self.direct(file, area, mark, ret, talk),
+            Service::Heal(healing) => self.perform_heal(file, healing, ret, talk),
             Service::Train(skill) => {
                 talk.sheet_changes.training.push((skill, APPRENTICE));
                 let thanks = self.pc_line(1000, 1099, talk);
@@ -1803,7 +1993,7 @@ mod tests {
 
     fn npc(class: i32) -> NpcInfo {
         let reaction = crate::NpcReaction { base: 50, race: 0, origin: 0, faction: 0, only_reputation: false };
-        NpcInfo { name: "Kietzel".into(), male: true, reaction, class, dumb: false, overrides: None }
+        NpcInfo { name: "Kietzel".into(), male: true, reaction, class, dumb: false, overrides: None, healer: Healer::default() }
     }
 
     fn floats(deltas: &[LedgerDelta]) -> Vec<(String, FloatColour)> {
@@ -2002,6 +2192,65 @@ mod tests {
         say.pay(&file, price, service, ret, &mut talk);
         assert_eq!(talk.sheet_changes.training, [(9, APPRENTICE)]);
         assert_eq!(floats(&say.deltas).last().unwrap().0, "There, done.");
+    }
+
+    #[test]
+    fn healers_offer_what_they_can_and_heal_for_a_price() {
+        let file = DialogFile::parse(b"{1}{Hurt?}{}{}{}{}{}\n{2}{H:}{}{1}{}{1}{}\n{3}{U:10}{}{1}{}{1}{}");
+        let rules = RulesData::default();
+        let sheet = CharacterSheet { gender: arcanum_rules::MALE, hp_damage: 60, poison: 70, ..Default::default() };
+        let (mut inventory, mut pc, mut globals, mut attachment): (Inventory, PcScriptState, ScriptGlobals, Attachment) = Default::default();
+        let mut talk = talk_with(&rules, &sheet, &mut inventory, &mut pc, &mut globals, &mut attachment);
+        talk.change_gold(1000);
+        let mut generic = generic_with(&[
+            ("mes/gd_cls_m2m.mes", "{1000}{That will be %d coins.}{14000}{What healing?}{15000}{It is done.}"),
+            ("mes/gd_cls_pc2m.mes", "{1000}{Thanks.}"),
+            ("mes/gd_pc2m.mes", "{1}{Yes.}{100}{No.}{700}{I need healing.}{800}{Forget it.}{900}{[%s Skill]}{1000}{[%s Spell]}{1100}{[Magickal Healing]}{1200}{[Magickal Poison Healing]}"),
+            ("mes/skill.mes", "{10}{Heal}"),
+            ("mes/spell.mes", "{60}{Minor Healing}{61}{Halt Poison}{62}{Major Healing}{64}{Resurrect}"),
+        ]);
+        let mut info = npc(0);
+        // Heal 3 points (level 12), Expert (rank 2); two white necromancy spells; a kit; aptitude 40.
+        info.healer = Healer { college: 2, kit: true, aptitude: 40, ..Default::default() };
+        info.healer.skills[HEAL_SKILL] = 3 | 2 << 6;
+        let mut rng = crate::HostRng::default();
+        let mut say = Say { npc_net: NetId(7), dialog: 1, pc_name: "Vel", npc: &info, generic: &mut generic, vfs: None, rng: &mut rng, deltas: Vec::new(), jumps: 0, areas: &crate::areas::NO_AREAS, pc_at: arcanum_formats::map::TileLoc { x: 0, y: 0 } };
+        let Shown::Line(_, options) = say.show(&file, 1, &mut talk) else { panic!() };
+        let texts: Vec<&str> = options.iter().map(|o| o.text.as_str()).collect();
+        assert_eq!(texts, ["I need healing.", "[Heal Skill]"]);
+        let Shown::Line(_, options) = say.chosen(&file, 2, &mut talk, 0) else { panic!() };
+        assert_eq!(floats(&say.deltas).last().unwrap().0, "What healing?");
+        let texts: Vec<&str> = options.iter().map(|o| o.text.as_str()).collect();
+        assert_eq!(texts, ["[Heal Skill]", "[Magickal Healing]", "[Magickal Poison Healing]", "Forget it."], "no Resurrect below 5");
+        assert_eq!(options[3].act, OptionAct::Respond(1));
+        let Shown::Line(_, page) = say.heal_menu(&file, 1, 1, &mut talk) else { panic!() };
+        let texts: Vec<&str> = page.iter().map(|o| o.text.as_str()).collect();
+        assert_eq!(texts, ["[Minor Healing Spell]", "Forget it."], "Major Healing needs 3");
+        // Minor Healing: 100 before the reaction, 5 + 25 x 40 / 100 = 15 hit points.
+        let Shown::Line(_, ask) = say.heal(&file, Healing::Spell(MINOR_HEALING), 1, &mut talk) else { panic!() };
+        let price = (SPELL_PRICE * crate::barter::reaction_factor(talk.reaction()) / 100).max(2);
+        assert_eq!(floats(&say.deltas).last().unwrap().0, format!("That will be {price} coins."));
+        let OptionAct::Pay { price: asked, service, ret } = ask[0].act else { panic!() };
+        let Shown::Line(_, after) = say.pay(&file, asked, service, ret, &mut talk) else { panic!() };
+        assert_eq!(talk.sheet_changes.heal, 15);
+        assert_eq!(floats(&say.deltas).last().unwrap().0, "It is done.");
+        assert_eq!(after, [Offered { text: "Thanks.".into(), act: OptionAct::Respond(1) }]);
+        // The skill: (12 + 2) x (2 + 1) = 42 before the reaction; 1 to 18 hit points.
+        let Shown::Line(_, ask) = say.chosen(&file, 3, &mut talk, 0) else { panic!() };
+        let OptionAct::Pay { price, service, ret } = ask[0].act else { panic!() };
+        assert_eq!(price, (42 * crate::barter::reaction_factor(talk.reaction()) / 100).max(2));
+        say.pay(&file, price, service, ret, &mut talk);
+        assert!((16..=33).contains(&talk.sheet_changes.heal), "{}", talk.sheet_changes.heal);
+        // A follower heals for nothing; Halt Poison takes 50.
+        talk.follow.mine = true;
+        let gold = talk.gold();
+        say.heal(&file, Healing::Spell(HALT_POISON), 1, &mut talk);
+        assert_eq!((talk.gold(), talk.sheet_changes.cure_poison), (gold, 50));
+        let mut healed = sheet.clone();
+        talk.sheet_changes.apply(&rules, &mut healed);
+        assert!(healed.hp_damage < 60 - 15 && healed.poison == 20, "{healed:?}");
+        assert_eq!(spell_heal(MAJOR_HEALING, 100), 80);
+        assert_eq!(spell_heal(MINOR_HEALING, -30), 5, "no aptitude: the least");
     }
 
     #[test]

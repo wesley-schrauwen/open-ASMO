@@ -103,6 +103,12 @@ pub struct CharacterSheet {
     pub experience: i32,
     #[cfg_attr(feature = "serde", serde(default))]
     pub fate_points: i32,
+    /// Hit points lost (field 0x1d `hp_damage`) and the poison level (stat 0x18). Nothing
+    /// damages or poisons a PC yet; healing and rest take them away.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub hp_damage: i32,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub poison: i32,
     /// Effects given in play (scripts, items), oldest first: the critter's effect ids (field
     /// 0xe4) and causes (0xe5), appended by 0x4e9f70 and taken by 0x4ea100. Race, gender and
     /// background effects are not kept here: they follow from the sheet.
@@ -159,6 +165,8 @@ impl Default for CharacterSheet {
             alignment: 0,
             experience: 0,
             fate_points: 0,
+            hp_damage: 0,
+            poison: 0,
             effects: Vec::new(),
             draft: Draft::default(),
         }
