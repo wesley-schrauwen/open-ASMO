@@ -301,7 +301,7 @@ format and language are checked against all 709 `.dlg` files.
 5. **Barter** (`B:`): see `plans/barter.md`.
 6. **Services** (`arcanum_sim::dialogue`). Built: `R:` rumours, `T:` training, `Q:` quest
    lines, the price dialogue. Training sends the new sheet (`SheetUpdate`, ack 0) and saves it.
-   - **Not built:** `P:` (newspapers), `L:` (no world map); what quells rumours; the rumour's
+   - **Not built:** `L:` (no world map); what quells rumours; the rumour's
      timestamp and logbook. (`D:` / `X:`: step 7; `H:` / `U:`: step 9.)
    - **Real data:** every `Q:` names a row of `gamequest.mes`; `T:` lists name skills 0-15.
 7. **Areas and directions** (`arcanum_sim::areas`). Built.
@@ -370,3 +370,16 @@ format and language are checked against all 709 `.dlg` files.
      (`ce su ii ri`), `np` news, `or`.
    - **Not built:** finding areas by passing near them; the world map. Real data: the start
      tile is in area 2, the Crash Site; Bessie Toone's mine is area 1, Shrouded Hills.
+10. **Newspapers** (`P:`, built, `feat/newspaper-seller`; 0x416c10 type 0x19, 0x41a520).
+    - The option shows `gd_pc2` 1900. Chosen: `gd_npc` 4200, then "today's paper" (`gd_pc2`
+      2200), "the headline" (2000), "older papers" (2100), "forget it" (800).
+    - **Headline** (0x41a620): the paper's headline ([`newspaper::headline`]) and a `gd_npc`
+      4300 line; yes (1-99) asks the price, no (100-199) goes back.
+    - **Older papers** (0x41a700): the queue's slots 0-3 that are set; none, `gd_npc` 4400 and a
+      "more" (600) back; else 4500 and one option per paper, its headline (and "forget it",
+      builder's call).
+    - **Buying** (0x41a880 → 0x418a40): the price dialogue with 2 × the reaction factor, at least
+      2 (2-4 coins). Paid (0x41a8c0 → 0x4bf210): a newspaper (basic prototype 14064) whose first
+      line is the paper's number goes into the PC's inventory, `gd_cls` 15000 and a "thanks".
+      No room: the gold comes back (builder's call; the original drops the paper at the PC's
+      feet).
