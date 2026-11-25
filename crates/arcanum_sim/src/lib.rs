@@ -20,6 +20,7 @@ pub mod delta;
 pub mod dialogue;
 pub mod doors;
 pub mod follow;
+pub mod heartbeat;
 pub mod gait;
 pub mod barter;
 pub mod ground;

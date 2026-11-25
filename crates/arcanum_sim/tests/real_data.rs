@@ -751,3 +751,28 @@ fn item_wield_scripts_exist_and_run() {
     assert!(numbers.len() >= 27, "{}", numbers.len());
     assert!(stopped.is_empty(), "{stopped:?}");
 }
+
+/// The start map's NPCs with heartbeat scripts beat; what they run into is reported.
+#[test]
+fn heartbeats_run_on_the_start_map() {
+    use arcanum_rules::{CharacterBlueprint, CharacterSheet, RulesData};
+    use arcanum_sim::{PlayerId, PlayerSave, SimApp, SimVfs, WorldSave};
+    use std::sync::{Arc, RwLock};
+    let Some(vfs) = vfs() else { return };
+    let start = StartMap::load(&vfs).unwrap();
+    let rules = RulesData::load(&vfs).unwrap();
+    let mut save = WorldSave::new_game(&start);
+    let sheet = CharacterSheet { name: "Hero".into(), ..Default::default() };
+    save.players.insert(PlayerId(1), PlayerSave { blueprint: CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None }, position: start.position, inventory: None, script_state: Default::default(), worn: None });
+    let mut sim = SimApp::new(rules);
+    sim.use_manual_clock();
+    sim.app.insert_resource(SimVfs(Arc::new(RwLock::new(vfs))));
+    sim.boot(save);
+    for _ in 0..300 {
+        sim.update();
+    }
+    let beats = sim.app.world().resource::<arcanum_sim::heartbeat::Heartbeats>().beats.len();
+    let reports = sim.app.world().resource::<arcanum_sim::ScriptReports>().0.clone();
+    eprintln!("{beats} NPCs with heartbeat scripts beat; reports: {reports:?}");
+    assert!(reports.is_empty(), "{reports:?}");
+}

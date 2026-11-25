@@ -312,6 +312,8 @@ pub trait ScriptContext {
     fn skill_level(&mut self, _object: Self::Object, _k: i32) -> i32 {
         0
     }
+    /// Kills `object` (0x3a → 0x45d900).
+    fn kill(&mut self, _object: Self::Object) {}
     /// Destroys `object` (0x44 → 0x43cca0).
     fn destroy(&mut self, _object: Self::Object) {}
     /// Whether `object` wears an item whose `name` is `name` (slots 1000-1008, 0x4649c0).
@@ -907,6 +909,13 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
             let o = objects(run, ops[1], line, unsupported)?.first().copied();
             let v = o.map_or(0, |o| ctx.skill_level(o, k));
             set(ctx, attachment, run, ops[2], v);
+            Step::Next
+        }
+        // Kill each object (0x4488e8 → 0x45d900).
+        0x3a => {
+            for o in objects(run, ops[0], line, unsupported)? {
+                ctx.kill(o);
+            }
             Step::Next
         }
         // Destroy one object (0x448d19).

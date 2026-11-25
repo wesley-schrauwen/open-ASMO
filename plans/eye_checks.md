@@ -90,3 +90,9 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 - [ ] A plaque's text appears in the message box when a script shows it.
 - [ ] An object a script transforms or gives new art is redrawn for every player; one destroyed
       disappears.
+
+## Heartbeats and killing
+
+- [ ] At the crash site the bodies lie dead (death animation, last frame) instead of standing.
+- [ ] NPCs with heartbeat scripts do their thing (switching on or off, barks) while the PC is
+      near; nothing stutters.

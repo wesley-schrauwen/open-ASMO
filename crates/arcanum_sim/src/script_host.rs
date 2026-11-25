@@ -461,6 +461,43 @@ impl ScriptContext for HostWorld<'_> {
         }
     }
 
+    /// A PC with no hit points left; an NPC killed.
+    fn is_dead(&mut self, object: ScriptObject) -> bool {
+        match object {
+            ScriptObject::Pc(p) => self.players.get(&p).is_some_and(|s| s.blueprint.sheet.hp_damage >= self.rules.derived(&s.blueprint.sheet).hit_points),
+            ScriptObject::Mobile { sector, index } => self.map.is_dead(sector, index),
+            _ => false,
+        }
+    }
+
+    /// A PC loses all its hit points (death is not built). An NPC is kept dead and shown on the
+    /// last frame of its death animation (7), as 0x45d900 leaves it (when 0x5e863c is 1, not
+    /// traced); it is spawned again as a corpse. Its hit points are not kept.
+    fn kill(&mut self, object: ScriptObject) {
+        match object {
+            ScriptObject::Pc(p) => {
+                if let Some(saved) = self.players.get_mut(&p) {
+                    let sheet = &mut saved.blueprint.sheet;
+                    sheet.hp_damage = self.rules.derived(sheet).hit_points;
+                    self.sheets.insert(p);
+                }
+            }
+            ScriptObject::Mobile { sector, index } => {
+                if self.map.is_dead(sector, index) {
+                    return;
+                }
+                self.map.changes.entry(sector).or_default().dead.insert(index);
+                if let Some(art) = self.map.object_at(sector, index, true).and_then(|o| self.map.prototypes.art_id(o)) {
+                    let dying = death_frame(self.vfs, self.map.art.as_deref(), art);
+                    self.map.set_object_art(sector, index, true, dying.0);
+                }
+                self.sectors.insert(sector);
+                self.npcs_toggled.push((sector, index));
+            }
+            _ => {}
+        }
+    }
+
     /// Objects of the map: flagged destroyed (0x1), so hidden, not blocking, NPCs gone. The
     /// destroy event (2) is not run.
     fn destroy(&mut self, object: ScriptObject) {
@@ -588,6 +625,21 @@ impl ScriptContext for HostWorld<'_> {
     fn player(&mut self) -> Option<ScriptObject> {
         Some(ScriptObject::Pc(self.player))
     }
+}
+
+/// Critter art's death animation.
+pub const ANIM_DEATH: u32 = 7;
+
+/// `art` on the last frame of its death animation (critters, monsters, unique NPCs share the
+/// animation bits 6-10 and frame bits 14-18); other art as it is.
+pub fn death_frame(vfs: Option<&arcanum_vfs::Vfs>, index: Option<&arcanum_formats::art_id::ArtIndex>, art: arcanum_formats::art_id::ArtId) -> arcanum_formats::art_id::ArtId {
+    use arcanum_formats::art_id::{ArtId, ArtKind};
+    if !matches!(art.kind(), ArtKind::Critter | ArtKind::Monster | ArtKind::UniqueNpc) {
+        return art;
+    }
+    let dying = ArtId((art.0 & !(0x1f << 6 | 0x1f << 14)) | ANIM_DEATH << 6);
+    let frames = index.and_then(|i| i.path(dying)).and_then(|p| vfs?.read(&p).ok()).and_then(|d| arcanum_formats::art::ArtFile::parse(&d).ok()).map_or(1, |f| f.frame_count);
+    ArtId(dying.0 | ((frames.saturating_sub(1) as u32 & 0x1f) << 14))
 }
 
 /// A map object's place: sector, index, whether it is a mobile one.
@@ -814,12 +866,18 @@ impl ScriptHost<'_, '_> {
     /// attachment is kept and saved; the answer says whether the default still happens.
     /// Lines it shows go to their players through `outbox`.
     pub fn hook(&mut self, world: &mut WorldState, map: &mut LoadedMap, outbox: &mut crate::Outbox, object: ScriptObject, event: u32, player: PlayerId) -> HookResult {
+        self.hook_by(world, map, outbox, object, event, player, ScriptObject::Pc(player))
+    }
+
+    /// The same with another triggerer (a heartbeat's is the NPC itself, 0x4ad200).
+    #[allow(clippy::too_many_arguments)]
+    pub fn hook_by(&mut self, world: &mut WorldState, map: &mut LoadedMap, outbox: &mut crate::Outbox, object: ScriptObject, event: u32, player: PlayerId, triggerer: ScriptObject) -> HookResult {
         let mut attachment = map.attachment(object, event);
         if attachment.number == 0 {
             return HookResult::RunDefault;
         }
         let before = attachment;
-        let invocation = Invocation { attachee: object, triggerer: ScriptObject::Pc(player), other: None, event, start_line: 0 };
+        let invocation = Invocation { attachee: object, triggerer, other: None, event, start_line: 0 };
         let Some(result) = self.execute(world, map, outbox, &mut attachment, invocation, player) else { return HookResult::RunDefault };
         if attachment != before {
             map.set_attachment(object, event, attachment);
@@ -949,6 +1007,11 @@ impl ScriptHost<'_, '_> {
             crate::ground::save_change(world, map, sector);
         }
         Some(run.result)
+    }
+
+    /// The host's random numbers.
+    pub fn rng(&mut self) -> &mut crate::HostRng {
+        &mut self.rng
     }
 
     /// Puts a script in the library by hand (tests).
