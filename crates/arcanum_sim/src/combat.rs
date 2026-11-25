@@ -247,6 +247,9 @@ pub struct AttackOutcome {
     /// Items it wore or broke ([`ARMOUR_DAMAGED`] …).
     #[serde(default)]
     pub items: u8,
+    /// It killed the target (the client plays the death).
+    #[serde(default)]
+    pub killed: bool,
 }
 
 /// [`AttackOutcome::items`]: the armour where it landed, or the target's weapon, damaged
@@ -598,14 +601,14 @@ impl crate::LoadedMap {
         self.changes.entry(sector).or_default().npc_pools.insert(index, pool);
     }
 
-    /// Kills NPC `index` (action 0x3a's way): dead, in its death frame.
-    pub fn kill_npc(&mut self, vfs: Option<&arcanum_vfs::Vfs>, sector: arcanum_formats::map::SectorId, index: u32) {
+    /// Kills NPC `index` (action 0x3a's way): dead, in the last frame of death animation `anim`.
+    pub fn kill_npc(&mut self, vfs: Option<&arcanum_vfs::Vfs>, sector: arcanum_formats::map::SectorId, index: u32, anim: u32) {
         if self.is_dead(sector, index) {
             return;
         }
         self.changes.entry(sector).or_default().dead.insert(index);
         if let Some(art) = self.object_at(sector, index, true).and_then(|o| self.prototypes.art_id(o)) {
-            let dying = crate::death_frame(vfs, self.art.as_deref(), art);
+            let dying = crate::death_frame_in(vfs, self.art.as_deref(), art, anim);
             self.set_object_art(sector, index, true, dying.0);
         }
     }
@@ -1361,6 +1364,7 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     if outcome.items != 0 {
         outcome.items = w.wear_items(victim, &outcome);
     }
+    outcome.killed = outcome.hit && outcome.hp > 0 && victim.npc.is_some_and(|n| w.map.npc_hp(n.sector, n.index).is_some_and(|(left, _)| left - outcome.hp < 1));
     crate::ground::broadcast(&w.session, &mut w.outbox, LedgerDelta::Attacked { attacker: attacker.net_id, target: victim.net_id, outcome });
     rally(commands, w, all, attacker, victim);
     if let Some(player) = victim.player {
@@ -1401,7 +1405,7 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     if left - outcome.hp < 1 {
         let vfs = w.vfs.as_ref().map(|v| v.0.clone());
         let guard = vfs.as_ref().and_then(|v| v.read().ok());
-        w.map.kill_npc(guard.as_deref(), source.sector, source.index);
+        w.map.kill_npc(guard.as_deref(), source.sector, source.index, crate::death_anim(outcome.hp, outcome.part));
         commands.entity(victim.entity).remove::<Fighting>();
         w.toggled.0.push((source.sector, source.index));
         if let Some(player) = attacker.player {
@@ -1532,6 +1536,11 @@ mod tests {
         assert!(!should_flee(60, 100, one(1), one(3), &rows[1], 0));
         assert!(should_flee(60, 100, one(1), Party { count: 21, levels: 0 }, &rows[1], 0), "a side 20 larger");
         assert_eq!(flee_goal(TileLoc { x: 10, y: 10 }, TileLoc { x: 9, y: 10 }, 8), TileLoc { x: 18, y: 10 });
+    }
+
+    #[test]
+    fn violent_deaths_go_by_where_the_hit_landed() {
+        assert_eq!([crate::death_anim(20, 1), crate::death_anim(21, 1), crate::death_anim(21, 3), crate::death_anim(21, 0), crate::death_anim(30, 2)], [7, 17, 19, 18, 18]);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-9 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`).
+Status: steps 1-10 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`).
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -130,8 +130,20 @@ of `combat_design.md` come after the original's rules work.
 - **AP bar:** art 294 `AP_Bar.ART` at (222, 412) over the bottom bar; End Turn button art 297 at
   (320, 9) in it; 20 slots at x 22, 35, 48, 61, 74, 93, … 287 (table 0x5caa48), y 10: art 295
   green for points left, 296 orange for what a planned move costs, 315 red past them.
-- **Animations:** 5 the combat stance (and sneaking), 6 run, 7 knocked down, 18 the default
-  death; 20 and 21 most likely the attacks (0x437990 times them by the weapon).
+- **Animations:** 5 the combat stance (and sneaking), 6 run, 7 knocked down and the default
+  death.
+  - Attack (0x42b9c0 → 0x503f60, checked): 20 when the critter's body entry (table 0x5be980 by
+    bits 24-26: human 1, dwarf 0, gnome/halfling 0, half-ogre 2, elf 1) or the monster's
+    (0x5be994 by bits 23-27) is set, else 21; unique NPCs 20; 21 forced by `flags` 0x80 or while
+    in animations 7-11; 14 for a wielded weapon with `weapon_flags` 0x40 (agent, not checked).
+    The hit lands at the art's action frame (header + 0x1c, 0x432a8f); frame times scale by the
+    weapon's speed (0x432c9e, 30-800 ms).
+  - Death (0x4b5306, checked): more than 20 damage dies by the hit location (head 17, legs 19,
+    else 18), else 7; 18 when the art for the chosen one is missing (0x42bce9).
+  - No critter animation for being hit: an AnimFX by damage (0x433020, table 0x5de670); no dodge
+    animation. Projectiles: `weapon_missile_aid` (0x4b39b0, goal 36).
+  - Weapon code (bits 0-3): from the wielded weapon's `item_use_aid_fragment` (0x4650d0); 1
+    unarmed.
 - **Floats** (`combat.mes`, colours white, red, green, blue, yellow at 0x5b8e6c): "HT 7" (line
   1, white) for damage; "Dodge!" (11); "Critical hit" (12); "Damage +50% / +100% / +200%"
   (13-15); fatigue "FT" (10, red), poison (0, green); red over PCs, yellow over the player's
@@ -264,3 +276,14 @@ of `combat_design.md` come after the original's rules work.
    - Firearms' chance corrected to 5 × level + 25 (tech table 0x4c6ad8 index 1).
    - Not built: armour damaged by ordinary hits (damage array [0x14], weapons with `weapon_flags`
      0x100), critical misses wearing the attacker's weapon, worn items weakening.
+10. **Animations** (built, `feat/combat-anims`; client `combat_ui`, `actors`).
+   - On each attack the attacker faces its target and plays its attack once (20 / 21 by body;
+     `Actor::action`, held at most 3 s).
+   - The host picks the death by damage and hit location (`death_anim`, `death_frame_in`); the
+     outcome says `killed`, and the client plays the death from its first frame when the dead
+     NPC is spawned again.
+   - Checked by screenshot: the fight runs at the crash site; the swing itself is for the eye
+     (`plans/eye_checks.md`).
+   - Not built: the hit's timing at the action frame (the host resolves at once), speed-scaled
+     frame times, hit effects, projectiles, the weapon code in the art (wielded weapons), thrown
+     weapons' animation 14.

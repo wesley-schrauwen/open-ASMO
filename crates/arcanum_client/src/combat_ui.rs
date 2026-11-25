@@ -12,9 +12,13 @@
 //!   "Critical miss" over the attacker, "Blinded", "Crippled arm", "Crippled leg", "Armor
 //!   damaged" / "broken", "Weapon damaged" / "broken"; white over NPCs, red over PCs.
 //!
+//! - **Animations:** the attacker faces its target and plays its attack once ([`attack_anim`],
+//!   0x42b9c0: 20 or 21 by body); an NPC an attack killed plays its death from the first frame
+//!   when the host spawns it again dead ([`Dying`]; the host picks the death, 0x4b5306).
+//!
 //! Not built: the orange and red lights of a planned move's cost, the battle cursor (art 353) and
-//! `hoverattack.art`, the attack, hit and death animations (attacks most likely 20 / 21), called
-//! shots, the button's pressed look.
+//! `hoverattack.art`, the hit effects (AnimFX by damage, 0x433020), projectiles (0x4b39b0),
+//! called shots, the button's pressed look.
 
 use arcanum_sim::{FloatColour, LedgerDelta, NetId, PlayerIntent};
 use bevy::prelude::*;
@@ -102,12 +106,52 @@ pub fn attack_floats(attacker: NetId, target: NetId, outcome: &arcanum_sim::comb
     out
 }
 
+/// NPCs an attack killed: when the host spawns them again dead, they play their death
+/// ([`crate::actors::Actor::action`]) instead of appearing on its last frame.
+#[derive(Resource, Debug, Default)]
+pub struct Dying(pub std::collections::HashSet<NetId>);
+
+/// The attack animation of critter art `art` (0x42b9c0 → 0x503f60): 20 when its body's (table
+/// 0x5be980: human, elf 1, half-ogre 2) or monster's (0x5be994, by bits 23-27) entry is set, else
+/// 21; unique NPCs 20. Not built: 14 for thrown weapons, 21 forced by `flags` 0x80 or while
+/// knocked down.
+pub fn attack_anim(art: arcanum_formats::art_id::ArtId) -> u32 {
+    const BODIES: [u32; 5] = [1, 0, 0, 2, 1];
+    const MONSTERS: [u32; 32] = [0, 0, 1, 2, 1, 1, 1, 1, 2, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 2, 2, 2, 1, 1, 1];
+    let set = match art.art_type() {
+        2 => BODIES.get(((art.0 >> 24) & 7) as usize).copied().unwrap_or(1),
+        0xc => MONSTERS[((art.0 >> 23) & 0x1f) as usize],
+        _ => 1,
+    };
+    if set != 0 { ANIM_ATTACK } else { ANIM_ATTACK_ALT }
+}
+
+/// The two attack animations (0x42b9c0).
+pub const ANIM_ATTACK: u32 = 20;
+pub const ANIM_ATTACK_ALT: u32 = 21;
+
+/// The rotation from `from` facing `to` (one of the eight).
+fn facing(from: arcanum_formats::map::TileLoc, to: arcanum_formats::map::TileLoc) -> Option<usize> {
+    let step = arcanum_formats::map::TileLoc { x: from.x.checked_add_signed((i64::from(to.x) - i64::from(from.x)).signum() as i32)?, y: from.y.checked_add_signed((i64::from(to.y) - i64::from(from.y)).signum() as i32)? };
+    arcanum_sim::rotation_of_step(from, step)
+}
+
 /// The fight's deltas from the bridge, for [`apply_combat_deltas`].
 #[derive(Resource, Debug, Default)]
 pub struct CombatDeltas(pub Vec<LedgerDelta>);
 
 /// Applies the fight's deltas (`mes/combat.mes` read on first use).
-fn apply_combat_deltas(mut deltas: ResMut<CombatDeltas>, mut view: ResMut<CombatView>, mut floats: Option<ResMut<crate::dialogue_ui::Floats>>, party: Res<crate::actors::Party>, vfs: Option<Res<VfsResource>>, mut mes: Local<Option<arcanum_formats::mes::MesFile>>) {
+#[allow(clippy::too_many_arguments)]
+fn apply_combat_deltas(
+    mut deltas: ResMut<CombatDeltas>,
+    mut view: ResMut<CombatView>,
+    mut floats: Option<ResMut<crate::dialogue_ui::Floats>>,
+    party: Res<crate::actors::Party>,
+    vfs: Option<Res<VfsResource>>,
+    mut mes: Local<Option<arcanum_formats::mes::MesFile>>,
+    mut actors: Query<&mut crate::actors::Actor>,
+    mut dying: ResMut<Dying>,
+) {
     if deltas.0.is_empty() {
         return;
     }
@@ -119,6 +163,19 @@ fn apply_combat_deltas(mut deltas: ResMut<CombatDeltas>, mut view: ResMut<Combat
     let is_pc = |id: NetId| party.status.contains_key(&id);
     for delta in std::mem::take(&mut deltas.0) {
         apply(&delta, &mut view, floats.as_deref_mut(), &is_pc, &text);
+        // The attacker swings, facing its target; a killed NPC's death plays when it comes back.
+        if let LedgerDelta::Attacked { attacker, target, outcome } = &delta {
+            let to = actors.iter().find(|a| a.net_id == *target).map(|a| (a.at, a.art));
+            if let Some(mut a) = actors.iter_mut().find(|a| a.net_id == *attacker) {
+                a.action = Some((attack_anim(a.art), 0.0));
+                if let Some(r) = to.and_then(|(at, _)| facing(a.at, at)) {
+                    a.rotation = r;
+                }
+            }
+            if outcome.killed {
+                dying.0.insert(*target);
+            }
+        }
     }
 }
 
@@ -138,6 +195,7 @@ pub struct CombatUiPlugin;
 impl Plugin for CombatUiPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CombatView>()
+            .init_resource::<Dying>()
             .init_resource::<CombatDeltas>()
             .add_systems(OnExit(AppState::InGame), |mut v: ResMut<CombatView>| *v = CombatView::default())
             .add_observer(on_combat_button)
@@ -230,6 +288,16 @@ pub fn apply(delta: &LedgerDelta, view: &mut CombatView, floats: Option<&mut cra
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attackers_swing_by_their_body_facing_the_target() {
+        use arcanum_formats::art_id::CritterArt;
+        let body = |body| CritterArt { body, male: true, ..Default::default() }.id();
+        assert_eq!([0, 1, 2, 3, 4].map(|b| attack_anim(body(b))), [20, 21, 21, 20, 20], "table 0x5be980");
+        let t = |x, y| arcanum_formats::map::TileLoc { x, y };
+        assert_eq!(facing(t(10, 10), t(15, 10)), arcanum_sim::rotation_of_step(t(10, 10), t(11, 10)));
+        assert_eq!(facing(t(10, 10), t(10, 10)), None);
+    }
 
     #[test]
     fn attacks_float_their_combat_lines() {
