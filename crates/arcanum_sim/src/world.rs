@@ -595,7 +595,7 @@ mod tests {
         let mut save = WorldSave { map: MAP.into(), ..WorldSave::new_game(&crate::StartMap { map: MAP.into(), position: TileLoc { x: 0, y: 0 }, clock: Default::default() }) };
         for &(id, name, position) in players {
             let sheet = CharacterSheet { name: name.into(), ..Default::default() };
-            save.players.insert(PlayerId(id), PlayerSave { blueprint: CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None }, position, inventory: None, script_state: Default::default() });
+            save.players.insert(PlayerId(id), PlayerSave { blueprint: CharacterBlueprint { sheet, gold: 0, items: vec![], prototype: None }, position, inventory: None, script_state: Default::default(), worn: None });
         }
         save
     }
@@ -2169,6 +2169,60 @@ mod tests {
         assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::ObjectTransformed { prototype: 9000, .. })));
         let world = sim.app.world_mut();
         assert_eq!(world.query::<&crate::NpcSource>().iter(world).filter(|s| s.sector == sector && s.index == 0).count(), 0, "destroyed: not spawned again");
+    }
+
+    #[test]
+    fn putting_on_and_taking_off_an_item_runs_its_wield_scripts() {
+        use crate::script::tests::{always, block, n, op};
+        use arcanum_formats::mes::MesFile;
+        use arcanum_formats::object::{Array, Object, TYPE_ARMOR, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, prototype_id};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let rules = RulesData::from_files(&MesFile::default(), &MesFile::parse(b"{117}{st +2}").unwrap(), &MesFile::default());
+        let mut sim = SimApp::new(rules);
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        // A ring: wield on runs script 710, wield off 711 (events 24 and 25).
+        let mut data = Vec::new();
+        for v in [0u32, 0, 710, 0, 0, 711] {
+            data.extend(v.to_le_bytes());
+        }
+        let scripts = Array { elem_size: 12, id: 1, data, bitset: vec![1 << 24 | 1 << 25, 0] };
+        let mut ring = Object::parse_instance(&ObjectBuilder::new(TYPE_ARMOR).field("item_weight", Value::Int32(1)).field("armor_flags", Value::Int32(0)).field("scripts_idx", Value::Array(Some(scripts))).build()).unwrap();
+        ring.id = prototype_id(8000);
+        let mut prototypes = Prototypes::default();
+        prototypes.insert(ring);
+        sim.app.world_mut().resource_mut::<LoadedMap>().prototypes = Arc::new(prototypes);
+        let mut s = save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]);
+        let mut carried = crate::Inventory::default();
+        carried.items.push(crate::CarriedItem { prototype: 8000, location: 0, quantity: 0, keys: vec![] });
+        s.players.get_mut(&PlayerId(7)).unwrap().inventory = Some(carried);
+        sim.boot(s);
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            library.insert(710, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(0x4d, &[op(0, 0), n(117), n(5)])), always(block(1, &[]))] });
+            library.insert(711, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(0x4e, &[op(0, 0), n(117)])), always(block(1, &[]))] });
+        }
+        sim.update();
+        sim.update();
+        let effects = |sim: &SimApp| sim.app.world().resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(7)].blueprint.sheet.effects.iter().map(|e| e.id).collect::<Vec<_>>();
+        assert!(effects(&sim).is_empty(), "carried, not worn");
+        let move_ring = |sim: &mut SimApp, to: i32| {
+            let world = sim.app.world_mut();
+            let mut q = world.query::<(&PlayerControlled, &mut crate::Inventory)>();
+            let (_, mut inventory) = q.single_mut(world).unwrap();
+            inventory.items[0].location = to;
+        };
+        move_ring(&mut sim, crate::FIRST_SLOT + 5);
+        sim.update();
+        assert_eq!(effects(&sim), [117], "worn: its effect");
+        sim.update();
+        assert_eq!(effects(&sim), [117], "once");
+        move_ring(&mut sim, 0);
+        sim.update();
+        assert!(effects(&sim).is_empty(), "taken off");
     }
 
     #[test]
