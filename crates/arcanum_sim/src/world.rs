@@ -1856,6 +1856,37 @@ mod tests {
     }
 
     #[test]
+    fn scripts_set_reactions_and_measure_distances() {
+        use crate::script::tests::{always, block, n, op};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]));
+        let npc_object = crate::ScriptObject::Mobile { sector: SectorId::new(1, 1), index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 700));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            let lines = vec![
+                always(block(0x1e, &[op(1, 0), op(0, 0), n(70)])),     // set to 70
+                always(block(0x1f, &[op(1, 0), op(0, 0), n(-5)])),     // then -5
+                always(block(0x1d, &[op(1, 0), op(0, 0), op(1, 1)])),  // global var 1 = reaction
+                always(block(0x47, &[op(0, 0), op(1, 0), op(1, 2)])),  // global var 2 = distance
+                always(block(1, &[])),
+            ];
+            library.insert(700, arcanum_formats::script::Script { description: String::new(), flags: 0, lines });
+        }
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0).unwrap().0
+        };
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let globals = sim.app.world().resource::<WorldState>().0.as_ref().unwrap().scripts.clone();
+        assert_eq!(globals.var(1), 65, "set to 70, then -5");
+        assert_eq!(globals.var(2), 1, "the NPC at (80, 80), the PC at (79, 80)");
+    }
+
+    #[test]
     fn an_npc_trains_a_skill_to_apprentice_for_gold() {
         use crate::script::tests::{always, block, n};
         let dir = tempfile::tempdir().unwrap();

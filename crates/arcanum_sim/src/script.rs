@@ -263,6 +263,12 @@ pub trait ScriptContext {
     fn reaction(&mut self, _npc: Self::Object, _pc: Self::Object) -> i32 {
         50
     }
+    /// Changes `npc`'s reaction to `pc` by `delta` (0x4c0de0).
+    fn change_reaction(&mut self, _npc: Self::Object, _pc: Self::Object, _delta: i32) {}
+    /// The distance between two objects, in tiles (0x4b96f0; not read: here the straight line).
+    fn distance(&mut self, _a: Self::Object, _b: Self::Object) -> i32 {
+        0
+    }
     /// Whether `npc` has met `pc` (0x4c0c40); the same object has.
     fn has_met(&mut self, npc: Self::Object, pc: Self::Object) -> bool {
         npc == pc
@@ -550,6 +556,13 @@ fn condition<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &m
             let rumour = number(ctx, run, 0);
             return Some(u32::try_from(rumour).is_ok_and(|r| ctx.globals().quelled.contains(&r)));
         }
+        // Mastered college N: all five of its spells.
+        0x31 => {
+            let college = number(ctx, run, 1);
+            return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.knows_spell(o, college * 5 + 4));
+        }
+        // Bless / curse N, bad associates: none exist yet (no blessings, curses or followers).
+        8 | 9 | 0xb => return Some(false),
         0x30 => {
             let spell = number(ctx, run, 1);
             return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.knows_spell(o, spell));
@@ -757,6 +770,48 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
             }
             Step::Next
         }
+        // Reaction of NPC to PC: set (0x1e: by the difference) / adjust (0x1f) (0x4c0de0).
+        0x1e | 0x1f => {
+            let npc = objects(run, ops[0], line, unsupported)?.first().copied();
+            let pc = objects(run, ops[1], line, unsupported)?.first().copied();
+            let v = value(ctx, attachment, run, 2);
+            if let (Some(n), Some(p)) = (npc, pc) {
+                let delta = if block.kind == 0x1e { v - ctx.reaction(n, p) } else { v };
+                ctx.change_reaction(n, p, delta);
+            }
+            Step::Next
+        }
+        // Distance between two objects.
+        0x47 => {
+            let a = objects(run, ops[0], line, unsupported)?.first().copied();
+            let b = objects(run, ops[1], line, unsupported)?.first().copied();
+            let d = match (a, b) {
+                (Some(a), Some(b)) => ctx.distance(a, b),
+                _ => 0,
+            };
+            set(ctx, attachment, run, ops[2], d);
+            Step::Next
+        }
+        // Reputation given / taken away.
+        0x48 | 0x49 => {
+            let who = objects(run, ops[0], line, unsupported)?;
+            let rep = value(ctx, attachment, run, 1);
+            for o in who {
+                if let (Some(pc), Ok(r)) = (ctx.pc_state(o), u32::try_from(rep)) {
+                    if block.kind == 0x48 {
+                        pc.reputations.insert(r);
+                    } else {
+                        pc.reputations.remove(&r);
+                    }
+                }
+            }
+            Step::Next
+        }
+        // Remove an effect: no effects exist yet, so there is none to remove.
+        0x4e => Step::Next,
+        // Sound (0x52), eye candy (0x78) and slides (0x83): not shown or played yet; the script
+        // goes on, as the original's does.
+        0x52 | 0x78 | 0x83 => Step::Next,
         // Magic/tech adjust (0x461540): N scaled by how well the user's aptitude meets the
         // item's complexity, rounded: `(F × N + 50) / 100`.
         0x5b => {
@@ -1263,5 +1318,24 @@ pub(crate) mod tests {
         assert_eq!(w.globals.var(3), 10);
         assert!(w.pcs[&1].rumours.contains(&1040));
         assert!(w.globals.flag(11) && w.globals.flag(12) && !w.globals.flag(13));
+    }
+
+    #[test]
+    fn reputations_come_and_go_and_sounds_and_candy_pass() {
+        let lines = vec![
+            always(block(0x48, &[op(0, 0), n(1003)])),
+            always(block(0x48, &[op(0, 0), n(1004)])),
+            always(block(0x49, &[op(0, 0), n(1003)])),
+            always(block(0x52, &[n(4000)])),
+            always(block(0x78, &[n(7), op(1, 0)])),
+            always(block(0x4e, &[op(0, 0), n(3)])),
+            line(block(8, &[op(0, 0), n(1)]), block(0x64, &[n(1)]), block(0, &[])),
+            always(block(1, &[])),
+        ];
+        let mut w = world(lines, 0);
+        let run = invoke(&mut w, &mut Attachment::new(0, 0, 100));
+        assert!(run.unsupported.is_empty(), "{run:?}");
+        assert_eq!(w.pcs[&1].reputations.iter().copied().collect::<Vec<_>>(), [1004]);
+        assert!(!w.globals.flag(1), "no blessings yet");
     }
 }

@@ -296,6 +296,18 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      mapping 0x41a940 not decoded); the temporary record's header defaults (0x44c710).
    - **Real data:** 1875 of 2399 scripts run to an end (1731 before). Next: action 0x4d (82),
      0x50 (47), 0x31 (18), condition 0xb (18), action 0x38 (17), 0x52 (17).
+4e. **Reputations, reactions, distances; no-ops that are faithful** (built,
+   `feat/script-gaps-3`).
+   - Actions 0x48 / 0x49 give / take a reputation; 0x1e / 0x1f set / adjust a reaction
+     (0x4c0de0: the stored part moves by the difference); 0x47 the distance between two
+     objects (0x4b96f0 not read: the straight line in tiles).
+   - Condition 0x31 mastered a college (all five spells).
+   - Faithful because nothing of the kind exists yet: action 0x4e removes an effect (none
+     exist); conditions 8 / 9 bless / curse and 0xb bad associates are false.
+   - Not shown yet, the script goes on: 0x52 sound, 0x78 eye candy, 0x83 slides.
+   - **Real data:** 2005 of 2399 scripts run to an end (1906 before). Next: action 0x4d give an
+     effect (82), 0x50 magic/tech adjust on a target (48), 0x38 toggle off (17), 0x3a kill
+     (17), 0x28 transform (12), 0x72 plaque window (12), 0x3b art (11).
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,
