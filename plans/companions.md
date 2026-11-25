@@ -1,6 +1,6 @@
 # Companions
 
-Status: plan, not implemented.
+Status: following built (`feat/followers`, below); the player's control of followers is a plan.
 
 The player manages their followers directly, the same way they manage their own character.
 
@@ -18,6 +18,51 @@ The player manages their followers directly, the same way they manage their own 
   switched off: a follower uses only what the player assigns. The original's behaviour is copied
   first, then switched off (owner's call).
 - And so on: other per-follower choices to be added as the design grows.
+
+## Following (built, `feat/followers`; `arcanum_sim::follow`)
+
+Copied from the original first.
+
+- **Joining** (`jo force line`, 0x41624d → 0x4ad950 / 0x45de90).
+  - Refused for being too good (1) or too evil (2), for a reaction at or below the AI packet's D6
+    (3), for following a PC at least as charismatic (4), for too many followers (5) or none
+    allowed (6), or for being more than D9 levels above the PC (7).
+  - A Master of Persuasion skips 1-4 and 7. `jo 1` skips the count, and that follower is not
+    counted (`npc_flags` 0x400).
+  - Refused: a `gd_npc` line by reason (1600, 1700, 1800, 2600-2900; override 12015 + ...) and the
+    talk ends (builder's call). Joined: the talk goes on at NPC line `line`.
+  - Max followers: Charisma / 4, plus one for an Expert or Master of Persuasion (stat 0xf).
+- **Orders:**
+  - `wa` waits (flag 0x8: keeps its leader, not counted, does not follow);
+  - `uw force line` rejoins after the same check;
+  - `sc` / `so` stay close / spread out (flag 0x10);
+  - `lv` leaves.
+  - Tests: `fo 1` follows this PC (Virgil's "I need you to do something..." has `fo 1, wa 0`), `wa`,
+    `wt`.
+- **Following** (0x4ac380 / 0x4346a0): farther than 4 tiles (7 spread out) the follower walks
+  until within it. At 31 tiles or more it is put on the leader's tile (0x4ad4d0).
+- **Moves:** a teleport within the map puts the followers on the leader's tile.
+- **Saved:** `WorldSave::followers` (map, NPC, leader player) and the NPC's flags in the sector's
+  changes (`npc_flags`).
+- **Multiplayer:** each follower follows the PC who recruited it.
+- **Not built:**
+  - **Map changes:** followers stay behind, waiting (builder's call). The original takes them
+    along (0x4d3760), but an NPC cannot move between maps here yet.
+  - **The wait timer:** 15 min to 30 days by field 0x12c, after which the follower leaves for
+    good (0x4aa990).
+  - **Per-tick re-checks:** the original re-checks each tick and the NPC may leave (0x4ac380).
+    The warnings (`gd_npc` 5200-5400) are not built either.
+  - **Hits:** the reaction lost when the leader hits a follower.
+  - **Summoned and charmed** followers.
+  - **Gold:** followers' gold in `$$` tests and payments (0x415335 / 0x415cc6).
+  - **The follower menu** (inventory exchange, character sheet).
+  - **The level catch-up** (0x4a6cb0).
+  - **`pa`:** the party test.
+  - **Where followers stand:** an NPC's position is not saved, so a follower stands at its home
+    after loading until the leash brings it.
+- **Data:** Virgil's AI packet is 5, but `Rules/gameai.mes` has only packet 100 ("generic AI"),
+  which is used for any packet it lacks (builder's call: how the original maps packet numbers to
+  rows was not traced). Virgil (level 1, alignment 1) passes the join check for a new character.
 
 ## New followers
 

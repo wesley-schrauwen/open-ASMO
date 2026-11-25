@@ -147,7 +147,7 @@ pub fn npc_idle(
     clock: Res<GameClock>,
     mut rng: ResMut<HostRng>,
     pcs: Query<&Position, (With<PlayerControlled>, Without<Npc>)>,
-    mut npcs: Query<ThinkerQuery, With<Npc>>,
+    mut npcs: Query<ThinkerQuery, (With<Npc>, Without<crate::follow::Following>)>,
 ) {
     let tick_ms = (1000.0 / crate::TICK_HZ) as u32;
     let hour = clock.now.hour();

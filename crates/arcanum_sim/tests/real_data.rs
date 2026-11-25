@@ -566,7 +566,7 @@ fn every_generic_greeting_has_a_line() {
                                 let (mut inventory, mut pc, mut globals, mut attachment): (Inventory, PcScriptState, ScriptGlobals, Attachment) = Default::default();
                                 // Looks and race do not count, so the base is the reaction.
                                 let reaction = NpcReaction { base, race: 0, origin: 0, faction: 0, only_reputation: true };
-                                let mut talk = Talk { rules: &rules, sheet: &sheet, inventory: &mut inventory, pc: &mut pc, globals: &mut globals, npc: &mut attachment, met, npc_key: "npc".into(), npc_reaction: reaction, reputations: &reputations, gold_changed: false, unbuilt: Vec::new(), sheet_changes: Default::default(), pc_area: 0, prototypes: &prototypes, npc_flags: 0, npc_inventory: None, npc_stock: None, npc_inventory_changed: false, xp_quest: None, item_info: &|_| None };
+                                let mut talk = Talk { follow: Default::default(), rules: &rules, sheet: &sheet, inventory: &mut inventory, pc: &mut pc, globals: &mut globals, npc: &mut attachment, met, npc_key: "npc".into(), npc_reaction: reaction, reputations: &reputations, gold_changed: false, unbuilt: Vec::new(), sheet_changes: Default::default(), pc_area: 0, prototypes: &prototypes, npc_flags: 0, npc_inventory: None, npc_stock: None, npc_inventory_changed: false, xp_quest: None, item_info: &|_| None };
                                 assert_eq!(arcanum_sim::level(talk.reaction()), level as u32);
                                 let info = NpcInfo { name: "N".into(), male: npc_male, reaction, class, dumb, overrides: None };
                                 let mut say = Say { npc_net: NetId(1), dialog: 0, pc_name: "P", npc: &info, generic: &mut generic, vfs: Some(&vfs), rng: &mut rng, deltas: Vec::new(), jumps: 0, areas: &arcanum_sim::areas::NO_AREAS, pc_at: TileLoc { x: 0, y: 0 } };
@@ -695,4 +695,25 @@ fn the_experience_table_reads_and_levels_rise() {
     let mut sheet = arcanum_rules::CharacterSheet { unspent: 0, ..Default::default() };
     assert_eq!(rules.gain_experience(&mut sheet, 5000), [2, 3]);
     assert_eq!((sheet.level, sheet.unspent, rules.xp_to_next(&sheet)), (3, 2, 7700 - 5000));
+}
+
+/// Virgil (dialogue 1324) will follow a new character: his AI packet, level and alignment pass
+/// the join check (0x4ad950) at a neutral reaction.
+#[test]
+fn virgil_can_join_a_new_character() {
+    use arcanum_sim::follow::{JoinCheck, ai_follow, can_join};
+    let Some(vfs) = vfs() else { return };
+    let start = StartMap::load(&vfs).unwrap();
+    let mut map = arcanum_sim::LoadedMap::default();
+    map.open(Some(&vfs), &start.map);
+    map.load_around(Some(&vfs), start.position);
+    let virgil = map.mobiles.values().flatten().find(|o| arcanum_sim::attachments(o, &map.prototypes).get(&arcanum_sim::EVENT_DIALOGUE).is_some_and(|a| a.number == 1324)).expect("Virgil");
+    let stats = virgil.ints("critter_stat_base_idx").or_else(|| map.prototypes.of(virgil)?.ints("critter_stat_base_idx")).unwrap_or_default();
+    let packet = map.prototypes.int(virgil, "npc_ai_data").unwrap_or(0);
+    let ai_mes = arcanum_formats::mes::MesFile::parse(&vfs.read(arcanum_sim::follow::GAME_AI).unwrap()).unwrap();
+    let ai = ai_follow(Some(&ai_mes), packet);
+    let (level, alignment) = (stats.get(0x11).copied().unwrap_or(0), stats.get(0x13).copied().unwrap_or(0));
+    eprintln!("Virgil: AI packet {packet} {ai:?}, level {level}, alignment {alignment}, npc_flags {:?}", map.prototypes.int(virgil, "npc_flags"));
+    let check = JoinCheck { pc_charisma: 8, pc_level: 1, max_followers: 2, reaction: 50, npc_alignment: alignment, npc_level: level, ai, ..Default::default() };
+    assert_eq!(can_join(&check, false), Ok(()));
 }

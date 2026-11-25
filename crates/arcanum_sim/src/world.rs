@@ -113,9 +113,11 @@ pub fn spawn_npcs(
         let spawn = look.spawn(net_id, EntityKind::Npc { prototype }, position);
         outbox.0.extend(players.iter().map(|&p| (p, spawn.clone())));
     };
+    // A follower can be away from its own sector: it is not spawned twice.
+    let spawned: BTreeSet<(SectorId, u32)> = npcs.iter().map(|(_, _, s)| (s.sector, s.index)).collect();
     for id in new {
         populated.0.insert(id);
-        for (index, object) in map.mobiles.get(&id).into_iter().flatten().enumerate().filter(|(_, o)| o.object_type == TYPE_NPC && !off(o)) {
+        for (index, object) in map.mobiles.get(&id).into_iter().flatten().enumerate().filter(|(i, o)| o.object_type == TYPE_NPC && !off(o) && !spawned.contains(&(id, *i as u32))) {
             spawn(&mut commands, &mut ids, &mut outbox, id, index, object);
         }
     }
@@ -1943,6 +1945,68 @@ mod tests {
         sim.update();
         let deltas = sim.take_deltas();
         assert!(deltas.iter().any(|(p, d)| p.0 == 7 && matches!(d, LedgerDelta::Spawn { .. })), "{deltas:?}");
+    }
+
+    #[test]
+    fn an_npc_joins_through_dialogue_then_follows_its_leader() {
+        use crate::follow::{Following, LEASH_TILES};
+        use crate::script::tests::{always, block, n};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]));
+        sim.update();
+        sim.update();
+        let sector = SectorId::new(1, 1);
+        let npc_object = crate::ScriptObject::Mobile { sector, index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 703));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            library.insert(703, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(4, &[n(1)]))] });
+            library.insert_dialog(703, arcanum_formats::dialog::DialogFile::parse(b"{1}{Need a hand?}{}{}{}{}{}\n{2}{Come along.}{}{1}{}{0}{jo 0 3}\n{3}{Lead on.}{}{}{}{}{}"));
+        }
+        let (npc, entity) = {
+            let world = sim.app.world_mut();
+            let (e, id, _) = world.query::<(Entity, &NetId, &crate::NpcSource)>().iter(world).find(|(_, _, s)| s.index == 0 && s.sector == sector).unwrap();
+            (*id, e)
+        };
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Choose { option: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::FloatText { text, .. } if text == "Lead on.")), "line 3 after joining: {deltas:?}");
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(save.followers.len(), 1);
+        assert_eq!((save.followers[0].leader, save.followers[0].index), (PlayerId(7), 0));
+        sim.update();
+        assert_eq!(sim.app.world().get::<Following>(entity), Some(&Following { leader: PlayerId(7), spread_out: false }));
+        // Far away: put on the leader's tile.
+        let start = sim.app.world().get::<Position>(entity).unwrap().0;
+        let far = TileLoc { x: start.x + LEASH_TILES, y: start.y };
+        let set_pc = |sim: &mut SimApp, at: TileLoc| {
+            let world = sim.app.world_mut();
+            let mut q = world.query_filtered::<&mut Position, With<PlayerControlled>>();
+            q.single_mut(world).unwrap().0 = at;
+        };
+        set_pc(&mut sim, far);
+        sim.update();
+        assert_eq!(sim.app.world().get::<Position>(entity).unwrap().0, far, "leashed");
+        // Six tiles off: it walks after the PC until within four.
+        let near = TileLoc { x: far.x - 6, y: far.y };
+        set_pc(&mut sim, near);
+        sim.update();
+        let walking = sim.app.world().get::<crate::Walking>(entity).expect("walks after its leader");
+        assert_eq!(crate::tile_distance(*walking.steps.back().unwrap(), near), 4, "{walking:?}");
+        // A teleport within the map takes it along, onto the same tile.
+        let to = TileLoc { x: 75, y: 75 };
+        let teleport = crate::big_move::ScriptTeleport { causer: PlayerId(7), object: crate::ScriptObject::Pc(PlayerId(7)), map: crate::big_move::THIS_MAP, to };
+        sim.app.world_mut().resource_mut::<crate::big_move::ScriptTeleports>().0.push(teleport);
+        sim.update();
+        assert_eq!(sim.app.world().get::<Position>(entity).unwrap().0, to);
     }
 
     #[test]

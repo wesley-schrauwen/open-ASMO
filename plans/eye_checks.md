@@ -61,3 +61,12 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 - [ ] A dialogue line that gives experience raises the level when enough is reached, shows
       "Congratulations! You are now level N." in the message box, and the points appear.
 - [ ] The character screen shows the new level and the experience still needed ("XP Next").
+
+## Followers (followers PR)
+
+- [ ] Virgil joins after "I suppose it can not hurt to search out this Elder Joachim" and walks
+      after the PC, stopping about 4 tiles away; after `so` (spread out) about 7.
+- [ ] Told to wait, he stays; told to rejoin, he follows again; told to leave, he stops following.
+- [ ] Far away (31 tiles or more), he appears beside the PC.
+- [ ] A teleport within the map brings him along; a map change leaves him waiting behind.
+- [ ] Refusals show the NPC's line and end the talk.
