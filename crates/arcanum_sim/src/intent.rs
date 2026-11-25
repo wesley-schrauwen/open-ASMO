@@ -55,6 +55,9 @@ pub enum PlayerIntent {
     EndTurn,
     /// Cast `spell` on a door or container from where the PC stands ([`crate::magick`]).
     Cast { spell: usize, target: crate::LockTarget },
+    /// Cast `spell` on critter `target` from where the PC stands ([`crate::magick`]: the healing
+    /// spells and Resurrect).
+    CastOn { spell: usize, target: crate::NetId },
     /// Open the sleep window ([`crate::rest`]): the host answers with
     /// [`RestWindow`](crate::LedgerDelta::RestWindow) or [`RestRefused`](crate::LedgerDelta::RestRefused).
     RestWindow,

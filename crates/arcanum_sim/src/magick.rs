@@ -1,5 +1,11 @@
 //! Casting spells (Arcanum.exe 0x57bc70 / 0x57c110 / 0x4564e0 / 0x4508a0 / 0x450420): for now
-//! the Unlocking Cantrip on a door or container.
+//! the Unlocking Cantrip on a door or container, and the healing spells and Resurrect on a
+//! critter ([`cast_on_critters`]).
+//!
+//! - **On critters** (`rules/spelllist.mes`): Minor Healing (60, 5-30 by aptitude, a hurt
+//!   living target), Halt Poison (61, 50), Major Healing (62, 40-80, and scars and crippling),
+//!   Resurrect (64, a dead target not the caster, `Full | Resurrect`; a PC gets up with 15 %,
+//!   owner's call).
 //!
 //! - **Who may cast** (0x57bc70, 0x4564e0): a PC who knows the spell (its college's count,
 //!   [`arcanum_rules::CharacterSheet::spells`], is past the spell's place in it) with an
@@ -23,7 +29,7 @@
 //! Not built: the cast animation and its eye candy and sounds (`SpellEyeCandy.mes`: cast art
 //! 10, sound 9020; destination art 16, sound 9025); the charge waiting for the animation; mana
 //! stored in worn items, drawn first; line of sight ("You cannot see the target.", 604); the
-//! tech-aptitude roll (read as dead code); other spells.
+//! tech-aptitude roll (read as dead code); other spells; NPCs' poison; mechanical targets.
 
 use arcanum_rules::{CharacterSheet, SPELLS_PER_COLLEGE};
 use bevy_ecs::prelude::{Commands, Component, Entity, Query, Res, ResMut, Resource};
@@ -126,9 +132,144 @@ pub fn cast_check(rules: &arcanum_rules::RulesData, sheet: &CharacterSheet, curr
     Ok(cost)
 }
 
-/// Casts taken from the inbox by `handle_intents`: the player, the spell and its target.
+/// Casts taken from the inbox by `handle_intents`: the player, the spell and its target (a door
+/// or container; `critters`: a critter).
 #[derive(Resource, Debug, Default)]
-pub struct CastRequests(pub Vec<(PlayerId, usize, LockTarget)>);
+pub struct CastRequests(pub Vec<(PlayerId, usize, LockTarget)>, pub Vec<(PlayerId, usize, NetId)>);
+
+impl CastRequests {
+    pub fn critters(&mut self) -> &mut Vec<(PlayerId, usize, NetId)> {
+        &mut self.1
+    }
+}
+
+/// What a spell does to a critter (`rules/spelllist.mes` lines `1000 + 50 × spell` …; 0x4521a0).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CritterSpell {
+    /// Hit points healed on a living, hurt target; Major Healing also mends scars and crippling
+    /// (`Dmg_Flags: Scars | Crippling`).
+    Heal { amount: i32, injuries: bool },
+    /// Halt Poison: 50 poison taken away.
+    CurePoison(i32),
+    /// Resurrect (`Full | Resurrect`): a dead target, not the caster, gets up.
+    Resurrect,
+}
+
+/// The critter spell `spell` cast at magick aptitude `aptitude`.
+pub fn critter_spell(spell: usize, aptitude: i32) -> Option<CritterSpell> {
+    let spell32 = spell as u32;
+    Some(match spell32 {
+        crate::MINOR_HEALING => CritterSpell::Heal { amount: crate::spell_heal(spell32, aptitude), injuries: false },
+        crate::MAJOR_HEALING => CritterSpell::Heal { amount: crate::spell_heal(spell32, aptitude), injuries: true },
+        crate::HALT_POISON => CritterSpell::CurePoison(50),
+        crate::RESURRECT => CritterSpell::Resurrect,
+        _ => return None,
+    })
+}
+
+/// The critters the spells may land on: PCs and NPCs.
+type SpellTargetQuery<'a> = (&'a NetId, &'a Position, Option<&'a PlayerControlled>, Option<&'a crate::NpcSource>);
+
+/// Casts the healing spells and Resurrect on critters (`PlayerIntent::CastOn`): in range
+/// ([`CAST_RANGE`]), paid as any cast ([`cast_check`]); a target the spell does not take (a dead
+/// one to heal, a living one to raise, the caster to raise, the undead) costs nothing. A PC is
+/// raised with 15 % of its hit points (owner's call), an NPC with all of them (`Full`).
+#[allow(clippy::too_many_arguments)]
+pub fn cast_on_critters(
+    mut requests: ResMut<CastRequests>,
+    mut map: ResMut<LoadedMap>,
+    mut world: ResMut<WorldState>,
+    session: Res<Session>,
+    rules: Res<SimRules>,
+    mut outbox: ResMut<Outbox>,
+    (mut sheets, mut toggled): (ResMut<crate::ScriptSheets>, ResMut<crate::world::ToggledNpcs>),
+    mut casters: Query<(&NetId, &PlayerControlled, &Position, &mut Sheet)>,
+    targets: Query<SpellTargetQuery>,
+) {
+    for (player, spell, target) in std::mem::take(requests.critters()) {
+        let Some((&net_id, _, position, mut sheet)) = casters.iter_mut().find(|pc| pc.1.0 == player) else { continue };
+        let Some(effect) = critter_spell(spell, rules.0.aptitude(&sheet.0)) else { continue };
+        let Some((_, at, pc, npc)) = targets.iter().find(|t| *t.0 == target) else { continue };
+        if !crate::within_radius(position.0, at.0, CAST_RANGE) {
+            continue;
+        }
+        // Whether the target takes it (the list's `Tgt_` flags).
+        let takes = match (pc.map(|p| p.0), npc) {
+            (Some(p), _) => world.0.as_ref().and_then(|w| w.players.get(&p)).is_some_and(|s| {
+                let t = &s.blueprint.sheet;
+                match effect {
+                    CritterSpell::Heal { .. } => !t.dead && t.hp_damage > 0,
+                    CritterSpell::CurePoison(_) => !t.dead,
+                    CritterSpell::Resurrect => t.dead && p != player,
+                }
+            }),
+            (None, Some(n)) => {
+                let dead = map.is_dead(n.sector, n.index);
+                let undead = map.mobiles.get(&n.sector).and_then(|m| m.get(n.index as usize)).and_then(|o| map.prototypes.int(o, "critter_flags")).unwrap_or(0) & crate::combat::OCF_UNDEAD != 0;
+                match effect {
+                    CritterSpell::Heal { .. } => !dead && map.npc_hp(n.sector, n.index).is_some_and(|(left, max)| left < max),
+                    CritterSpell::CurePoison(_) => false,
+                    CritterSpell::Resurrect => dead && !undead,
+                }
+            }
+            _ => false,
+        };
+        if !takes {
+            continue;
+        }
+        let current = pc_status(&rules.0, &sheet.0).fatigue.current;
+        let cost = match cast_check(&rules.0, &sheet.0, current, spell) {
+            Ok(cost) => cost,
+            Err(CastRefusal::NoEnergy) => {
+                outbox.0.push((player, LedgerDelta::SpellResult { message: NOT_ENOUGH_ENERGY }));
+                continue;
+            }
+            Err(CastRefusal::Silent) => continue,
+        };
+        sheet.0.fatigue_damage += cost;
+        if let Some(saved) = world.0.as_mut().and_then(|w| w.players.get_mut(&player)) {
+            saved.blueprint.sheet = sheet.0.clone();
+        }
+        crate::ground::broadcast(&session, &mut outbox, LedgerDelta::PcStatus { net_id, status: pc_status(&rules.0, &sheet.0) });
+        match (pc.map(|p| p.0), npc) {
+            (Some(p), _) => {
+                let Some(t) = world.0.as_mut().and_then(|w| w.players.get_mut(&p)).map(|s| &mut s.blueprint.sheet) else { continue };
+                match effect {
+                    CritterSpell::Heal { amount, injuries } => {
+                        t.hp_damage = (t.hp_damage - amount).max(0);
+                        if injuries {
+                            t.injuries = 0;
+                        }
+                    }
+                    CritterSpell::CurePoison(n) => t.poison = (t.poison - n).max(0),
+                    CritterSpell::Resurrect => {
+                        let max = rules.0.derived(t).hit_points;
+                        t.dead = false;
+                        t.hp_damage = (max - crate::resurrected_hp(max)).max(0);
+                    }
+                }
+                sheets.0.insert(p);
+            }
+            (None, Some(n)) => {
+                match effect {
+                    CritterSpell::Heal { amount, injuries } => {
+                        map.hurt_npc(n.sector, n.index, -amount);
+                        if injuries {
+                            map.cure_npc_injuries(n.sector, n.index);
+                        }
+                    }
+                    CritterSpell::CurePoison(_) => {}
+                    CritterSpell::Resurrect => {
+                        map.revive_npc(n.sector, n.index);
+                        toggled.0.push((n.sector, n.index));
+                    }
+                }
+                crate::ground::save_change(&mut world, &map, n.sector);
+            }
+            _ => {}
+        }
+    }
+}
 
 /// Casts the requested spells from where the PCs stand.
 #[allow(clippy::too_many_arguments)]

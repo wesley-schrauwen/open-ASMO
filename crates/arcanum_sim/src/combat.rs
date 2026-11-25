@@ -806,10 +806,11 @@ impl crate::LoadedMap {
         Some((max - self.prototypes.int(o, "hp_damage").unwrap_or(0), max))
     }
 
-    /// Adds `amount` to NPC `index`'s `hp_damage`, kept in [`crate::LoadedMap::changes`].
+    /// Adds `amount` to NPC `index`'s `hp_damage` (a negative amount heals, to 0), kept in
+    /// [`crate::LoadedMap::changes`].
     pub fn hurt_npc(&mut self, sector: arcanum_formats::map::SectorId, index: u32, amount: i32) {
         let Some(o) = self.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize)) else { return };
-        let now = o.int("hp_damage").unwrap_or(0) + amount.max(0);
+        let now = (o.int("hp_damage").unwrap_or(0) + amount).max(0);
         o.set_int("hp_damage", now);
         self.changes.entry(sector).or_default().npc_damage.insert(index, now);
     }
@@ -820,6 +821,29 @@ impl crate::LoadedMap {
         let flags = self.prototypes.int(o, "critter_flags").unwrap_or(0) | injuries;
         o.set_int("critter_flags", flags);
         self.changes.entry(sector).or_default().npc_critter_flags.insert(index, flags);
+    }
+
+    /// Mends NPC `index`'s injuries (`critter_flags` 0x80-0x400).
+    pub fn cure_npc_injuries(&mut self, sector: arcanum_formats::map::SectorId, index: u32) {
+        let Some(o) = self.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize)) else { return };
+        let flags = self.prototypes.int(o, "critter_flags").unwrap_or(0) & !OCF_INJURIES;
+        o.set_int("critter_flags", flags);
+        self.changes.entry(sector).or_default().npc_critter_flags.insert(index, flags);
+    }
+
+    /// Raises dead NPC `index` with all its hit points (Resurrect's `Full`), standing (animation
+    /// 0, frame 0).
+    pub fn revive_npc(&mut self, sector: arcanum_formats::map::SectorId, index: u32) {
+        if let Some(changes) = self.changes.get_mut(&sector) {
+            changes.dead.remove(&index);
+        }
+        if let Some(o) = self.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize)) {
+            o.set_int("hp_damage", 0);
+        }
+        self.changes.entry(sector).or_default().npc_damage.insert(index, 0);
+        if let Some(art) = self.object_at(sector, index, true).and_then(|o| self.prototypes.art_id(o)) {
+            self.set_object_art(sector, index, true, art.0 & !(0x1f << 6 | 0x1f << 14));
+        }
     }
 
     /// Takes `amount` from NPC `index`'s experience pool (field 0x11e), kept the same way.

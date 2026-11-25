@@ -1138,6 +1138,51 @@ mod tests {
     }
 
     #[test]
+    fn a_pc_raises_another_and_heals_an_npc_by_spell() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let mut npc = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(74, 70)).field("hp_damage", Value::Int32(2));
+        npc.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
+        std::fs::write(folder.join("G_0F.mob"), npc.build()).unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        let mut start = save(&[(1, "Healer", TileLoc { x: 71, y: 70 }), (2, "Fallen", TileLoc { x: 72, y: 70 })]);
+        let healer = &mut start.players.get_mut(&PlayerId(1)).unwrap().blueprint.sheet;
+        healer.base = [20; arcanum_rules::PRIMARY_STATS];
+        healer.spells[crate::RESURRECT as usize / arcanum_rules::SPELLS_PER_COLLEGE] = 5;
+        let fallen = &mut start.players.get_mut(&PlayerId(2)).unwrap().blueprint.sheet;
+        fallen.dead = true;
+        fallen.hp_damage = 1000;
+        sim.boot(start);
+        sim.update();
+        sim.update();
+        let id = |sim: &mut SimApp, p: u64| { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::PlayerControlled)>().iter(world).find(|c| c.1.0 == PlayerId(p)).unwrap().0 };
+        let fallen_id = id(&mut sim, 2);
+        sim.receive([(PlayerId(1), crate::PlayerIntent::CastOn { spell: crate::RESURRECT as usize, target: fallen_id })]);
+        sim.update();
+        sim.update();
+        let sheet = |sim: &SimApp, p: u64| sim.app.world().resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(p)].blueprint.sheet.clone();
+        let raised = sheet(&sim, 2);
+        let max = sim.app.world().resource::<crate::SimRules>().0.derived(&raised).hit_points;
+        assert!(!raised.dead, "raised");
+        assert_eq!(max - raised.hp_damage, crate::resurrected_hp(max));
+        let cost = sim.app.world().resource::<crate::SimRules>().0.spells.spells.get(crate::RESURRECT as usize).map_or(0, |s| s.cost);
+        assert_eq!(sheet(&sim, 1).fatigue_damage, cost, "paid in fatigue (50 with the game's list)");
+        // Minor Healing on the hurt NPC.
+        let npc_id = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::NpcSource)>().iter(world).next().unwrap().0 };
+        sim.receive([(PlayerId(1), crate::PlayerIntent::CastOn { spell: crate::MINOR_HEALING as usize, target: npc_id })]);
+        sim.update();
+        let map = sim.app.world().resource::<LoadedMap>();
+        let (left, max) = map.npc_hp(SectorId::new(1, 1), 0).unwrap();
+        assert_eq!(left, max, "healed whole");
+    }
+
+    #[test]
     fn prowling_switches_the_pcs_art_and_everyone_hears_of_it() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());

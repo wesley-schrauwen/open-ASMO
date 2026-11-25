@@ -682,7 +682,7 @@ fn click_to_move(
     let candidates = objects.iter().filter(|o| o.4.object_type != TYPE_WALL).map(|(e, s, a, t, _)| (e, s, a, t));
     let hit = crate::picking::pick(world, candidates, &images);
     // An armed skill or spell takes the click: on a door or container it walks there and picks
-    // the lock, or casts from where the PC stands; Pick Pocket on an NPC walks to it and opens
+    // the lock, or casts from where the PC stands; a spell on a critter is cast on it; Pick Pocket on an NPC walks to it and opens
     // its pockets; anywhere else it is put away.
     if let Some(armed) = armed.and_then(|mut a| a.0.take()) {
         if let crate::skill_use::Armed::Skill { skill: arcanum_sim::SKILL_PICK_POCKET, .. } = armed {
@@ -707,6 +707,16 @@ fn click_to_move(
                 debug!("cast {spell} on {target:?}");
                 if let Some(link) = link {
                     let _ = link.0.send_intent(PlayerIntent::Cast { spell, target });
+                }
+            }
+            // A spell on a critter, a PC or an NPC, alive or dead (the healing spells, Resurrect).
+            (None, _, crate::skill_use::Armed::Spell(spell)) => {
+                let critters = actors.iter().map(|(e, s, a, t, _)| (e, s, a, t));
+                if let Some((_, _, _, _, critter)) = crate::picking::pick(world, critters, &images).and_then(|e| actors.get(e).ok())
+                    && let Some(link) = link
+                {
+                    debug!("cast {spell} on {:?}", critter.net_id);
+                    let _ = link.0.send_intent(PlayerIntent::CastOn { spell, target: critter.net_id });
                 }
             }
             _ => {}
