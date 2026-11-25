@@ -25,7 +25,8 @@
 //! - **PCs hurt:** an NPC's hit goes on the PC's sheet (hit points, poison, fatigue) as script
 //!   damage does; a PC with no hit points left takes no turns.
 //!
-//! Not built yet: critical effects other than the multiplier, called shots, the light, range and
+//! Not built yet: stunning, knocking down and knocking out, scars, dropped and damaged items,
+//! critical misses' effects, called shots, the light, range and
 //! cover terms, ammunition, PC death.
 
 use arcanum_formats::map::TileLoc;
@@ -90,6 +91,11 @@ pub struct Weapon {
     /// In tiles; 1 or less for melee.
     pub range: i32,
     pub min_strength: i32,
+    /// `weapon_magic_crit_hit_chance` (field 0x82), `weapon_magic_crit_hit_effect` (0x83) and
+    /// `weapon_crit_hit_chart` (0x81).
+    pub crit_chance: i32,
+    pub crit_effect: i32,
+    pub crit_chart: i32,
 }
 
 /// One side of an attack.
@@ -109,6 +115,62 @@ pub struct Fighter {
     pub resistances: [i32; 5],
     /// The skills it is trained in (a weapon's speed + 5, 0x465cf0).
     pub trained: Vec<usize>,
+    /// A PC (an NPC's critical hits on it only multiply by 1.5 and never blind it).
+    pub pc: bool,
+    /// Constitution, against critical injuries (0x45f060).
+    pub constitution: i32,
+    /// Its injuries (`critter_flags` 0x80-0x400: [`OCF_BLINDED`] …).
+    pub injuries: i32,
+    /// It wears a helmet (slot 1000).
+    pub helmet: bool,
+    /// `critter_flags` 0x4: undead, not injured by critical hits.
+    pub undead: bool,
+}
+
+/// `critter_flags`: undead, blinded, one / both arms crippled, legs crippled (0x4b5f40).
+pub const OCF_UNDEAD: i32 = 0x4;
+pub const OCF_BLINDED: i32 = 0x80;
+pub const OCF_CRIPPLED_ARM: i32 = 0x100;
+pub const OCF_CRIPPLED_ARMS: i32 = 0x200;
+pub const OCF_CRIPPLED_LEGS: i32 = 0x400;
+/// All of them.
+pub const OCF_INJURIES: i32 = OCF_BLINDED | OCF_CRIPPLED_ARM | OCF_CRIPPLED_ARMS | OCF_CRIPPLED_LEGS;
+/// The helmet slot.
+pub const HELMET_SLOT: i32 = 1000;
+
+/// Where a critical hit lands (0x4b65a0): torso, head, arms, legs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BodyPart {
+    Torso,
+    Head,
+    Arms,
+    Legs,
+}
+
+impl BodyPart {
+    /// From a 1-100 roll: up to 70 the torso, 85 the legs, 95 the arms, else the head.
+    pub fn of_roll(roll: i32) -> Self {
+        match roll {
+            ..=70 => Self::Torso,
+            71..=85 => Self::Legs,
+            86..=95 => Self::Arms,
+            _ => Self::Head,
+        }
+    }
+}
+
+/// The attacker's difficulty from its injuries (0x4c8430): blinded + 30, one arm crippled + 20,
+/// both + 50.
+pub fn injury_difficulty(injuries: i32) -> i32 {
+    let blind = if injuries & OCF_BLINDED != 0 { 30 } else { 0 };
+    let arms = if injuries & OCF_CRIPPLED_ARMS != 0 {
+        50
+    } else if injuries & OCF_CRIPPLED_ARM != 0 {
+        20
+    } else {
+        0
+    };
+    blind + arms
 }
 
 impl Fighter {
@@ -154,6 +216,9 @@ pub struct AttackOutcome {
     pub fatigue: i32,
     /// The critical multiplier in percent (150, 200, 300), 100 for none.
     pub multiplier: i32,
+    /// Injuries this hit gave (`critter_flags` bits it did not have).
+    #[serde(default)]
+    pub injured: i32,
 }
 
 /// One attack (0x4b3170 → 0x4c7160 → 0x4b6680 → 0x4b6860 → 0x4b4390):
@@ -172,13 +237,15 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
     let chance = weapon_chance(skill, attacker.level(skill));
     let weapon = attacker.weapon.clone().unwrap_or_default();
     let short = (weapon.min_strength - attacker.strength).max(0);
-    let difficulty = -weapon.to_hit + 5 * short;
+    let difficulty = -weapon.to_hit + 5 * short + injury_difficulty(attacker.injuries);
     let mut out = AttackOutcome { multiplier: 100, ..Default::default() };
     if rng.range(1, 100) + difficulty > chance {
         out.fumbled = rng.range(1, 100) <= ((100 - chance) / 2).max(2);
         return out;
     }
-    out.critical = rng.range(1, 100) <= chance / 2;
+    // A combat skill's critical chance is a twentieth of it (0x4c81a0: skill flag 0x400), plus
+    // the weapon's magick part (unscaled: 0x461590 not read).
+    out.critical = rng.range(1, 100) <= chance / 20 + weapon.crit_chance;
     let dodge = weapon_chance(SKILL_DODGE, defender.level(SKILL_DODGE));
     if dodge > 0 && rng.range(1, 100) <= dodge {
         out.dodged = true;
@@ -205,8 +272,8 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
         *dealt = if r > 0 { rolled - rolled * r.min(100) / 100 } else { rolled };
     }
     if out.critical {
-        let roll = rng.range(1, 100);
-        out.multiplier = if roll <= 10 { 300 } else if roll <= 30 { 200 } else { 150 };
+        out.multiplier = critical_multiplier(attacker, defender, &weapon, rng);
+        out.injured = critical_injuries(attacker, defender, &weapon, rng);
     }
     out.hp = (dealt[0] + dealt[2] + dealt[3]) * out.multiplier / 100;
     out.poison = dealt[1];
@@ -217,6 +284,62 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
 /// A weapon item's fighting stats (fields 0x72-0x7d) and its skill (0x465d80): thrown with
 /// `weapon_flags` 0x40; firearms when tech, of range 3 or more, firing bullets, charges or fuel
 /// (ammunition 1-3); a bow when it shoots arrows (0); else melee.
+/// The base of a critical hit's rolls (0x4b5f40): the weapon's critical effect, none for ranged
+/// weapons.
+fn critical_base(attacker: &Fighter, weapon: &Weapon) -> i32 {
+    if attacker.weapon.is_some() && weapon.range <= 1 { weapon.crit_effect } else { 0 }
+}
+
+/// The multiplier of a critical hit (0x4b5f40): × 3 on a roll up to the base + 10, else × 2 on a
+/// second up to + 30, else × 1.5; an NPC's on a PC × 1.5.
+pub fn critical_multiplier(attacker: &Fighter, defender: &Fighter, weapon: &Weapon, rng: &mut HostRng) -> i32 {
+    if !attacker.pc && defender.pc {
+        return 150;
+    }
+    let x = critical_base(attacker, weapon);
+    if rng.range(1, 100) <= x + 10 {
+        300
+    } else if rng.range(1, 100) <= x + 30 {
+        200
+    } else {
+        150
+    }
+}
+
+/// The injuries a critical hit gives (0x4b5f40), none to the undead: by the body part
+/// ([`BodyPart::of_roll`]), a roll up to `E` (the base + 5, + 10 more for critical chart 1 or 3
+/// (unarmed and ranged count as 1), + 10 on a bare head) and a failed Constitution save (a roll
+/// above CO − 5, CO for the head): the head blinds (not with chart 1, nor an NPC a PC), an arm is
+/// crippled (both if one was, half the time), the legs are crippled. The original's rolls for
+/// the three injuries differ a little (builder's call: `E` for all).
+pub fn critical_injuries(attacker: &Fighter, defender: &Fighter, weapon: &Weapon, rng: &mut HostRng) -> i32 {
+    if defender.undead {
+        return 0;
+    }
+    let part = BodyPart::of_roll(rng.range(1, 100));
+    let chart = if attacker.weapon.is_none() || weapon.range > 1 { 1 } else { weapon.crit_chart };
+    let mut e = critical_base(attacker, weapon) + 5;
+    if matches!(chart, 1 | 3) {
+        e += 10;
+    }
+    if part == BodyPart::Head && !defender.helmet {
+        e += 10;
+    }
+    let mut fails = |modifier: i32| rng.range(1, 100) <= e && rng.range(1, 100) > defender.constitution + modifier;
+    let had = defender.injuries;
+    let got = match part {
+        BodyPart::Torso => 0,
+        BodyPart::Head if chart == 1 || (!attacker.pc && defender.pc) => 0,
+        BodyPart::Head => if fails(0) { OCF_BLINDED } else { 0 },
+        BodyPart::Arms if fails(-5) => {
+            if had & OCF_CRIPPLED_ARM != 0 && rng.range(1, 100) <= 50 { OCF_CRIPPLED_ARMS } else { OCF_CRIPPLED_ARM }
+        }
+        BodyPart::Arms => 0,
+        BodyPart::Legs => if fails(-5) { OCF_CRIPPLED_LEGS } else { 0 },
+    };
+    got & !had
+}
+
 pub fn weapon_of(item: &Object, prototypes: &Prototypes) -> Weapon {
     let int = |f: &str| prototypes.int(item, f).unwrap_or(0);
     let at = |f: &str, i: usize| item.ints(f).or_else(|| prototypes.of(item)?.ints(f)).and_then(|v| v.get(i).copied()).unwrap_or(0);
@@ -245,6 +368,9 @@ pub fn weapon_of(item: &Object, prototypes: &Prototypes) -> Weapon {
         speed: int("weapon_speed_factor") + int("weapon_magic_speed_adj"),
         range: if range == 1 { 0 } else { range + int("weapon_magic_range_adj") },
         min_strength: int("weapon_min_strength") + int("weapon_magic_min_strength_adj"),
+        crit_chance: int("weapon_magic_crit_hit_chance"),
+        crit_effect: int("weapon_magic_crit_hit_effect"),
+        crit_chart: int("weapon_crit_hit_chart"),
     }
 }
 
@@ -411,6 +537,14 @@ impl crate::LoadedMap {
         self.changes.entry(sector).or_default().npc_damage.insert(index, now);
     }
 
+    /// Adds injuries to NPC `index`'s `critter_flags`, kept the same way.
+    pub fn injure_npc(&mut self, sector: arcanum_formats::map::SectorId, index: u32, injuries: i32) {
+        let Some(o) = self.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize)) else { return };
+        let flags = self.prototypes.int(o, "critter_flags").unwrap_or(0) | injuries;
+        o.set_int("critter_flags", flags);
+        self.changes.entry(sector).or_default().npc_critter_flags.insert(index, flags);
+    }
+
     /// Takes `amount` from NPC `index`'s experience pool (field 0x11e), kept the same way.
     pub fn spend_npc_pool(&mut self, sector: arcanum_formats::map::SectorId, index: u32, amount: i32) {
         let Some(o) = self.mobiles.get_mut(&sector).and_then(|m| m.get_mut(index as usize)) else { return };
@@ -524,6 +658,11 @@ impl CombatWorld<'_, '_> {
                 unarmed: pc_unarmed(gloves),
                 resistances: armour_resistances(&worn, prototypes),
                 trained: [SKILL_BOW, SKILL_MELEE, SKILL_THROWING, SKILL_FIREARMS].into_iter().filter(|&k| sheet.training[k] > 0).collect(),
+                pc: c.player.is_some(),
+                constitution: rules.stats(sheet)[2],
+                injuries: sheet.injuries,
+                helmet: item(inv, HELMET_SLOT).is_some(),
+                undead: false,
             };
         }
         let Some(source) = c.npc else { return Fighter::default() };
@@ -538,6 +677,11 @@ impl CombatWorld<'_, '_> {
             unarmed: npc_unarmed(o, prototypes),
             resistances: armour_resistances(&worn, prototypes),
             trained: Vec::new(),
+            pc: false,
+            constitution: npc_stat(o, prototypes, 2),
+            injuries: prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_INJURIES,
+            helmet: item(&inv, HELMET_SLOT).is_some(),
+            undead: prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_UNDEAD != 0,
         }
     }
 
@@ -567,6 +711,7 @@ impl CombatWorld<'_, '_> {
         sheet.hp_damage = (sheet.hp_damage + outcome.hp.max(0)).min(max);
         sheet.poison += outcome.poison.max(0);
         sheet.fatigue_damage += outcome.fatigue.max(0);
+        sheet.injuries |= outcome.injured;
         self.sheets.0.insert(player);
     }
 
@@ -1152,6 +1297,9 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     if !outcome.hit || outcome.hp <= 0 {
         return;
     }
+    if outcome.injured != 0 {
+        w.map.injure_npc(source.sector, source.index, outcome.injured);
+    }
     let Some((left, max)) = w.map.npc_hp(source.sector, source.index) else { return };
     let dealt = outcome.hp.min(left.max(0));
     w.map.hurt_npc(source.sector, source.index, outcome.hp);
@@ -1298,6 +1446,30 @@ mod tests {
         assert!(!should_flee(60, 100, one(1), one(3), &rows[1], 0));
         assert!(should_flee(60, 100, one(1), Party { count: 21, levels: 0 }, &rows[1], 0), "a side 20 larger");
         assert_eq!(flee_goal(TileLoc { x: 10, y: 10 }, TileLoc { x: 9, y: 10 }, 8), TileLoc { x: 18, y: 10 });
+    }
+
+    #[test]
+    fn critical_hits_injure_by_body_part() {
+        assert_eq!([1, 70, 71, 85, 86, 95, 96, 100].map(BodyPart::of_roll), [BodyPart::Torso, BodyPart::Torso, BodyPart::Legs, BodyPart::Legs, BodyPart::Arms, BodyPart::Arms, BodyPart::Head, BodyPart::Head]);
+        assert_eq!((injury_difficulty(OCF_BLINDED), injury_difficulty(OCF_CRIPPLED_ARM), injury_difficulty(OCF_CRIPPLED_ARM | OCF_CRIPPLED_ARMS | OCF_BLINDED)), (30, 20, 80));
+        let sword = Weapon { skill: SKILL_MELEE, crit_effect: 100, crit_chart: 2, ..Default::default() };
+        let pc = Fighter { weapon: Some(sword.clone()), pc: true, ..Default::default() };
+        let npc = Fighter::default();
+        let mut rng = HostRng::default();
+        // A base of 100: every multiplier roll and injury roll passes; CO 0 never saves.
+        assert!((0..50).all(|_| critical_multiplier(&pc, &npc, &sword, &mut rng) == 300));
+        assert!((0..50).all(|_| critical_multiplier(&npc, &pc, &sword, &mut rng) == 150), "an NPC's on a PC");
+        let mut seen = 0;
+        for _ in 0..400 {
+            seen |= critical_injuries(&pc, &npc, &sword, &mut rng);
+        }
+        assert_eq!(seen, OCF_BLINDED | OCF_CRIPPLED_ARM | OCF_CRIPPLED_LEGS, "both arms only after one");
+        let one_arm = Fighter { injuries: OCF_CRIPPLED_ARM, ..npc.clone() };
+        assert!((0..400).any(|_| critical_injuries(&pc, &one_arm, &sword, &mut rng) == OCF_CRIPPLED_ARMS));
+        let undead = Fighter { undead: true, ..npc.clone() };
+        assert!((0..100).all(|_| critical_injuries(&pc, &undead, &sword, &mut rng) == 0));
+        let tough = Fighter { constitution: 200, ..npc };
+        assert!((0..100).all(|_| critical_injuries(&pc, &tough, &sword, &mut rng) == 0), "always saves");
     }
 
     #[test]

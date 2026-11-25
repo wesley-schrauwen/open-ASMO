@@ -117,6 +117,10 @@ pub struct CharacterSheet {
     /// background effects are not kept here: they follow from the sheet.
     #[cfg_attr(feature = "serde", serde(default))]
     pub effects: Vec<HeldEffect>,
+    /// Injuries from critical hits: `critter_flags` 0x80 blinded, 0x100 / 0x200 one / both arms
+    /// crippled, 0x400 legs crippled (0x4b5f40); a Master's Heal takes them away.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub injuries: i32,
     pub draft: Draft,
 }
 
@@ -172,6 +176,7 @@ impl Default for CharacterSheet {
             fate_pending: 0,
             poison: 0,
             effects: Vec::new(),
+            injuries: 0,
             draft: Draft::default(),
         }
     }

@@ -117,6 +117,7 @@ impl RulesData {
             fate_pending: 0,
             poison: 0,
             effects: Vec::new(),
+            injuries: 0,
             draft: Draft::default(),
         }
     }
