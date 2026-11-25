@@ -145,6 +145,8 @@ fn spawn_floats(
         let colour = match colour {
             FloatColour::White => WHITE,
             FloatColour::Green => GREEN,
+            FloatColour::Red => Color::srgb_u8(255, 0, 0),
+            FloatColour::Yellow => Color::srgb_u8(255, 255, 0),
         };
         commands
             .spawn((

@@ -86,6 +86,8 @@ pub enum HudAction {
     Sleep,
     /// Opens or closes the fate window ([`crate::fate_window`]).
     Fate,
+    /// Combat mode on or off ([`crate::combat_ui`]).
+    Combat,
 }
 
 /// The fate point count in the top bar (`%02d`, 0x54ad00 slot 2, rect 0x5c6420).
@@ -205,6 +207,9 @@ fn spawn_hud(mut commands: Commands, assets: Res<AssetServer>) {
                     }
                     "Skills_Button.ART" => {
                         button.insert(HudAction::Skills);
+                    }
+                    "Combat_Button.ART" => {
+                        button.insert(HudAction::Combat);
                     }
                     _ => {}
                 }

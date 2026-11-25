@@ -190,6 +190,14 @@ Checked by screenshot (`DEBUG_ARCANUM_PANEL=prowl`): the PC stands crouched (ani
 - [ ] Walking while prowling plays animation 5, at a believable pace; a right click stops it.
 - [ ] A second player sees the first one's PC crouch.
 
+## Combat
+
+Checked by screenshot (`DEBUG_ARCANUM_PANEL=fight`): the AP bar over the bottom bar, two green
+lights after the walk.
+- [ ] The lights sit in the bar's holes; End Turn passes the turn; the NPC hits back.
+- [ ] Floats: "HT 3" white over an NPC, red over the PC; "Dodge!"; "Critical hit".
+- [ ] The NPC dies in its death frame; the fight ends; the bar goes.
+
 ## Spotting traps while walking
 
 - [ ] Walking towards a trap object with Spot Trap, the PC sometimes stops a tile short with

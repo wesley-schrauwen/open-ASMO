@@ -332,6 +332,10 @@ pub enum FloatColour {
     White,
     /// The PC's chosen line.
     Green,
+    /// Combat text over a PC (`combat.mes` floats, table 0x5b8e6c).
+    Red,
+    /// Combat text over the player's followers.
+    Yellow,
 }
 
 /// An NPC's reaction toward a PC (0x4c0d00): the PC's stored value for it (`npc_key`), else its
