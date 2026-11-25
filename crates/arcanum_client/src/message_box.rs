@@ -59,7 +59,59 @@ pub enum BoxIcon {
     Exclamation,
     /// A college's icon (`s_<college>.art`): spells and colleges.
     College(usize),
+    /// Interface art number N (`art/interface/interface.mes`): what the cursor rests on.
+    Interface(u32),
 }
+
+/// One text of a detail row: its text and colour (all in `Flare12Font`, 0x64c498 / 0x64c49c /
+/// 0x64c500).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoxCell {
+    pub text: String,
+    pub colour: [u8; 3],
+}
+
+impl BoxCell {
+    pub fn new(text: impl Into<String>, colour: [u8; 3]) -> Self {
+        Self { text: text.into(), colour }
+    }
+}
+
+/// A row of the hover details (0x553be0): 0 is the name's row (only a right text there), 1-3
+/// the rows under it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoxRow {
+    pub row: usize,
+    pub left: Option<BoxCell>,
+    pub right: Option<BoxCell>,
+}
+
+/// A gauge at the left of a row (0x554640): `fill` drawn over `percent` of the width of
+/// `empty`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoxGauge {
+    pub row: usize,
+    pub fill: u32,
+    pub empty: u32,
+    pub percent: u32,
+}
+
+/// What the box shows of an object under the cursor besides its name.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BoxDetails {
+    /// The name's colour (0x1b font: white, or blue / red for magic items).
+    pub title_colour: Option<[u8; 3]>,
+    pub rows: Vec<BoxRow>,
+    pub gauges: Vec<BoxGauge>,
+}
+
+/// The rows' rects on screen (0x5c70c8: the name's, then three under it).
+pub const ROWS: [Rect; 4] = [
+    Rect { min: Vec2::new(290.0, 504.0), max: Vec2::new(581.0, 523.0) },
+    Rect { min: Vec2::new(290.0, 528.0), max: Vec2::new(581.0, 546.0) },
+    Rect { min: Vec2::new(290.0, 546.0), max: Vec2::new(581.0, 564.0) },
+    Rect { min: Vec2::new(290.0, 564.0), max: Vec2::new(581.0, 582.0) },
+];
 
 /// Where a message's extra line goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,12 +129,14 @@ pub struct BoxMessage {
     pub title: Option<String>,
     pub body: String,
     pub extra: Option<ExtraLine>,
+    /// An object's rows under its name (the body is then empty).
+    pub details: Option<BoxDetails>,
 }
 
 impl BoxMessage {
     /// A plain stored message, such as a refusal (kind 4).
     pub fn plain(text: impl Into<String>) -> Self {
-        Self { icon: BoxIcon::Exclamation, title: None, body: text.into(), extra: None }
+        Self { icon: BoxIcon::Exclamation, title: None, body: text.into(), extra: None, details: None }
     }
 
     /// Help text: a first line becomes the title, the rest the body (kinds 6 and 12).
@@ -91,7 +145,7 @@ impl BoxMessage {
             Some((t, b)) => (Some(t.trim().to_string()), b.trim().to_string()),
             None => (None, text.trim().to_string()),
         };
-        Self { icon: BoxIcon::Arcanum, title, body, extra: None }
+        Self { icon: BoxIcon::Arcanum, title, body, extra: None, details: None }
     }
 }
 
@@ -151,6 +205,8 @@ pub enum BoxText {
     Title,
     Body,
     Extra,
+    /// A detail row's text.
+    Detail,
 }
 
 #[derive(Resource)]
@@ -192,7 +248,19 @@ fn in_box(r: Rect) -> Rect {
 }
 
 /// Redraws the box when its message changes.
-fn show_box(mut commands: Commands, messages: Res<MessageBox>, roots: Query<(Entity, Option<&Children>), With<MessageBoxRoot>>, art: Option<Res<BoxArt>>, frames: Option<Res<Assets<ArtFrames>>>, fonts: Option<Res<ArcanumFonts>>, added: Query<(), Added<MessageBoxRoot>>, mut pending: Local<bool>) {
+#[allow(clippy::too_many_arguments)]
+fn show_box(
+    mut commands: Commands,
+    messages: Res<MessageBox>,
+    roots: Query<(Entity, Option<&Children>), With<MessageBoxRoot>>,
+    art: Option<Res<BoxArt>>,
+    frames: Option<Res<Assets<ArtFrames>>>,
+    fonts: Option<Res<ArcanumFonts>>,
+    added: Query<(), Added<MessageBoxRoot>>,
+    (assets, vfs): (Res<AssetServer>, Option<Res<crate::vfs_asset::VfsResource>>),
+    mut interface_art: Local<InterfaceArt>,
+    mut pending: Local<bool>,
+) {
     if !messages.is_changed() && added.is_empty() && !*pending {
         return;
     }
@@ -214,10 +282,24 @@ fn show_box(mut commands: Commands, messages: Res<MessageBox>, roots: Query<(Ent
                 *pending |= image.is_none();
                 image
             }
+            BoxIcon::Interface(n) => interface_art.image(n, &assets, vfs.as_deref()),
         };
+        let gauges: Vec<(BoxGauge, Option<Handle<Image>>, Option<Handle<Image>>, Option<Vec2>)> =
+            m.details.iter().flat_map(|d| &d.gauges).map(|g| (g.clone(), interface_art.image(g.fill, &assets, vfs.as_deref()), interface_art.image(g.empty, &assets, vfs.as_deref()), interface_art.size(g.empty, vfs.as_deref()))).collect();
         commands.entity(root).with_children(|b| {
             if let Some(icon) = icon {
                 b.spawn((Pickable::IGNORE, ImageNode::new(icon), Node { position_type: PositionType::Absolute, left: crate::menu_window::px(ICON_AT.x - BOX.min.x), top: crate::menu_window::px(ICON_AT.y - BOX.min.y), ..default() }));
+            }
+            for (g, fill, empty, size) in &gauges {
+                let (Some(size), Some(r)) = (size, ROWS.get(g.row)) else { continue };
+                let place = |w: f32| Node { overflow: Overflow::clip(), ..at(in_box(Rect::from_corners(r.min, r.min + Vec2::new(w, size.y)))) };
+                if let Some(empty) = empty {
+                    b.spawn((Pickable::IGNORE, place(size.x))).with_child((Pickable::IGNORE, ImageNode::new(empty.clone())));
+                }
+                if let Some(fill) = fill {
+                    let w = (size.x * g.percent.min(100) as f32 / 100.0).ceil();
+                    b.spawn((Pickable::IGNORE, place(w))).with_child((Pickable::IGNORE, ImageNode::new(fill.clone()), Node { width: crate::menu_window::px(size.x), min_width: crate::menu_window::px(size.x), ..default() }));
+                }
             }
             let mut line = |r: Rect, text: &str, which: BoxText, font: UiFont, colour: Color, justify: JustifyContent| {
                 b.spawn((Pickable::IGNORE, Node { justify_content: justify, align_items: AlignItems::FlexStart, overflow: Overflow::clip(), ..at(in_box(r)) })).with_children(|cell| {
@@ -230,6 +312,22 @@ fn show_box(mut commands: Commands, messages: Res<MessageBox>, roots: Query<(Ent
                 (Some(_), Some(ExtraLine::UnderTitle(_))) => BODY_LOW,
                 (Some(_), _) => BODY_UNDER_TITLE,
             };
+            if let Some(details) = &m.details {
+                if let Some(title) = &m.title {
+                    let colour = details.title_colour.map_or(SCREEN_WHITE, |[r, g, b]| Color::srgb_u8(r, g, b));
+                    line(ROWS[0], title, BoxText::Title, UiFont::Small, colour, JustifyContent::FlexStart);
+                }
+                for row in &details.rows {
+                    let Some(&r) = ROWS.get(row.row) else { continue };
+                    for (cell, justify) in [(&row.left, JustifyContent::FlexStart), (&row.right, JustifyContent::FlexEnd)] {
+                        if let Some(cell) = cell {
+                            let [cr, cg, cb] = cell.colour;
+                            line(r, &cell.text, BoxText::Detail, UiFont::Body, Color::srgb_u8(cr, cg, cb), justify);
+                        }
+                    }
+                }
+                return;
+            }
             if let Some(title) = &m.title {
                 line(TITLE, title, BoxText::Title, UiFont::Small, SCREEN_WHITE, JustifyContent::FlexStart);
             }
@@ -244,6 +342,51 @@ fn show_box(mut commands: Commands, messages: Res<MessageBox>, roots: Query<(Ent
                 fonts.insert_block(&mut t, &m.body, UiFont::Body, body_at.width() * scale, Some(body_at.height() * scale), crate::bitmap_text::Align::Left);
             });
         });
+    }
+}
+
+/// Interface art by number, loaded as it is first asked for.
+#[derive(Default)]
+pub struct InterfaceArt {
+    names: Option<arcanum_formats::mes::MesFile>,
+    images: std::collections::HashMap<u32, Option<Handle<Image>>>,
+    sizes: std::collections::HashMap<u32, Option<Vec2>>,
+}
+
+impl InterfaceArt {
+    fn path(&mut self, n: u32, vfs: Option<&crate::vfs_asset::VfsResource>) -> Option<String> {
+        if self.names.is_none() {
+            let guard = vfs?.0.read().ok()?;
+            self.names = arcanum_formats::mes::MesFile::parse(&guard.read(interface::INDEX).ok()?).ok();
+        }
+        self.names.as_ref()?.get(n).map(|name| format!("{}/{}", interface::DIR, name.trim()))
+    }
+
+    /// Art `n`'s image.
+    pub fn image(&mut self, n: u32, assets: &AssetServer, vfs: Option<&crate::vfs_asset::VfsResource>) -> Option<Handle<Image>> {
+        if let Some(known) = self.images.get(&n) {
+            return known.clone();
+        }
+        let image = self.path(n, vfs).map(|p| assets.load(p));
+        if self.names.is_some() {
+            self.images.insert(n, image.clone());
+        }
+        image
+    }
+
+    /// Art `n`'s first frame's size, in original pixels.
+    pub fn size(&mut self, n: u32, vfs: Option<&crate::vfs_asset::VfsResource>) -> Option<Vec2> {
+        if let Some(known) = self.sizes.get(&n) {
+            return *known;
+        }
+        let path = self.path(n, vfs)?;
+        let guard = vfs?.0.read().ok()?;
+        let size = arcanum_formats::art::ArtFile::parse(&guard.read(&path).ok()?).ok().and_then(|a| {
+            let f = a.frames.first()?.first()?;
+            Some(Vec2::new(f.width as f32, f.height as f32))
+        });
+        self.sizes.insert(n, size);
+        size
     }
 }
 
@@ -306,7 +449,7 @@ pub fn stat_to_raise(k: usize, sheet: &CharacterSheet) -> Option<i32> {
 pub fn editor_help(id: u32, data: &CreationData, sheet: &CharacterSheet) -> Option<BoxMessage> {
     let rules = &data.rules;
     let idx = |base: u32| (id - base) as usize;
-    let arcanum = |title: &str, body: &str, extra| BoxMessage { icon: BoxIcon::Arcanum, title: Some(title.to_string()), body: body.to_string(), extra };
+    let arcanum = |title: &str, body: &str, extra| BoxMessage { icon: BoxIcon::Arcanum, title: Some(title.to_string()), body: body.to_string(), extra, details: None };
     match id {
         1000..=1999 => {
             let k = idx(1000);
