@@ -59,6 +59,7 @@ pub fn gate_unconscious(
     mut pickups: ResMut<crate::PickUpRequests>,
     mut picks: ResMut<crate::PickLockRequests>,
     mut casts: ResMut<crate::CastRequests>,
+    mut disarms: ResMut<crate::DisarmRequests>,
 ) {
     let down: Vec<crate::PlayerId> = pcs.iter().map(|p| p.0).collect();
     if down.is_empty() {
@@ -69,6 +70,7 @@ pub fn gate_unconscious(
     pickups.0.retain(|r| !down.contains(&r.0));
     picks.0.retain(|r| !down.contains(&r.0));
     casts.0.retain(|r| !down.contains(&r.0));
+    disarms.0.retain(|r| !down.contains(&r.0));
 }
 
 #[cfg(test)]

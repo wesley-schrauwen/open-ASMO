@@ -117,3 +117,9 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
 - [ ] An NPC a script makes follow (action 0x15) walks after the PC; one told to stop (0x16)
       stays where it is.
 - [ ] An NPC whose day standpoint a script moves (0x2d) walks to the new place in daytime.
+
+## Traps
+
+- [ ] Using a trapped chest at the start (no Spot Trap) shows "Trap!" over the PC, the party bar's
+      hit points drop, and the chest stays shut; using it again opens it.
+- [ ] A PC with Spot Trap sometimes stops before using it with "You have spotted a trap!".

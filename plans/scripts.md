@@ -176,8 +176,7 @@ Decoded so far, with confidence; the rest are named by the helper they call.
    - `ScriptHost::hook` runs the script with the acting player's PC as the triggerer. Doors
      (`use_portals`) and containers (`pick_up_items`) run it before their default.
    - **Traps** (scripts 30000-30007) are sprung by 0x4bcb70 before any line, and the use does
-     not happen. Not built: they run the default and are reported. Traps need their own step
-     (Disarm Traps, damage).
+     not happen. Built in 4l.
    - **Start map** (around the start): 20 containers and 1 piece of scenery carry use
      scripts. Most are traps, plus 1180 ("Grave_Container_Use") and others not built yet,
      which run the default. 1621 ("Search the bed") keeps its bed shut until global flag 2273
@@ -468,6 +467,34 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      - 0x7b touch art (0x4ef190): an art-cache load; nothing.
    - **Real data:** 2328 of 2399 scripts run to an end (2252 before). Next: traps (8), 0x24
      combat attack (6), 0x88 (5), 0x34 / 0x5a / 0x5d / 0x7f (4).
+4l. **Traps** (built, `feat/traps`; `arcanum_sim::trap`, the runner's `trap`).
+   - **What is a trap** (0x4bbe00): scripts 30000-30006 whose header has flag 1 (mechanical) or
+     2 (magical). In the data: 30000 magical (0x6), 30001-30006 mechanical (0x5), all run once
+     (flag 4); 30007, "Trap source", has flags 0 and is not one. The scripts have no lines.
+   - **The hook** (0x441980): a use (event 1) of an object whose trap is not spotted makes a PC
+     roll Spot Trap (0x4bbe40, skill 7); spotting it cancels the use. Otherwise, spotted or not,
+     the trap springs (corrected 2026-11-25: the agent's "spotted cancels" is wrong; 0x441980
+     rolls only when 0x4bbfe0 says not spotted). NPCs never roll and spring traps too.
+   - **Springing** (0x4bcb70 / 0x4bcdc0): `mes/trap.mes` 1 "Trap!" over the triggerer; the
+     victims are the triggerer, or the critters within the header's radius (0x20 / 0x40 / 0x80:
+     1 / 2 / 4 tiles; no trap in the data has one); each takes `random(byte 0, byte 1)` of the
+     attachment's counters as damage of the trap's kind (record field 0x11 + kind, as action
+     0x3c: 30001-30003 hit points, 30004 fire, 30005 electrical, 30006 poison; 30000 none), then
+     spell byte 3 if set. Run once: the attachment's number becomes 0. The use does not happen.
+   - **Spot roll** (0x4c7160 case 7): the skill chance (0x4c69f0, as Pick Locks); a Master who
+     fails rolls again; a success below Expert on a magical trap fails. Spotted: `flags`
+     0x2000000 (kept, sent; the original keeps it per PC in multiplayer), `mes/trap.mes` 0.
+   - **Disarming** (`PlayerIntent::DisarmTrap`, skill 15, 0x4c7160 case 0xf → 0x4bc7b0): doors
+     and containers, a spotted trap only; the lock pick's roll with no difficulty (0x4c8430
+     adds `trap_difficulty` only for trap objects); a Master who fails without a critical
+     failure rolls again. Success: the script number becomes 0 (0x4bc220); a critical failure
+     springs it on the PC (0x441980 event 1). `mes/skill_ui.mes` 560 / 561.
+   - **Not built:** spotting while walking (0x427110: trap objects, mask 0x20000); the arrow
+     trap's attack roll (0x4b3170 from its source object, 30007); recovered parts on a critical
+     success (0x4bc9c0, table 0x5b5f80); setting traps (0x4bc480, table 0x5b5f60); the eye candy
+     (`rules/TrapEyeCandy.mes` N × 10 + 0-2); the client's way to arm Disarm Traps (the bottom
+     bar's skills view, next).
+   - **Real data:** 2336 of 2399 scripts run to an end (2328 before).
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,

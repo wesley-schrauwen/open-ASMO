@@ -415,7 +415,6 @@ fn real_scripts_run_and_the_unbuilt_types_are_counted() {
             Some(Unsupported::Condition { kind, .. }) => *stops.entry(format!("condition {kind:#x}")).or_default() += 1,
             Some(Unsupported::Action { kind, .. }) => *stops.entry(format!("action {kind:#x}")).or_default() += 1,
             Some(Unsupported::ObjectSet { kind, .. }) => *stops.entry(format!("set {kind:#x}")).or_default() += 1,
-            Some(Unsupported::Trap { .. }) => *stops.entry("trap".into()).or_default() += 1,
         }
     }
     let mut top: Vec<_> = stops.into_iter().collect();
@@ -791,3 +790,4 @@ fn blessings_and_curses_name_effects_that_exist() {
         assert!(found * 2 > numbers.len(), "{file}");
     }
 }
+

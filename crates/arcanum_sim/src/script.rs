@@ -29,9 +29,9 @@
 //! - **Not built yet** (builder's call): anything else stops the script and runs the default,
 //!   recorded in [`ScriptRun::unsupported`], rather than guessing at a half-run.
 //!
-//! Traps (scripts 30000-30007) are not built: they run the default and are reported.
+//! Traps (scripts 30000-30007, [`is_trap`]) are sprung instead of running lines.
 //!
-//! Not copied: the theft checks before a use (0x4bbfe0, 0x4bbe40); the NPC dialogue special
+//! Not copied: the NPC dialogue special
 //! cases (event 9); the client gate (clients never run scripts here).
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -201,13 +201,17 @@ pub enum Unsupported {
     Condition { line: usize, kind: u32 },
     Action { line: usize, kind: u32 },
     ObjectSet { line: usize, kind: i8 },
-    /// A trap script ([`TRAP_SCRIPTS`]), sprung before any line runs (0x4bcb70).
-    Trap { number: u32 },
 }
 
 /// The trap scripts (30000-30007): 0x4bcb70 springs the trap instead of running lines, and the
-/// use does not happen.
+/// use does not happen ([`is_trap`]).
 pub const TRAP_SCRIPTS: std::ops::RangeInclusive<u32> = 30000..=30007;
+/// Trap script header flags (0x4bbe00): mechanical, magical.
+pub const TRAP_MECHANICAL: u32 = 0x1;
+pub const TRAP_MAGICAL: u32 = 0x2;
+/// `mes/trap.mes`: "You have spotted a trap!", "Trap!".
+pub const TRAP_LINE_SPOTTED: u32 = 0;
+pub const TRAP_LINE_SPRUNG: u32 = 1;
 
 /// How a run went.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -409,6 +413,24 @@ pub trait ScriptContext {
     }
     /// Moves an NPC's day standpoint (field 0x121).
     fn set_day_standpoint(&mut self, _npc: Self::Object, _to: arcanum_formats::map::TileLoc) {}
+    /// The trap on `object` has been spotted (object flag 0x2000000, 0x4bbfe0).
+    fn trap_spotted(&mut self, _object: Self::Object) -> bool {
+        false
+    }
+    /// PC `pc` rolls Spot Trap against a trap (0x4bbe40); true when it spots it.
+    fn spot_trap(&mut self, _pc: Self::Object, _magical: bool) -> bool {
+        false
+    }
+    /// Marks the trap on `object` spotted, telling `by` (0x4bc090).
+    fn mark_trap_spotted(&mut self, _object: Self::Object, _by: Self::Object) {}
+    /// Line `line` of `mes/trap.mes`.
+    fn trap_text(&mut self, _line: u32) -> Option<String> {
+        None
+    }
+    /// The critters within `radius` tiles of `centre`, the larger distance (0x4ae4e0).
+    fn critters_within(&mut self, _centre: Self::Object, _radius: u32) -> Vec<Self::Object> {
+        Vec::new()
+    }
 }
 
 /// What a vicinity set lists (0x44b4e0's type masks for 0x440fc0).
@@ -481,6 +503,11 @@ impl ScriptLibrary {
         self.loaded.entry(number).or_insert_with(|| index.path(number).and_then(|p| vfs.read(&p).ok()).and_then(|d| Script::parse(&d).ok()).map(Arc::new)).clone()
     }
 
+    /// Script `number` if it has been read or put in already.
+    pub fn get_loaded(&self, number: u32) -> Option<Arc<Script>> {
+        self.loaded.get(&number).cloned().flatten()
+    }
+
     /// Script `number`'s dialogue file (`dlg/` beside `scr/`), read on first use.
     pub fn dialog(&mut self, vfs: &arcanum_vfs::Vfs, number: u32) -> Option<Arc<arcanum_formats::dialog::DialogFile>> {
         let index = &self.index;
@@ -542,11 +569,10 @@ fn run<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, invocation: I
     if attachment.number == 0 || depth > MAX_DEPTH {
         return HookResult::RunDefault;
     }
-    if TRAP_SCRIPTS.contains(&attachment.number) {
-        unsupported.push(Unsupported::Trap { number: attachment.number });
-        return HookResult::RunDefault;
-    }
     let Some(script) = ctx.script(attachment.number) else { return HookResult::RunDefault };
+    if let Some(result) = trap(ctx, attachment, &script, invocation) {
+        return result;
+    }
     let names = |tags: &[i8]| script.lines.iter().flat_map(|l| [&l.condition, &l.then, &l.otherwise]).any(|b| b.operands.iter().any(|o| tags.contains(&o.tag)));
     let mut near = BTreeMap::new();
     for set in [8, 0xf, 0x11, 0x13, 0x16] {
@@ -605,6 +631,71 @@ fn run<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, invocation: I
         attachment.number = number;
     }
     result
+}
+
+/// A trap's script: one of [`TRAP_SCRIPTS`] whose header has flag 1 (mechanical) or 2 (magical)
+/// (0x4bbe00). The others, and 30007 (the trap's source, flags 0), run as scripts.
+pub fn is_trap(number: u32, script: &Script) -> bool {
+    TRAP_SCRIPTS.contains(&number) && script.flags & (TRAP_MECHANICAL | TRAP_MAGICAL) != 0
+}
+
+/// A trap instead of the script's lines (0x441980 / 0x4bcb70); `None` when it is no trap.
+///
+/// - **Spotting** (a use, event 1, 0x441980): a PC using an object whose trap it has not spotted
+///   rolls Spot Trap (0x4bbe40); spotting it cancels the use. A trap spotted before springs like
+///   any other (a critical failure to disarm springs it this way, 0x4bc7b0). NPCs do not roll
+///   (0x4bbfe0 counts them as knowing it).
+/// - **Springing** (0x4bcb70): "Trap!" floats over the triggerer; each victim (the triggerer, or
+///   the critters within the header's radius of the trap: flag 0x20 one tile, 0x40 two, 0x80
+///   four; no trap in the data has one) takes `random(byte 0, byte 1)` damage of the trap's
+///   kind and, with byte 3, that spell (30000 the spell alone). A run-once trap (flag 4, all of
+///   them) is then gone. The use does not happen.
+fn trap<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, script: &Script, invocation: Invocation<C::Object>) -> Option<HookResult> {
+    if !is_trap(attachment.number, script) {
+        return None;
+    }
+    let (triggerer, trapped) = (invocation.triggerer, invocation.attachee);
+    if invocation.event == 1 && ctx.object_type(triggerer) == 15 && !ctx.trap_spotted(trapped) && ctx.spot_trap(triggerer, script.flags & TRAP_MAGICAL != 0) {
+        ctx.mark_trap_spotted(trapped, triggerer);
+        return Some(HookResult::SkipDefault);
+    }
+    if let Some(text) = ctx.trap_text(TRAP_LINE_SPRUNG) {
+        ctx.float_text(triggerer, text);
+    }
+    let radius = [(0x80, 4), (0x40, 2), (0x20, 1)].into_iter().find(|(bit, _)| script.flags & bit != 0).map(|(_, r)| r);
+    let victims = match radius {
+        Some(r) => ctx.critters_within(trapped, r),
+        None => vec![triggerer],
+    };
+    let [low, high, _, spell] = attachment.counters.map(i32::from);
+    let kind = trap_damage_kind(attachment.number);
+    for victim in victims {
+        if let Some(kind) = kind {
+            let amount = ctx.random(low.min(high), high.max(low));
+            ctx.damage(victim, amount, kind);
+        }
+        if spell != 0 {
+            ctx.cast_on(spell, victim);
+        }
+    }
+    if script.runs_once() {
+        attachment.number = 0;
+    }
+    Some(HookResult::SkipDefault)
+}
+
+/// The damage kind a trap deals (0x4bcdc0, the damage record's field less 0x11, as action
+/// 0x3c's kinds): mechanical, arrow and bullet hit points; fire 3; electrical 2; poison 1. The
+/// magical trap (30000) deals none. Builder's call: the arrow trap's attack roll (0x4b3170 with
+/// the source object, script 30007) is not made: it hits.
+pub fn trap_damage_kind(number: u32) -> Option<i32> {
+    match number {
+        30001..=30003 => Some(0),
+        30004 => Some(3),
+        30005 => Some(2),
+        30006 => Some(1),
+        _ => None,
+    }
 }
 
 /// Set 6/7 (0x4413e0): a PC's party and each member's followers; anyone else, itself.
