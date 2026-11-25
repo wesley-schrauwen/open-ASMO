@@ -289,6 +289,9 @@ pub trait ScriptContext {
     fn player(&mut self) -> Option<Self::Object> {
         None
     }
+    /// Flips `mask` in `object`'s `flags` (actions 0x38 / 0x39: 0x4efee0 clears a set bit,
+    /// 0x4eff50 sets a clear one), any type.
+    fn toggle_flags(&mut self, _object: Self::Object, _mask: i32) {}
     /// Gives `object` effect `id` for `cause` (0x4e9f70): critters only, appended.
     fn give_effect(&mut self, _object: Self::Object, _id: i32, _cause: i32) {}
     /// Takes the oldest hold of effect `id` from `object` (0x4ea100).
@@ -811,6 +814,31 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
             }
             Step::Next
         }
+        // Switch each object off or on (0x38: object flag 0x2, "off"; 0x39: 0x400000).
+        0x38 | 0x39 => {
+            let mask = if block.kind == 0x38 { 0x2 } else { 0x40_0000 };
+            for o in objects(run, ops[0], line, unsupported)? {
+                ctx.toggle_flags(o, mask);
+            }
+            Step::Next
+        }
+        // Magic/tech against a target (0x461620): N less the percent the item's magick or tech
+        // loses on a critter of the other kind, `N × (100 - r) / 100`.
+        0x50 => {
+            let n = value(ctx, attachment, run, 0);
+            let item = objects(run, ops[1], line, unsupported)?.first().copied();
+            let user = objects(run, ops[2], line, unsupported)?.first().copied();
+            let target = objects(run, ops[3], line, unsupported)?.first().copied();
+            let r = match (item, user, target) {
+                (Some(item), Some(user), Some(target)) if [user, target].into_iter().all(|o| matches!(ctx.object_type(o), 15 | 16)) => {
+                    let k = ctx.object_int(item, "item_magic_tech_complexity").unwrap_or(0);
+                    magic_tech_resistance(k, ctx.stat(user, 0x10), ctx.stat(target, 0x10))
+                }
+                _ => 0,
+            };
+            set(ctx, attachment, run, ops[4], n * (100 - r) / 100);
+            Step::Next
+        }
         // Give an effect (0x4e9f70) for a cause / take one (0x4ea100), to each object.
         0x4d | 0x4e => {
             let id = value(ctx, attachment, run, 1);
@@ -1001,6 +1029,23 @@ fn objects<O: Copy>(run: &Run<O>, operand: Operand, line: usize, unsupported: &m
 fn pc_object<O: Copy>(run: &Run<O>, value: i32) -> Option<O> {
     let set = Operand { tag: (value >> 16) as i8, value: 0 };
     objects(run, set, 0, &mut Vec::new())?.first().copied()
+}
+
+/// The percent an item's magick or tech loses against a critter of the other kind (0x461620):
+/// `k` the item's adjustment (field 0x60: above 0 magick, below 0 tech), `user` and `target`
+/// the two critters' aptitudes (stat 0x10). A magick item on a technologist (`target` below 0)
+/// loses the target's whole aptitude when the user is a technologist too, else
+/// `(100 - user) × -target / 100`; a tech item on a mage, the same the other way round.
+pub fn magic_tech_resistance(k: i32, user: i32, target: i32) -> i32 {
+    match () {
+        _ if k > 0 && target < 0 => {
+            if user < 0 { -target } else { (100 - user) * target / -100 }
+        }
+        _ if k < 0 && target > 0 => {
+            if user > 0 { target } else { (user + 100) * target / 100 }
+        }
+        _ => 0,
+    }
 }
 
 /// How well an item of `complexity` works for a user of `aptitude`, in percent (0x461540 /
@@ -1310,6 +1355,14 @@ pub(crate) mod tests {
         assert_eq!(magic_tech_factor(40, -60, true), 0, "tech against magic");
         assert_eq!(magic_tech_factor(-40, -40, true), 100, "tech with tech");
         assert_eq!(magic_tech_factor(40, -60, false), 100, "not a critter: all of it");
+        // 0x461620: magick on a technologist, tech on a mage.
+        assert_eq!(magic_tech_resistance(40, 0, -50), 50, "a neutral user: (100 - 0) x 50 / 100");
+        assert_eq!(magic_tech_resistance(40, 60, -50), 20, "a mage user: (100 - 60) x 50 / 100");
+        assert_eq!(magic_tech_resistance(40, -10, -50), 50, "a technologist user: the target's whole aptitude");
+        assert_eq!(magic_tech_resistance(-40, -60, 50), 20, "tech: (100 - 60) x 50 / 100");
+        assert_eq!(magic_tech_resistance(-40, 30, 50), 50);
+        assert_eq!(magic_tech_resistance(40, 0, 50), 0, "magick on a mage: nothing lost");
+        assert_eq!(magic_tech_resistance(0, 0, -50), 0, "no adjustment");
         // Script 100: calls 200 from line 1 for triggerer 1 on attachee 50, adjusts 10 by item
         // 60 (no complexity here) into global 3, sets rumour 1040 for PC 1, quells 1041, tests
         // both and reputation 9 into flags 11-13.

@@ -99,7 +99,7 @@ pub struct MapDeltas(pub Vec<LedgerDelta>);
 impl MapDeltas {
     /// Whether this module handles `delta`.
     pub fn wants(delta: &LedgerDelta) -> bool {
-        matches!(delta, LedgerDelta::MapChanges { .. } | LedgerDelta::PortalChanged { .. } | LedgerDelta::GroundItemDropped { .. } | LedgerDelta::GroundItemTaken { .. } | LedgerDelta::PileChanged { .. } | LedgerDelta::ContainerShown { .. } | LedgerDelta::LockChanged { .. })
+        matches!(delta, LedgerDelta::MapChanges { .. } | LedgerDelta::ObjectFlags { .. } | LedgerDelta::PortalChanged { .. } | LedgerDelta::GroundItemDropped { .. } | LedgerDelta::GroundItemTaken { .. } | LedgerDelta::PileChanged { .. } | LedgerDelta::ContainerShown { .. } | LedgerDelta::LockChanged { .. })
     }
 }
 
@@ -276,7 +276,15 @@ fn drop_far_sectors(
 
 /// Applies the host's changes to the client's copy of the map (once it is open), and starts the
 /// sprites of doors that changed playing their frames.
-fn apply_map_deltas(mut commands: Commands, mut deltas: ResMut<MapDeltas>, mut client: ResMut<ClientMap>, frames: Res<Assets<ArtFrames>>, mut objects: Query<(Entity, &mut MapObject)>, assets: Res<AssetServer>) {
+fn apply_map_deltas(
+    mut commands: Commands,
+    mut deltas: ResMut<MapDeltas>,
+    mut client: ResMut<ClientMap>,
+    frames: Res<Assets<ArtFrames>>,
+    mut objects: Query<(Entity, &mut MapObject)>,
+    tiles: Query<(Entity, &GroundTile)>,
+    assets: Res<AssetServer>,
+) {
     if deltas.0.is_empty() || client.map.name.is_none() {
         return;
     }
@@ -378,6 +386,22 @@ fn apply_map_deltas(mut commands: Commands, mut deltas: ResMut<MapDeltas>, mut c
             }
             LedgerDelta::LockChanged { target, flags } => {
                 client.map.set_lock_flags(target, flags);
+            }
+            // An object switched off or on: the sector is drawn again with it hidden or shown.
+            LedgerDelta::ObjectFlags { sector, index, mobile, flags } => {
+                client.map.set_object_flags(sector, index, mobile, flags);
+                if client.drawn.remove(&sector) {
+                    for (entity, object) in &objects {
+                        if object.location.sector() == sector {
+                            commands.entity(entity).despawn();
+                        }
+                    }
+                    for (entity, tile) in &tiles {
+                        if tile.0.sector() == sector {
+                            commands.entity(entity).despawn();
+                        }
+                    }
+                }
             }
             LedgerDelta::PortalChanged { door, open } => {
                 client.map.set_portal(door, open);

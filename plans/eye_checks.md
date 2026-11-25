@@ -49,3 +49,9 @@ Needs two players: a LAN host and a client (`DEBUG_ARCANUM_LISTEN` / `_JOIN`).
       pools). Most effects come from magic items' wield scripts, which do not run yet; until they
       do, use a dialogue or use script that gives one.
 - [ ] Other players' party bars show the new maximum hit points or fatigue.
+
+## Switching objects off and on (script gaps 4 PR)
+
+- [ ] When a script switches an object off, it disappears for every player and stops blocking;
+      switched on, it comes back in its place. An NPC switched off despawns.
+- [ ] The redrawn sector shows no gap or flicker beyond the one frame.
