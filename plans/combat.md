@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-14 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`, `feat/combat-events`, `feat/ammunition`, `feat/combat-stun`).
+Status: steps 1-15 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`, `feat/combat-events`, `feat/ammunition`, `feat/combat-stun`, `feat/sight`).
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -219,7 +219,7 @@ of `combat_design.md` come after the original's rules work.
    - Real data: all 2399 scripts run to an end.
    - Not built: hit / miss events (7 / 8 not traced), the fate points that wait on attacks.
 5. **Noticing** (built, `feat/combat-notice`).
-   - Every 15 ticks (builder's call: the original on each heartbeat) each NPC not fighting,
+   - Every 15 ticks (builder's call: the original's noticing is in its target search 0x4ab460) each NPC not fighting,
      following, talking or dead looks for a PC within reach (`clamp(PE, 1, 10)` tiles, Perception
      cut by a prowler's value, or its hearing reach) it is hostile to (0x4ae120 as above); one
      found starts a fight (`CombatStarts`). Sight lines and facing are not counted.
@@ -342,3 +342,19 @@ of `combat_design.md` come after the original's rules work.
      Floats "Stunned", "Knocked down", "Weapon destroyed", "Ammo lost".
    - Not built: knocking out (NPC fatigue is not kept), dropping or wearing the weapon from a
      critical miss, the critical miss's spell weapons (0x4b65d0), 0x44c820.
+15. **Sight** (built, `feat/sight`).
+   - Findings (0x4af260, returns 0 when seen; callers test `== 0`): 1000 for a fleeing, dead or
+     stunned watcher (`critter_flags` 0x10a0) or an invisible target (unless the watcher has
+     Perception 20); the facing cone 0x45eff0: the direction to the target within two
+     rotations of the watcher's (5 of 8); reach `clamp(PE', 1, 10)` (0x4af240), `PE'` Perception
+     less a prowler's stealth in percent (its Prowling value less 0x4c8430's difficulty: light
+     `(255 - light) × 30 / 255` and its modifiers, blocked lines, the watcher's state); then the
+     tile distance past the reach, + 1 when 0x4ade00 finds a blocker on the line (0x43fe00 with
+     flags 0xc, not read). Hearing 0x4af470 subtracts a path cost along the line (0x4af640, the
+     same walk with flags 0x20). 0x4aa0d0 is called from trap code (0x4bc2e0 / 0x4bc480), not on
+     heartbeats: noticing there is a witness's.
+   - Built: critters face their last step (`Facing`; before one, their art's rotation); NPCs
+     notice foes (and allies notice in fights) by seeing (`combat::sees`: reach, cone, no tile
+     on the line that blocks walking: builder's call for what blocks sight) or hearing.
+   - Not built: light, invisibility, the stealth difficulty terms, the hearing path cost, the
+     watcher's state.

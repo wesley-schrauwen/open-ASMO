@@ -236,6 +236,11 @@ pub fn apply_moves(
     }
 }
 
+/// Which way a critter faces (rotations as [`crate::rotation_of_step`]): its last step's; before
+/// any, its art's.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Facing(pub usize);
+
 type WalkerQuery<'a> = (Entity, &'a mut Position, Option<&'a PlayerControlled>, Option<&'a Gait>, Option<&'a mut Walking>);
 
 /// An NPC that stopped walking since the last state sync: the next sync includes it once.
@@ -268,6 +273,9 @@ pub fn walk(mut commands: Commands, map: Res<LoadedMap>, pace: Res<crate::PartyP
                 break;
             }
             walking.steps.pop_front();
+            if let Some(r) = crate::rotation_of_step(at, next) {
+                commands.entity(entity).insert(Facing(r));
+            }
             position.0 = next;
             walking.progress -= needed;
         }
