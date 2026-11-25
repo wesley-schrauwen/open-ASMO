@@ -14,7 +14,8 @@
 //!
 //! - **Animations:** the attacker faces its target and plays its attack once ([`attack_anim`],
 //!   0x42b9c0: 20 or 21 by body); an NPC an attack killed plays its death from the first frame
-//!   when the host spawns it again dead ([`Dying`]; the host picks the death, 0x4b5306).
+//!   when the host spawns it again dead ([`Dying`]; the host picks the death, 0x4b5306); one
+//!   knocked down falls (7) and gets up (8).
 //!
 //! Not built: the orange and red lights of a planned move's cost, the battle cursor (art 353) and
 //! `hoverattack.art`, the hit effects (AnimFX by damage, 0x433020), projectiles (0x4b39b0),
@@ -67,6 +68,15 @@ pub fn attack_floats(attacker: NetId, target: NetId, outcome: &arcanum_sim::comb
     let mut out = Vec::new();
     if outcome.fumbled {
         out.push((attacker, mes(2), FloatColour::White));
+        // What befell the attacker (0x4b4390): "Weapon destroyed" (22), "Ammo lost" (9), its own
+        // stun, fall and injuries.
+        use arcanum_sim::combat::{AMMO_LOST, AMMO_LOST_ALL, WEAPON_DESTROYED};
+        for (bit, line) in [(WEAPON_DESTROYED, 22), (AMMO_LOST_ALL | AMMO_LOST, 9)] {
+            if outcome.effects & bit != 0 {
+                out.push((attacker, mes(line), FloatColour::White));
+            }
+        }
+        out.extend(effect_floats(outcome.fumble_effects, outcome.fumble_injured, mes).into_iter().map(|t| (attacker, t, FloatColour::White)));
     }
     if outcome.dodged {
         out.push((target, mes(11), FloatColour::White));
@@ -80,13 +90,7 @@ pub fn attack_floats(attacker: NetId, target: NetId, outcome: &arcanum_sim::comb
                 _ => 13,
             };
             out.push((target, mes(line), colour));
-            // Injuries (0x4b4390): "Blinded" (4), "Crippled arm" (5), "Crippled leg" (6).
-            use arcanum_sim::combat::{OCF_BLINDED, OCF_CRIPPLED_ARM, OCF_CRIPPLED_ARMS, OCF_CRIPPLED_LEGS};
-            for (bits, line) in [(OCF_BLINDED, 4), (OCF_CRIPPLED_ARM | OCF_CRIPPLED_ARMS, 5), (OCF_CRIPPLED_LEGS, 6)] {
-                if outcome.injured & bits != 0 {
-                    out.push((target, mes(line), colour));
-                }
-            }
+            out.extend(effect_floats(outcome.effects, outcome.injured, mes).into_iter().map(|t| (target, t, colour)));
             // Items (0x4b4390): "Armor damaged" (7), "Weapon damaged" (8), "Weapon broken" (23),
             // "Armor broken" (24).
             use arcanum_sim::combat::{ARMOUR_BROKEN, ARMOUR_DAMAGED, WEAPON_BROKEN, WEAPON_DAMAGED};
@@ -136,6 +140,24 @@ fn facing(from: arcanum_formats::map::TileLoc, to: arcanum_formats::map::TileLoc
     arcanum_sim::rotation_of_step(from, step)
 }
 
+/// A critical's effect lines (0x4b4390): "Stunned" (16), "Knocked down" (18), "Blinded" (4),
+/// "Crippled arm" (5), "Crippled leg" (6).
+fn effect_floats(effects: u8, injured: i32, mes: &dyn Fn(u32) -> String) -> Vec<String> {
+    use arcanum_sim::combat::{KNOCKED_DOWN, OCF_BLINDED, OCF_CRIPPLED_ARM, OCF_CRIPPLED_ARMS, OCF_CRIPPLED_LEGS, STUNNED};
+    let mut out = Vec::new();
+    for (bit, line) in [(STUNNED, 16), (KNOCKED_DOWN, 18)] {
+        if effects & bit != 0 {
+            out.push(mes(line));
+        }
+    }
+    for (bits, line) in [(OCF_BLINDED, 4), (OCF_CRIPPLED_ARM | OCF_CRIPPLED_ARMS, 5), (OCF_CRIPPLED_LEGS, 6)] {
+        if injured & bits != 0 {
+            out.push(mes(line));
+        }
+    }
+    out
+}
+
 /// The fight's deltas from the bridge, for [`apply_combat_deltas`].
 #[derive(Resource, Debug, Default)]
 pub struct CombatDeltas(pub Vec<LedgerDelta>);
@@ -174,6 +196,14 @@ fn apply_combat_deltas(
             }
             if outcome.killed {
                 dying.0.insert(*target);
+            }
+            // Knocked down (goal 62, animation 7), then up again (goal 63, animation 8).
+            use arcanum_sim::combat::KNOCKED_DOWN;
+            for (who, fell) in [(*target, outcome.effects & KNOCKED_DOWN != 0 && !outcome.killed), (*attacker, outcome.fumble_effects & KNOCKED_DOWN != 0)] {
+                if fell && let Some(mut a) = actors.iter_mut().find(|a| a.net_id == who) {
+                    a.action = Some((crate::actors::ANIM_KNOCKED_DOWN, 0.0));
+                    a.then = Some(crate::actors::ANIM_GET_UP);
+                }
             }
         }
     }
@@ -309,6 +339,7 @@ mod tests {
             14 => "Damage +100%".into(),
             6 => "Crippled leg".into(),
             24 => "Armor broken".into(),
+            16 => "Stunned".into(),
             _ => "?".into(),
         };
         let hit = arcanum_sim::combat::AttackOutcome { hit: true, critical: true, multiplier: 200, hp: 8, fatigue: 3, injured: arcanum_sim::combat::OCF_CRIPPLED_LEGS, items: arcanum_sim::combat::ARMOUR_BROKEN, ..Default::default() };
@@ -316,6 +347,9 @@ mod tests {
         let texts: Vec<&str> = floats.iter().map(|f| f.1.as_str()).collect();
         assert_eq!(texts, ["Critical hit", "Damage +100%", "Crippled leg", "Armor broken", "HT 8", "FT 3"]);
         assert!(floats.iter().all(|f| f.0 == NetId(2) && f.2 == FloatColour::Red), "over the PC, red");
+        let fumble = arcanum_sim::combat::AttackOutcome { fumbled: true, effects: arcanum_sim::combat::WEAPON_DESTROYED, fumble_effects: arcanum_sim::combat::STUNNED, ..Default::default() };
+        let texts: Vec<(NetId, String)> = attack_floats(NetId(1), NetId(2), &fumble, false, &mes).into_iter().map(|f| (f.0, f.1)).collect();
+        assert_eq!(texts, [(NetId(1), "?".to_string()), (NetId(1), "?".into()), (NetId(1), "Stunned".into())], "all over the attacker");
         let dodged = arcanum_sim::combat::AttackOutcome { dodged: true, ..Default::default() };
         assert_eq!(attack_floats(NetId(1), NetId(2), &dodged, false, &mes), [(NetId(2), "Dodge!".into(), FloatColour::White)]);
         let view = CombatView { order: vec![NetId(1), NetId(2)], turn: Some(NetId(1)), ap: 7, mode: false };

@@ -102,6 +102,13 @@ pub struct Weapon {
     /// `weapon_ammo_consumption`, rounds a shot.
     pub ammo_type: i32,
     pub ammo_per_shot: i32,
+    /// `weapon_crit_miss_chart` (0x84), `weapon_magic_crit_miss_chance` (0x85),
+    /// `weapon_magic_crit_miss_effect` (0x86).
+    pub miss_chart: i32,
+    pub miss_chance: i32,
+    pub miss_effect: i32,
+    /// Hit points lost in percent (the critical miss's wear term, 0x4c82e0).
+    pub worn: i32,
 }
 
 /// `weapon_ammo_type` of weapons that use none (0x465ca0).
@@ -165,13 +172,23 @@ pub struct Fighter {
     pub undead: bool,
     /// Rounds it carries for its weapon's ammunition.
     pub ammo: i32,
+    /// `critter_crit_hit_chart` (0xe3): only 0 can be knocked down.
+    pub crit_chart: i32,
+    /// Stunned now (`critter_flags` 0x20): not stunned again.
+    pub stunned: bool,
 }
 
 impl Fighter {
     /// The same with the rounds it carries counted.
     fn with_ammo(self, inventory: &crate::Inventory, prototypes: &Prototypes) -> Self {
         let ammo = self.weapon.as_ref().filter(|w| w.uses_ammo()).map_or(0, |w| ammo_count(inventory, w.ammo_type, prototypes));
-        Self { ammo, ..self }
+        // The weapon's wear in percent, for its critical misses.
+        let worn = inventory.items.iter().find(|i| i.location == WEAPON_SLOT).map_or(0, |i| {
+            let max = crate::repair::item_max_hp(i, prototypes);
+            if max > 0 { i.wear.damage.min(max) * 100 / max } else { 0 }
+        });
+        let weapon = self.weapon.map(|w| Weapon { worn, ..w });
+        Self { ammo, weapon, ..self }
     }
 
     /// Whether its weapon needs ammunition it has not got (0x432cf0).
@@ -301,6 +318,35 @@ pub struct AttackOutcome {
     /// It killed the target (the client plays the death).
     #[serde(default)]
     pub killed: bool,
+    /// Critical effects on the target ([`STUNNED`], [`KNOCKED_DOWN`]); on a critical miss, what
+    /// befell the attacker ([`WEAPON_DESTROYED`] …).
+    #[serde(default)]
+    pub effects: u8,
+    /// A critical miss's effects of the attacker's own critical on itself, and its injuries.
+    #[serde(default)]
+    pub fumble_effects: u8,
+    #[serde(default)]
+    pub fumble_injured: i32,
+}
+
+/// [`AttackOutcome::effects`]: stunned (`combat.mes` 16, `critter_flags` 0x20), knocked down
+/// (18), the weapon destroyed (22), all its ammunition lost or five shots' worth (9).
+pub const STUNNED: u8 = 1;
+pub const KNOCKED_DOWN: u8 = 2;
+pub const WEAPON_DESTROYED: u8 = 4;
+pub const AMMO_LOST_ALL: u8 = 8;
+pub const AMMO_LOST: u8 = 16;
+
+/// A stunned critter (0x4357b0, anim goal 57): it loses its turns, 3 off the count each, until
+/// the count is under 1 (0x427000); its count starts at `(20 - CO) / 2`.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stunned {
+    pub left: i32,
+}
+
+/// The stun count for Constitution `co` (0x43581e).
+pub fn stun_count(co: i32) -> i32 {
+    (20 - co) / 2
 }
 
 /// [`AttackOutcome::items`]: the armour where it landed, or the target's weapon, damaged
@@ -329,7 +375,10 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
     let difficulty = -weapon.to_hit + 5 * short + injury_difficulty(attacker.injuries);
     let mut out = AttackOutcome { multiplier: 100, ..Default::default() };
     if rng.range(1, 100) + difficulty > chance {
-        out.fumbled = rng.range(1, 100) <= ((100 - chance) / 2).max(2);
+        out.fumbled = rng.range(1, 100) <= fumble_chance(chance, attacker.weapon.as_ref());
+        if out.fumbled && rng.range(1, 100) <= 50 {
+            fumble(attacker, &weapon, &mut out, rng);
+        }
         return out;
     }
     // A combat skill's critical chance is a twentieth of it (0x4c81a0: skill flag 0x400), plus
@@ -364,6 +413,7 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
         out.multiplier = critical_multiplier(attacker, defender, &weapon, rng);
         let part = BodyPart::of_roll(rng.range(1, 100));
         out.part = part.number();
+        out.effects = critical_effects(attacker, defender, &weapon, part, rng);
         out.injured = critical_injuries(attacker, defender, &weapon, part, rng);
         // Item damage (0x4b5f40 flags 0x100000 / 0x4000): each on a roll up to the base + 10;
         // the host finds the items ([`crate::repair::wear_item`]).
@@ -384,6 +434,69 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
 /// A weapon item's fighting stats (fields 0x72-0x7d) and its skill (0x465d80): thrown with
 /// `weapon_flags` 0x40; firearms when tech, of range 3 or more, firing bullets, charges or fuel
 /// (ammunition 1-3); a bow when it shoots arrows (0); else melee.
+/// The chance in percent that a miss is critical (0x4c82e0): `(100 - chance) / 7` for the combat
+/// skills (flag 0x400; checked at 0x4c8309), + the weapon's wear the same way, + its
+/// `weapon_magic_crit_miss_chance`; at least 2.
+pub fn fumble_chance(chance: i32, weapon: Option<&Weapon>) -> i32 {
+    let mut c = (100 - chance) / 7;
+    if let Some(w) = weapon {
+        c += w.worn / 7 + w.miss_chance;
+    }
+    c.max(2)
+}
+
+/// What half the critical misses do to the attacker (0x4b6410), `Y` its weapon's critical miss
+/// effect: the weapon destroyed (chart not 5, a roll up to `Y + 1`); a shooter's ammunition, all
+/// of it (up to `Y + 1`) or five shots' worth (else up to `Y + 11`); then a critical of its own on
+/// itself (0x4b5f40: stun, knock down, injuries).
+fn fumble(attacker: &Fighter, weapon: &Weapon, out: &mut AttackOutcome, rng: &mut HostRng) {
+    let armed = attacker.weapon.is_some();
+    let y = if armed { weapon.miss_effect } else { 0 };
+    let chart = if armed { weapon.miss_chart } else { 5 };
+    if chart != 5 && rng.range(1, 100) <= y + 1 {
+        out.effects |= WEAPON_DESTROYED;
+    }
+    if armed && weapon.uses_ammo() {
+        if rng.range(1, 100) <= y + 1 {
+            out.effects |= AMMO_LOST_ALL;
+        } else if rng.range(1, 100) <= y + 11 {
+            out.effects |= AMMO_LOST;
+        }
+    }
+    let part = BodyPart::of_roll(rng.range(1, 100));
+    out.fumble_effects = critical_effects(attacker, attacker, weapon, part, rng);
+    out.fumble_injured = critical_injuries(attacker, attacker, weapon, part, rng);
+}
+
+/// A critical hit's stun and knock down (0x4b5f40), `E` as for injuries
+/// ([`critical_injuries`]): stunned on a roll up to `E` and a failed Constitution save at − 5,
+/// unless stunned already or knocked down; knocked down (critter chart 0 only, not the undead)
+/// on a roll up to the base + 5, + 10 with weapon chart 1, + 10 on the legs. Knocking out
+/// (0x100) is not built.
+pub fn critical_effects(attacker: &Fighter, defender: &Fighter, weapon: &Weapon, part: BodyPart, rng: &mut HostRng) -> u8 {
+    let x = critical_base(attacker, weapon);
+    let chart = if attacker.weapon.is_none() || weapon.range > 1 { 1 } else { weapon.crit_chart };
+    let mut e = x + 5;
+    if matches!(chart, 1 | 3) {
+        e += 10;
+    }
+    if part == BodyPart::Head && !defender.helmet {
+        e += 10;
+    }
+    let mut effects = 0;
+    let stun = rng.range(1, 100) <= e && rng.range(1, 100) > defender.constitution - 5;
+    if !defender.undead && defender.crit_chart == 0 {
+        let k = x + 5 + if chart == 1 { 10 } else { 0 } + if part == BodyPart::Legs { 10 } else { 0 };
+        if rng.range(1, 100) <= k {
+            effects |= KNOCKED_DOWN;
+        }
+    }
+    if stun && !defender.stunned && effects & KNOCKED_DOWN == 0 {
+        effects |= STUNNED;
+    }
+    effects
+}
+
 /// The base of a critical hit's rolls (0x4b5f40): the weapon's critical effect, none for ranged
 /// weapons.
 fn critical_base(attacker: &Fighter, weapon: &Weapon) -> i32 {
@@ -472,6 +585,10 @@ pub fn weapon_of(item: &Object, prototypes: &Prototypes) -> Weapon {
         crit_chart: int("weapon_crit_hit_chart"),
         ammo_type: prototypes.int(item, "weapon_ammo_type").unwrap_or(NO_AMMO),
         ammo_per_shot: int("weapon_ammo_consumption"),
+        miss_chart: int("weapon_crit_miss_chart"),
+        miss_chance: int("weapon_magic_crit_miss_chance"),
+        miss_effect: int("weapon_magic_crit_miss_effect"),
+        worn: 0,
     }
 }
 
@@ -752,7 +869,7 @@ pub struct CombatWorld<'w, 's> {
 }
 
 /// A critter as the combat systems see it.
-type CombatantQuery<'a> = (Entity, &'a NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::Sheet>, Option<&'a crate::Inventory>, Option<&'a Fighting>, Has<crate::Walking>, Option<&'a PendingAttack>, Option<&'a crate::follow::Following>, Option<&'a Surrendered>);
+type CombatantQuery<'a> = (Entity, &'a NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::Sheet>, Option<&'a crate::Inventory>, Option<&'a Fighting>, Has<crate::Walking>, Option<&'a PendingAttack>, Option<&'a crate::follow::Following>, Option<&'a Surrendered>, Option<&'a Stunned>);
 
 /// One critter of the query, copied out.
 #[derive(Clone)]
@@ -773,6 +890,7 @@ struct Seen {
     leader: Option<PlayerId>,
     /// Whom it gave up to.
     surrendered: Option<NetId>,
+    stunned: Option<Stunned>,
 }
 
 impl Seen {
@@ -784,7 +902,8 @@ impl Seen {
 
 fn seen(q: &Query<CombatantQuery>) -> Vec<Seen> {
     q.iter()
-        .map(|(entity, &net_id, at, pc, npc, sheet, inventory, fighting, walking, pending, following, surrendered)| Seen {
+        .map(|(entity, &net_id, at, pc, npc, sheet, inventory, fighting, walking, pending, following, surrendered, stunned)| Seen {
+            stunned: stunned.copied(),
             surrendered: surrendered.map(|s| s.to),
             leader: following.map(|f| f.leader),
             target: fighting.map(|f| f.target),
@@ -826,6 +945,8 @@ impl CombatWorld<'_, '_> {
                 helmet: item(inv, HELMET_SLOT).is_some(),
                 undead: false,
                 ammo: 0,
+                crit_chart: 0,
+                stunned: c.stunned.is_some(),
             }
             .with_ammo(inv, prototypes);
         }
@@ -847,6 +968,8 @@ impl CombatWorld<'_, '_> {
             helmet: item(&inv, HELMET_SLOT).is_some(),
             undead: prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_UNDEAD != 0,
             ammo: 0,
+            crit_chart: prototypes.int(o, "critter_crit_hit_chart").unwrap_or(0),
+            stunned: c.stunned.is_some(),
         }
         .with_ammo(&inv, prototypes)
     }
@@ -891,6 +1014,27 @@ impl CombatWorld<'_, '_> {
         }
         let row = self.npc_int(source, "npc_ai_data").max(0) as usize;
         self.ai.0.as_ref()?.get(row).copied()
+    }
+
+    /// Destroys the attacker's wielded weapon (0x43cca0).
+    fn destroy_weapon(&mut self, attacker: &Seen) {
+        let gone = |inv: &mut crate::Inventory| inv.items.retain(|i| i.location != WEAPON_SLOT);
+        match (attacker.player, attacker.npc) {
+            (Some(p), _) => {
+                if let Some(inv) = self.world.0.as_mut().and_then(|w| w.players.get_mut(&p)).and_then(|s| s.inventory.as_mut()) {
+                    gone(inv);
+                    self.inventories.0.insert(p);
+                }
+            }
+            (None, Some(n)) => {
+                if let Some(mut inv) = self.map.npc_inventory(n.sector, n.index) {
+                    gone(&mut inv);
+                    self.map.set_npc_inventory(n.sector, n.index, inv);
+                    crate::ground::save_change(&mut self.world, &self.map, n.sector);
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Takes a shot's rounds from the attacker's inventory (builder's call: the original's
@@ -1127,6 +1271,16 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
         let current = e.current().and_then(find);
         let done = match &current {
             None => true,
+            // A stunned critter loses its turn, 3 off its count (0x4b7580 → 0x427000).
+            Some(c) if c.stunned.is_some() && e.fresh => {
+                let left = c.stunned.map_or(0, |s| s.left) - 3;
+                if left < 1 {
+                    commands.entity(c.entity).remove::<Stunned>();
+                } else {
+                    commands.entity(c.entity).insert(Stunned { left });
+                }
+                true
+            }
             Some(c) if c.walking || c.pending.is_some() => false,
             Some(c) if c.npc.is_some_and(|n| w.map.is_dead(n.sector, n.index)) => true,
             Some(c) if c.npc.is_some() => {
@@ -1152,6 +1306,13 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
         if !fights || !stands {
             w.combat.0 = None;
             changed = true;
+        }
+    }
+    // Out of a fight the stun wears off (builder's call: the original counts it down by its
+    // animation goal's ticks, 0x426f60, at a rate not traced).
+    if w.combat.0.is_none() {
+        for c in all.iter().filter(|c| c.stunned.is_some()) {
+            commands.entity(c.entity).remove::<Stunned>();
         }
     }
     if changed {
@@ -1529,6 +1690,7 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     outcome.killed = outcome.hit && outcome.hp > 0 && victim.npc.is_some_and(|n| w.map.npc_hp(n.sector, n.index).is_some_and(|(left, _)| left - outcome.hp < 1));
     crate::ground::broadcast(&w.session, &mut w.outbox, LedgerDelta::Attacked { attacker: attacker.net_id, target: victim.net_id, outcome });
     attack_events(w, attacker, victim, &outcome);
+    apply_effects(commands, w, attacker, victim, fighter, &defender, &outcome);
     rally(commands, w, all, attacker, victim);
     if let Some(player) = victim.player {
         if outcome.hit {
@@ -1557,6 +1719,41 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
         return;
     }
     damage_npc(commands, w, attacker.player, victim, &outcome);
+}
+
+/// A hit's and a critical miss's effects: stuns, the attacker's weapon destroyed or ammunition
+/// lost, its injuries from its own critical (0x4b4390).
+fn apply_effects(commands: &mut Commands, w: &mut CombatWorld, attacker: &Seen, victim: &Seen, fighter: &Fighter, defender: &Fighter, outcome: &AttackOutcome) {
+    if outcome.effects & STUNNED != 0 {
+        commands.entity(victim.entity).insert(Stunned { left: stun_count(defender.constitution) });
+    }
+    if outcome.fumble_effects & STUNNED != 0 && !fighter.stunned {
+        commands.entity(attacker.entity).insert(Stunned { left: stun_count(fighter.constitution) });
+    }
+    let weapon = fighter.weapon.as_ref();
+    let lost = match weapon {
+        Some(_) if outcome.effects & AMMO_LOST_ALL != 0 => fighter.ammo.max(0),
+        Some(wp) if outcome.effects & AMMO_LOST != 0 && fighter.ammo >= wp.ammo_per_shot * 5 => wp.ammo_per_shot * 5,
+        _ => 0,
+    };
+    if let Some(wp) = weapon.filter(|_| lost > 0) {
+        w.spend_ammo(attacker, wp.ammo_type, lost);
+    }
+    if outcome.effects & WEAPON_DESTROYED != 0 {
+        w.destroy_weapon(attacker);
+    }
+    if outcome.fumble_injured != 0 {
+        match (attacker.player, attacker.npc) {
+            (Some(p), _) => {
+                if let Some(saved) = w.world.0.as_mut().and_then(|s| s.players.get_mut(&p)) {
+                    saved.blueprint.sheet.injuries |= outcome.fumble_injured;
+                    w.sheets.0.insert(p);
+                }
+            }
+            (None, Some(n)) => w.map.injure_npc(n.sector, n.index, outcome.fumble_injured),
+            _ => {}
+        }
+    }
 }
 
 /// The script object of a critter of the fight.
@@ -1773,6 +1970,31 @@ mod tests {
         assert!(!Fighter { ammo: 3, ..archer.clone() }.out_of_ammo());
         let sword = Weapon { ammo_type: NO_AMMO, ..Default::default() };
         assert!(!Fighter { weapon: Some(sword), ..Default::default() }.out_of_ammo());
+    }
+
+    #[test]
+    fn critical_misses_and_stuns_follow_the_original() {
+        assert_eq!((stun_count(8), stun_count(20), stun_count(5)), (6, 0, 7));
+        assert_eq!(fumble_chance(95, None), 2, "at least 2");
+        assert_eq!(fumble_chance(30, None), 10, "70 / 7");
+        let worn = Weapon { worn: 70, miss_chance: 3, ..Default::default() };
+        assert_eq!(fumble_chance(30, Some(&worn)), 23);
+        // A base of 100 always stuns a CO 0 critter (unless knocked down) and knocks down chart 0.
+        let sword = Weapon { skill: SKILL_MELEE, crit_effect: 100, crit_chart: 2, ..Default::default() };
+        let pc = Fighter { weapon: Some(sword.clone()), pc: true, ..Default::default() };
+        let mut rng = HostRng::default();
+        let npc = Fighter { crit_chart: 5, ..Default::default() };
+        assert!((0..50).all(|_| critical_effects(&pc, &npc, &sword, BodyPart::Torso, &mut rng) == STUNNED), "not chart 0: never knocked down");
+        let down = critical_effects(&pc, &Fighter::default(), &sword, BodyPart::Legs, &mut rng);
+        assert_eq!(down, KNOCKED_DOWN, "knocked down: not stunned too");
+        let stunned = Fighter { stunned: true, crit_chart: 5, ..Default::default() };
+        assert_eq!(critical_effects(&pc, &stunned, &sword, BodyPart::Torso, &mut rng), 0);
+        // A critical miss with a breakable weapon of effect 100: destroyed, and the ammunition.
+        let gun = Weapon { miss_chart: 1, miss_effect: 100, ammo_type: 1, ammo_per_shot: 1, range: 10, ..Default::default() };
+        let shooter = Fighter { weapon: Some(gun.clone()), ammo: 20, crit_chart: 5, ..Default::default() };
+        let mut out = AttackOutcome::default();
+        fumble(&shooter, &gun, &mut out, &mut rng);
+        assert_eq!(out.effects & (WEAPON_DESTROYED | AMMO_LOST_ALL), WEAPON_DESTROYED | AMMO_LOST_ALL);
     }
 
     #[test]

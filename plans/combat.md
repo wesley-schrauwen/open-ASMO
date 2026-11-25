@@ -1,6 +1,6 @@
 # Combat: turn-based fights
 
-Status: steps 1-13 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`, `feat/combat-events`, `feat/ammunition`).
+Status: steps 1-14 built (`feat/combat-turns`, `feat/combat-npcs`, `feat/combat-ui`, `feat/combat-hooks`, `feat/combat-notice`, `feat/combat-allies`, `feat/combat-surrender`, `feat/combat-criticals`, `feat/repair`, `feat/combat-anims`, `feat/pc-death`, `feat/combat-events`, `feat/ammunition`, `feat/combat-stun`).
 
 The owner's rules (`plans/multiplayer.md` 3, `plans/combat_design.md`): combat is turn-based
 only; the host is authoritative over every result; any client may start a fight; the party
@@ -322,3 +322,23 @@ of `combat_design.md` come after the original's rules work.
      bare-handed.
    - Not built: a message for the PC, NPCs switching to another weapon, the critical miss's
      ammunition loss (step 14).
+14. **Stuns, knock-downs, critical misses** (built, `feat/combat-stun`).
+   - Findings: stunned (0x4b4390 → 0x4357b0: `critter_flags` 0x20, anim goal 57 with a count of
+     `(20 - CO) / 2`, checked at 0x43581e) can do nothing (0x45d790 tests 0x60); in turn-based
+     combat it loses each turn, 3 off the count (0x4b7580 → 0x427000), until under 1; in real
+     time the goal counts down (0x426f60). Knocked down (goal 62, 0x435a90) costs no turn; it
+     gets up on recovering fatigue (0x434de0); no timer found for a plain knock-down. Knocked
+     out (0x100): fatigue damage to the most + 10-20 (NPCs only), with the knock-down.
+   - Rolls (0x4b5f40): stun up to `E` with a CO save at − 5 (not when knocked down or stunned);
+     knock down only for `critter_crit_hit_chart` 0, up to the base + 5, + 10 for weapon chart 1,
+     + 10 on the legs.
+   - Critical misses (0x4c82e0, checked: divisor 7 for combat skills at 0x4c8309, not 2):
+     `(100 - chance) / 7` + the weapon's wear the same way + `weapon_magic_crit_miss_chance`, at
+     least 2. Half of them (0x4b6410) have effects with `Y` the weapon's critical miss effect:
+     destroyed (chart not 5, up to `Y + 1`); a shooter's ammunition all lost (up to `Y + 1`) or
+     five shots' worth (up to `Y + 11`); then the attacker's own critical on itself.
+   - Built: all of that but knocking out and the real-time stun count (a stun ends with the
+     fight, builder's call); knocked down plays the fall and the get-up on the client.
+     Floats "Stunned", "Knocked down", "Weapon destroyed", "Ammo lost".
+   - Not built: knocking out (NPC fatigue is not kept), dropping or wearing the weapon from a
+     critical miss, the critical miss's spell weapons (0x4b65d0), 0x44c820.
