@@ -1826,6 +1826,58 @@ mod tests {
     }
 
     #[test]
+    fn scripts_give_and_take_effects_and_the_sheet_follows() {
+        use crate::script::tests::{always, block, n, op};
+        use arcanum_formats::mes::MesFile;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let rules = RulesData::from_files(&MesFile::default(), &MesFile::parse(b"{117}{st +2}{177}{pe max 1}").unwrap(), &MesFile::default());
+        let mut sim = SimApp::new(rules.clone());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]));
+        sim.update();
+        sim.update();
+        let npc_object = crate::ScriptObject::Mobile { sector: SectorId::new(1, 1), index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 701));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            let (pc, npc) = (op(0, 0), op(1, 0));
+            let lines = vec![
+                always(block(0x4d, &[pc, n(117), n(5)])),
+                always(block(0x4d, &[pc, n(117), n(5)])), // held twice
+                always(block(0x4d, &[pc, n(177), n(5)])),
+                always(block(0x4d, &[npc, n(117), n(5)])), // NPCs' are not kept
+                always(block(0x4e, &[pc, n(117)])),        // one goes
+                always(block(0x4e, &[pc, n(999)])),        // not held: nothing
+                always(block(1, &[])),
+            ];
+            library.insert(701, arcanum_formats::script::Script { description: String::new(), flags: 0, lines });
+        }
+        let npc = {
+            let world = sim.app.world_mut();
+            *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0).unwrap().0
+        };
+        sim.take_deltas();
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let deltas = sim.take_deltas();
+        let sheet = deltas.iter().rev().find_map(|(_, d)| match d { LedgerDelta::SheetUpdate { sheet, .. } => Some(sheet.clone()), _ => None }).expect("the sheet goes to the client");
+        let held: Vec<u32> = sheet.effects.iter().map(|e| e.id).collect();
+        assert_eq!(held, [117, 177]);
+        assert_eq!(sheet.effects[0].cause, 5);
+        let stats = rules.stats(&sheet);
+        assert_eq!((stats[0], stats[5]), (10, 1), "st 8 + 2; pe at most 1");
+        assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::PcStatus { .. })), "everyone sees the new maxima");
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(save.players[&PlayerId(7)].blueprint.sheet.effects, sheet.effects, "kept in the save");
+        let world = sim.app.world_mut();
+        let component = world.query::<(&PlayerControlled, &crate::Sheet)>().iter(world).next().unwrap().1.0.clone();
+        assert_eq!(component.effects, sheet.effects, "and on the PC");
+    }
+
+    #[test]
     fn a_script_called_in_seconds_runs_once_the_game_clock_gets_there() {
         use crate::script::tests::{always, block, n, op};
         let dir = tempfile::tempdir().unwrap();

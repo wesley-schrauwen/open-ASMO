@@ -124,6 +124,7 @@ pub struct ScriptHost<'w, 's> {
     timed: ResMut<'w, TimedScripts>,
     areas: ResMut<'w, crate::areas::AreaTable>,
     changed_inventories: ResMut<'w, ScriptInventories>,
+    changed_sheets: ResMut<'w, ScriptSheets>,
     teleports: ResMut<'w, crate::big_move::ScriptTeleports>,
     reports: ResMut<'w, ScriptReports>,
     rng: ResMut<'w, crate::HostRng>,
@@ -150,6 +151,8 @@ struct HostWorld<'a> {
     floats: Vec<(crate::NetId, String)>,
     /// PCs whose inventory a script changed.
     inventories: std::collections::BTreeSet<PlayerId>,
+    /// PCs whose sheet a script changed.
+    sheets: std::collections::BTreeSet<PlayerId>,
     /// Sectors whose changes a script touched.
     sectors: std::collections::BTreeSet<arcanum_formats::map::SectorId>,
     rules: &'a arcanum_rules::RulesData,
@@ -344,6 +347,26 @@ impl ScriptContext for HostWorld<'_> {
         }
     }
 
+    /// PCs keep their effects on the sheet. NPCs' are not kept yet (builder's call: their
+    /// stats are read from their prototype's base stats, without effects).
+    fn give_effect(&mut self, object: ScriptObject, id: i32, cause: i32) {
+        if let (ScriptObject::Pc(p), Ok(id)) = (object, u32::try_from(id))
+            && let Some(saved) = self.players.get_mut(&p)
+        {
+            saved.blueprint.sheet.add_effect(id, u32::try_from(cause).unwrap_or(0));
+            self.sheets.insert(p);
+        }
+    }
+
+    fn remove_effect(&mut self, object: ScriptObject, id: i32) {
+        if let (ScriptObject::Pc(p), Ok(id)) = (object, u32::try_from(id))
+            && let Some(saved) = self.players.get_mut(&p)
+            && saved.blueprint.sheet.remove_effect(id)
+        {
+            self.sheets.insert(p);
+        }
+    }
+
     fn stat(&mut self, object: ScriptObject, stat: i32) -> i32 {
         match object {
             ScriptObject::Pc(p) => {
@@ -535,6 +558,30 @@ pub fn sync_script_inventories(mut changed: ResMut<ScriptInventories>, world: Re
     }
 }
 
+/// PCs whose sheet a script changed: [`sync_script_sheets`] sends them.
+#[derive(Resource, Debug, Default)]
+pub struct ScriptSheets(pub std::collections::BTreeSet<PlayerId>);
+
+/// Copies sheets scripts changed from the save to the PCs and their players; everyone gets the
+/// PC's status, as effects move its maxima.
+pub fn sync_script_sheets(
+    mut changed: ResMut<ScriptSheets>,
+    world: Res<WorldState>,
+    rules: Res<crate::SimRules>,
+    session: Res<crate::Session>,
+    mut outbox: ResMut<crate::Outbox>,
+    mut pcs: Query<(&crate::NetId, &crate::PlayerControlled, &mut crate::Sheet)>,
+) {
+    for player in std::mem::take(&mut changed.0) {
+        let Some(saved) = world.0.as_ref().and_then(|w| w.players.get(&player)).map(|p| p.blueprint.sheet.clone()) else { continue };
+        if let Some((&net_id, _, mut sheet)) = pcs.iter_mut().find(|pc| pc.1.0 == player) {
+            sheet.0 = saved.clone();
+            crate::ground::broadcast(&session, &mut outbox, crate::LedgerDelta::PcStatus { net_id, status: crate::pc_status(&rules.0, &saved) });
+        }
+        outbox.0.push((player, crate::LedgerDelta::SheetUpdate { ack: 0, sheet: saved }));
+    }
+}
+
 impl ScriptHost<'_, '_> {
     /// Runs `object`'s script for `event`, triggered by `player`'s PC (0x441980). A changed
     /// attachment is kept and saved; the answer says whether the default still happens.
@@ -611,6 +658,7 @@ impl ScriptHost<'_, '_> {
             critters,
             floats: Vec::new(),
             inventories: Default::default(),
+            sheets: Default::default(),
             sectors: Default::default(),
             vfs,
             globals: &mut save.scripts,
@@ -634,6 +682,7 @@ impl ScriptHost<'_, '_> {
             }
         }
         self.changed_inventories.0.append(&mut ctx.inventories);
+        self.changed_sheets.0.append(&mut ctx.sheets);
         self.timed.0.append(&mut ctx.scheduled);
         let touched = std::mem::take(&mut ctx.sectors);
         for (object, map, to) in std::mem::take(&mut ctx.teleports) {

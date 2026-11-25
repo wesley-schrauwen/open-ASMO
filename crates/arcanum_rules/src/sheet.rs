@@ -103,7 +103,36 @@ pub struct CharacterSheet {
     pub experience: i32,
     #[cfg_attr(feature = "serde", serde(default))]
     pub fate_points: i32,
+    /// Effects given in play (scripts, items), oldest first: the critter's effect ids (field
+    /// 0xe4) and causes (0xe5), appended by 0x4e9f70 and taken by 0x4ea100. Race, gender and
+    /// background effects are not kept here: they follow from the sheet.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub effects: Vec<HeldEffect>,
     pub draft: Draft,
+}
+
+/// One effect a character holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct HeldEffect {
+    /// `rules/effect.mes` id.
+    pub id: u32,
+    /// Why it is held (5: an item's script, as most scripts give).
+    pub cause: u32,
+}
+
+impl CharacterSheet {
+    /// Holds effect `id` (0x4e9f70): appended, so the same one can be held twice.
+    pub fn add_effect(&mut self, id: u32, cause: u32) {
+        self.effects.push(HeldEffect { id, cause });
+    }
+
+    /// Drops the oldest hold of effect `id` (0x4ea100); its cause does not matter.
+    pub fn remove_effect(&mut self, id: u32) -> bool {
+        let Some(i) = self.effects.iter().position(|e| e.id == id) else { return false };
+        self.effects.remove(i);
+        true
+    }
 }
 
 impl Default for CharacterSheet {
@@ -130,6 +159,7 @@ impl Default for CharacterSheet {
             alignment: 0,
             experience: 0,
             fate_points: 0,
+            effects: Vec::new(),
             draft: Draft::default(),
         }
     }

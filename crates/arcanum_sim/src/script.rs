@@ -289,6 +289,10 @@ pub trait ScriptContext {
     fn player(&mut self) -> Option<Self::Object> {
         None
     }
+    /// Gives `object` effect `id` for `cause` (0x4e9f70): critters only, appended.
+    fn give_effect(&mut self, _object: Self::Object, _id: i32, _cause: i32) {}
+    /// Takes the oldest hold of effect `id` from `object` (0x4ea100).
+    fn remove_effect(&mut self, _object: Self::Object, _id: i32) {}
     /// `object`'s leader, if it follows someone (0x45de00); nobody follows anyone yet.
     fn leader(&mut self, _object: Self::Object) -> Option<Self::Object> {
         None
@@ -807,8 +811,19 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
             }
             Step::Next
         }
-        // Remove an effect: no effects exist yet, so there is none to remove.
-        0x4e => Step::Next,
+        // Give an effect (0x4e9f70) for a cause / take one (0x4ea100), to each object.
+        0x4d | 0x4e => {
+            let id = value(ctx, attachment, run, 1);
+            let cause = value(ctx, attachment, run, 2);
+            for o in objects(run, ops[0], line, unsupported)? {
+                if block.kind == 0x4d {
+                    ctx.give_effect(o, id, cause);
+                } else {
+                    ctx.remove_effect(o, id);
+                }
+            }
+            Step::Next
+        }
         // Sound (0x52), eye candy (0x78) and slides (0x83): not shown or played yet; the script
         // goes on, as the original's does.
         0x52 | 0x78 | 0x83 => Step::Next,
