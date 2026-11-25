@@ -65,6 +65,7 @@ impl Plugin for SimPlugin {
             .init_resource::<crate::TalkRequests>()
             .init_resource::<crate::barter::BarterStarts>()
             .init_resource::<crate::big_move::ScriptTeleports>()
+            .init_resource::<crate::script_host::ScriptOrders>()
             .init_resource::<crate::big_move::TeleportReports>()
             .init_resource::<crate::big_move::BigMoves>()
             .init_resource::<crate::big_move::VoteRequests>()
@@ -85,7 +86,7 @@ impl Plugin for SimPlugin {
             .init_resource::<crate::ScriptReports>()
             .init_resource::<InventoryAcks>()
             .init_resource::<ClosingDoors>()
-            .add_systems(FixedUpdate, ((handle_intents, gate_unconscious).chain(), boot_world, (apply_sheet_requests, crate::apply_fate).chain(), apply_inventory_requests, crate::barter::apply_barter, update_party_pace, advance_clock, apply_moves, (crate::trap::spot_traps_walking, walk, crate::big_move::step_on_jump_points).chain(), use_portals, pick_up_items, (pick_locks, crate::trap::disarm_traps, cast_spells, start_resting, rest_steps, recover_fatigue, update_consciousness, crate::talk_to_npcs, crate::run_conversations, crate::share_experience, crate::barter::open_barters, crate::script_host::run_timed_scripts, crate::big_move::run_big_moves, crate::script_host::run_wield_scripts, crate::script_host::run_carry_scripts, crate::script_host::sync_script_inventories, crate::script_host::sync_script_sheets).chain(), close_doors, stream_sectors, spawn_npcs, update_activity, (crate::heartbeat::run_heartbeats, npc_idle, crate::follow::expire_waits, crate::follow::recheck_followers, crate::follow::sync_followers, crate::follow::follow_leaders, crate::dialogue::send_known_npcs, crate::newspaper::advance_newspapers).chain(), sync_state, advance_tick, write_save).chain());
+            .add_systems(FixedUpdate, ((handle_intents, gate_unconscious).chain(), boot_world, (apply_sheet_requests, crate::apply_fate).chain(), apply_inventory_requests, crate::barter::apply_barter, update_party_pace, advance_clock, apply_moves, (crate::trap::spot_traps_walking, walk, crate::big_move::step_on_jump_points).chain(), use_portals, pick_up_items, (pick_locks, crate::trap::disarm_traps, cast_spells, start_resting, rest_steps, recover_fatigue, update_consciousness, crate::talk_to_npcs, crate::run_conversations, crate::share_experience, crate::barter::open_barters, crate::script_host::run_timed_scripts, crate::big_move::run_big_moves, crate::script_host::run_wield_scripts, crate::script_host::run_carry_scripts, crate::script_host::sync_script_inventories, crate::script_host::sync_script_sheets).chain(), close_doors, stream_sectors, spawn_npcs, update_activity, (crate::heartbeat::run_heartbeats, npc_idle, crate::follow::expire_waits, crate::follow::recheck_followers, crate::follow::sync_followers, crate::follow::follow_leaders, crate::dialogue::send_known_npcs, crate::newspaper::advance_newspapers, crate::script_host::apply_script_orders).chain(), sync_state, advance_tick, write_save).chain());
     }
 }
 

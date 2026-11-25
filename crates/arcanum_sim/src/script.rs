@@ -55,6 +55,11 @@ pub const WRITTEN_PLAQUE: i32 = 6;
 pub const WEAPON_SLOT: i32 = 1004;
 
 /// The sector key of tile X, Y (0x4cfc50: 64-tile sectors, Y's above X's).
+/// Whether art id `aid` is monster art (type 0xc) of number `n` (bits 23-27; condition 0x13).
+pub fn is_monster_of(aid: u32, n: i32) -> bool {
+    aid >> 28 == 0xc && ((aid >> 23) & 0x1f) as i32 == n
+}
+
 pub fn blocked_key(x: i32, y: i32) -> u64 {
     arcanum_formats::map::TileLoc { x: x as u32, y: y as u32 }.sector().0
 }
@@ -100,6 +105,9 @@ pub struct ScriptGlobals {
     /// The newspaper queue ([`crate::newspaper`]).
     #[serde(default)]
     pub newspapers: crate::newspaper::Newspapers,
+    /// A script ended the game (action 0x84); the ending is not shown yet.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub game_ended: bool,
 }
 
 impl ScriptGlobals {
@@ -476,6 +484,12 @@ pub trait ScriptContext {
         None
     }
     /// The critters within `radius` tiles of `centre`, the larger distance (0x4ae4e0).
+    /// Make a critter walk to a tile (action 0x45).
+    fn walk_to(&mut self, _object: Self::Object, _to: arcanum_formats::map::TileLoc) {}
+    /// A critter uses skill `skill` with `tool` on `target` (action 0x4f).
+    fn use_skill(&mut self, _actor: Self::Object, _tool: Option<Self::Object>, _target: Self::Object, _skill: i32) {}
+    /// Sets an object's `name` (action 0x5c).
+    fn rename(&mut self, _object: Self::Object, _name: i32) {}
     fn critters_within(&mut self, _centre: Self::Object, _radius: u32) -> Vec<Self::Object> {
         Vec::new()
     }
@@ -853,6 +867,12 @@ fn condition<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &m
             return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.object_int(o, "name") == Some(name) && ctx.object_int(o, "flags").unwrap_or(0) & 0x800_0000 == 0);
         }
         0x16 => return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.is_dead(o)),
+        // A monster of kind N (0x445b72): its art (`aid`, field 0x18) is monster art (type 0xc)
+        // whose number (bits 23-27, 0x503f20) is N.
+        0x13 => {
+            let n = number(ctx, run, 1);
+            return over_set(ctx, run, unsupported, &mut |ctx, o| ctx.object_int(o, "aid").is_some_and(|aid| is_monster_of(aid as u32, n)));
+        }
         // Identified (0x464370): an item with no complexity, or flagged identified.
         0x2f => {
             return over_set(ctx, run, unsupported, &mut |ctx, o| {
@@ -1524,6 +1544,42 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
             set(ctx, attachment, run, ops[0], v);
             Step::Next
         }
+        // Walk to X, Y (0x448d48 → 0x4341c0, goal 7): the script goes on while it walks.
+        0x45 => {
+            let to = arcanum_formats::map::TileLoc { x: value(ctx, attachment, run, 1) as u32, y: value(ctx, attachment, run, 2) as u32 };
+            if let Some(o) = objects(run, ops[0], line, unsupported)?.first().copied() {
+                ctx.walk_to(o, to);
+            }
+            Step::Next
+        }
+        // A critter uses skill N with an item on a target (0x4492a1 → 0x4352c0, goal 0x28):
+        // actor, tool, target, skill, a number; queued, the script goes on.
+        0x4f => {
+            let mut one = |i: usize| objects(run, ops[i], line, unsupported).and_then(|o| o.first().copied());
+            let (actor, tool, target) = (one(0), one(1), one(2));
+            let skill = value(ctx, attachment, run, 3);
+            if let (Some(actor), Some(target)) = (actor, target) {
+                ctx.use_skill(actor, tool, target, skill);
+            }
+            Step::Next
+        }
+        // Rename (0x449782 → 0x4efdd0): the object's `name` (field 0x16), the number the
+        // item-named actions and conditions match.
+        0x5c => {
+            let name = value(ctx, attachment, run, 1);
+            if let Some(o) = objects(run, ops[0], line, unsupported)?.first().copied() {
+                ctx.rename(o, name);
+            }
+            Step::Next
+        }
+        // An animation (0x448b10 → 0x4332e0): not shown yet; the script goes on, as it does in
+        // the original.
+        0x3e => Step::Next,
+        // End the game (0x44a8ce → 0x460530: the interface's ending callback, slides not built).
+        0x84 => {
+            ctx.globals().game_ended = true;
+            Step::Next
+        }
         // Prone at once (0x435b30: the knock-down animation's last frame): the pose is not shown
         // yet; the script goes on.
         0x5d => Step::Next,
@@ -1813,6 +1869,10 @@ pub(crate) mod tests {
         /// Followers by leader, and where objects are.
         pub followers: BTreeMap<u32, Vec<u32>>,
         pub at: BTreeMap<u32, arcanum_formats::map::TileLoc>,
+        /// Objects' int fields.
+        pub ints: BTreeMap<(u32, String), i32>,
+        /// Walks, skill uses and renames, as text.
+        pub orders: Vec<String>,
     }
 
     impl ScriptContext for TestWorld {
@@ -1855,6 +1915,18 @@ pub(crate) mod tests {
         }
         fn location(&mut self, object: u32) -> Option<arcanum_formats::map::TileLoc> {
             self.at.get(&object).copied()
+        }
+        fn object_int(&mut self, object: u32, field: &str) -> Option<i32> {
+            self.ints.get(&(object, field.to_string())).copied()
+        }
+        fn walk_to(&mut self, object: u32, to: arcanum_formats::map::TileLoc) {
+            self.orders.push(format!("{object} walks to {},{}", to.x, to.y));
+        }
+        fn use_skill(&mut self, actor: u32, tool: Option<u32>, target: u32, skill: i32) {
+            self.orders.push(format!("{actor} uses {skill} with {tool:?} on {target}"));
+        }
+        fn rename(&mut self, object: u32, name: i32) {
+            self.orders.push(format!("{object} is {name}"));
         }
     }
 
@@ -2166,5 +2238,35 @@ pub(crate) mod tests {
         assert_eq!((w.globals.var(3), w.globals.var(4)), (1, 0), "the same 64-tile sector; another not");
         invoke(&mut w, &mut Attachment::new(0, 0, 100));
         assert!(w.globals.blocked_sectors.is_empty(), "toggled back");
+    }
+
+    #[test]
+    fn walks_skill_uses_renames_and_the_end_go_on() {
+        // As scripts 1378, 29009 and 1573 have them; then an animation and the end of the game.
+        let lines = vec![
+            always(block(0x45, &[op(1, 0), n(32257), n(62248)])),
+            always(block(0x4f, &[op(0, 0), op(1, 0), op(0xc, 0), n(14), n(10)])),
+            always(block(0x5c, &[op(1, 0), n(2805)])),
+            always(block(0x3e, &[op(1, 0), n(10)])),
+            always(block(0x84, &[])),
+        ];
+        let mut w = world(lines, 0);
+        assert!(invoke(&mut w, &mut Attachment::new(0, 0, 100)).unsupported.is_empty());
+        assert_eq!(w.orders, ["50 walks to 32257,62248", "1 uses 14 with Some(50) on 2", "50 is 2805"]);
+        assert!(w.globals.game_ended);
+    }
+
+    #[test]
+    fn monster_kinds_are_read_from_the_art() {
+        // Monster art (type 0xc) number 2: Dante's script 1014 tests the triggerer for it.
+        let lines = vec![line(block(0x13, &[op(0, 0), n(2)]), block(0xa, &[op(1, 1), n(1)]), block(0xa, &[op(1, 1), n(2)]))];
+        let mut w = world(lines, 0);
+        w.ints.insert((1, "aid".into()), (0xc000_0000u32 | 2 << 23) as i32);
+        invoke(&mut w, &mut Attachment::new(0, 0, 100));
+        assert_eq!(w.globals.var(1), 1);
+        w.ints.insert((1, "aid".into()), (0xc000_0000u32 | 3 << 23) as i32);
+        invoke(&mut w, &mut Attachment::new(0, 0, 100));
+        assert_eq!(w.globals.var(1), 2, "another kind");
+        assert!(!is_monster_of(0x2000_0000 | 2 << 23, 2), "critter art");
     }
 }
