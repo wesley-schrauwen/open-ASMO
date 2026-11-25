@@ -71,6 +71,7 @@ impl Plugin for SimPlugin {
             .init_resource::<crate::prowl::ProwlRequests>()
             .init_resource::<crate::combat::Combat>()
             .init_resource::<crate::combat::CombatRequests>()
+            .init_resource::<crate::combat::AiParams>()
             .init_resource::<crate::big_move::TeleportReports>()
             .init_resource::<crate::big_move::BigMoves>()
             .init_resource::<crate::big_move::VoteRequests>()
