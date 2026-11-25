@@ -1097,6 +1097,46 @@ mod tests {
     }
 
     #[test]
+    fn a_taking_damage_script_that_says_no_keeps_the_npc_whole() {
+        use crate::script::tests::{always, block};
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let mut foe = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(72, 70));
+        foe.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
+        std::fs::write(folder.join("G_0F.mob"), foe.build()).unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        let sector = SectorId::new(1, 1);
+        let (npc, index) = {
+            let world = sim.app.world_mut();
+            let map = world.resource::<LoadedMap>();
+            let index = map.mobiles[&sector].iter().position(|o| o.object_type == TYPE_NPC).unwrap() as u32;
+            (*world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == index).unwrap().0, index)
+        };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(crate::ScriptObject::Mobile { sector, index }, crate::combat::EVENT_TAKING_DAMAGE, crate::Attachment::new(0, 0, 707));
+        sim.app.world_mut().resource_mut::<crate::Scripts>().0.get_or_insert_with(Default::default).insert(707, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(1, &[]))] });
+        sim.take_deltas();
+        let mut hits = 0;
+        for seq in 0..60 {
+            sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: npc, seq })]);
+            sim.update();
+            hits += sim.take_deltas().iter().filter(|(_, d)| matches!(d, LedgerDelta::Attacked { attacker, outcome, .. } if *attacker != npc && outcome.hit && outcome.hp > 0)).count();
+        }
+        assert!(hits > 0, "the PC lands hits");
+        let map = sim.app.world().resource::<LoadedMap>();
+        assert!(!map.is_dead(sector, index));
+        assert_eq!(map.npc_hp(sector, index).map(|(left, max)| left == max), Some(true), "no damage taken");
+    }
+
+    #[test]
     fn prowling_switches_the_pcs_art_and_everyone_hears_of_it() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());

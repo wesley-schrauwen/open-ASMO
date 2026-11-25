@@ -75,6 +75,7 @@ impl Plugin for SimPlugin {
             .init_resource::<crate::combat::CombatStarts>()
             .init_resource::<crate::unconscious::Resurrections>()
             .init_resource::<crate::combat::CombatEvents>()
+            .init_resource::<crate::combat::ScriptChecks>()
             .init_resource::<crate::big_move::TeleportReports>()
             .init_resource::<crate::big_move::BigMoves>()
             .init_resource::<crate::big_move::VoteRequests>()
