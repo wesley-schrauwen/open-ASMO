@@ -12,6 +12,10 @@
 //! original's targeting cursor (UI mode 0x10, art picked by 0x5719f0) was not decoded, and this
 //! tint stands in for it, as the owner remembers it.
 //!
+//! In combat mode or a fight ([`crate::combat_ui::CombatView::attacks`]) the cursor is the battle
+//! cursor (interface art 353, `battlecur.art`), and over an NPC `hoverattack.art` (555); their
+//! hotspot is the art's own (builder's call: the original's mouse hotspots were not decoded).
+//!
 //! Not built: the cursors for actions and objects (0x573640 reads an object's cursor art from
 //! its field 0x5d), and the scroll arrows (498, 499).
 
@@ -35,17 +39,44 @@ impl Plugin for CursorPlugin {
     }
 }
 
-/// The cursor's art, and the image size its window cursor was made at.
+/// Which cursor shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CursorKind {
+    #[default]
+    Arrow,
+    /// Combat mode or a fight (art 353).
+    Battle,
+    /// The same over an NPC (art 555).
+    Attack,
+}
+
+/// `battlecur.art` and `hoverattack.art`.
+pub const BATTLE_CURSOR: &str = "art/interface/battlecur.art";
+pub const ATTACK_CURSOR: &str = "art/interface/hoverattack.art";
+
+/// The cursors' art, and the image size and kind its window cursor was made at.
 #[derive(Resource)]
 struct GameCursor {
     art: Handle<ArtFrames>,
+    battle: Handle<ArtFrames>,
+    attack: Handle<ArtFrames>,
     size: UVec2,
     /// Whether the window cursor was made blue.
     blue: bool,
+    kind: CursorKind,
 }
 
 fn load_cursor(mut commands: Commands, assets: Res<AssetServer>) {
-    commands.insert_resource(GameCursor { art: assets.load(interface::CURSOR), size: UVec2::ZERO, blue: false });
+    commands.insert_resource(GameCursor { art: assets.load(interface::CURSOR), battle: assets.load(BATTLE_CURSOR), attack: assets.load(ATTACK_CURSOR), size: UVec2::ZERO, blue: false, kind: CursorKind::Arrow });
+}
+
+/// The cursor for the fight's state: the arrow out of combat mode and fights.
+pub fn cursor_kind(view: Option<&crate::combat_ui::CombatView>, pc: Option<arcanum_sim::NetId>) -> CursorKind {
+    match view {
+        Some(v) if v.attacks(pc) && v.over_npc => CursorKind::Attack,
+        Some(v) if v.attacks(pc) => CursorKind::Battle,
+        _ => CursorKind::Arrow,
+    }
 }
 
 /// Scale from art pixels to cursor pixels for a window `height` logical pixels tall.
@@ -107,29 +138,49 @@ fn set_cursor(
     mut images: ResMut<Assets<Image>>,
     windows: Query<(Entity, &Window), With<PrimaryWindow>>,
     armed: Option<Res<crate::skill_use::SkillTargeting>>,
+    (view, local): (Option<Res<crate::combat_ui::CombatView>>, Option<Res<crate::sim_bridge::LocalPc>>),
 ) {
     let Ok((entity, window)) = windows.single() else { return };
     let blue = armed.is_some_and(|a| a.0.is_some());
-    let Some(art) = frames.get(&cursor.art) else { return };
+    let mut kind = cursor_kind(view.as_deref(), local.and_then(|l| l.0.map(|(id, _)| id)));
+    // A battle cursor whose art is not in (yet) leaves the arrow.
+    let handle = match kind {
+        CursorKind::Arrow => &cursor.art,
+        CursorKind::Battle => &cursor.battle,
+        CursorKind::Attack => &cursor.attack,
+    };
+    let art = match frames.get(handle) {
+        Some(a) => a,
+        None => {
+            kind = CursorKind::Arrow;
+            let Some(a) = frames.get(&cursor.art) else { return };
+            a
+        }
+    };
     let Some(frame) = art.frames.first() else { return };
     let Some(source) = images.get(frame) else { return };
     let factor = cursor_factor(window.height());
     let size = scaled_size(source.width(), source.height(), factor);
-    if size == cursor.size && blue == cursor.blue {
+    if size == cursor.size && blue == cursor.blue && kind == cursor.kind {
         return;
     }
+    let tip = match kind {
+        CursorKind::Arrow => UVec2::new(TIP.0, TIP.1),
+        _ => art.centers.first().map_or(UVec2::ZERO, |c| c.max(IVec2::ZERO).as_uvec2()),
+    };
     let Some(mut scaled) = resample(source, size) else { return };
     if blue {
         tint_blue(&mut scaled);
     }
     let hotspot = (
-        ((TIP.0 as f32 * factor) as u32).min(size.x - 1) as u16,
-        ((TIP.1 as f32 * factor) as u32).min(size.y - 1) as u16,
+        ((tip.x as f32 * factor) as u32).min(size.x - 1) as u16,
+        ((tip.y as f32 * factor) as u32).min(size.y - 1) as u16,
     );
     let handle = images.add(scaled);
     commands.entity(entity).insert(CursorIcon::Custom(CustomCursor::Image(CustomCursorImage { handle, hotspot, ..default() })));
     cursor.size = size;
     cursor.blue = blue;
+    cursor.kind = kind;
 }
 
 /// Turns an RGBA8 image's colours to blues of the same brightness.

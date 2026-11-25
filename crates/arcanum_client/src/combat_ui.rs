@@ -17,8 +17,13 @@
 //!   when the host spawns it again dead ([`Dying`]; the host picks the death, 0x4b5306); one
 //!   knocked down falls (7) and gets up (8).
 //!
-//! Not built: the orange and red lights of a planned move's cost, the battle cursor (art 353) and
-//! `hoverattack.art`, the hit effects (AnimFX by damage, 0x433020), projectiles (0x4b39b0),
+//! - **Planning** ([`plan_move`], 0x56f430): on the PC's turn, the tile or NPC under the cursor
+//!   gives the planned cost (2 a step; an NPC: the steps into reach and the attack): the bar
+//!   lights orange (art 296) for the points it would spend, red (315) for those it lacks.
+//! - **Cursor** ([`crate::cursor`]): in combat mode or a fight the battle cursor (art 353), over
+//!   an NPC `hoverattack` (555).
+//!
+//! Not built: the hit effects (AnimFX by damage, 0x433020), projectiles (0x4b39b0),
 //! called shots, the button's pressed look.
 
 use arcanum_sim::{FloatColour, LedgerDelta, NetId, PlayerIntent};
@@ -36,6 +41,9 @@ pub const AP_BAR_ART: u32 = 294;
 pub const END_TURN_ART: u32 = 297;
 pub const END_TURN_AT: Vec2 = Vec2::new(320.0, 9.0);
 pub const AP_LIGHT_ART: u32 = 295;
+/// The lights of points a planned move spends, and of points it lacks.
+pub const AP_PLANNED_ART: u32 = 296;
+pub const AP_SHORT_ART: u32 = 315;
 /// The lights' x in the bar (table 0x5caa48), y 10.
 pub const AP_LIGHT_X: [f32; 20] = [22.0, 35.0, 48.0, 61.0, 74.0, 93.0, 106.0, 119.0, 132.0, 145.0, 164.0, 177.0, 190.0, 203.0, 216.0, 235.0, 248.0, 261.0, 274.0, 287.0];
 pub const AP_LIGHT_Y: f32 = 10.0;
@@ -48,6 +56,10 @@ pub struct CombatView {
     pub ap: i32,
     /// The combat button is on.
     pub mode: bool,
+    /// What the move under the cursor would cost, on the PC's turn ([`plan_move`]).
+    pub planned: i32,
+    /// The cursor is on an NPC.
+    pub over_npc: bool,
 }
 
 impl CombatView {
@@ -229,7 +241,7 @@ impl Plugin for CombatUiPlugin {
             .init_resource::<CombatDeltas>()
             .add_systems(OnExit(AppState::InGame), |mut v: ResMut<CombatView>| *v = CombatView::default())
             .add_observer(on_combat_button)
-            .add_systems(Update, (apply_combat_deltas, show_ap_bar, end_turn).chain().run_if(in_state(AppState::InGame)));
+            .add_systems(Update, (apply_combat_deltas, plan_move, show_ap_bar, end_turn).chain().run_if(in_state(AppState::InGame)));
     }
 }
 
@@ -242,9 +254,9 @@ fn on_combat_button(activate: On<bevy::ui_widgets::Activate>, buttons: Query<&cr
 
 /// Builds the AP bar again when the fight changes.
 #[allow(clippy::too_many_arguments)]
-fn show_ap_bar(mut commands: Commands, view: Res<CombatView>, local: Res<LocalPc>, roots: Query<Entity, With<ApBar>>, assets: Res<AssetServer>, vfs: Option<Res<VfsResource>>, mut art: Local<InterfaceArt>, mut shown: Local<Option<(bool, i32)>>) {
+fn show_ap_bar(mut commands: Commands, view: Res<CombatView>, local: Res<LocalPc>, roots: Query<Entity, With<ApBar>>, assets: Res<AssetServer>, vfs: Option<Res<VfsResource>>, mut art: Local<InterfaceArt>, mut shown: Local<Option<(bool, i32, i32)>>) {
     let pc = local.0.map(|(id, _)| id);
-    let want = view.fighting(pc).then(|| (view.turn == pc, view.ap));
+    let want = view.fighting(pc).then(|| (view.turn == pc, view.ap, view.planned));
     if *shown == want && !(want.is_some() && roots.is_empty()) {
         return;
     }
@@ -252,13 +264,12 @@ fn show_ap_bar(mut commands: Commands, view: Res<CombatView>, local: Res<LocalPc
     for root in &roots {
         commands.entity(root).despawn();
     }
-    let Some((mine, ap)) = want else { return };
+    let Some((mine, ap, planned)) = want else { return };
     let vfs = vfs.as_deref();
     let (Some(bar), Some(size)) = (art.image(AP_BAR_ART, &assets, vfs), art.size(AP_BAR_ART, vfs)) else { return };
     let end = art.image(END_TURN_ART, &assets, vfs);
     let end_size = art.size(END_TURN_ART, vfs).unwrap_or(Vec2::new(40.0, 20.0));
-    let light = art.image(AP_LIGHT_ART, &assets, vfs);
-    let light_size = art.size(AP_LIGHT_ART, vfs).unwrap_or(Vec2::splat(10.0));
+    let lights: Vec<(Option<Handle<Image>>, Vec2)> = light_arts(ap, planned).into_iter().map(|n| (art.image(n, &assets, vfs), art.size(n, vfs).unwrap_or(Vec2::splat(10.0)))).collect();
     commands
         .spawn((
             ApBar,
@@ -273,12 +284,85 @@ fn show_ap_bar(mut commands: Commands, view: Res<CombatView>, local: Res<LocalPc
             if let Some(end) = end {
                 screen.spawn((EndTurnButton, bevy::ui::RelativeCursorPosition::default(), ImageNode::new(end), place(AP_BAR_AT + END_TURN_AT, end_size)));
             }
-            if mine && let Some(light) = light {
-                for x in AP_LIGHT_X.iter().take(ap.clamp(0, 20) as usize) {
-                    screen.spawn((bevy::picking::Pickable::IGNORE, ImageNode::new(light.clone()), place(AP_BAR_AT + Vec2::new(*x, AP_LIGHT_Y), light_size)));
+            if mine {
+                for (x, (light, size)) in AP_LIGHT_X.iter().zip(&lights) {
+                    if let Some(light) = light {
+                        screen.spawn((bevy::picking::Pickable::IGNORE, ImageNode::new(light.clone()), place(AP_BAR_AT + Vec2::new(*x, AP_LIGHT_Y), *size)));
+                    }
                 }
             }
         });
+}
+
+/// The lights' art, left to right, for `ap` points left and a planned move of `planned`: green
+/// for what stays, orange for what it spends, red for what it lacks; at most 20.
+pub fn light_arts(ap: i32, planned: i32) -> Vec<u32> {
+    let (ap, planned) = (ap.max(0), planned.max(0));
+    let green = (ap - planned).max(0);
+    let orange = ap.min(planned);
+    let red = (planned - ap).max(0);
+    std::iter::repeat_n(AP_LIGHT_ART, green as usize).chain(std::iter::repeat_n(AP_PLANNED_ART, orange as usize)).chain(std::iter::repeat_n(AP_SHORT_ART, red as usize)).take(20).collect()
+}
+
+/// What a plan was made for: the NPC, the tile under the cursor, the PC's tile.
+type PlanKey = (Option<NetId>, Option<arcanum_formats::map::TileLoc>, arcanum_formats::map::TileLoc);
+
+type PlanActors<'a> = (Entity, &'a Sprite, &'a bevy::sprite::Anchor, &'a GlobalTransform, &'a crate::actors::Actor);
+
+/// What the move under the cursor would cost on the PC's turn (0x56f430): an NPC, the steps into
+/// its reach and the attack's cost; a tile, 2 a step of the path there; and whether the cursor is
+/// on an NPC (the cursor's look).
+#[allow(clippy::too_many_arguments)]
+fn plan_move(
+    windows: Query<&Window>,
+    cameras: Query<(&Camera, &GlobalTransform), With<Camera2d>>,
+    client: Option<Res<crate::world_render::ClientMap>>,
+    actors: Query<PlanActors>,
+    images: Res<Assets<Image>>,
+    local: Res<LocalPc>,
+    (sheet_host, pc_inventory): (Res<crate::pc_sheet::SheetHost>, Res<crate::inventory_screen::PcInventory>),
+    mut view: ResMut<CombatView>,
+    mut last: Local<Option<PlanKey>>,
+) {
+    let pc = local.0.map(|(id, _)| id);
+    let (Some(client), Some(origin)) = (client.as_ref(), client.as_ref().and_then(|c| c.origin)) else { return };
+    let world = windows.iter().find_map(|w| w.cursor_position()).and_then(|c| cameras.iter().find_map(|(camera, t)| camera.viewport_to_world_2d(t, c).ok()));
+    let npc = world.and_then(|w| crate::picking::pick(w, actors.iter().filter(|a| !a.4.pc).map(|(e, s, a, t, _)| (e, s, a, t)), &images)).and_then(|e| actors.get(e).ok()).map(|a| (a.4.net_id, a.4.at));
+    let over_npc = npc.is_some();
+    if view.over_npc != over_npc {
+        view.over_npc = over_npc;
+    }
+    let me = actors.iter().find(|a| Some(a.4.net_id) == pc).map(|a| a.4.at);
+    let (Some(me), true) = (me, view.turn.is_some() && view.turn == pc) else {
+        if view.planned != 0 {
+            view.planned = 0;
+        }
+        return;
+    };
+    let tile = world.and_then(|w| crate::isometric::world_to_tile(w, origin));
+    let key = (npc.map(|n| n.0), tile, me);
+    if *last == Some(key) {
+        return;
+    }
+    *last = Some(key);
+    let map = &client.map;
+    let planned = match npc {
+        Some((_, at)) => {
+            let weapon = pc_inventory.shown().and_then(|inv| inv.items.iter().find(|i| i.location == arcanum_sim::combat::WEAPON_SLOT)).and_then(|i| map.prototypes.get(i.prototype)).filter(|o| o.object_type == arcanum_formats::object::TYPE_WEAPON);
+            let trained = sheet_host.sheet().map(|s| [arcanum_sim::combat::SKILL_BOW, arcanum_sim::combat::SKILL_MELEE, arcanum_sim::combat::SKILL_THROWING, arcanum_sim::combat::SKILL_FIREARMS].into_iter().filter(|&k| s.training[k] > 0).collect()).unwrap_or_default();
+            let fighter = arcanum_sim::combat::Fighter { weapon: weapon.map(|w| arcanum_sim::combat::weapon_of(w, &map.prototypes)), trained, ..Default::default() };
+            let steps = if arcanum_sim::combat::reach_between(me, at) <= fighter.reach() {
+                0
+            } else {
+                arcanum_sim::combat::neighbours(at).into_iter().filter_map(|g| arcanum_sim::find_path(map, me, g).ok()).map(|p| p.iter().position(|&t| arcanum_sim::combat::reach_between(t, at) <= fighter.reach()).map_or(p.len(), |i| i + 1)).min().unwrap_or(0)
+            };
+            steps as i32 * arcanum_sim::combat::STEP_AP + fighter.attack_cost()
+        }
+        None => tile.filter(|&t| t != me).and_then(|t| arcanum_sim::find_path(map, me, t).ok()).map_or(0, |p| p.len() as i32 * arcanum_sim::combat::STEP_AP),
+    };
+    if view.planned != planned {
+        view.planned = planned;
+    }
 }
 
 /// A click on End Turn ends the PC's turn.
@@ -352,7 +436,10 @@ mod tests {
         assert_eq!(texts, [(NetId(1), "?".to_string()), (NetId(1), "?".into()), (NetId(1), "Stunned".into())], "all over the attacker");
         let dodged = arcanum_sim::combat::AttackOutcome { dodged: true, ..Default::default() };
         assert_eq!(attack_floats(NetId(1), NetId(2), &dodged, false, &mes), [(NetId(2), "Dodge!".into(), FloatColour::White)]);
-        let view = CombatView { order: vec![NetId(1), NetId(2)], turn: Some(NetId(1)), ap: 7, mode: false };
+        let view = CombatView { order: vec![NetId(1), NetId(2)], turn: Some(NetId(1)), ap: 7, mode: false, ..Default::default() };
+        assert_eq!(light_arts(7, 0), [AP_LIGHT_ART; 7].to_vec());
+        assert_eq!(light_arts(5, 2), [AP_LIGHT_ART, AP_LIGHT_ART, AP_LIGHT_ART, AP_PLANNED_ART, AP_PLANNED_ART].to_vec());
+        assert_eq!(light_arts(3, 5), [AP_PLANNED_ART, AP_PLANNED_ART, AP_PLANNED_ART, AP_SHORT_ART, AP_SHORT_ART].to_vec());
         assert!(view.attacks(Some(NetId(1))) && !view.attacks(Some(NetId(9))));
         assert!(covers(&view, Some(NetId(1)), Vec2::new(300.0, 420.0)) && !covers(&view, Some(NetId(1)), Vec2::new(300.0, 300.0)));
     }
