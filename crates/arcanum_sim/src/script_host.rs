@@ -130,6 +130,7 @@ pub struct ScriptHost<'w, 's> {
     changed_sheets: ResMut<'w, ScriptSheets>,
     toggled_npcs: ResMut<'w, crate::world::ToggledNpcs>,
     teleports: ResMut<'w, crate::big_move::ScriptTeleports>,
+    orders: ResMut<'w, ScriptOrders>,
     reports: ResMut<'w, ScriptReports>,
     rng: ResMut<'w, crate::HostRng>,
     clock: Res<'w, crate::GameClock>,
@@ -195,6 +196,45 @@ struct HostWorld<'a> {
     dialogs: Vec<crate::StartedDialogue>,
     /// Teleports asked for: object, map, tile.
     teleports: Vec<(ScriptObject, i32, arcanum_formats::map::TileLoc)>,
+    /// Walks and skill uses a script ordered (actions 0x45, 0x4f).
+    orders: ScriptOrders,
+}
+
+/// What scripts ordered critters to do, for [`apply_script_orders`].
+#[derive(Resource, Debug, Default)]
+pub struct ScriptOrders {
+    /// Critters to walk to a tile (action 0x45).
+    pub walks: Vec<(crate::NetId, arcanum_formats::map::TileLoc)>,
+    /// PCs to pick a lock (action 0x4f with Pick Locks), with the tool's prototype.
+    pub picks: Vec<(PlayerId, crate::LockTarget, Option<u32>)>,
+}
+
+type OrderedQuery<'a> = (Entity, &'a crate::NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::Inventory>);
+
+/// Starts the walks and picks scripts ordered: a walk on a path from where the critter stands
+/// (none found: it stays); a pick as the player's own, with the PC's first item of the tool's
+/// prototype as the tool.
+pub fn apply_script_orders(
+    mut commands: Commands,
+    mut orders: ResMut<ScriptOrders>,
+    map: Res<LoadedMap>,
+    mut picks: ResMut<crate::PickLockRequests>,
+    critters: Query<OrderedQuery>,
+) {
+    for (net_id, to) in std::mem::take(&mut orders.walks) {
+        let Some((entity, _, position, ..)) = critters.iter().find(|c| *c.1 == net_id) else { continue };
+        match crate::find_path(&*map, position.0, to) {
+            Ok(path) if !path.is_empty() => {
+                commands.entity(entity).insert(crate::Walking { steps: path.into(), progress: 0.0 });
+            }
+            _ => {}
+        }
+    }
+    for (player, target, tool) in std::mem::take(&mut orders.picks) {
+        let inventory = critters.iter().find(|c| c.3.is_some_and(|pc| pc.0 == player)).and_then(|c| c.4);
+        let tool = tool.and_then(|t| inventory?.items.iter().find(|i| i.prototype == t).map(|i| i.location));
+        picks.0.push((player, target, tool, 0));
+    }
 }
 
 impl ScriptContext for HostWorld<'_> {
@@ -772,6 +812,42 @@ impl ScriptContext for HostWorld<'_> {
         mes.get(line).map(str::to_string)
     }
 
+    /// Critters only (PCs as well as NPCs); the path is found when it starts.
+    fn walk_to(&mut self, object: ScriptObject, to: arcanum_formats::map::TileLoc) {
+        if let Some(c) = self.critters.iter().find(|c| c.0 == object) {
+            self.orders.walks.push((c.2, to));
+        }
+    }
+
+    /// Pick Locks by a PC on a door or container (the item scripts 29009 / 29010 use it); the
+    /// other skills do nothing yet (builder's call).
+    fn use_skill(&mut self, actor: ScriptObject, tool: Option<ScriptObject>, target: ScriptObject, skill: i32) {
+        let ScriptObject::Pc(player) = actor else { return };
+        if skill != crate::lockpick::SKILL_PICK_LOCKS as i32 {
+            return;
+        }
+        let kind = self.object_type(target);
+        let lock = match target {
+            ScriptObject::Map(id) if kind == arcanum_formats::object::TYPE_PORTAL as i32 => crate::LockTarget::Door(id),
+            ScriptObject::Mobile { sector, index } if kind == arcanum_formats::object::TYPE_CONTAINER as i32 => crate::LockTarget::Container(GroundItemId::Container { sector, index }),
+            _ => return,
+        };
+        let tool = match tool {
+            Some(ScriptObject::Carried { prototype, .. }) => Some(prototype),
+            _ => None,
+        };
+        self.orders.picks.push((player, lock, tool));
+    }
+
+    /// Objects of the map, kept in the sector's changes; a carried item's name is not kept
+    /// (items are kept by prototype).
+    fn rename(&mut self, object: ScriptObject, name: i32) {
+        let Some((sector, index, mobile)) = map_place(object) else { return };
+        if self.map.set_object_name(sector, index, mobile, name) {
+            self.sectors.insert(sector);
+        }
+    }
+
     fn critters_within(&mut self, centre: ScriptObject, radius: u32) -> Vec<ScriptObject> {
         let Some(at) = self.tile_of(centre) else { return Vec::new() };
         self.critters.iter().filter(|c| c.1.x.abs_diff(at.x).max(c.1.y.abs_diff(at.y)) <= radius).map(|c| c.0).collect()
@@ -1264,6 +1340,7 @@ impl ScriptHost<'_, '_> {
             experience: Vec::new(),
             dialogs: Vec::new(),
             teleports: Vec::new(),
+            orders: ScriptOrders::default(),
         };
         let run = crate::run_hook(&mut ctx, attachment, invocation);
         for (to, text) in std::mem::take(&mut ctx.messages) {
@@ -1299,6 +1376,8 @@ impl ScriptHost<'_, '_> {
         for (object, map, to) in std::mem::take(&mut ctx.teleports) {
             self.teleports.0.push(crate::big_move::ScriptTeleport { causer: player, object, map, to });
         }
+        self.orders.walks.append(&mut ctx.orders.walks);
+        self.orders.picks.append(&mut ctx.orders.picks);
         for unsupported in run.unsupported {
             self.reports.0.push((number, unsupported));
         }

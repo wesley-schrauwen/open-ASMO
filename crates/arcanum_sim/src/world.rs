@@ -2267,6 +2267,47 @@ mod tests {
     }
 
     #[test]
+    fn a_script_walks_an_npc_and_renames_it() {
+        use crate::script::tests::{always, block, n, op};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]));
+        sim.update();
+        sim.update();
+        let sector = SectorId::new(1, 1);
+        let (npc, at) = {
+            let world = sim.app.world_mut();
+            world.query::<(&NetId, &crate::NpcSource, &Position)>().iter(world).find(|(_, s, _)| s.index == 0 && s.sector == sector).map(|(n, _, p)| (*n, p.0)).unwrap()
+        };
+        let to = {
+            use crate::Walkable;
+            let map = sim.app.world().resource::<LoadedMap>();
+            [(2, 0), (0, 2), (-2, 0), (0, -2), (2, 2), (-2, -2), (3, 0), (0, 3)].into_iter().map(|(dx, dy)| TileLoc { x: at.x.wrapping_add_signed(dx), y: at.y.wrapping_add_signed(dy) }).find(|&t| map.walkable(t) && crate::find_path(map, at, t).is_ok()).unwrap()
+        };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(crate::ScriptObject::Mobile { sector, index: 0 }, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 705));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let lines = vec![always(block(0x45, &[op(1, 0), n(to.x as i32), n(to.y as i32)])), always(block(0x5c, &[op(1, 0), n(2805)])), always(block(1, &[]))];
+            scripts.0.get_or_insert_with(Default::default).insert(705, arcanum_formats::script::Script { description: String::new(), flags: 0, lines });
+        }
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        sim.update();
+        sim.update();
+        {
+            let world = sim.app.world_mut();
+            let walking = world.query::<(&NetId, &crate::Walking)>().iter(world).find(|(n, _)| **n == npc).map(|(_, w)| w.steps.back().copied());
+            assert_eq!(walking, Some(Some(to)), "on its way");
+        }
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(save.sector_changes[&sector].mobile_names[&0], 2805);
+        assert_eq!(sim.app.world().resource::<LoadedMap>().mobiles[&sector][0].int("name"), Some(2805));
+    }
+
+    #[test]
     fn scripts_hurt_heal_show_plaques_transform_destroy_and_flip_switches() {
         use crate::script::tests::{always, block, line, n, op};
         use arcanum_formats::object::{Object, Value};

@@ -195,6 +195,16 @@ impl LoadedMap {
         }
     }
 
+    /// Sets an object's `name` (action 0x5c), kept in [`LoadedMap::changes`]. False if it is not
+    /// loaded.
+    pub fn set_object_name(&mut self, sector: arcanum_formats::map::SectorId, index: u32, mobile: bool, name: i32) -> bool {
+        let Some(o) = self.object_mut(sector, index, mobile) else { return false };
+        o.set_int("name", name);
+        let delta = self.changes.entry(sector).or_default();
+        if mobile { delta.mobile_names.insert(index, name) } else { delta.object_names.insert(index, name) };
+        true
+    }
+
     /// Makes an object a new instance of prototype `prototype` in its place (action 0x28), kept
     /// in [`LoadedMap::changes`]. False if there is no such prototype or object.
     pub fn transform_object(&mut self, sector: arcanum_formats::map::SectorId, index: u32, mobile: bool, prototype: u32) -> bool {
@@ -204,11 +214,13 @@ impl LoadedMap {
             delta.mobile_protos.insert(index, prototype);
             delta.mobile_flags.remove(&index);
             delta.mobile_art.remove(&index);
+            delta.mobile_names.remove(&index);
             delta.npc_flags.remove(&index);
         } else {
             delta.object_protos.insert(index, prototype);
             delta.object_flags.remove(&index);
             delta.object_art.remove(&index);
+            delta.object_names.remove(&index);
         }
         self.apply_transform(sector, index, mobile, prototype)
     }
@@ -285,6 +297,13 @@ impl LoadedMap {
         for (index, art) in delta.mobile_art {
             if let Some(o) = self.object_mut(id, index, true) {
                 o.set_int("current_aid", art as i32);
+            }
+        }
+        for (mobile, names) in [(false, delta.object_names), (true, delta.mobile_names)] {
+            for (index, name) in names {
+                if let Some(o) = self.object_mut(id, index, mobile) {
+                    o.set_int("name", name);
+                }
             }
         }
         for (index, flags) in delta.npc_flags {

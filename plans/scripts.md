@@ -566,6 +566,28 @@ Decoded so far, with confidence; the rest are named by the helper they call.
    - **Real data:** 2377 of 2399 scripts run to an end (2336 before). Left: 0x24 combat attack
      (6), 0x45 walk to (3), 0x55 newspaper queue (3), 0x4f use a skill (2), 0x5e written start
      (2), 0x84 end game (2), 0x3e animation, 0x56 headline, 0x5c rename, condition 0x13.
+4p. **Script gaps 8** (built, `feat/script-gaps-8`). Operands checked against the handlers.
+   - **Actions:**
+     - 0x45 walk to X, Y (0x448d48 → 0x4341c0, goal 7): object, X, Y. The critter (PC or NPC)
+       walks there on a path from where it stands; none found, it stays. The script goes on. An
+       NPC's idle thinking takes it back to its standpoint afterwards unless a script moved that
+       (script 1378 does both).
+     - 0x4f use a skill (0x4492a1 → 0x4352c0, goal 0x28): actor, tool, target, skill, a number.
+       Built for Pick Locks (14) by a PC on a door or container: the pick a player would make,
+       with the PC's first item of the tool's prototype as the tool (its own bonus counts; the
+       fifth operand is not used). Other skills do nothing yet (builder's call). Its users are
+       the item scripts 29009 / 29010.
+     - 0x5c rename (0x449782 → 0x4efdd0): sets the object's `name` (field 0x16), the number the
+       item-named actions and conditions match (the hover shows `description`, 0x17). Map
+       objects only, kept as `SectorDelta::object_names` / `mobile_names`.
+     - 0x3e play animation N (0x448b10 → 0x4332e0; N < 26; 10 on a critter queues goal 0x3c):
+       not shown; the script goes on, as in the original.
+     - 0x84 end the game (0x44a8ce → the interface callback 0x460530; a host also sends packet
+       0x7c): kept as `ScriptGlobals::game_ended`; the ending is not shown.
+   - **Condition 0x13** (0x445b72): a set member's `aid` (field 0x18) is monster art (type 0xc)
+     of number N (bits 23-27, 0x503f20); all or any by the set's kind.
+   - **Real data:** 2393 of 2399 scripts run to an end. Left: 0x24 combat attack (6: the set
+     turns hostile to the object, 0x4a9650; no combat yet).
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,

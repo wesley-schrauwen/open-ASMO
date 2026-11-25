@@ -151,11 +151,17 @@ pub struct SectorDelta {
     /// And their night standpoints (action 0x2e).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub night_standpoints: BTreeMap<u32, arcanum_formats::map::TileLoc>,
+    /// Objects' `name` a script changed (action 0x5c), by index in the sector's list / mobile
+    /// objects.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub object_names: BTreeMap<u32, i32>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub mobile_names: BTreeMap<u32, i32>,
 }
 
 impl SectorDelta {
     pub fn is_empty(&self) -> bool {
-        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty() && self.npc_inventories.is_empty() && self.npc_restock.is_empty() && self.object_flags.is_empty() && self.mobile_flags.is_empty() && self.npc_flags.is_empty() && self.object_art.is_empty() && self.mobile_art.is_empty() && self.object_protos.is_empty() && self.mobile_protos.is_empty() && self.dead.is_empty() && self.standpoints.is_empty() && self.night_standpoints.is_empty()
+        self.object_scripts.is_empty() && self.mobile_scripts.is_empty() && self.portals.is_empty() && self.taken.is_empty() && self.dropped.is_empty() && self.piles.is_empty() && self.containers.is_empty() && self.opened.is_empty() && self.portal_flags.is_empty() && self.container_flags.is_empty() && self.npc_inventories.is_empty() && self.npc_restock.is_empty() && self.object_flags.is_empty() && self.mobile_flags.is_empty() && self.npc_flags.is_empty() && self.object_art.is_empty() && self.mobile_art.is_empty() && self.object_protos.is_empty() && self.mobile_protos.is_empty() && self.dead.is_empty() && self.standpoints.is_empty() && self.night_standpoints.is_empty() && self.object_names.is_empty() && self.mobile_names.is_empty()
     }
 }
 
