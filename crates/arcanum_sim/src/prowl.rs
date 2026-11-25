@@ -13,8 +13,11 @@
 //!   6) / 2` tiles; against a prowler its Perception first loses the prowler's value in percent
 //!   (at most 100). The difficulty 0x4c8430 takes off (flag 0x2000) is not counted.
 //!
-//! Not built: sight (0x4af260: the facing cone, invisibility, the same percentage), NPCs noticing
-//! prowlers (0x4aa0d0) and dropping it when alerted, followers copying their leader, untrained
+//! - **Sight** ([`crate::combat::sees`], 0x4af260): within `clamp(PE, 1, 10)` tiles, Perception
+//!   cut by a prowler's value in percent; in the watcher's facing cone; nothing between.
+//!
+//! Not built: invisibility, the light and the difficulty terms of a prowler's value (0x4c8430),
+//! dropping prowling when alerted, followers copying their leader, untrained
 //! prowlers' path flag 0x200, the hover text's prowling state.
 
 use bevy_ecs::prelude::*;

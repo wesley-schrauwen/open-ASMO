@@ -869,7 +869,7 @@ pub struct CombatWorld<'w, 's> {
 }
 
 /// A critter as the combat systems see it.
-type CombatantQuery<'a> = (Entity, &'a NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::Sheet>, Option<&'a crate::Inventory>, Option<&'a Fighting>, Has<crate::Walking>, Option<&'a PendingAttack>, Option<&'a crate::follow::Following>, Option<&'a Surrendered>, Option<&'a Stunned>);
+type CombatantQuery<'a> = (Entity, &'a NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::Sheet>, Option<&'a crate::Inventory>, Option<&'a Fighting>, Has<crate::Walking>, Option<&'a PendingAttack>, Option<&'a crate::follow::Following>, Option<&'a Surrendered>, Option<&'a Stunned>, Option<&'a crate::Facing>, Option<&'a crate::Appearance>);
 
 /// One critter of the query, copied out.
 #[derive(Clone)]
@@ -891,6 +891,7 @@ struct Seen {
     /// Whom it gave up to.
     surrendered: Option<NetId>,
     stunned: Option<Stunned>,
+    rotation: usize,
 }
 
 impl Seen {
@@ -902,7 +903,8 @@ impl Seen {
 
 fn seen(q: &Query<CombatantQuery>) -> Vec<Seen> {
     q.iter()
-        .map(|(entity, &net_id, at, pc, npc, sheet, inventory, fighting, walking, pending, following, surrendered, stunned)| Seen {
+        .map(|(entity, &net_id, at, pc, npc, sheet, inventory, fighting, walking, pending, following, surrendered, stunned, facing, look)| Seen {
+            rotation: facing_of(facing, look),
             stunned: stunned.copied(),
             surrendered: surrendered.map(|s| s.to),
             leader: following.map(|f| f.leader),
@@ -1548,11 +1550,49 @@ pub fn hostile(npc_flags: i32, reaction: i32, alignment_gap: i32, row: &[i32; 17
 /// How far an NPC of Perception `pe` notices a PC (0x4ab460 / 0x4af260: `clamp(PE, 1, 10)`
 /// tiles, Perception first cut by a prowler's value), or hears it (0x4af470).
 pub fn notice_reach(pe: i32, prowler: Option<i32>) -> u32 {
-    let seen = pe - prowler.map_or(0, |p| pe * p.clamp(0, 100) / 100);
-    (seen.clamp(1, 10) as u32).max(crate::prowl::hearing_reach(pe, prowler) as u32)
+    sight_reach(pe, prowler).max(crate::prowl::hearing_reach(pe, prowler) as u32)
 }
 
-type FoeQuery<'a> = (&'a NetId, &'a crate::Position, &'a crate::NpcSource);
+/// How far a watcher of Perception `pe` sees (0x4af260 → 0x4af240): `clamp(PE, 1, 10)` tiles, its
+/// Perception first cut by a prowler's value in percent.
+pub fn sight_reach(pe: i32, prowler: Option<i32>) -> u32 {
+    let seen = pe - prowler.map_or(0, |p| pe * p.clamp(0, 100) / 100);
+    seen.clamp(1, 10) as u32
+}
+
+/// Whether a watcher at `from` facing `rotation` has `to` in view (0x45eff0): the direction to it
+/// within two rotations of its facing (5 of the 8; behind it, 3, not).
+pub fn in_view(rotation: usize, from: TileLoc, to: TileLoc) -> bool {
+    let step = TileLoc { x: (i64::from(from.x) + (i64::from(to.x) - i64::from(from.x)).signum()) as u32, y: (i64::from(from.y) + (i64::from(to.y) - i64::from(from.y)).signum()) as u32 };
+    let Some(dir) = crate::rotation_of_step(from, step) else { return true };
+    matches!((dir + 8 - rotation % 8) % 8, 0 | 1 | 2 | 6 | 7)
+}
+
+/// The tiles on the straight line between `from` and `to`, both left out.
+pub fn line_between(from: TileLoc, to: TileLoc) -> Vec<TileLoc> {
+    let (x0, y0, x1, y1) = (i64::from(from.x), i64::from(from.y), i64::from(to.x), i64::from(to.y));
+    let n = (x1 - x0).abs().max((y1 - y0).abs());
+    (1..n).map(|i| TileLoc { x: (x0 + (x1 - x0) * i / n) as u32, y: (y0 + (y1 - y0) * i / n) as u32 }).collect()
+}
+
+/// Whether a watcher sees `to` (0x4af260 returning 0): in reach ([`sight_reach`]), in view
+/// ([`in_view`]) and with nothing between that blocks walking (0x4ade00; builder's call: which
+/// objects block sight in 0x43fe00 was not read).
+pub fn sees(map: &impl crate::Walkable, from: TileLoc, rotation: usize, pe: i32, to: TileLoc, prowler: Option<i32>) -> bool {
+    crate::tile_distance(from, to) <= sight_reach(pe, prowler) && in_view(rotation, from, to) && line_between(from, to).into_iter().all(|t| map.walkable(t))
+}
+
+/// Whether a watcher notices `to`: sees it, or hears it (0x4af470, its path cost not counted).
+pub fn notices(map: &impl crate::Walkable, from: TileLoc, rotation: usize, pe: i32, to: TileLoc, prowler: Option<i32>) -> bool {
+    sees(map, from, rotation, pe, to, prowler) || i64::from(crate::tile_distance(from, to)) <= crate::prowl::hearing_reach(pe, prowler)
+}
+
+/// A critter's facing: its last step's, else its art's rotation (bits 11-13).
+fn facing_of(facing: Option<&crate::Facing>, look: Option<&crate::Appearance>) -> usize {
+    facing.map(|f| f.0).or_else(|| look.map(|l| ((l.art.0 >> 11) & 7) as usize)).unwrap_or(4)
+}
+
+type FoeQuery<'a> = (&'a NetId, &'a crate::Position, &'a crate::NpcSource, Option<&'a crate::Facing>, Option<&'a crate::Appearance>);
 /// NPCs not fighting, following or surrendered.
 type AtPeace = (Without<Fighting>, Without<crate::follow::Following>, Without<Surrendered>);
 type QuarryQuery<'a> = (&'a NetId, &'a crate::Position, &'a crate::PlayerControlled, &'a crate::Sheet, Has<crate::Prowling>);
@@ -1584,7 +1624,8 @@ pub fn notice_foes(
     let reputations = &*reputations.0.get_or_insert_with(|| guard.as_deref().and_then(|v| v.read(crate::GAME_REP).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).map(|m| crate::ReputationEffects::parse(&m)).unwrap_or_default());
     let rows = ai.0.as_deref().unwrap_or_default();
     let busy: Vec<NetId> = talking.iter().map(|c| c.npc).collect();
-    for (&npc, at, source) in &npcs {
+    for (&npc, at, source, facing, look) in &npcs {
+        let rotation = facing_of(facing, look);
         if map.is_dead(source.sector, source.index) || busy.contains(&npc) {
             continue;
         }
@@ -1598,7 +1639,7 @@ pub fn notice_foes(
         for (&pc, pc_at, player, sheet, prowling) in &pcs {
             let Some(saved) = save.players.get(&player.0) else { continue };
             let prowler = prowling.then(|| crate::prowl::prowl_value(rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING)));
-            if crate::tile_distance(at.0, pc_at.0) > notice_reach(pe, prowler) {
+            if !notices(&*map, at.0, rotation, pe, pc_at.0, prowler) {
                 continue;
             }
             let towards = crate::reaction_to(&saved.script_state, &key, &reaction, &rules.0, &sheet.0, reputations);
@@ -1867,8 +1908,8 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
         }
         let own = w.npc_int(source, "npc_faction");
         let Some(o) = w.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { continue };
-        let reach = notice_reach(npc_stat(o, &w.map.prototypes, 5), None);
-        let notices = |x: &Seen| crate::tile_distance(c.at, x.at) <= reach;
+        let pe = npc_stat(o, &w.map.prototypes, 5);
+        let notices = |x: &Seen| notices(&*w.map, c.at, c.rotation, pe, x.at, None);
         let for_victim = allied(c.leader, own, victim.player, victim.leader, v_faction) && (c.leader.is_some() || notices(victim));
         let for_attacker = allied(c.leader, own, attacker.player, attacker.leader, a_faction) && (c.leader.is_some() || notices(attacker));
         let foe = match (for_victim, for_attacker) {
@@ -1995,6 +2036,24 @@ mod tests {
         let mut out = AttackOutcome::default();
         fumble(&shooter, &gun, &mut out, &mut rng);
         assert_eq!(out.effects & (WEAPON_DESTROYED | AMMO_LOST_ALL), WEAPON_DESTROYED | AMMO_LOST_ALL);
+    }
+
+    #[test]
+    fn watchers_see_ahead_in_reach_and_past_nothing() {
+        use crate::pathfinding::tests::{Grid, t};
+        // Facing rotation 5 (x + 1): ahead and two to each side are in view, behind is not.
+        assert!(in_view(5, t(10, 10), t(15, 10)) && in_view(5, t(10, 10), t(15, 14)) && in_view(5, t(10, 10), t(10, 15)));
+        assert!(!in_view(5, t(10, 10), t(5, 10)) && !in_view(5, t(10, 10), t(5, 5)));
+        assert_eq!(line_between(t(0, 0), t(4, 2)), [t(1, 0), t(2, 1), t(3, 1)]);
+        let open = Grid::parse(&["...................."; 20]);
+        assert!(sees(&open, t(2, 5), 5, 8, t(9, 5), None));
+        assert!(!sees(&open, t(2, 5), 5, 8, t(11, 5), None), "9 tiles: past PE 8");
+        assert!(!sees(&open, t(2, 5), 5, 8, t(9, 5), Some(50)), "a prowler halves it");
+        let mut rows = vec!["...................."; 20];
+        rows[5] = ".....#..............";
+        let walled = Grid::parse(&rows);
+        assert!(!sees(&walled, t(2, 5), 5, 8, t(9, 5), None), "a wall between");
+        assert!(notices(&walled, t(2, 5), 1, 8, t(4, 5), None), "heard behind it, 2 tiles off");
     }
 
     #[test]
