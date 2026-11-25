@@ -495,6 +495,22 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      (`rules/TrapEyeCandy.mes` N × 10 + 0-2); the client's way to arm Disarm Traps (the bottom
      bar's skills view, next).
    - **Real data:** 2336 of 2399 scripts run to an end (2328 before).
+4m. **Item and lock events** (built, `feat/item-events`).
+   - **Get (4)** (0x461810, before the pick-up): triggerer the picker, attachee the item (a map
+     item's own attachments, a dropped one's prototype's); "skip the default" leaves it.
+   - **Drop (5)** (0x461ab0, before): triggerer the holder; "skip the default" keeps it.
+   - **Insert (21) / remove (28)** (0x466640 / 0x467860, after; the answer ignored): here a
+     host system compares each PC's items by prototype with the last look and runs remove, then
+     insert, whatever moved them; a PC seen first runs nothing. Builder's call: a move inside
+     the inventory runs nothing (the original's moves inside may run them; not traced); NPCs'
+     and containers' are not run.
+   - **Unlock (3)** (0x4aeb70 doors, 0x4aed80 containers): a try at the lock, not a successful
+     unlock. Doors: after the use script, when opening a shut door, before the lock check.
+     Containers: before the use script (0x572370). "Skip the default" denies the opening (the
+     original's result 4; its message is not shown). Picking, keys and the Unlocking spell do
+     not run it.
+   - **Not built:** examine (0, 0x57cd60: a PC only, before the description; "skip" shows
+     none) — there is no examine yet; destroy (2, 0x43cca0, before; "skip" keeps the object).
 5. **Gold and items:** done in 4c.
 5. **Float text and messages** (0x40/0x41/0x72) as deltas to the right players.
 6. Later: dialogue (4, 0x30, event 9), quest state, reputation, followers, timed events,

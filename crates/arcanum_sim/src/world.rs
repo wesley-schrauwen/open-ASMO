@@ -2288,6 +2288,69 @@ mod tests {
     }
 
     #[test]
+    fn items_run_their_insert_remove_and_drop_scripts() {
+        use crate::script::tests::{always, block, n, op};
+        use arcanum_formats::object::{Array, Object, TYPE_ARMOR, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, prototype_id};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        // A ring: drop runs 730 (keeps it), insert 731 (global var 1 + 1), remove 732 (var 2 + 1).
+        let mut data = Vec::new();
+        for v in [0u32, 0, 730, 0, 0, 731, 0, 0, 732] {
+            data.extend(v.to_le_bytes());
+        }
+        let scripts = Array { elem_size: 12, id: 1, data, bitset: vec![1 << 5 | 1 << 21 | 1 << 28, 0] };
+        let mut ring = Object::parse_instance(&ObjectBuilder::new(TYPE_ARMOR).field("item_weight", Value::Int32(1)).field("armor_flags", Value::Int32(0)).field("scripts_idx", Value::Array(Some(scripts))).build()).unwrap();
+        ring.id = prototype_id(8000);
+        let mut prototypes = Prototypes::default();
+        prototypes.insert(ring);
+        sim.app.world_mut().resource_mut::<LoadedMap>().prototypes = Arc::new(prototypes);
+        let mut s = save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]);
+        let mut carried = crate::Inventory::default();
+        carried.items.push(crate::CarriedItem { prototype: 8000, location: 0, quantity: 0, keys: vec![] });
+        s.players.get_mut(&PlayerId(7)).unwrap().inventory = Some(carried);
+        sim.boot(s);
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            library.insert(730, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(1, &[]))] });
+            library.insert(731, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(0xb, &[op(1, 1), op(1, 1), n(1)]))] });
+            library.insert(732, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![always(block(0xb, &[op(1, 2), op(1, 2), n(1)]))] });
+        }
+        sim.update();
+        sim.update();
+        let var = |sim: &SimApp, i: i32| sim.app.world().resource::<WorldState>().0.as_ref().unwrap().scripts.var(i);
+        assert_eq!((var(&sim, 1), var(&sim, 2)), (0, 0), "loading runs nothing");
+        // Its drop script keeps it.
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Inventory { seq: 1, request: crate::InventoryRequest::Drop { from: 0 } })]);
+        sim.update();
+        let count = |sim: &mut SimApp| {
+            let world = sim.app.world_mut();
+            world.query::<(&PlayerControlled, &crate::Inventory)>().single(world).unwrap().1.items.len()
+        };
+        assert_eq!(count(&mut sim), 1, "kept by its drop script");
+        // Gone (a script took it, say), then back.
+        let set_items = |sim: &mut SimApp, items: Vec<crate::CarriedItem>| {
+            let world = sim.app.world_mut();
+            let mut q = world.query::<(&PlayerControlled, &mut crate::Inventory)>();
+            q.single_mut(world).unwrap().1.items = items;
+        };
+        let ring = crate::CarriedItem { prototype: 8000, location: 3, quantity: 0, keys: vec![] };
+        set_items(&mut sim, vec![]);
+        sim.update();
+        assert_eq!((var(&sim, 1), var(&sim, 2)), (0, 1), "removed");
+        set_items(&mut sim, vec![ring.clone()]);
+        sim.update();
+        assert_eq!((var(&sim, 1), var(&sim, 2)), (1, 1), "inserted");
+        set_items(&mut sim, vec![crate::CarriedItem { location: 5, ..ring }]);
+        sim.update();
+        assert_eq!((var(&sim, 1), var(&sim, 2)), (1, 1), "a move inside runs nothing");
+    }
+
+    #[test]
     fn heartbeats_run_first_then_on_a_timer_even_for_an_npc_switched_off() {
         use crate::script::tests::{always, block, line, n, op};
         let dir = tempfile::tempdir().unwrap();

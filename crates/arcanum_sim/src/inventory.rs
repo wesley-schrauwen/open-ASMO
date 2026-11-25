@@ -427,6 +427,7 @@ pub fn apply_inventory_requests(
     mut commands: Commands,
     mut pcs: Query<OwnerQuery>,
     mut barters: ResMut<crate::barter::BarterRequests>,
+    mut scripts: crate::ScriptHost,
 ) {
     if requests.0.is_empty() {
         return;
@@ -447,7 +448,11 @@ pub fn apply_inventory_requests(
         let wearer = Wearer { race: sheet.0.race, gender: sheet.0.gender };
         let open = open.map(|l| l.0);
         let result = match request {
-            InventoryRequest::Drop { from } => crate::drop_item(&inventory, from, position.0, &info, &mut map, &mut world, &session, &mut outbox),
+            // The item's drop script first (0x461ab0): it may keep the item.
+            InventoryRequest::Drop { from } => match inventory.items.iter().find(|i| i.location == from).map(|i| i.prototype) {
+                Some(prototype) if scripts.item_hook(&mut world, &mut map, &mut outbox, player, prototype, crate::EVENT_DROP) == crate::HookResult::SkipDefault => Err(ItemRefusal::Silent),
+                _ => crate::drop_item(&inventory, from, position.0, &info, &mut map, &mut world, &session, &mut outbox),
+            },
             ref loot if loot.is_loot() => {
                 let others = open_elsewhere.iter().any(|(p, pile)| *p != player && Some(*pile) == open);
                 let (carry, aptitude) = (rules.0.derived(&sheet.0).carry_weight, rules.0.aptitude(&sheet.0));

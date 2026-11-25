@@ -412,6 +412,11 @@ pub fn use_portals(
             if scripts.hook(&mut world, &mut map, &mut outbox, crate::ScriptObject::Map(use_.door), crate::EVENT_USE, player.0) == crate::HookResult::SkipDefault {
                 continue;
             }
+            // Opening a shut door: its "unlock" script before the lock check (0x4aeb70) may deny it.
+            let shut = map.map_object(use_.door).and_then(|o| map.prototypes.art_id(o)).is_some_and(|art| !portal_open(art));
+            if shut && scripts.hook(&mut world, &mut map, &mut outbox, crate::ScriptObject::Map(use_.door), crate::EVENT_UNLOCK, player.0) == crate::HookResult::SkipDefault {
+                continue;
+            }
             use_door(&mut map, &mut world, &mut closing, &session, &mut outbox, use_.door, keys);
         } else if walking {
             commands.entity(entity).insert(use_);
@@ -592,6 +597,24 @@ mod tests {
             assert!(save.scripts.flags.contains(&9));
             assert!(save.players[&PlayerId(7)].script_state.flags.contains(&4), "the triggering PC's flag");
             assert!(sim.app.world().resource::<crate::ScriptReports>().0.is_empty());
+        }
+
+        #[test]
+        fn a_doors_unlock_script_can_keep_it_shut() {
+            use crate::script::tests::{block, line, n};
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            let mut changes = BTreeMap::new();
+            let delta: &mut crate::SectorDelta = changes.entry(DOOR.sector).or_default();
+            delta.object_scripts.insert(DOOR.index, BTreeMap::from([(crate::EVENT_UNLOCK, crate::Attachment::new(0, 0, 740))]));
+            let mut sim = booted(dir.path(), &[(7, t(71, 80))], changes);
+            // Shut until global flag 5 is set.
+            let lines = vec![line(block(0x2b, &[n(5)]), block(2, &[]), block(1, &[]))];
+            sim.app.world_mut().resource_mut::<crate::Scripts>().0.get_or_insert_with(Default::default).insert(740, arcanum_formats::script::Script { description: String::new(), flags: 0, lines });
+            sim.take_deltas();
+            assert_eq!(changed(&use_door(&mut sim, 7, DOOR, 0), 7), None, "denied");
+            sim.app.world_mut().resource_mut::<WorldState>().0.as_mut().unwrap().scripts.set_flag(5, true);
+            assert_eq!(changed(&use_door(&mut sim, 7, DOOR, 1), 7), Some(true), "allowed");
         }
 
         #[test]
