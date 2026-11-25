@@ -206,6 +206,9 @@ pub enum LedgerDelta {
     Combat { order: Vec<NetId>, turn: Option<NetId>, ap: i32 },
     /// `attacker` attacked `target`: how it went.
     Attacked { attacker: NetId, target: NetId, outcome: crate::combat::AttackOutcome },
+    /// An NPC's hit points and fatigue now ([`crate::combat::send_npc_health`]): for the hover's
+    /// gauges.
+    NpcHealth { net_id: NetId, hit_points: Pool, fatigue: Pool },
     /// A PC started or stopped prowling ([`crate::prowl`]): clients show it in animation 5.
     Prowling { net_id: NetId, on: bool },
     /// An entity is gone.

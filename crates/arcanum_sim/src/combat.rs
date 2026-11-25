@@ -1749,6 +1749,27 @@ fn back_off(w: &CombatWorld, at: TileLoc, from: TileLoc, keep: u32) -> Option<Ve
     (!path.is_empty()).then_some(path)
 }
 
+/// How often NPCs' health is compared, in ticks.
+pub const HEALTH_TICKS: u64 = 5;
+
+/// Tells every player an NPC's hit points and fatigue when they change from what was last told
+/// (or, at first sight, are not full): the hover's gauges show the host's numbers.
+pub fn send_npc_health(tick: Res<crate::SimTick>, map: Res<crate::LoadedMap>, session: Res<crate::Session>, mut outbox: ResMut<crate::Outbox>, npcs: Query<(&NetId, &crate::NpcSource)>, mut told: Local<std::collections::HashMap<NetId, (crate::Pool, crate::Pool)>>) {
+    if !tick.0.is_multiple_of(HEALTH_TICKS) {
+        return;
+    }
+    for (&net_id, source) in &npcs {
+        let (Some(hp), Some(fatigue)) = (map.npc_hp(source.sector, source.index), map.npc_fatigue(source.sector, source.index)) else { continue };
+        let now = (crate::Pool { current: hp.0, max: hp.1 }, crate::Pool { current: fatigue.0, max: fatigue.1 });
+        let before = told.insert(net_id, now);
+        let full = now.0.current >= now.0.max && now.1.current >= now.1.max;
+        if before == Some(now) || (before.is_none() && full) {
+            continue;
+        }
+        crate::ground::broadcast(&session, &mut outbox, LedgerDelta::NpcHealth { net_id, hit_points: now.0, fatigue: now.1 });
+    }
+}
+
 /// NPCs' fatigue recovers as PCs' does ([`crate::magick::recover_fatigue`], 0x45e610): every
 /// [`crate::RECOVERY_MS`] of game time by their heal rate `(CO + 1) / 3`; one back above 0 gets
 /// up (0x434de0).
