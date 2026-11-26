@@ -565,11 +565,14 @@ of `combat_design.md` come after the original's rules work.
      shoot-through), 4 Heavy Wood Doors, 458 walls; its stones, plants and bowmen pass.
    - Not built: cover (`PROVIDES_COVER` 0x4000 and not `SEE_THROUGH` 0x10 add cost, 0x44063f:
      its use in to-hit or sight not traced), the 2500 remark (flag 0x8).
-   - Findings for thrown items (not built): 0x4b3c00 removes the thrown item only when the
-     thrower is not type 0xf (0x4b3c43); on landing 0x4b2690 reads the projectile's
-     `projectile_flags_combat` (field 0x4d): 0x40 places `projectile_parent_weapon` (0x50) at
-     the projectile's tile, 0x1000 places it once (0x2000 marks it), else it is destroyed. Where
-     a PC's thrown weapon goes is not settled.
+   - Thrown weapons land (`feat/thrown-weapons-land`): every throw sets the projectile's
+     `projectile_flags_combat` 0x40 (0x4b3d02, copied at 0x4b25fb), so on landing 0x4b2690
+     moves `projectile_parent_weapon` (field 0x50, the whole thrown item: no stack split) to the
+     projectile's tile and shows it (0x4b271d-0x4b2746); 0x1000 is ammunition's (0x4b25e7).
+     Built: the thrown weapon leaves the thrower's hands and lands on the victim's tile, hit or
+     miss, or on the tile where a wall or object stopped it. Builder's call: a PC's item goes
+     the same way (the original removes only an NPC's at 0x4b3c4a; a PC's leaves through the
+     interface, not traced).
 22. **To-hit difficulty** (0x4c8430, read in full; the roll `1-100 + difficulty <= chance` at
     0x4c7259-0x4c7261).
    - Terms for weapon skills: the weapon's to-hit bonus and 5 a Strength point short (built);

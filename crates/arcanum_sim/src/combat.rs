@@ -1374,6 +1374,11 @@ impl CombatWorld<'_, '_> {
 
     /// Drops `c`'s wielded weapon on its tile (0x461a90); whether it had one.
     fn drop_weapon(&mut self, c: &Seen) -> bool {
+        self.drop_weapon_at(c, c.at)
+    }
+
+    /// Puts `c`'s wielded weapon on tile `at`; whether it had one.
+    fn drop_weapon_at(&mut self, c: &Seen, at: TileLoc) -> bool {
         let take = |inv: &mut crate::Inventory| {
             let at = inv.items.iter().position(|i| i.location == WEAPON_SLOT)?;
             Some(inv.items.remove(at))
@@ -1401,7 +1406,7 @@ impl CombatWorld<'_, '_> {
         let vfs = self.vfs.as_ref().map(|v| v.0.clone());
         let guard = vfs.as_ref().and_then(|v| v.read().ok());
         let info = crate::item_info(&prototypes, |id| crate::world::art_size(guard.as_deref(), art.as_deref(), id));
-        crate::ground::place_on_ground(item, c.at, &info, &mut self.map, &mut self.world, &self.session, &mut self.outbox);
+        crate::ground::place_on_ground(item, at, &info, &mut self.map, &mut self.world, &self.session, &mut self.outbox);
         if let Some(n) = c.npc {
             crate::ground::save_change(&mut self.world, &self.map, n.sector);
         }
@@ -1859,14 +1864,27 @@ fn attack_or_approach(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen]
         let thrown = fighter.weapon.as_ref().is_some_and(|wp| wp.skill == SKILL_THROWING);
         let missile = fighter.weapon.as_ref().is_some_and(|wp| wp.range > 1);
         let way = if missile { in_the_way(w, all, attacker, victim) } else { InTheWay::Clear };
-        match way {
-            InTheWay::Critter(other) => strike(commands, w, all, attacker, &other, &fighter, Aim::Stray),
+        let lands = match way {
+            InTheWay::Critter(other) => {
+                strike(commands, w, all, attacker, &other, &fighter, Aim::Stray);
+                other.at
+            }
             // Stopped by a wall or object: it strikes that, and nobody (0x4b34a6: an object is
             // hit outright; objects take no damage here).
-            InTheWay::Stopped => {
+            InTheWay::Stopped(at) => {
                 crate::ground::broadcast(&w.session, &mut w.outbox, LedgerDelta::Attacked { attacker: attacker.net_id, target: victim.net_id, outcome: AttackOutcome { multiplier: 100, ..Default::default() } });
+                at
             }
-            InTheWay::Clear => strike(commands, w, all, attacker, victim, &fighter, if thrown { Aim::Thrown } else { Aim::Meant }),
+            InTheWay::Clear => {
+                strike(commands, w, all, attacker, victim, &fighter, if thrown { Aim::Thrown } else { Aim::Meant });
+                victim.at
+            }
+        };
+        // The thrown weapon lands where its flight ended, hit or miss (0x4b2690 with the
+        // projectile's 0x40: `projectile_parent_weapon` to its tile, 0x4b271d-0x4b2746), the
+        // whole item (no stack split found).
+        if thrown {
+            w.drop_weapon_at(attacker, lands);
         }
         return true;
     }
@@ -2526,7 +2544,8 @@ pub enum Aim {
 enum InTheWay {
     Clear,
     Critter(Box<Seen>),
-    Stopped,
+    /// Stopped while on this tile.
+    Stopped(TileLoc),
 }
 
 /// What a missile from `attacker` to `victim` meets first in flight (0x4ade00 → 0x43fe00):
@@ -2541,7 +2560,7 @@ fn in_the_way(w: &CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen) -> 
     let view = crate::MissileView(&w.map);
     match first_on_line(attacker.at, victim.at, others.iter().copied(), |a, b| crate::crossing_clear(&view, a, b), |t| crate::Walkable::walkable(&view, t)) {
         Some(Met::Critter(id)) => all.iter().find(|c| c.net_id == id).cloned().map_or(InTheWay::Clear, |c| InTheWay::Critter(Box::new(c))),
-        Some(Met::Blocked) => InTheWay::Stopped,
+        Some(Met::Blocked(at)) => InTheWay::Stopped(at),
         None => InTheWay::Clear,
     }
 }
@@ -2563,7 +2582,8 @@ pub fn missile_passes(shooter: Option<PlayerId>, player: Option<PlayerId>, leade
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Met {
     Critter(NetId),
-    Blocked,
+    /// Stopped while on this tile.
+    Blocked(TileLoc),
 }
 
 /// What a missile from `from` to `to` meets first: stepping along the straight line, a step
@@ -2573,7 +2593,7 @@ pub fn first_on_line(from: TileLoc, to: TileLoc, others: impl Iterator<Item = (N
     let mut at = from;
     for next in line_between(from, to).into_iter().chain(std::iter::once(to)) {
         if !clear(at, next) {
-            return Some(Met::Blocked);
+            return Some(Met::Blocked(at));
         }
         if next == to {
             return None;
@@ -2582,7 +2602,7 @@ pub fn first_on_line(from: TileLoc, to: TileLoc, others: impl Iterator<Item = (N
             return Some(Met::Critter(o.0));
         }
         if !open(next) {
-            return Some(Met::Blocked);
+            return Some(Met::Blocked(at));
         }
         at = next;
     }
@@ -3117,11 +3137,11 @@ mod tests {
         assert_eq!(first_on_line(t(10, 10), t(12, 10), others.iter().copied(), clear, open), None, "the target's own tile does not count");
         assert_eq!(first_on_line(t(10, 12), t(16, 12), others.iter().copied(), clear, open), None, "nobody between");
         let boulder = |p: TileLoc| p != t(13, 12);
-        assert_eq!(first_on_line(t(10, 12), t(16, 12), others.iter().copied(), clear, boulder), Some(Met::Blocked), "a big stone stops it");
-        assert_eq!(first_on_line(t(10, 10), t(16, 10), others.iter().copied(), clear, |p| p != t(11, 10)), Some(Met::Blocked), "before the critter");
+        assert_eq!(first_on_line(t(10, 12), t(16, 12), others.iter().copied(), clear, boulder), Some(Met::Blocked(t(12, 12))), "a big stone stops it, the throw left on the tile before");
+        assert_eq!(first_on_line(t(10, 10), t(16, 10), others.iter().copied(), clear, |p| p != t(11, 10)), Some(Met::Blocked(t(10, 10))), "before the critter");
         let wall = |a: TileLoc, b: TileLoc| !(a == t(11, 12) && b == t(12, 12));
-        assert_eq!(first_on_line(t(10, 12), t(16, 12), others.iter().copied(), wall, open), Some(Met::Blocked), "a wall on the edge crossed");
-        assert_eq!(first_on_line(t(10, 12), t(11, 12), others.iter().copied(), |_, _| false, open), Some(Met::Blocked), "even next to the target");
+        assert_eq!(first_on_line(t(10, 12), t(16, 12), others.iter().copied(), wall, open), Some(Met::Blocked(t(11, 12))), "a wall on the edge crossed");
+        assert_eq!(first_on_line(t(10, 12), t(11, 12), others.iter().copied(), |_, _| false, open), Some(Met::Blocked(t(10, 12))), "even next to the target");
     }
 
     #[test]
