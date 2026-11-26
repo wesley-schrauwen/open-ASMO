@@ -527,3 +527,14 @@ of `combat_design.md` come after the original's rules work.
    - A PC's follower brought under 20 % of its hit points (0x4b50bb-0x4b50f1, before at least
      20 at 0x4b50d3, after under at 0x4b50e4) calls to its leader: `gd_npc` 5500 (0x4aeab0 →
      0x414490), once as it crosses, dying or not (`feat/follower-cry`).
+21. **Stray throws** (`feat/stray-throws`, `combat::Aim`, `first_on_line`).
+   - Findings: only the thrown path sets the stray flag 0x200 (0x4b3c00, `or 0x40240` at
+     0x4b3d02, type 3); the redirect (0x4b33cf → 0x4ade00 at 0x4b33e9) puts the first object on
+     the path before the target's tile in its place, with no chance roll, and the to-hit roll is
+     made afresh against it (0x4b3405). Thrown attacks skip 0x4a9650 (0x4b3334, `ebx` 0): no
+     one joins and no one's reaction moves, for the target meant or a stray one.
+   - Built: a throw strikes the first critter on the straight line (builder's call: critters
+     only, the line rather than 0x4201c0's path) as `Aim::Stray`; throws draw no one in and
+     change no follower's reaction (with the owner's stray-hit rule); a stray throw draws no
+     follower's remark (0x4b6bfc).
+   - Not built: objects other than critters stopping a throw, the 2500 remark (flag 0x8).

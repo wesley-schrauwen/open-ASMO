@@ -1796,7 +1796,13 @@ fn attack_or_approach(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen]
         if let Some(e) = w.combat.0.as_mut() {
             e.ap = (e.ap - cost).max(0);
         }
-        strike(commands, w, all, attacker, victim, &fighter, Aim::Meant);
+        // A throw strikes the first critter on its way (0x4b3c00 sets 0x200: 0x4b33cf →
+        // 0x4ade00, the target's own tile not counted), rolled for afresh (0x4b3405).
+        let thrown = fighter.weapon.as_ref().is_some_and(|wp| wp.skill == SKILL_THROWING);
+        match thrown.then(|| in_the_way(all, attacker, victim)).flatten() {
+            Some(other) => strike(commands, w, all, attacker, &other, &fighter, Aim::Stray),
+            None => strike(commands, w, all, attacker, victim, &fighter, if thrown { Aim::Thrown } else { Aim::Meant }),
+        }
         return true;
     }
     // A path towards the target, to the first tile in reach (next to it for melee), as many
@@ -2442,12 +2448,27 @@ pub fn neighbours(at: TileLoc) -> Vec<TileLoc> {
 
 /// One attack and what it does: an NPC victim fights back; its damage, death and the
 /// experience; everyone is told.
-/// Whom a blow struck: the target meant, or another in the way (a stray hit, 0x4a9650's
-/// "indirect" flag 1; none are made yet).
+/// Whom a blow struck: the target meant, by a throw ([`Aim::Thrown`]: the original's thrown
+/// attacks skip 0x4a9650, 0x4b3334 with `ebx` 0), or another in the way (a stray throw).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Aim {
     Meant,
+    Thrown,
     Stray,
+}
+
+/// The first critter standing on the line from `attacker` to `victim`, both left out (0x4ade00
+/// walks the path and stops before the target's tile; builder's call: only critters, the
+/// straight line rather than 0x4201c0's path).
+fn in_the_way(all: &[Seen], attacker: &Seen, victim: &Seen) -> Option<Seen> {
+    let others = all.iter().filter(|c| c.net_id != attacker.net_id && c.net_id != victim.net_id).map(|c| (c.net_id, c.at));
+    let id = first_on_line(attacker.at, victim.at, others)?;
+    all.iter().find(|c| c.net_id == id).cloned()
+}
+
+/// The first of `others` on a tile of the line from `from` to `to`, both ends left out.
+pub fn first_on_line(from: TileLoc, to: TileLoc, others: impl Iterator<Item = (NetId, TileLoc)> + Clone) -> Option<NetId> {
+    line_between(from, to).into_iter().find_map(|t| others.clone().find(|o| o.1 == t).map(|o| o.0))
 }
 
 fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen, fighter: &Fighter, aim: Aim) {
@@ -2475,14 +2496,21 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     outcome.killed = outcome.hit && outcome.hp > 0 && victim.npc.is_some_and(|n| w.map.npc_hp(n.sector, n.index).is_some_and(|(left, _)| left - outcome.hp < 1));
     crate::ground::broadcast(&w.session, &mut w.outbox, LedgerDelta::Attacked { attacker: attacker.net_id, target: victim.net_id, outcome });
     attack_events(w, attacker, victim, &outcome);
-    praise_critical(w, all, attacker, victim, &outcome);
+    // The remark needs the target meant (0x4b6bfc); 0x4a9650's part only blows not thrown.
+    if aim != Aim::Stray {
+        praise_critical(w, all, attacker, victim, &outcome);
+    }
     if let (Some(player), Some(source)) = (attacker.player, victim.npc)
         && victim.leader == Some(player)
+        && aim == Aim::Meant
     {
         leader_hits_follower(commands, w, player, source, victim, aim);
     }
     apply_effects(commands, w, attacker, victim, fighter, &defender, &outcome);
-    rally(commands, w, all, attacker, victim);
+    // Throws draw no one in, and stir no one's reaction (0x4b3334: 0x4a9650 skipped).
+    if aim == Aim::Meant {
+        rally(commands, w, all, attacker, victim);
+    }
     if let Some(player) = victim.player {
         if outcome.hit {
             w.hurt_pc(player, &outcome);
@@ -2898,6 +2926,15 @@ mod tests {
         assert!(can_look(&keen, &prototypes, false, Some(&ghost)), "Perception 20");
         let seer = npc(&[("spell_flags", Value::Int32(OSF_SEE_INVISIBLE)), ("critter_stat_base_idx", stats(8))]);
         assert!(can_look(&seer, &prototypes, false, Some(&spelled)), "sees the invisible");
+    }
+
+    #[test]
+    fn a_throw_strikes_the_first_critter_on_its_way() {
+        let t = |x, y| TileLoc { x, y };
+        let others = [(NetId(5), t(14, 10)), (NetId(6), t(12, 10)), (NetId(7), t(12, 11))];
+        assert_eq!(first_on_line(t(10, 10), t(16, 10), others.iter().copied()), Some(NetId(6)), "the nearer of two on the line");
+        assert_eq!(first_on_line(t(10, 10), t(12, 10), others.iter().copied()), None, "the target's own tile does not count");
+        assert_eq!(first_on_line(t(10, 12), t(16, 12), others.iter().copied()), None, "nobody between");
     }
 
     #[test]
