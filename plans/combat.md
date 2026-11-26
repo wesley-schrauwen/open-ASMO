@@ -277,12 +277,13 @@ of `combat_design.md` come after the original's rules work.
      fatigue at +0x44 (entry [0x14] is fire, not item damage). A hit with fire damage (0x4b454f)
      or from a weapon of `weapon_flags` 0x100 (0x4b458d) sets the wear flag 0x100000; 0x4b4d5e →
      0x4b54b0 wears the armour at the hit's part by 10 (0 on an ordinary hit: body armour).
-   - Finding, not built: 0x4b5580 wears the attacker's weapon on a hit with hit-point damage
-     when the attack's flags 0x10000 and `[6] == 2` hold (their meaning not traced), by the
-     target's field 0x1e (0 → 4, 1 → 3, 2 → 2, 3 → 1, 5 / 0xc → 5), cut by the weapon's field
-     0x60 percent; bare-handed, the attacker takes it as hit points (at most to 1). Also not
-     built: the shield's wear (0x4b23b0, flag 0x4000), critical misses wearing the attacker's
-     weapon, worn items weakening.
+   - Finding: 0x4b5580 would wear the attacker's weapon (or hurt a bare hand) by the target's
+     `material` (0x1e: 0 → 4, 1 → 3, 2 → 2, 3 → 1, 5 / 0xc → 5) less the weapon's
+     `item_magic_tech_complexity` percent, gated at 0x4b55a7 by the attack's flag 0x10000,
+     which nothing found sets (`[6] == 2`: unarmed or melee, 0x465d80). Not built.
+   - Finding: no shield is worn: 0x4b23b0 is the slot-1004 item (the weapon), and flag 0x4000
+     is the critical's weapon wear already built. Not built: critical misses wearing the
+     attacker's weapon, worn items weakening.
 10. **Animations** (built, `feat/combat-anims`; client `combat_ui`, `actors`).
    - On each attack the attacker faces its target and plays its attack once (20 / 21 by body;
      `Actor::action`, held at most 3 s).
@@ -380,6 +381,8 @@ of `combat_design.md` come after the original's rules work.
      orange and 9 red lights for a 12-point walk with 3 points left.
    - Finding: the original draws no planned path on the ground (0x56f430 draws only the AP
      bar's 20 slots into window 0x5caa18 through 0x51da80; no path or marker art found).
+   - Owner's note, not built: an option to show the planned path on the ground (builder's
+     call: off by default, as the original).
 17. **NPC fatigue and knocking out** (built, `feat/knock-out`).
    - NPCs' fatigue is kept (`critter_fatigue_damage`, `SectorDelta::npc_fatigue`; most as
      0x45d670: `pts × 4 + adj + 4 + (level + CO) × 2 + WP`). Hits' fatigue damage lands on it
@@ -416,7 +419,13 @@ of `combat_design.md` come after the original's rules work.
      stat 0xd (poison recovery), to 0. Halt Poison subtracts its amount (script op 0x80).
    - Built: PCs' and NPCs' poison hurts and wears off on one clock (builder's call); NPCs keep
      it in `SectorDelta::npc_poison`; Halt Poison cures NPCs too.
-   - Builder's calls: the tick's damage is not cut by resistance; an NPC's recovery is its CN
-     (at least 1); an NPC killed by poison dies on animation 7, without experience or events.
-   - Not built: the immunity flags (`critter_flags` 0x20000004, 0x4b4390), a float or message
-     for the tick (0x433020), poison kept through resurrection (0x49d272).
+   - Builder's calls: an NPC's recovery is its CN (at least 1); an NPC killed by poison dies on
+     animation 7 (as 0x45da20 picks for 20 or less) without experience (no killer, as the
+     original) or script events (the original runs 23 and 12 with no triggerer).
+   - Immunity (`feat/poison-immunity`, `combat::shield_damage`): undead or mechanical critters
+     (`critter_flags` 0x20000004, 0x4b441d) take no poison from attacks; else `spell_flags`
+     0x10000 zeroes all damage (0x4b442e). The tick's hurt goes through 0x4b4390 (0x4b1203,
+     its damage at +0x44): cut by damage resistance (worn armour), spared by `spell_flags`
+     0x10000, floated "HT n" (0x4b5088, `LedgerDelta::Hurt`). 0x433020 is a particle effect
+     on the target (not built); the struct's 0x80 flag changes nothing found.
+   - Not built: poison kept through resurrection (0x49d272).

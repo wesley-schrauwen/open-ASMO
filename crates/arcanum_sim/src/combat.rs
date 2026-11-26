@@ -180,6 +180,24 @@ pub struct Fighter {
     pub stunned: bool,
     /// Its `critter_flags` (NPCs).
     pub flags: i32,
+    /// `spell_flags` [`SPELL_NO_DAMAGE`] (NPCs): it takes no damage.
+    pub no_damage: bool,
+}
+
+/// `critter_flags` 0x20000000: mechanical (with [`OCF_UNDEAD`], never poisoned: 0x4b441d).
+pub const OCF_MECHANICAL: i32 = crate::pickpocket::OCF_MECHANICAL;
+/// `spell_flags` (field 0x14) 0x10000: all damage zeroed (0x4b442e).
+pub const SPELL_NO_DAMAGE: i32 = 0x10000;
+
+/// Cuts damage `dealt` (by type) as 0x4b4390 does for the target: undead or mechanical
+/// critters take no poison (0x4b441d → 0x4b4425); else one of `spell_flags` 0x10000 takes
+/// nothing (0x4b442e → 0x4b4435).
+pub fn shield_damage(dealt: &mut [i32; DAMAGE_TYPES], critter_flags: i32, no_damage: bool) {
+    if critter_flags & (OCF_UNDEAD | OCF_MECHANICAL) != 0 {
+        dealt[1] = 0;
+    } else if no_damage {
+        *dealt = [0; DAMAGE_TYPES];
+    }
 }
 
 impl Fighter {
@@ -434,6 +452,7 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
             out.items |= WEAPON_DAMAGED;
         }
     }
+    shield_damage(&mut dealt, defender.flags, defender.no_damage);
     // Any hit with fire damage (0x4b454f) or from a weapon of flag 0x100 (0x4b4592) wears the
     // armour where it lands (0x4b4d5e → 0x4b54b0), by 10 as a critical's.
     if dealt[3] > 0 || weapon.wears_armour {
@@ -647,6 +666,12 @@ pub fn armour_resistances(worn: &[&Object], prototypes: &Prototypes) -> [i32; 5]
         }
     }
     out.map(|r| r.min(MAX_CHANCE))
+}
+
+/// The resistances of the armour worn in `inv` (as [`armour_resistances`]).
+pub fn worn_resistances(inv: &crate::Inventory, prototypes: &Prototypes) -> [i32; 5] {
+    let worn: Vec<&Object> = inv.items.iter().filter(|i| (crate::FIRST_SLOT..=crate::LAST_SLOT).contains(&i.location)).filter_map(|i| prototypes.get(i.prototype)).filter(|o| o.object_type == arcanum_formats::object::TYPE_ARMOR).collect();
+    armour_resistances(&worn, prototypes)
 }
 
 /// An NPC's stat (its `critter_stat_base_idx`).
@@ -1041,6 +1066,7 @@ impl CombatWorld<'_, '_> {
                 crit_chart: 0,
                 stunned: c.stunned.is_some(),
                 flags: 0,
+                no_damage: false,
             }
             .with_ammo(inv, prototypes);
         }
@@ -1065,6 +1091,7 @@ impl CombatWorld<'_, '_> {
             crit_chart: prototypes.int(o, "critter_crit_hit_chart").unwrap_or(0),
             stunned: c.stunned.is_some(),
             flags: prototypes.int(o, "critter_flags").unwrap_or(0),
+            no_damage: prototypes.int(o, "spell_flags").unwrap_or(0) & SPELL_NO_DAMAGE != 0,
         }
         .with_ammo(&inv, prototypes)
     }
@@ -2288,6 +2315,20 @@ mod tests {
         let novice = Fighter { levels: vec![(SKILL_MELEE, 0)], ..Default::default() };
         let misses = (0..200).filter(|_| !resolve(&novice, &armoured, &mut rng).hit).count();
         assert!(misses > 100, "25 %: {misses}");
+    }
+
+    #[test]
+    fn undead_and_machines_take_no_poison_and_the_spell_no_damage() {
+        let hit = || [4, 6, 1, 2, 3];
+        let mut d = hit();
+        shield_damage(&mut d, OCF_UNDEAD, false);
+        assert_eq!(d, [4, 0, 1, 2, 3]);
+        let mut d = hit();
+        shield_damage(&mut d, OCF_MECHANICAL, true);
+        assert_eq!(d, [4, 0, 1, 2, 3], "the poison test skips the 0x10000 one (0x4b442c)");
+        let mut d = hit();
+        shield_damage(&mut d, 0, true);
+        assert_eq!(d, [0; DAMAGE_TYPES]);
     }
 
     #[test]

@@ -298,7 +298,7 @@ fn receive_deltas(
         if let Some(votes) = votes.as_mut() {
             votes.receive(delta);
         }
-        if let (LedgerDelta::Combat { .. } | LedgerDelta::Attacked { .. } | LedgerDelta::NpcHealth { .. }, Some(fights)) = (delta, fights.as_mut()) {
+        if let (LedgerDelta::Combat { .. } | LedgerDelta::Attacked { .. } | LedgerDelta::NpcHealth { .. } | LedgerDelta::Hurt { .. }, Some(fights)) = (delta, fights.as_mut()) {
             fights.0.push(delta.clone());
         }
         if let (LedgerDelta::Written { kind, line }, Some(written)) = (delta, written.as_mut()) {

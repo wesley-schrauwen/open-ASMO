@@ -207,6 +207,7 @@ lights after the walk.
 - [ ] A killed NPC falls through its death animation (a big hit: by the head, body or legs) and
   stays on the last frame.
 - [ ] A knocked-out NPC falls and lies; when its fatigue is back it plays the get-up and stands.
+- [ ] A poisoned PC or NPC floats "HT 1" (red over PCs) every 15 s of game time.
 
 ## Repair
 
