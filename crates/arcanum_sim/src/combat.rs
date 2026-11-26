@@ -1910,6 +1910,73 @@ pub fn notice_foes(
     }
 }
 
+/// How far from the lock witnesses are looked for (0x4aee50 → 0x4ae4e0 with 10).
+pub const WITNESS_TILES: u32 = 10;
+/// `npc_social_class` (field 0x128) of guards: they watch every lock (0x45d010 == 5).
+pub const SOCIAL_CLASS_GUARD: i32 = 5;
+/// The reaction a failed pick costs with a witness (0x4af00f: −20, through 0x4c0de0).
+pub const WITNESS_REACTION: i32 = -20;
+
+/// Witnesses of a pick on an owned lock (0x4aee50): NPCs within [`WITNESS_TILES`] of the lock,
+/// standing, at peace, of the owner's `name` number or guards, who see the PC (0x4af260; the
+/// hearing check's reach is 0 for these calls, table 0x5b50c0 index 0). A lock opened: they
+/// fight the PC (0x4a9650 at once, `softFlag` 0). A failed pick: each likes the PC 20 less and
+/// fights when its reaction is then at or under its row's column 10 (builder's call for the
+/// threshold read by 0x4aaa60). Not built: the script hook 11 (0x441980), the bark (0x5f8488),
+/// the PC's followers' picks counting for their leader (0x45dda0).
+#[allow(clippy::too_many_arguments)]
+pub fn catch_lock_pickers(
+    mut witnessing: ResMut<crate::lockpick::LockWitnessing>,
+    map: Res<crate::LoadedMap>,
+    mut world: ResMut<crate::WorldState>,
+    rules: Res<crate::SimRules>,
+    (mut ai, mut reputations, vfs): (ResMut<AiParams>, ResMut<crate::ReputationTable>, Option<Res<crate::SimVfs>>),
+    mut starts: ResMut<CombatStarts>,
+    npcs: Query<FoeQuery, AtPeace>,
+    pcs: Query<QuarryQuery>,
+) {
+    if witnessing.0.is_empty() {
+        return;
+    }
+    let guard = vfs.as_ref().and_then(|v| v.0.read().ok());
+    if ai.0.is_none() {
+        let mes = guard.as_deref().and_then(|v| v.read(AI_PARAMS).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).unwrap_or_default();
+        ai.0 = Some(parse_ai_params(&mes));
+    }
+    let reputations = &*reputations.0.get_or_insert_with(|| guard.as_deref().and_then(|v| v.read(crate::GAME_REP).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).map(|m| crate::ReputationEffects::parse(&m)).unwrap_or_default());
+    let rows = ai.0.as_deref().unwrap_or_default();
+    for (player, lock, owner, opened) in std::mem::take(&mut witnessing.0) {
+        let Some((&pc, pc_at, _, sheet, prowling)) = pcs.iter().find(|p| p.2.0 == player) else { continue };
+        let prowler = prowling.then(|| crate::prowl::prowl_value(rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING)));
+        for (&npc, at, source, facing, look) in &npcs {
+            if !crate::within_radius(at.0, lock, WITNESS_TILES) || map.npc_down(source.sector, source.index) || map.is_dead(source.sector, source.index) {
+                continue;
+            }
+            let Some(o) = map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { continue };
+            let int = |f: &str| map.prototypes.int(o, f).unwrap_or(0);
+            if int("name") != owner && int("npc_social_class") != SOCIAL_CLASS_GUARD {
+                continue;
+            }
+            if !sees(&*map, at.0, facing_of(facing, look), npc_stat(o, &map.prototypes, 5), pc_at.0, prowler) {
+                continue;
+            }
+            if opened {
+                starts.0.push((npc, pc));
+                continue;
+            }
+            let Some(saved) = world.0.as_mut().and_then(|w| w.players.get_mut(&player)) else { continue };
+            let reaction = crate::NpcReaction::of(o, &map.prototypes);
+            let key = crate::met_key(source.object());
+            let stored = saved.script_state.reactions.get(&key).copied().unwrap_or(reaction.base);
+            saved.script_state.reactions.insert(key.clone(), stored + WITNESS_REACTION);
+            let towards = crate::reaction_to(&saved.script_state, &key, &reaction, &rules.0, &sheet.0, reputations);
+            if rows.get(int("npc_ai_data").max(0) as usize).is_some_and(|row| towards <= row[10]) {
+                starts.0.push((npc, pc));
+            }
+        }
+    }
+}
+
 /// A tile up to `tiles` away from `from`, straight on past `at`.
 fn flee_goal(at: TileLoc, from: TileLoc, tiles: u32) -> TileLoc {
     let dx = i64::from(at.x) - i64::from(from.x);
