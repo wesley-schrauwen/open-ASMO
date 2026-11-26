@@ -137,7 +137,7 @@ impl Default for Inventory {
 }
 
 /// What placement and weight need of an item's prototype.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ItemInfo {
     /// The object type (`TYPE_WEAPON`, ...).
     pub kind: u32,

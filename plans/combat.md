@@ -352,9 +352,16 @@ of `combat_design.md` come after the original's rules work.
    - Builder's call: only NPCs in a fight re-pick (the flag waits); 0x4a8570's gates (0x4233d0,
      field 0x13 & 0x102) are not decoded, and re-picking at peace would arm shopkeepers with
      the weapons sold to them. Followers never re-pick (0x4a8651).
+   - Other slots (`feat/npc-repick-armour`, `combat::wear_best`): with 0x40 the NPC picks each
+     worn slot 1000-1008 again (0x4654f0): the highest `item_worth` (at least 2, 0x461f20 at
+     0x461f38) that fits, the worn one kept unless strictly beaten (0x46545c), one that no
+     longer fits taken off (0x4651d4). The fit test's race comes from the art's body (builder's
+     call).
+   - Findings: a critical miss rolls its effects once (0x4b3770 skips the hit path at
+     0x4b3778); resurrection (0x49d100 → 0x4a6010) keeps poison (0x4a609a / 0x4a60ab), as built.
    - Not built: a message for the PC (the original shows none), the critical miss's ammunition
-     loss (step 14), the skill gate 0x4c5eb0, other slots (0x4654f0), the PC's auto-switch
-     after its weapon breaks (0x4b83e0, gated by 0x4b8330).
+     loss (step 14), the skill gate 0x4c5eb0, the PC's auto-switch after its weapon breaks
+     (0x4b83e0, gated by 0x4b8330).
 14. **Stuns, knock-downs, critical misses** (built, `feat/combat-stun`).
    - Findings: stunned (0x4b4390 → 0x4357b0: `critter_flags` 0x20, anim goal 57 with a count of
      `(20 - CO) / 2`, checked at 0x43581e) can do nothing (0x45d790 tests 0x60); in turn-based

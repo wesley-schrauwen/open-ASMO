@@ -174,7 +174,7 @@ pub const ONF_REPICK_WEAPON: i32 = 0x80;
 /// NPCs in a fight only (builder's call: 0x4a8570's gates 0x4233d0 / field 0x13 & 0x102 are not
 /// decoded, and re-picking at peace would arm shopkeepers with the weapons sold to them; the
 /// flag waits for the next fight). Not followers (0x4a8651), nor the dead or down (0x4a8589 /
-/// 0x4a8796). Not built: the other slots of 0x4654f0.
+/// 0x4a8796). With 0x40, every other worn slot is picked again too ([`wear_best`], 0x4654f0).
 pub fn rearm_npcs(mut map: ResMut<crate::LoadedMap>, mut world: ResMut<crate::WorldState>, vfs: Option<Res<crate::SimVfs>>, npcs: Query<(&crate::NpcSource, &crate::Position, &Fighting), Without<crate::follow::Following>>, critters: Query<(&NetId, &crate::Position)>) {
     let guard = vfs.as_ref().and_then(|v| v.0.read().ok());
     for (source, at, fighting) in &npcs {
@@ -189,12 +189,66 @@ pub fn rearm_npcs(mut map: ResMut<crate::LoadedMap>, mut world: ResMut<crate::Wo
             let pick = choose_weapon(&inv, &map.prototypes, &fighter, distance);
             let (prototypes, art) = (map.prototypes.clone(), map.art.clone());
             let info = crate::item_info(&prototypes, |id| crate::world::art_size(guard.as_deref(), art.as_deref(), id));
-            if let Some(armed) = wield_pick(&inv, pick, &info) {
-                map.set_npc_inventory(source.sector, source.index, armed);
+            let mut changed = wield_pick(&inv, pick, &info);
+            // Asked for all (0x40): every other worn slot too (0x4654f0).
+            if flags & ONF_REPICK_ALL != 0 {
+                let wearer = npc_wearer(o, &prototypes);
+                let base = changed.clone().unwrap_or_else(|| inv.clone());
+                let worn = wear_best(&base, wearer, &info);
+                if worn != base {
+                    changed = Some(worn);
+                }
+            }
+            if let Some(changed) = changed {
+                map.set_npc_inventory(source.sector, source.index, changed);
             }
         }
         crate::ground::save_change(&mut world, &map, source.sector);
     }
+}
+
+/// An NPC's race and gender for the fit test, from its art: the body's race (human, dwarf,
+/// gnome, half-ogre, elf: table 0x5c5170 read back; builder's call) and the art's sex.
+pub fn npc_wearer(o: &Object, prototypes: &Prototypes) -> crate::Wearer {
+    let art = prototypes.art_id(o).map(arcanum_formats::art_id::CritterArt::from_id).unwrap_or_default();
+    let race = [0u8, 1, 4, 7, 2].get(art.body as usize).copied().unwrap_or(0);
+    crate::Wearer { race, gender: if art.male { arcanum_rules::MALE } else { arcanum_rules::FEMALE } }
+}
+
+/// What it wears after picking again every slot but the weapon's (0x4654f0: 1000-1008 →
+/// 0x465170): in each, the item of the highest `item_worth` (at least 2, 0x461f20 at 0x461f38)
+/// that passes the fit test, the worn one first and replaced only by a higher worth (0x46545c);
+/// a worn item that no longer fits comes off (0x4651d4). Items already worn elsewhere are left
+/// (0x461340).
+pub fn wear_best(inv: &crate::Inventory, wearer: crate::Wearer, info: &impl Fn(u32) -> Option<crate::ItemInfo>) -> crate::Inventory {
+    let mut inv = inv.clone();
+    let slots = (crate::FIRST_SLOT..=crate::LAST_SLOT).filter(|&s| s != WEAPON_SLOT);
+    let worth = |p: u32| info(p).map_or(i32::MIN, |i| i.worth.max(2));
+    for slot in slots {
+        let fits = |inv: &crate::Inventory, p: u32| info(p).is_some_and(|i| {
+            let without = crate::Inventory { items: inv.items.iter().filter(|x| x.location != slot).cloned().collect(), ..inv.clone() };
+            without.fit_test(&i, slot, wearer, info).is_ok()
+        });
+        let mut best = i32::MIN;
+        if let Some(worn) = inv.items.iter().find(|i| i.location == slot).map(|i| i.prototype) {
+            if fits(&inv, worn) {
+                best = worth(worn);
+            } else {
+                let cells = info(worn).map_or((1, 1), |i| i.cells);
+                if let Some(off) = crate::Inventory::free_spot(&inv.occupied(info), cells).and_then(|spot| inv.move_item(slot, spot, wearer, info).ok()) {
+                    inv = off;
+                }
+            }
+        }
+        let pick = inv.items.iter().filter(|i| !(crate::FIRST_SLOT..=crate::LAST_SLOT).contains(&i.location) && inv.in_grid(i.location)).filter(|i| fits(&inv, i.prototype)).fold(None, |b: Option<(i32, i32)>, i| {
+            let w = worth(i.prototype);
+            if w > b.map_or(best, |b| b.0) { Some((w, i.location)) } else { b }
+        });
+        if let Some(moved) = pick.and_then(|(_, from)| inv.move_item(from, slot, wearer, info).ok()) {
+            inv = moved;
+        }
+    }
+    inv
 }
 
 /// What an NPC's weapon choice needs of it: its weapon skills.
@@ -2489,6 +2543,33 @@ mod tests {
         map.set_npc_flags(sector, 0, 0);
         map.set_npc_inventory(sector, 0, armed);
         assert_eq!(map.npc_flags(sector, 0), Some(0), "the same items");
+    }
+
+    #[test]
+    fn npcs_wear_their_most_valuable_armour_that_fits() {
+        use arcanum_formats::object::TYPE_ARMOR;
+        // 1 plain body armour (worth 10), 2 fine (worth 50), 3 a large-only suit (worth 900),
+        // 4 a helmet (worth 5).
+        let info = |p: u32| {
+            let (coverage, worth, flags) = match p {
+                1 => (0, 10, 7),
+                2 => (0, 50, 7),
+                3 => (0, 900, 4),
+                4 => (2, 5, 7),
+                _ => return None,
+            };
+            Some(crate::ItemInfo { kind: TYPE_ARMOR, inventory_art: coverage << 14, cells: (1, 1), worth, armor_flags: flags, ..Default::default() })
+        };
+        let item = |prototype, location| crate::CarriedItem { prototype, location, quantity: 1, keys: vec![], written: 0, wear: Default::default() };
+        let human = crate::Wearer { race: 0, gender: arcanum_rules::MALE };
+        let inv = crate::Inventory { items: vec![item(1, crate::Slot::Armor as i32), item(2, 0), item(3, 1), item(4, 2)], ..Default::default() };
+        let worn = wear_best(&inv, human, &info);
+        let at = |p| worn.items.iter().find(|i| i.prototype == p).unwrap().location;
+        assert_eq!((at(2), at(4)), (crate::Slot::Armor as i32, crate::Slot::Helmet as i32), "the finer suit, the helmet put on");
+        assert!(crate::in_grid(at(1)) && crate::in_grid(at(3)), "the plain one off, the large suit never");
+        assert_eq!(wear_best(&worn, human, &info), worn, "nothing better: as it was");
+        let ogre = crate::Wearer { race: 7, gender: arcanum_rules::MALE };
+        assert_eq!(wear_best(&worn, ogre, &info).items.iter().find(|i| i.location == crate::Slot::Armor as i32).map(|i| i.prototype), Some(3), "a half-ogre: the large suit");
     }
 
     #[test]
