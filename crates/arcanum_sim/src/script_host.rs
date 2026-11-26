@@ -162,6 +162,8 @@ struct HostWorld<'a> {
     prowling: Vec<ScriptObject>,
     /// NPCs made to follow (a leader) or to stop (`None`).
     follow_changes: Vec<((arcanum_formats::map::SectorId, u32), Option<PlayerId>)>,
+    /// PCs whose alignment a script moved, and whether up (their followers warn).
+    alignment_moves: Vec<(PlayerId, bool)>,
     /// Lines floated over objects.
     floats: Vec<(crate::NetId, String)>,
     /// PCs whose inventory a script changed.
@@ -690,6 +692,9 @@ impl ScriptContext for HostWorld<'_> {
         };
         let new = (*value + delta).clamp(low, high);
         if new != *value {
+            if stat == 0x13 {
+                self.alignment_moves.push((p, new >= *value));
+            }
             *value = new;
             self.sheets.insert(p);
         }
@@ -1371,6 +1376,7 @@ impl ScriptHost<'_, '_> {
             talking,
             prowling,
             follow_changes: Vec::new(),
+            alignment_moves: Vec::new(),
             floats: Vec::new(),
             inventories: Default::default(),
             sheets: Default::default(),
@@ -1421,6 +1427,7 @@ impl ScriptHost<'_, '_> {
         self.timed.0.append(&mut ctx.scheduled);
         let mut touched = std::mem::take(&mut ctx.sectors);
         let follow_changes = std::mem::take(&mut ctx.follow_changes);
+        let alignment_moves = std::mem::take(&mut ctx.alignment_moves);
         for (object, map, to) in std::mem::take(&mut ctx.teleports) {
             self.teleports.0.push(crate::big_move::ScriptTeleport { causer: player, object, map, to });
         }
@@ -1435,6 +1442,14 @@ impl ScriptHost<'_, '_> {
         // Joins and leaves by script: forced joins, not counted (0x45de90 sets 0x400, clears
         // 0x20); leaving clears forced and waiting, as the `lv` result does.
         if let Some(save) = world.0.as_mut() {
+            // A PC's alignment moved: its followers warn at their next check (0x4b0980 stat
+            // 0x13 → 0x4b0db8: 0x2000000 up, 0x4000000 down, compare at 0x4b0dd4).
+            for (player, up) in alignment_moves {
+                let bit = if up { crate::follow::WARN_GOOD } else { crate::follow::WARN_EVIL };
+                for f in save.followers.iter_mut().filter(|f| f.leader == player) {
+                    f.warn |= bit;
+                }
+            }
             for ((sector, index), leader) in follow_changes {
                 use crate::follow::{FORCED, LEFT, WAITING};
                 let flags = map.npc_flags(sector, index).unwrap_or(0);

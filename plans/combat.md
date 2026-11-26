@@ -278,6 +278,9 @@ of `combat_design.md` come after the original's rules work.
      the follower to warn (0x10000 with 0x1000000, 0x4c0f06 / 0x4c0f18): at its next check
      (`follow::warning`, 0x4ac4c7 → 0x4adb50 → 0x414290) a follower within 20 of its limit says
      a `gd_npc` 5400 line.
+   - Alignment warnings by script (`feat/script-alignment-warns`): action 0x89 moving a PC's
+     alignment (0x4b0980 stat 0x13 → 0x4b0db8) marks its followers to warn, up good
+     (0x2000000), down evil (0x4000000), as dialogue's change already did.
    - Not built: the PC's reputation with a faction, prowling attackers noticed less.
 7. **Fleeing, surrender, keeping away** (built, `feat/combat-surrender`).
    - `should_flee` is 0x4ab2f0 in full: never from a target below column 3 percent; at or
