@@ -136,10 +136,10 @@ fn is_ammo_of(prototype: u32, ammo_type: i32, prototypes: &Prototypes) -> bool {
 
 /// The weapon an NPC picks for its hands (0x465170, slot 1004): among its carried weapons with
 /// rounds enough (0x465820 against `weapon_ammo_consumption`), the best `chance × damage / 100`
-/// (the weapon skill's chance, 0x4c62e0; damage the sum of each type's mean, 0x465f70); one that
-/// reaches `distance` tiles first (0x465e30 against 0x441ae0). Its location; `None`: bare hands
+/// (the weapon skill's chance, 0x4c62e0; damage the sum of each type's mean, 0x465f70); with a
+/// foe `distance` tiles away, one that reaches it first (0x465e30 against 0x441ae0). Its location; `None`: bare hands
 /// (0x464c50). Ties go to the later item (builder's call: the original's larger handle).
-pub fn choose_weapon(inventory: &crate::Inventory, prototypes: &Prototypes, fighter: &Fighter, distance: u32) -> Option<i32> {
+pub fn choose_weapon(inventory: &crate::Inventory, prototypes: &Prototypes, fighter: &Fighter, distance: Option<u32>) -> Option<i32> {
     let mut best: Option<(i32, i32)> = None;
     let mut reaching: Option<(i32, i32)> = None;
     for item in &inventory.items {
@@ -155,11 +155,67 @@ pub fn choose_weapon(inventory: &crate::Inventory, prototypes: &Prototypes, figh
         if best.is_none_or(|b| score >= b.0) {
             best = Some((score, item.location));
         }
-        if armed.reach() >= distance && reaching.is_none_or(|b| score >= b.0) {
+        if distance.is_some_and(|d| armed.reach() >= d) && reaching.is_none_or(|b| score >= b.0) {
             reaching = Some((score, item.location));
         }
     }
     reaching.or(best).map(|b| b.1)
+}
+
+/// `npc_flags` (field 0x118): pick every worn item again (set when an item enters its
+/// inventory, 0x46695a / 0x467c50), and pick the weapon again (set when a shot lacks rounds,
+/// 0x4ae006); [`rearm_npcs`] clears them (0x4a87f5 / 0x4a8840).
+pub const ONF_REPICK_ALL: i32 = 0x40;
+pub const ONF_REPICK_WEAPON: i32 = 0x80;
+
+/// NPCs asked to pick their weapon again ([`ONF_REPICK_ALL`], [`ONF_REPICK_WEAPON`]) do so
+/// (0x4a8570 at 0x4a87c4 / 0x4a880a → 0x465170 for slot 1004, [`choose_weapon`]) for the foe
+/// they fight: the original checks on its AI ticks and attacks (0x4a84f0); here each tick, for
+/// NPCs in a fight only (builder's call: 0x4a8570's gates 0x4233d0 / field 0x13 & 0x102 are not
+/// decoded, and re-picking at peace would arm shopkeepers with the weapons sold to them; the
+/// flag waits for the next fight). Not followers (0x4a8651), nor the dead or down (0x4a8589 /
+/// 0x4a8796). Not built: the other slots of 0x4654f0.
+pub fn rearm_npcs(mut map: ResMut<crate::LoadedMap>, mut world: ResMut<crate::WorldState>, vfs: Option<Res<crate::SimVfs>>, npcs: Query<(&crate::NpcSource, &crate::Position, &Fighting), Without<crate::follow::Following>>, critters: Query<(&NetId, &crate::Position)>) {
+    let guard = vfs.as_ref().and_then(|v| v.0.read().ok());
+    for (source, at, fighting) in &npcs {
+        let Some(flags) = map.npc_flags(source.sector, source.index).filter(|f| f & (ONF_REPICK_ALL | ONF_REPICK_WEAPON) != 0) else { continue };
+        if map.is_dead(source.sector, source.index) || map.npc_down(source.sector, source.index) {
+            continue;
+        }
+        let distance = critters.iter().find(|c| *c.0 == fighting.target).map(|c| reach_between(at.0, c.1.0));
+        map.set_npc_flags(source.sector, source.index, flags & !(ONF_REPICK_ALL | ONF_REPICK_WEAPON));
+        if let (Some(inv), Some(o)) = (map.npc_inventory(source.sector, source.index), map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize))) {
+            let fighter = npc_weapon_fighter(o, &map.prototypes);
+            let pick = choose_weapon(&inv, &map.prototypes, &fighter, distance);
+            let (prototypes, art) = (map.prototypes.clone(), map.art.clone());
+            let info = crate::item_info(&prototypes, |id| crate::world::art_size(guard.as_deref(), art.as_deref(), id));
+            if let Some(armed) = wield_pick(&inv, pick, &info) {
+                map.set_npc_inventory(source.sector, source.index, armed);
+            }
+        }
+        crate::ground::save_change(&mut world, &map, source.sector);
+    }
+}
+
+/// What an NPC's weapon choice needs of it: its weapon skills.
+fn npc_weapon_fighter(o: &Object, prototypes: &Prototypes) -> Fighter {
+    Fighter { levels: [SKILL_BOW, SKILL_DODGE, SKILL_MELEE, SKILL_THROWING, SKILL_FIREARMS].map(|k| (k, npc_skill_level(o, prototypes, k))).to_vec(), ..Default::default() }
+}
+
+/// `inv` with `pick` wielded (slot 1004, 0x464ae0), or with its weapon put away for bare hands
+/// when `None` (0x464c50); `None` when nothing changes or it cannot be done.
+pub fn wield_pick(inv: &crate::Inventory, pick: Option<i32>, info: &impl Fn(u32) -> Option<crate::ItemInfo>) -> Option<crate::Inventory> {
+    let wielding = inv.items.iter().find(|i| i.location == WEAPON_SLOT);
+    let wearer = crate::Wearer { race: 0, gender: 0 };
+    match pick {
+        Some(WEAPON_SLOT) => None,
+        Some(from) => inv.move_item(from, WEAPON_SLOT, wearer, info).ok(),
+        None => {
+            let cells = info(wielding?.prototype).map_or((1, 1), |i| i.cells);
+            let spot = crate::Inventory::free_spot(&inv.occupied(info), cells)?;
+            inv.move_item(WEAPON_SLOT, spot, wearer, info).ok()
+        }
+    }
 }
 
 /// Takes `rounds` of `ammo_type` from `inventory`'s stacks, an emptied stack gone (0x4658e0).
@@ -1199,36 +1255,15 @@ impl CombatWorld<'_, '_> {
         self.ai.0.as_ref()?.get(row).copied()
     }
 
-    /// Destroys the attacker's wielded weapon (0x43cca0).
-    /// Wields the weapon NPC `c` picks for a foe `distance` tiles away ([`choose_weapon`]), or
-    /// puts its weapon away for bare hands (0x464c50).
-    fn arm_npc(&mut self, c: &Seen, distance: u32) {
-        let Some(n) = c.npc else { return };
-        let Some(inv) = self.map.npc_inventory(n.sector, n.index) else { return };
-        let fighter = self.fighter(c);
-        let pick = choose_weapon(&inv, &self.map.prototypes, &Fighter { weapon: None, ..fighter }, distance);
-        if pick == Some(WEAPON_SLOT) || (pick.is_none() && inv.items.iter().all(|i| i.location != WEAPON_SLOT)) {
-            return;
-        }
-        let (prototypes, art) = (self.map.prototypes.clone(), self.map.art.clone());
+    /// Whether NPC `n`'s re-pick for a foe `distance` tiles away would change its hands.
+    fn can_rearm(&self, n: crate::NpcSource, distance: u32) -> bool {
+        let (Some(inv), Some(o)) = (self.map.npc_inventory(n.sector, n.index), self.map.mobiles.get(&n.sector).and_then(|m| m.get(n.index as usize))) else { return false };
+        let fighter = npc_weapon_fighter(o, &self.map.prototypes);
+        let pick = choose_weapon(&inv, &self.map.prototypes, &fighter, Some(distance));
         let vfs = self.vfs.as_ref().map(|v| v.0.clone());
         let guard = vfs.as_ref().and_then(|v| v.read().ok());
-        let info = crate::item_info(&prototypes, |id| crate::world::art_size(guard.as_deref(), art.as_deref(), id));
-        let wearer = crate::Wearer { race: 0, gender: 0 };
-        let moved = match pick {
-            Some(from) => inv.move_item(from, WEAPON_SLOT, wearer, &info),
-            None => {
-                let cells = inv.items.iter().find(|i| i.location == WEAPON_SLOT).and_then(|i| info(i.prototype)).map_or((1, 1), |i| i.cells);
-                match crate::Inventory::free_spot(&inv.occupied(&info), cells) {
-                    Some(spot) => inv.move_item(WEAPON_SLOT, spot, wearer, &info),
-                    None => return,
-                }
-            }
-        };
-        if let Ok(moved) = moved {
-            self.map.set_npc_inventory(n.sector, n.index, moved);
-            crate::ground::save_change(&mut self.world, &self.map, n.sector);
-        }
+        let info = crate::item_info(&self.map.prototypes, |id| crate::world::art_size(guard.as_deref(), self.map.art.as_deref(), id));
+        wield_pick(&inv, pick, &info).is_some()
     }
 
     /// Drops `c`'s wielded weapon on its tile (0x461a90); whether it had one.
@@ -1267,6 +1302,7 @@ impl CombatWorld<'_, '_> {
         true
     }
 
+    /// Destroys the attacker's wielded weapon (0x43cca0).
     fn destroy_weapon(&mut self, attacker: &Seen) {
         let gone = |inv: &mut crate::Inventory| inv.items.retain(|i| i.location != WEAPON_SLOT);
         match (attacker.player, attacker.npc) {
@@ -1608,11 +1644,17 @@ fn next_turn(w: &mut CombatWorld, all: &[Seen]) {
 /// changed.
 fn attack_or_approach(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen) -> bool {
     let mut fighter = w.fighter(attacker);
-    // Out of ammunition (0x432cf0): a PC cannot shoot; an NPC fights bare-handed (0x465170 picks
-    // no weapon whose rounds are short).
+    // Out of ammunition (0x4b3219 → 0x4b65d0 fails): no shot. A PC cannot shoot; an NPC asks
+    // for its weapon to be picked again (0x4b3284 → 0x4adff0: `npc_flags` 0x80) and acts on
+    // once [`rearm_npcs`] has. One that can change nothing (no room to put the weapon away)
+    // fights bare-handed with it in hand (builder's call).
     if fighter.out_of_ammo() {
-        if attacker.player.is_some() {
-            return false;
+        let Some(n) = attacker.npc else { return false };
+        if w.can_rearm(n, reach_between(attacker.at, victim.at)) {
+            let flags = w.map.npc_flags(n.sector, n.index).unwrap_or(0);
+            w.map.set_npc_flags(n.sector, n.index, flags | ONF_REPICK_WEAPON);
+            crate::ground::save_change(&mut w.world, &w.map, n.sector);
+            return true;
         }
         fighter.weapon = None;
     }
@@ -1776,11 +1818,6 @@ fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[See
         }
         commands.entity(npc.entity).insert(crate::Walking { steps: path.into(), progress: 0.0 });
         return true;
-    }
-    // Its weapon picked again at each turn's start (builder's call: the original re-picks on
-    // 0x4a8570's flags and after a weapon breaks, 0x4b83e0).
-    if fresh {
-        w.arm_npc(npc, reach_between(npc.at, target.at));
     }
     attack_or_approach(commands, w, all, npc, &target)
 }
@@ -2428,12 +2465,30 @@ mod tests {
         let skilled = Fighter { levels: vec![(SKILL_MELEE, 10), (SKILL_BOW, 10)], ..Default::default() };
         let inv = |items| crate::Inventory { items, ..Default::default() };
         let melee = inv(vec![item(200, WEAPON_SLOT, 1), item(201, 0, 1)]);
-        assert_eq!(choose_weapon(&melee, &prototypes, &skilled, 1), Some(0), "the sword over the dagger");
+        assert_eq!(choose_weapon(&melee, &prototypes, &skilled, Some(1)), Some(0), "the sword over the dagger");
         let archer = inv(vec![item(201, WEAPON_SLOT, 1), item(202, 0, 1), item(203, 1, 2)]);
-        assert_eq!(choose_weapon(&archer, &prototypes, &skilled, 5), Some(WEAPON_SLOT), "2 arrows: the bow cannot shoot");
+        assert_eq!(choose_weapon(&archer, &prototypes, &skilled, Some(5)), Some(WEAPON_SLOT), "2 arrows: the bow cannot shoot");
         let archer = inv(vec![item(201, WEAPON_SLOT, 1), item(202, 0, 1), item(203, 1, 9)]);
-        assert_eq!(choose_weapon(&archer, &prototypes, &skilled, 5), Some(0), "the bow reaches");
-        assert_eq!(choose_weapon(&inv(vec![item(202, WEAPON_SLOT, 1)]), &prototypes, &skilled, 5), None, "no arrows: bare hands");
+        assert_eq!(choose_weapon(&archer, &prototypes, &skilled, Some(5)), Some(0), "the bow reaches");
+        assert_eq!(choose_weapon(&inv(vec![item(202, WEAPON_SLOT, 1)]), &prototypes, &skilled, Some(5)), None, "no arrows: bare hands");
+        assert_eq!(choose_weapon(&archer, &prototypes, &skilled, None), Some(0), "no foe: the best");
+        // Wielding the pick: the sword swaps into the hands; bare hands put the bow away.
+        let info = crate::item_info(&prototypes, |_| Some((32, 32)));
+        let armed = wield_pick(&melee, Some(0), &info).unwrap();
+        assert_eq!(armed.items.iter().find(|i| i.location == WEAPON_SLOT).map(|i| i.prototype), Some(201));
+        assert!(armed.items.iter().any(|i| i.prototype == 200 && crate::in_grid(i.location)));
+        assert_eq!(wield_pick(&melee, Some(WEAPON_SLOT), &info), None, "already wielded");
+        let bare = wield_pick(&inv(vec![item(202, WEAPON_SLOT, 1)]), None, &info).unwrap();
+        assert!(bare.items.iter().all(|i| i.location != WEAPON_SLOT));
+        // An item new to an NPC asks it to pick again (0x46695a); a move does not.
+        let mut map = crate::LoadedMap { prototypes: prototypes.clone().into(), ..Default::default() };
+        let sector = arcanum_formats::map::SectorId::new(1, 1);
+        map.mobiles.insert(sector, vec![Object::parse_instance(&ObjectBuilder::new(arcanum_formats::object::TYPE_NPC).build()).unwrap()]);
+        map.set_npc_inventory(sector, 0, melee.clone());
+        assert_eq!(map.npc_flags(sector, 0).unwrap() & ONF_REPICK_ALL, ONF_REPICK_ALL);
+        map.set_npc_flags(sector, 0, 0);
+        map.set_npc_inventory(sector, 0, armed);
+        assert_eq!(map.npc_flags(sector, 0), Some(0), "the same items");
     }
 
     #[test]

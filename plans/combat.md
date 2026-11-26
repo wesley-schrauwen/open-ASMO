@@ -340,14 +340,21 @@ of `combat_design.md` come after the original's rules work.
    - Built: a shot needs and spends `weapon_ammo_consumption` rounds of its type (builder's call
      for the spending), emptied stacks gone. A PC short of rounds cannot shoot; an NPC fights
      bare-handed.
-   - NPCs' weapons (`feat/npc-weapon-choice`, `combat::choose_weapon`): at the start of each
-     turn (builder's call: the original re-picks on 0x4a8570's flags 0x40 / 0x80 of field 0x118
-     and after a weapon breaks, 0x4b83e0) an NPC wields the best of its weapons with rounds
-     enough (0x465170: score `chance × Σ mean damage / 100`, 0x4c62e0 / 0x465f70; ones reaching
+   - NPCs' weapons (`feat/npc-weapon-choice`, `combat::choose_weapon`): an NPC asked to
+     (`feat/npc-rearm-flags`, `combat::rearm_npcs`: `npc_flags` 0x40 when an item enters its
+     inventory, 0x46695a / 0x467c50; 0x80 when a shot lacks rounds, 0x4b3284 → 0x4adff0;
+     cleared at 0x4a87f5 / 0x4a8840; 0x4b83e0 is the PC's, type 0xf at 0x4b840c) wields the
+     best of its weapons with rounds enough (0x465170: score `chance × Σ mean damage / 100`, 0x4c62e0 / 0x465f70; ones reaching
      the target first, 0x465e30), or puts its weapon away for bare hands (0x464c50). Ties: the
      later item (the original's larger handle).
+   - A shot short of rounds is no attack: the NPC re-picks and acts on; one that can change
+     nothing fights bare-handed with the weapon in hand (builder's call).
+   - Builder's call: only NPCs in a fight re-pick (the flag waits); 0x4a8570's gates (0x4233d0,
+     field 0x13 & 0x102) are not decoded, and re-picking at peace would arm shopkeepers with
+     the weapons sold to them. Followers never re-pick (0x4a8651).
    - Not built: a message for the PC (the original shows none), the critical miss's ammunition
-     loss (step 14), the skill gate 0x4c5eb0, other slots (0x4654f0).
+     loss (step 14), the skill gate 0x4c5eb0, other slots (0x4654f0), the PC's auto-switch
+     after its weapon breaks (0x4b83e0, gated by 0x4b8330).
 14. **Stuns, knock-downs, critical misses** (built, `feat/combat-stun`).
    - Findings: stunned (0x4b4390 → 0x4357b0: `critter_flags` 0x20, anim goal 57 with a count of
      `(20 - CO) / 2`, checked at 0x43581e) can do nothing (0x45d790 tests 0x60); in turn-based
