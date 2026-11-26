@@ -1168,6 +1168,11 @@ mod tests {
         write_map(dir.path());
         std::fs::create_dir_all(dir.path().join("rules")).unwrap();
         std::fs::write(dir.path().join("rules").join("ai_params.mes"), "{0}{50 1000 1000 0 6 20 1001 1000 2 0 0 2001 100 50 20 1 1}").unwrap();
+        // Its words (gd_npc 3000-3099), in each speaker file.
+        std::fs::create_dir_all(dir.path().join("mes")).unwrap();
+        for file in ["gd_npc_m2m", "gd_npc_m2f", "gd_npc_f2m", "gd_npc_f2f"] {
+            std::fs::write(dir.path().join("mes").join(format!("{file}.mes")), "{3000}{I give up!}").unwrap();
+        }
         let folder = dir.path().join("maps").join(MAP);
         let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
         // 4 hit points (no stats), 2 lost: at 50 % it flees, west off the map: nowhere.
@@ -1187,6 +1192,7 @@ mod tests {
         sim.receive([(PlayerId(1), crate::PlayerIntent::EndTurn)]);
         sim.update();
         sim.update();
+        assert!(sim.take_deltas().iter().any(|(_, d)| matches!(d, LedgerDelta::FloatText { speaker, text, .. } if *speaker == npc && text == "I give up!")), "it barks (0x413ea0)");
         let world = sim.app.world_mut();
         let (fighting, surrendered) = world.query::<(&NetId, Has<crate::combat::Fighting>, Option<&crate::combat::Surrendered>)>().iter(world).find(|c| *c.0 == npc).map(|c| (c.1, c.2.copied())).unwrap();
         assert_eq!((fighting, surrendered), (false, Some(crate::combat::Surrendered { to: pc })));
