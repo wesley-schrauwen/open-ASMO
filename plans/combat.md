@@ -548,6 +548,9 @@ of `combat_design.md` come after the original's rules work.
      `OF_SHOOT_THROUGH` (0x20). Built as `blocking::missile_blocks` / `LoadedMap::missiles` /
      `MissileView`, the ground never tested (`first_on_line`: each step's edges, then the next
      tile's critters and objects, the target's tile left out).
+   - Owner's rule (`feat/pc-shots-pass-followers`, `combat::missile_passes`): a PC's missile
+     passes its own followers whatever their flags, and another PC in the way takes it (a stray
+     hit); NPCs' missiles pass PCs, as the data.
    - Owner's call: arrows and bullets strike what is in their way too (the original redirects
      throws only, 0x4b3c00's flag 0x200).
    - Height is in the data: the shoot-through flag marks what a missile passes. Prototypes:

@@ -2482,16 +2482,27 @@ enum InTheWay {
 /// shoot-through (0x440415; the dead let it by), or an object that stops missiles
 /// ([`crate::blocking::missile_blocks`]).
 fn in_the_way(w: &CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen) -> InTheWay {
-    // Every critter prototype of the game is shoot-through (PCs' too), so in the data only an
-    // NPC placed without the flag stops a missile; PCs never do.
-    let shoot_through = |c: &Seen| c.player.is_some() || c.npc.is_some_and(|n| w.npc_int(n, "flags") & crate::blocking::OF_SHOOT_THROUGH != 0);
-    let alive = |c: &&Seen| c.net_id != attacker.net_id && c.net_id != victim.net_id && c.npc.is_none_or(|n| !w.map.is_dead(n.sector, n.index)) && !shoot_through(c);
+    let shoot_through = |c: &Seen| missile_passes(attacker.player, c.player, c.leader, c.npc.is_some_and(|n| w.npc_int(n, "flags") & crate::blocking::OF_SHOOT_THROUGH != 0));
+    let alive = |c: &&Seen| c.net_id != attacker.net_id && c.net_id != victim.net_id && c.npc.is_none_or(|n| !w.map.is_dead(n.sector, n.index)) && !(c.player.is_some() && w.pc_down(c)) && !shoot_through(c);
     let others: Vec<(NetId, TileLoc)> = all.iter().filter(alive).map(|c| (c.net_id, c.at)).collect();
     let view = crate::MissileView(&w.map);
     match first_on_line(attacker.at, victim.at, others.iter().copied(), |a, b| crate::crossing_clear(&view, a, b), |t| crate::Walkable::walkable(&view, t)) {
         Some(Met::Critter(id)) => all.iter().find(|c| c.net_id == id).cloned().map_or(InTheWay::Clear, |c| InTheWay::Critter(Box::new(c))),
         Some(Met::Blocked) => InTheWay::Stopped,
         None => InTheWay::Clear,
+    }
+}
+
+/// Whether a missile passes a critter standing in its way. Every critter prototype of the game
+/// is shoot-through (PCs' too), so by the data: NPCs by their own `flags` (only one placed
+/// without 0x20 stops it), PCs always. A PC's own shot (owner's rule): its own followers let it
+/// by, whatever their flags; other PCs stop it.
+pub fn missile_passes(shooter: Option<PlayerId>, player: Option<PlayerId>, leader: Option<PlayerId>, shoot_through: bool) -> bool {
+    match (shooter, player) {
+        (Some(_), Some(_)) => false,
+        (None, Some(_)) => true,
+        (Some(me), None) if leader == Some(me) => true,
+        _ => shoot_through,
     }
 }
 
@@ -2982,6 +2993,17 @@ mod tests {
         assert!(can_look(&keen, &prototypes, false, Some(&ghost)), "Perception 20");
         let seer = npc(&[("spell_flags", Value::Int32(OSF_SEE_INVISIBLE)), ("critter_stat_base_idx", stats(8))]);
         assert!(can_look(&seer, &prototypes, false, Some(&spelled)), "sees the invisible");
+    }
+
+    #[test]
+    fn a_pcs_shots_pass_its_followers_but_not_other_pcs() {
+        let (me, other) = (Some(PlayerId(1)), Some(PlayerId(2)));
+        assert!(missile_passes(me, None, me, false), "its own follower, even placed solid");
+        assert!(!missile_passes(me, other, None, true), "another PC");
+        assert!(!missile_passes(me, None, other, false), "another PC's follower placed solid: by its flag");
+        assert!(missile_passes(me, None, other, true));
+        assert!(missile_passes(None, other, None, true), "an NPC's shot: PCs pass, as the data");
+        assert!(!missile_passes(None, None, None, false), "an NPC placed solid");
     }
 
     #[test]
