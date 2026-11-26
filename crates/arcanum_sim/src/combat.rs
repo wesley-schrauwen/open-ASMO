@@ -382,6 +382,9 @@ pub const ARMOUR_DAMAGED: u8 = 1;
 pub const WEAPON_DAMAGED: u8 = 2;
 pub const ARMOUR_BROKEN: u8 = 4;
 pub const WEAPON_BROKEN: u8 = 8;
+/// A critical hit knocked the target's weapon from its hands (0x4b5f40 flag 0x2000; dropped at
+/// 0x4b4fdf → 0x461a90, "Weapon dropped").
+pub const WEAPON_DROPPED: u8 = 16;
 
 /// One attack (0x4b3170 → 0x4c7160 → 0x4b6680 → 0x4b6860 → 0x4b4390):
 /// - **To hit:** 1-100 plus the difficulty at or under the weapon skill's chance; the difficulty
@@ -450,6 +453,10 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
         }
         if rng.range(1, 100) <= x + 10 {
             out.items |= WEAPON_DAMAGED;
+        }
+        // Knocked from its hands (0x4b6389, the same threshold), never an NPC's hit on a PC.
+        if defender.weapon.is_some() && !(defender.pc && !attacker.pc) && rng.range(1, 100) <= x + 10 {
+            out.items |= WEAPON_DROPPED;
         }
     }
     shield_damage(&mut dealt, defender.flags, defender.no_damage);
@@ -1146,6 +1153,42 @@ impl CombatWorld<'_, '_> {
     }
 
     /// Destroys the attacker's wielded weapon (0x43cca0).
+    /// Drops `c`'s wielded weapon on its tile (0x461a90); whether it had one.
+    fn drop_weapon(&mut self, c: &Seen) -> bool {
+        let take = |inv: &mut crate::Inventory| {
+            let at = inv.items.iter().position(|i| i.location == WEAPON_SLOT)?;
+            Some(inv.items.remove(at))
+        };
+        let item = match (c.player, c.npc) {
+            (Some(p), _) => {
+                let item = self.world.0.as_mut().and_then(|w| w.players.get_mut(&p)).and_then(|s| s.inventory.as_mut()).and_then(take);
+                if item.is_some() {
+                    self.inventories.0.insert(p);
+                }
+                item
+            }
+            (None, Some(n)) => {
+                let mut inv = self.map.npc_inventory(n.sector, n.index);
+                let item = inv.as_mut().and_then(take);
+                if let (Some(inv), Some(_)) = (inv, &item) {
+                    self.map.set_npc_inventory(n.sector, n.index, inv);
+                }
+                item
+            }
+            _ => None,
+        };
+        let Some(item) = item else { return false };
+        let (prototypes, art) = (self.map.prototypes.clone(), self.map.art.clone());
+        let vfs = self.vfs.as_ref().map(|v| v.0.clone());
+        let guard = vfs.as_ref().and_then(|v| v.read().ok());
+        let info = crate::item_info(&prototypes, |id| crate::world::art_size(guard.as_deref(), art.as_deref(), id));
+        crate::ground::place_on_ground(item, c.at, &info, &mut self.map, &mut self.world, &self.session, &mut self.outbox);
+        if let Some(n) = c.npc {
+            crate::ground::save_change(&mut self.world, &self.map, n.sector);
+        }
+        true
+    }
+
     fn destroy_weapon(&mut self, attacker: &Seen) {
         let gone = |inv: &mut crate::Inventory| inv.items.retain(|i| i.location != WEAPON_SLOT);
         match (attacker.player, attacker.npc) {
@@ -1914,7 +1957,12 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
         w.spend_ammo(attacker, weapon.ammo_type, weapon.ammo_per_shot);
     }
     if outcome.items != 0 {
+        let dropped = outcome.items & WEAPON_DROPPED;
         outcome.items = w.wear_items(victim, &outcome);
+        // A weapon broken by the same hit is gone (0x4b4f21 runs first).
+        if dropped != 0 && outcome.items & WEAPON_BROKEN == 0 && w.drop_weapon(victim) {
+            outcome.items |= WEAPON_DROPPED;
+        }
     }
     outcome.killed = outcome.hit && outcome.hp > 0 && victim.npc.is_some_and(|n| w.map.npc_hp(n.sector, n.index).is_some_and(|(left, _)| left - outcome.hp < 1));
     crate::ground::broadcast(&w.session, &mut w.outbox, LedgerDelta::Attacked { attacker: attacker.net_id, target: victim.net_id, outcome });
@@ -2295,6 +2343,18 @@ mod tests {
         assert!((0..100).all(|_| critical_injuries(&pc, &undead, &sword, BodyPart::Legs, &mut rng) == 0));
         let tough = Fighter { constitution: 200, ..npc };
         assert!((0..100).all(|_| critical_injuries(&pc, &tough, &sword, BodyPart::Legs, &mut rng) == 0), "always saves");
+    }
+
+    #[test]
+    fn criticals_knock_weapons_from_hands_but_never_a_pcs_by_an_npc() {
+        let sword = Weapon { skill: SKILL_MELEE, crit_effect: 100, damage: [(1, 1), (0, 0), (0, 0), (0, 0), (0, 0)], ..Default::default() };
+        let armed = |pc| Fighter { levels: vec![(SKILL_MELEE, 20)], weapon: Some(sword.clone()), pc, ..Default::default() };
+        let mut rng = HostRng::default();
+        let crits = |a: &Fighter, d: &Fighter, rng: &mut HostRng| (0..400).map(|_| resolve(a, d, rng)).filter(|o| o.critical).collect::<Vec<_>>();
+        let pc_on_npc = crits(&armed(true), &armed(false), &mut rng);
+        assert!(!pc_on_npc.is_empty() && pc_on_npc.iter().all(|o| o.items & WEAPON_DROPPED != 0), "a base of 100: always");
+        assert!(crits(&armed(false), &armed(true), &mut rng).iter().all(|o| o.items & WEAPON_DROPPED == 0), "an NPC's on a PC");
+        assert!(crits(&armed(true), &Fighter::default(), &mut rng).iter().all(|o| o.items & WEAPON_DROPPED == 0), "bare hands");
     }
 
     #[test]

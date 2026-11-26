@@ -353,6 +353,10 @@ of `combat_design.md` come after the original's rules work.
    - Built: all of that but knocking out and the real-time stun count (a stun ends with the
      fight, builder's call); knocked down plays the fall and the get-up on the client.
      Floats "Stunned", "Knocked down", "Weapon destroyed", "Ammo lost".
+   - Weapon dropped (`feat/weapon-dropped`): a critical hit on an armed target rolls up to the
+     base + 10 (0x4b6389, after the weapon's wear roll; never an NPC's hit on a PC) to knock its
+     weapon to its tile (flag 0x2000, 0x4b4fdf → 0x461a90; a weapon broken by the same hit is
+     gone). Float "Weapon dropped" (19).
    - Not built: knocking out (built in step 17), dropping or wearing the weapon from a
      critical miss, the critical miss's spell weapons (0x4b65d0), 0x44c820.
 15. **Sight** (built, `feat/sight`).
