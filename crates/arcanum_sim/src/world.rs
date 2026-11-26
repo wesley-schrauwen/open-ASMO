@@ -1335,6 +1335,54 @@ mod tests {
     }
 
     #[test]
+    fn a_prowling_attacker_is_heard_less_by_bystanders() {
+        use arcanum_formats::object::{Array, ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        for (prowl, flees) in [(false, true), (true, false)] {
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            let folder = dir.path().join("maps").join(MAP);
+            let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+            let mut foe = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(72, 70)).field("hp_pts", Value::Int32(500));
+            foe.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
+            std::fs::write(folder.join("G_0F.mob"), foe.build()).unwrap();
+            // A neutral bystander of Perception 14, 6 tiles off, facing away: it hears 8 tiles,
+            // 4 from a prowler of value 45.
+            let mut stats = [0i32; 6];
+            stats[5] = 14;
+            let stats = Value::Array(Some(Array { elem_size: 4, id: 1, data: stats.iter().flat_map(|x| x.to_le_bytes()).collect(), bitset: vec![0x3f, 0] }));
+            let mut neutral = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(77, 70)).field("critter_stat_base_idx", stats);
+            neutral.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [4; 16] };
+            std::fs::write(folder.join("G_10.mob"), neutral.build()).unwrap();
+            let mut sim = SimApp::new(RulesData::default());
+            sim.use_manual_clock();
+            sim.app.insert_resource(vfs(dir.path()));
+            let mut start = save(&[(1, "A", TileLoc { x: 71, y: 70 })]);
+            let sheet = &mut start.players.get_mut(&PlayerId(1)).unwrap().blueprint.sheet;
+            sheet.base = [20; arcanum_rules::PRIMARY_STATS];
+            sheet.skills[crate::SKILL_PROWLING] = 1;
+            sim.boot(start);
+            sim.update();
+            sim.update();
+            let id_at = |sim: &mut SimApp, x: u32| { let world = sim.app.world_mut(); let map = world.resource::<LoadedMap>(); let i = map.mobiles[&SectorId::new(1, 1)].iter().position(|o| o.object_type == TYPE_NPC && crate::object_location(o) == Some(TileLoc { x, y: 70 })).unwrap() as u32; *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == i).unwrap().0 };
+            let (foe, neutral) = (id_at(&mut sim, 72), id_at(&mut sim, 77));
+            let away = crate::rotation_of_step(TileLoc { x: 77, y: 70 }, TileLoc { x: 78, y: 70 }).unwrap();
+            { let world = sim.app.world_mut(); let e = world.query::<(Entity, &NetId)>().iter(world).find(|q| *q.1 == neutral).unwrap().0; world.entity_mut(e).insert(crate::Facing(away)); }
+            if prowl {
+                sim.receive([(PlayerId(1), crate::PlayerIntent::Prowl { on: true })]);
+                sim.update();
+            }
+            let level = { let world = sim.app.world(); world.resource::<crate::SimRules>().0.skill_level(&world.resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(1)].blueprint.sheet, crate::SKILL_PROWLING) };
+            assert_eq!(crate::prowl::prowl_value(level), 45, "prowl value 45");
+            sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: foe, seq: 0 })]);
+            sim.update();
+            let world = sim.app.world_mut();
+            let walks = world.query::<(&NetId, Has<crate::Walking>)>().iter(world).find(|c| *c.0 == neutral).unwrap().1;
+            assert_eq!(walks, flees, "prowling {prowl}");
+        }
+    }
+
+    #[test]
     fn a_cornered_npc_that_would_flee_surrenders() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;

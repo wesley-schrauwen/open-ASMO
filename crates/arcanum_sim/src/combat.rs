@@ -1161,7 +1161,7 @@ pub struct CombatWorld<'w, 's> {
 }
 
 /// A critter as the combat systems see it.
-type CombatantQuery<'a> = (Entity, &'a NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::Sheet>, Option<&'a crate::Inventory>, Option<&'a Fighting>, Has<crate::Walking>, Option<&'a PendingAttack>, Option<&'a crate::follow::Following>, Option<&'a Surrendered>, Option<&'a Stunned>, Option<&'a crate::Facing>, Option<&'a crate::Appearance>);
+type CombatantQuery<'a> = (Entity, &'a NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::Sheet>, Option<&'a crate::Inventory>, Option<&'a Fighting>, Has<crate::Walking>, Option<&'a PendingAttack>, Option<&'a crate::follow::Following>, Option<&'a Surrendered>, Option<&'a Stunned>, (Option<&'a crate::Facing>, Option<&'a crate::Appearance>, Has<crate::Prowling>));
 
 /// One critter of the query, copied out.
 #[derive(Clone)]
@@ -1184,6 +1184,8 @@ struct Seen {
     surrendered: Option<NetId>,
     stunned: Option<Stunned>,
     rotation: usize,
+    /// A PC prowling ([`crate::Prowling`]).
+    prowling: bool,
 }
 
 impl Seen {
@@ -1195,7 +1197,8 @@ impl Seen {
 
 fn seen(q: &Query<CombatantQuery>) -> Vec<Seen> {
     q.iter()
-        .map(|(entity, &net_id, at, pc, npc, sheet, inventory, fighting, walking, pending, following, surrendered, stunned, facing, look)| Seen {
+        .map(|(entity, &net_id, at, pc, npc, sheet, inventory, fighting, walking, pending, following, surrendered, stunned, (facing, look, prowling))| Seen {
+            prowling,
             rotation: facing_of(facing, look),
             stunned: stunned.copied(),
             surrendered: surrendered.map(|s| s.to),
@@ -2706,7 +2709,7 @@ pub fn allied(w_leader: Option<PlayerId>, w_faction: i32, x_player: Option<Playe
 /// A PC attacker's NPC victim then likes it no more than its row's column 10 (0x4a9650: lowered
 /// to it, never raised; 0x4aabe0 again). Not built: the bark, a leader hitting its follower
 /// (column 9, rebellion 0x4ad950), indirect hits (-10), followers who like the victim staying out
-/// (0x4adcc0), prowling attackers noticed less.
+/// (0x4adcc0).
 fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen) {
     let faction = |w: &CombatWorld, c: &Seen| c.npc.map(|n| w.npc_int(n, "npc_faction"));
     let (a_faction, v_faction) = (faction(w, attacker), faction(w, victim));
@@ -2719,9 +2722,11 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
         let own = w.npc_int(source, "npc_faction");
         let Some(o) = w.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { continue };
         let pe = npc_stat(o, &w.map.prototypes, 5);
+        // A prowling PC is noticed less (0x4a9f10 → 0x4af260 / 0x4af470 with its stealth).
         let notices = |x: &Seen| {
             let target = x.npc.and_then(|n| w.map.mobiles.get(&n.sector)?.get(n.index as usize));
-            notices(&*w.map, can_look(o, &w.map.prototypes, c.stunned.is_some(), target), c.at, c.rotation, pe, x.at, None)
+            let prowler = x.sheet.as_ref().filter(|_| x.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING)));
+            notices(&*w.map, can_look(o, &w.map.prototypes, c.stunned.is_some(), target), c.at, c.rotation, pe, x.at, prowler)
         };
         let for_victim = allied(c.leader, own, victim.player, victim.leader, v_faction) && (c.leader.is_some() || notices(victim));
         let for_attacker = allied(c.leader, own, attacker.player, attacker.leader, a_faction) && (c.leader.is_some() || notices(attacker));
