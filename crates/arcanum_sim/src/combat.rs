@@ -1146,6 +1146,7 @@ pub struct CombatWorld<'w, 's> {
     pub awards: ResMut<'w, crate::ExperienceAwards>,
     pub toggled: ResMut<'w, crate::world::ToggledNpcs>,
     pub vfs: Option<Res<'w, crate::SimVfs>>,
+    pub generic: ResMut<'w, crate::GenericLines>,
     pub sheets: ResMut<'w, crate::ScriptSheets>,
     pub ai: ResMut<'w, AiParams>,
     pub starts: ResMut<'w, CombatStarts>,
@@ -1490,6 +1491,62 @@ impl CombatWorld<'_, '_> {
         let o = self.map.mobiles.get(&source.sector)?.get(source.index as usize)?;
         let saved = self.world.0.as_ref()?.players.get(&player)?;
         Some(crate::reaction_to(&saved.script_state, &crate::met_key(source.object()), &crate::NpcReaction::of(o, &self.map.prototypes), &self.rules.0, &saved.blueprint.sheet, self.reputations.0.as_ref()?))
+    }
+
+    /// Why follower `source` of PC `leader` will not fight `foe` (0x4adcc0, non-zero codes):
+    /// 4 a follower of the same leader (0x4add66); 1 the follower good (alignment, stat 0x13,
+    /// above 0) and the foe's alignment at least its row's column 12 (0x4adda4); 2 the same
+    /// non-zero faction (0x45d320); 3 allied to it (0x45d110). `spell_flags` 0x8000000 (a bound
+    /// follower, 0x459040) always fights.
+    fn follower_refusal(&mut self, source: crate::NpcSource, leader: PlayerId, foe: &Seen) -> Option<u8> {
+        if self.npc_int(source, "spell_flags") & OSF_BOUND != 0 {
+            return None;
+        }
+        if foe.leader == Some(leader) {
+            return Some(4);
+        }
+        let alignment = self.npc_int_stat(source, 0x13);
+        let foe_alignment = match (foe.player, foe.npc) {
+            (Some(p), _) => self.world.0.as_ref().and_then(|w| w.players.get(&p)).map_or(0, |s| s.blueprint.sheet.alignment),
+            (None, Some(n)) => self.npc_int_stat(n, 0x13),
+            _ => 0,
+        };
+        if alignment > 0 && self.ai_row(source).is_some_and(|row| foe_alignment >= row[12]) {
+            return Some(1);
+        }
+        let own = self.npc_int(source, "npc_faction");
+        if let Some(n) = foe.npc {
+            let theirs = self.npc_int(n, "npc_faction");
+            if own != 0 && own == theirs {
+                return Some(2);
+            }
+        }
+        let foe_faction = foe.npc.map(|n| self.npc_int(n, "npc_faction"));
+        allied(Some(leader), own, foe.player, foe.leader, foe_faction).then_some(3)
+    }
+
+    /// Follower `source` (entity `net_id`) tells leader `leader` why it will not fight (0x414370
+    /// at 0x4a9d0a, `gd_npc` by refusal code: 1 → 4900, 2 → 5000, 3 → 5100, 4 → 4800, table
+    /// 0x414478).
+    fn refusal_bark(&mut self, source: crate::NpcSource, net_id: NetId, leader: PlayerId, code: u8) {
+        let base = match code {
+            1 => 4900,
+            2 => 5000,
+            3 => 5100,
+            _ => 4800,
+        };
+        let Some(sheet) = self.world.0.as_ref().and_then(|w| w.players.get(&leader)).map(|s| s.blueprint.sheet.clone()) else { return };
+        let vfs = self.vfs.as_ref().map(|v| v.0.clone());
+        let guard = vfs.as_ref().and_then(|v| v.read().ok());
+        let info = crate::npc_details(&self.map, source.object(), &mut self.generic, guard.as_deref());
+        let who = crate::Speaker { npc: &info, pc_name: &sheet.name, pc_female: sheet.gender == arcanum_rules::FEMALE, pc_race: sheet.race };
+        if let Some((text, voice)) = crate::npc_line(&mut self.generic, guard.as_deref(), &mut self.rng, &who, crate::Block::Npc, base) {
+            crate::ground::broadcast(&self.session, &mut self.outbox, LedgerDelta::FloatText { speaker: net_id, text, colour: crate::FloatColour::White, voice });
+        }
+    }
+
+    fn npc_int_stat(&self, source: crate::NpcSource, stat: usize) -> i32 {
+        self.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)).map_or(0, |o| npc_stat(o, &self.map.prototypes, stat))
     }
 
     /// Adds `delta` to the reaction NPC `source` keeps for PC `player` (as script action 0x2b).
@@ -1940,6 +1997,12 @@ pub fn sees(map: &impl crate::Walkable, from: TileLoc, rotation: usize, pe: i32,
 pub fn notices(map: &impl crate::Walkable, sight: bool, from: TileLoc, rotation: usize, pe: i32, to: TileLoc, prowler: Option<i32>) -> bool {
     (sight && sees(map, from, rotation, pe, to, prowler)) || i64::from(crate::tile_distance(from, to)) <= crate::prowl::hearing_reach(pe, prowler)
 }
+
+/// `spell_flags` 0x8000000: a follower bound to its leader (0x459040's table): it always
+/// fights for it and never leaves.
+pub const OSF_BOUND: i32 = 0x0800_0000;
+/// The reaction a follower refusing its leader's fight costs (0x4a9d26: −5).
+pub const REFUSAL_REACTION: i32 = -5;
 
 /// `critter_flags` of a watcher that sees nothing (0x4af287: 0x10a0, stunned 0x20 and blinded
 /// 0x80 among them).
@@ -2498,6 +2561,17 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
             }
             (true, true) => continue,
         };
+        // A follower may refuse (0x4a9c00 → 0x4adcc0); its leader's side then likes it 5 less
+        // (0x4a9d26), the victim's side nothing.
+        if let Some(leader) = c.leader
+            && let Some(code) = w.follower_refusal(source, leader, foe)
+        {
+            if for_attacker && attacker.player == Some(leader) {
+                w.refusal_bark(source, c.net_id, leader, code);
+                w.change_reaction(source, leader, REFUSAL_REACTION);
+            }
+            continue;
+        }
         commands.entity(c.entity).insert(Fighting { target: foe.net_id });
         w.joined.push(c.net_id);
         if let Some(e) = w.combat.0.as_mut()

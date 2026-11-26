@@ -248,8 +248,19 @@ of `combat_design.md` come after the original's rules work.
      asked first, "skip" leaving it out; after a failed pick each barks a `gd_npc` 4000 line
      ("Stop that!", 0x414130 → 0x418780 lines 4000-4099). Not built: the other callers
      (bashing locks, 0x4b4390), the dialogue override's lines.
-   - Not built: the bark, followers who like the victim staying out, a leader hitting its
-     follower, the PC's reputation with a faction, prowling attackers noticed less.
+   - Followers refusing (`feat/follower-refusal`, `CombatWorld::follower_refusal`; 0x4a9c00 →
+     0x4adcc0): a follower will not fight a foe that follows the same leader (code 4,
+     0x4add66), whose alignment is at least its row's column 12 when it is good itself (stat
+     0x13 above 0, code 1, 0x4adda4), of its own non-zero faction (2, 0x45d320) or allied to
+     it (3, 0x45d110); bound followers (`spell_flags` 0x8000000) always fight. Refusing its
+     attacking leader costs 5 reaction (0x4a9d26); the victim's followers just stay out.
+   - Finding: the −10 "indirect" is the victim's, for indirect hits (0x4a9650); no witness
+     reaction there.
+   - The refusal bark: `gd_npc` 4900 (code 1), 5000 (2), 5100 (3), 4800 (4) (0x414370, table
+     0x414478), before the −5.
+   - Not built: the bark of 0x4a9650 (0x413a90 / 0x413df0), a leader hitting its
+     follower (row column 9 and the rebellion test 0x4ad950), the PC's reputation with a
+     faction, prowling attackers noticed less.
 7. **Fleeing, surrender, keeping away** (built, `feat/combat-surrender`).
    - `should_flee` is 0x4ab2f0 in full: never from a target below column 3 percent; at or
      below column 0; else when the target's side is column 1 larger, or its levels column 2
