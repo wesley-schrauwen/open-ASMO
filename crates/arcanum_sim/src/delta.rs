@@ -206,6 +206,8 @@ pub enum LedgerDelta {
     Combat { order: Vec<NetId>, turn: Option<NetId>, ap: i32 },
     /// `attacker` attacked `target`: how it went.
     Attacked { attacker: NetId, target: NetId, outcome: crate::combat::AttackOutcome },
+    /// `net_id` lost `hit_points` to poison ([`crate::poison`]): clients float "HT n".
+    Hurt { net_id: NetId, hit_points: i32 },
     /// An NPC's hit points and fatigue now ([`crate::combat::send_npc_health`]): for the hover's
     /// gauges.
     NpcHealth { net_id: NetId, hit_points: Pool, fatigue: Pool },

@@ -1005,10 +1005,13 @@ mod tests {
         let pc = |sim: &SimApp| sim.app.world().resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(1)].blueprint.sheet.clone();
         let npc_hp = |sim: &SimApp| sim.app.world().resource::<LoadedMap>().npc_hp(sector, 0).unwrap();
         let full = npc_hp(&sim).1;
+        let mut floats = 0;
         for _ in 0..8 {
             sim.app.world_mut().resource_mut::<crate::GameClock>().now.ms += crate::poison::POISON_MS as u32;
             sim.update();
+            floats += sim.take_deltas().iter().filter(|(to, d)| *to == PlayerId(1) && matches!(d, LedgerDelta::Hurt { .. })).count();
         }
+        assert_eq!(floats, 16, "an HT float for the PC and the NPC each hurt");
         // 8 hurts (2 a time at 300, 1 for the NPC at 100), one wearing off at 2 minutes.
         assert_eq!(pc(&sim).hp_damage, 16);
         assert_eq!(npc_hp(&sim).0, full - 8);

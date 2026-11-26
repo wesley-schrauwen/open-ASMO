@@ -431,6 +431,13 @@ pub fn apply(delta: &LedgerDelta, view: &mut CombatView, floats: Option<&mut cra
                 }
             }
         }
+        // Poison's hurt (0x4b1170 → 0x4b4390): "HT n", red over PCs.
+        LedgerDelta::Hurt { net_id, hit_points } => {
+            if let Some(floats) = floats {
+                let colour = if pcs(*net_id) { FloatColour::Red } else { FloatColour::White };
+                floats.0.push((*net_id, format!("{} {}", mes(1), hit_points), colour, None));
+            }
+        }
         _ => {}
     }
 }

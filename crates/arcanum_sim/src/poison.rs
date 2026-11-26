@@ -9,10 +9,14 @@
 //!   0x4b11d1 / 0x4b11e2) as normal damage through 0x4b4390 (0x4b1203). It can kill.
 //! - **Wearing off** (subtype 1, every [`POISON_RECOVERY_MS`], 0x4b12bb): the level drops by the
 //!   poison recovery rate (stat 0xd; [`arcanum_rules::Derived::poison_recovery`]), to 0.
+//!   Each hurt is cut by the worn armour's damage resistance (0x4b6860), spares a critter of
+//!   `spell_flags` 0x10000 ([`crate::combat::shield_damage`]) and floats "HT n" over it
+//!   ([`crate::LedgerDelta::Hurt`], 0x4b5088: combat.mes line 1).
+//! - **Immune** (0x4b441d): undead and mechanical critters take no poison from attacks.
 //! - Builder's calls: one clock for everyone (the original queues each critter's events from
-//!   when it was poisoned); the tick's damage is not cut by resistance (0x4b6860 runs on it in
-//!   the original; damage resistance in percent of 1-3 rounds to 0 under 50 %); an NPC killed by
-//!   poison dies as by a light hit (animation 7), no experience, no script events.
+//!   when it was poisoned); an NPC killed by poison dies as by a light hit (animation 7, as
+//!   0x45da20 picks for 20 or less), with no experience (no killer, as the original) and no
+//!   script events (the original runs 23 and 12 with no triggerer).
 
 use arcanum_formats::object::{Object, Prototypes};
 use bevy_ecs::prelude::*;
@@ -40,6 +44,15 @@ fn npc_recovery(o: &Object, prototypes: &Prototypes) -> i32 {
     crate::combat::npc_stat(o, prototypes, 2).max(1)
 }
 
+/// A tick's hit points `damage` cut by damage resistance `percent` (0x4b6860, as an attack's).
+pub fn resisted(damage: i32, percent: i32) -> i32 {
+    if percent > 0 { damage - damage * percent.min(100) / 100 } else { damage }
+}
+
+/// PCs' and NPCs' net ids, for the floats.
+type PcIds = (&'static crate::NetId, &'static crate::PlayerControlled);
+type NpcIds = (&'static crate::NetId, &'static crate::NpcSource);
+
 /// Poison's hurts and wearing off on PCs and NPCs (see the module docs).
 #[allow(clippy::too_many_arguments)]
 pub fn run_poison(
@@ -51,6 +64,8 @@ pub fn run_poison(
     mut map: ResMut<crate::LoadedMap>,
     mut toggled: ResMut<crate::world::ToggledNpcs>,
     vfs: Option<Res<crate::SimVfs>>,
+    (session, mut outbox): (Res<crate::Session>, ResMut<crate::Outbox>),
+    (pcs, npcs): (Query<PcIds>, Query<NpcIds>),
 ) {
     let now = crate::magick::game_ms(clock.now);
     let (hurt_from, wear_from) = *last.get_or_insert((now, now));
@@ -60,13 +75,19 @@ pub fn run_poison(
         return;
     }
     *last = Some((hurt_from + hurts * POISON_MS, wear_from + wears * POISON_RECOVERY_MS));
+    let mut hurt = Vec::new();
     if let Some(save) = world.0.as_mut() {
         for (&player, saved) in save.players.iter_mut().filter(|(_, s)| s.blueprint.sheet.poison > 0 && !s.blueprint.sheet.dead) {
+            let resistance = saved.inventory.as_ref().map_or(0, |inv| crate::combat::worn_resistances(inv, &map.prototypes)[0]);
             let sheet = &mut saved.blueprint.sheet;
             let derived = rules.0.derived(sheet);
-            sheet.hp_damage = (sheet.hp_damage + poison_damage(sheet.poison) * hurts as i32).min(derived.hit_points);
+            let damage = resisted(poison_damage(sheet.poison), resistance) * hurts as i32;
+            sheet.hp_damage = (sheet.hp_damage + damage).min(derived.hit_points);
             sheet.poison = (sheet.poison - derived.poison_recovery.max(0) * wears as i32).max(0);
             sheets.0.insert(player);
+            if let Some((&net_id, _)) = pcs.iter().find(|p| p.1.0 == player).filter(|_| damage > 0) {
+                hurt.push((net_id, damage));
+            }
         }
     }
     // NPCs poisoned in this game (an NPC's own stat 0x18 from the data is not counted).
@@ -77,8 +98,17 @@ pub fn run_poison(
             continue;
         }
         let Some(rate) = map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).map(|o| npc_recovery(o, &map.prototypes)) else { continue };
-        let damage = poison_damage(level) * hurts as i32;
+        let o = map.mobiles.get(&sector).and_then(|m| m.get(index as usize));
+        let flags = o.map_or(0, |o| map.prototypes.int(o, "critter_flags").unwrap_or(0));
+        let no_damage = o.map_or(0, |o| map.prototypes.int(o, "spell_flags").unwrap_or(0)) & crate::combat::SPELL_NO_DAMAGE != 0;
+        let resistance = map.npc_inventory(sector, index).map_or(0, |inv| crate::combat::worn_resistances(&inv, &map.prototypes)[0]);
+        let mut dealt = [resisted(poison_damage(level), resistance), 0, 0, 0, 0];
+        crate::combat::shield_damage(&mut dealt, flags, no_damage);
+        let damage = dealt[0] * hurts as i32;
         if damage > 0 {
+            if let Some((&net_id, _)) = npcs.iter().find(|n| n.1.sector == sector && n.1.index == index) {
+                hurt.push((net_id, damage));
+            }
             let left = map.npc_hp(sector, index).map_or(0, |h| h.0);
             map.hurt_npc(sector, index, damage);
             if left - damage < 1 {
@@ -88,6 +118,9 @@ pub fn run_poison(
         }
         map.set_npc_poison(sector, index, level - rate * wears as i32);
         crate::ground::save_change(&mut world, &map, sector);
+    }
+    for (net_id, hit_points) in hurt {
+        crate::ground::broadcast(&session, &mut outbox, crate::LedgerDelta::Hurt { net_id, hit_points });
     }
 }
 
