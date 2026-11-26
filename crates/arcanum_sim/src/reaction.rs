@@ -61,7 +61,7 @@ pub fn level(reaction: i32) -> u32 {
 /// origin faction, ...}`, up to five; an effect applies to NPCs of that origin and faction (0:
 /// any).
 #[derive(Resource, Debug, Default, Clone, PartialEq, Eq)]
-pub struct ReputationEffects(pub HashMap<u32, Vec<(i32, i32, i32)>>);
+pub struct ReputationEffects(pub HashMap<u32, Vec<(i32, i32, i32)>>, pub HashMap<u32, [i32; 3]>);
 
 impl ReputationEffects {
     pub fn parse(mes: &MesFile) -> Self {
@@ -82,7 +82,24 @@ impl ReputationEffects {
                 (id, list)
             })
             .collect();
-        Self(effects)
+        // The first part: the reputation's three factions (0x4c2246: record +4 / +8 / +0xc).
+        let factions = mes
+            .messages
+            .iter()
+            .map(|(&id, text)| {
+                let mut f = [0; 3];
+                for (slot, n) in f.iter_mut().zip(text.split(',').next().unwrap_or("").split_whitespace()) {
+                    *slot = atoi(n);
+                }
+                (id, f)
+            })
+            .collect();
+        Self(effects, factions)
+    }
+
+    /// Whether any of `reputations` lists `faction` among its three (0x4c21e0).
+    pub fn lists_faction(&self, reputations: impl IntoIterator<Item = u32>, faction: i32) -> bool {
+        faction != 0 && reputations.into_iter().any(|r| self.1.get(&r).is_some_and(|f| f.contains(&faction)))
     }
 
     /// The sum of `reputations`' effects on an NPC of `origin` and `faction` (0x4c1ac0).
@@ -147,6 +164,10 @@ mod tests {
         assert_eq!(reps.on([1006], 2, 0), -10);
         assert_eq!(reps.on([1002], 0, 13), -100);
         assert_eq!(reps.on([1000, 1002], 0, 12), 20);
+        let mes = MesFile::parse(b"{1003}{12 0 7, +10 0 12}").unwrap();
+        let reps = ReputationEffects::parse(&mes);
+        assert!(reps.lists_faction([1003], 7) && reps.lists_faction([1003], 12) && !reps.lists_faction([1003], 5) && !reps.lists_faction([1000], 12));
+        assert!(!reps.lists_faction([1003], 0), "faction 0: nobody's");
     }
 
     #[test]

@@ -1486,13 +1486,28 @@ impl CombatWorld<'_, '_> {
         self.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)).and_then(|o| self.map.prototypes.int(o, field)).unwrap_or(0)
     }
 
-    /// NPC `source`'s reaction to PC `player`, everything counted.
-    fn reaction(&mut self, source: crate::NpcSource, player: PlayerId) -> Option<i32> {
+    /// Whether a reputation PC `player` holds lists `faction` (0x4c21e0: the three faction
+    /// slots of its `rules/gamerep.mes` line).
+    fn pc_kin(&mut self, player: PlayerId, faction: i32) -> bool {
+        if faction == 0 {
+            return false;
+        }
+        self.load_reputations();
+        let (Some(table), Some(saved)) = (self.reputations.0.as_ref(), self.world.0.as_ref().and_then(|w| w.players.get(&player))) else { return false };
+        table.lists_faction(saved.script_state.reputations.iter().copied(), faction)
+    }
+
+    fn load_reputations(&mut self) {
         if self.reputations.0.is_none() {
             let vfs = self.vfs.as_ref().map(|v| v.0.clone());
             let guard = vfs.as_ref().and_then(|v| v.read().ok());
             self.reputations.0 = Some(guard.as_deref().and_then(|v| v.read(crate::GAME_REP).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).map(|m| crate::ReputationEffects::parse(&m)).unwrap_or_default());
         }
+    }
+
+    /// NPC `source`'s reaction to PC `player`, everything counted.
+    fn reaction(&mut self, source: crate::NpcSource, player: PlayerId) -> Option<i32> {
+        self.load_reputations();
         let o = self.map.mobiles.get(&source.sector)?.get(source.index as usize)?;
         let saved = self.world.0.as_ref()?.players.get(&player)?;
         Some(crate::reaction_to(&saved.script_state, &crate::met_key(source.object()), &crate::NpcReaction::of(o, &self.map.prototypes), &self.rules.0, &saved.blueprint.sheet, self.reputations.0.as_ref()?))
@@ -1527,7 +1542,8 @@ impl CombatWorld<'_, '_> {
             }
         }
         let foe_faction = foe.npc.map(|n| self.npc_int(n, "npc_faction"));
-        allied(Some(leader), own, foe.player, foe.leader, foe_faction).then_some(3)
+        let kin = foe.player.is_some_and(|p| self.pc_kin(p, own));
+        allied(Some(leader), own, foe.player, foe.leader, foe_faction, kin).then_some(3)
     }
 
     /// Follower `source` (entity `net_id`) tells leader `leader` why it will not fight (0x414370
@@ -2748,12 +2764,13 @@ fn damage_npc(commands: &mut Commands, w: &mut CombatWorld, attacker_player: Opt
     crate::ground::save_change(&mut w.world, &w.map, source.sector);
 }
 
-/// Whether NPC `w` takes `x`'s side (0x4ae3a0 / 0x45d110): `x` itself; a PC it follows; an NPC
-/// following the same PC; an NPC of its own (non-zero) `npc_faction` (0x45d080). Not counted: a
-/// PC's reputation with its faction (0x4c21e0), leaders among NPCs.
-pub fn allied(w_leader: Option<PlayerId>, w_faction: i32, x_player: Option<PlayerId>, x_leader: Option<PlayerId>, x_faction: Option<i32>) -> bool {
+/// Whether NPC `w` takes `x`'s side (0x4ae3a0 / 0x45d110): `x` itself; a PC it follows, or a PC
+/// whose reputations include its (non-zero) faction (`kin`: 0x4c21e0 at 0x45d26d); an NPC
+/// following the same PC; an NPC of its own (non-zero) `npc_faction` (0x45d080). Not counted:
+/// leaders among NPCs.
+pub fn allied(w_leader: Option<PlayerId>, w_faction: i32, x_player: Option<PlayerId>, x_leader: Option<PlayerId>, x_faction: Option<i32>, kin: bool) -> bool {
     match (x_player, x_faction) {
-        (Some(p), _) => w_leader == Some(p),
+        (Some(p), _) => w_leader == Some(p) || (w_faction != 0 && kin),
         (None, Some(f)) => (w_leader.is_some() && w_leader == x_leader) || (w_leader.is_none() && x_leader.is_none() && f != 0 && f == w_faction),
         (None, None) => false,
     }
@@ -2782,6 +2799,7 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
             continue;
         }
         let own = w.npc_int(source, "npc_faction");
+        let (v_kin, a_kin) = (victim.player.is_some_and(|p| w.pc_kin(p, own)), attacker.player.is_some_and(|p| w.pc_kin(p, own)));
         let Some(o) = w.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { continue };
         let pe = npc_stat(o, &w.map.prototypes, 5);
         // A prowling PC is noticed less (0x4a9f10 → 0x4af260 / 0x4af470 with its stealth).
@@ -2790,8 +2808,8 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
             let prowler = x.sheet.as_ref().filter(|_| x.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING)));
             notices(&*w.map, can_look(o, &w.map.prototypes, c.stunned.is_some(), target), c.at, c.rotation, pe, x.at, prowler)
         };
-        let for_victim = allied(c.leader, own, victim.player, victim.leader, v_faction) && (c.leader.is_some() || notices(victim));
-        let for_attacker = allied(c.leader, own, attacker.player, attacker.leader, a_faction) && (c.leader.is_some() || notices(attacker));
+        let for_victim = allied(c.leader, own, victim.player, victim.leader, v_faction, v_kin) && (c.leader.is_some() || notices(victim));
+        let for_attacker = allied(c.leader, own, attacker.player, attacker.leader, a_faction, a_kin) && (c.leader.is_some() || notices(attacker));
         let foe = match (for_victim, for_attacker) {
             (true, false) => attacker,
             (false, true) => victim,

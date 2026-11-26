@@ -284,7 +284,10 @@ of `combat_design.md` come after the original's rules work.
    - Prowling attackers (`feat/prowling-attackers`): the others drawn in by an attack notice a
      prowling PC by its stealth (0x4a9f10 → 0x4af260 / 0x4af470 with the prowl value), as
      noticing foes does.
-   - Not built: the PC's reputation with a faction.
+   - A PC's reputation with a faction (`feat/faction-reputations`): an NPC also sides with a PC
+     holding a reputation whose `rules/gamerep.mes` line lists the NPC's faction among its three
+     (0x45d110 → 0x4c21e0: record +4 / +8 / +0xc; `ReputationEffects::lists_faction`), so it
+     neither fights for its faction against that PC nor, as a follower, against it.
 7. **Fleeing, surrender, keeping away** (built, `feat/combat-surrender`).
    - `should_flee` is 0x4ab2f0 in full: never from a target below column 3 percent; at or
      below column 0; else when the target's side is column 1 larger, or its levels column 2

@@ -1283,6 +1283,44 @@ mod tests {
     }
 
     #[test]
+    fn a_faction_stays_out_against_a_pc_of_its_reputation() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        for (reputed, joins) in [(false, true), (true, false)] {
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            std::fs::create_dir_all(dir.path().join("rules")).unwrap();
+            std::fs::write(dir.path().join("rules").join("gamerep.mes"), "{1003}{7 0 0, +10 0 7}").unwrap();
+            let folder = dir.path().join("maps").join(MAP);
+            let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+            let npc = |x: u32, n: u8| {
+                let mut b = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(x, 70)).field("npc_faction", Value::Int32(7)).field("hp_pts", Value::Int32(100));
+                b.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [n; 16] };
+                b.build()
+            };
+            std::fs::write(folder.join("G_0F.mob"), npc(72, 3)).unwrap();
+            std::fs::write(folder.join("G_10.mob"), npc(74, 4)).unwrap();
+            let mut start = save(&[(1, "A", TileLoc { x: 71, y: 70 })]);
+            if reputed {
+                start.players.get_mut(&PlayerId(1)).unwrap().script_state.reputations.insert(1003);
+            }
+            let mut sim = SimApp::new(RulesData::default());
+            sim.use_manual_clock();
+            sim.app.insert_resource(vfs(dir.path()));
+            sim.boot(start);
+            sim.update();
+            sim.update();
+            let id_at = |sim: &mut SimApp, x: u32| { let world = sim.app.world_mut(); let map = world.resource::<LoadedMap>(); let i = map.mobiles[&SectorId::new(1, 1)].iter().position(|o| o.object_type == TYPE_NPC && crate::object_location(o) == Some(TileLoc { x, y: 70 })).unwrap() as u32; *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == i).unwrap().0 };
+            let (foe, kin) = (id_at(&mut sim, 72), id_at(&mut sim, 74));
+            sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: foe, seq: 0 })]);
+            sim.update();
+            let world = sim.app.world_mut();
+            let fighting = world.query::<(&NetId, Has<crate::combat::Fighting>)>().iter(world).find(|c| *c.0 == kin).unwrap().1;
+            assert_eq!(fighting, joins, "reputation with faction 7: {reputed}");
+        }
+    }
+
+    #[test]
     fn allies_of_the_victim_join_and_neutrals_flee() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;
