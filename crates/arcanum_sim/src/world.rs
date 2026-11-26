@@ -1202,6 +1202,35 @@ mod tests {
     }
 
     #[test]
+    fn a_follower_that_stays_after_its_leaders_hit_warns_unless_the_leader_charms() {
+        use crate::follow::Follower;
+        for (charisma, warns) in [(10, true), (20, false)] {
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            // Column 9: -20 a hit; column 5 -1000: it never leaves.
+            std::fs::create_dir_all(dir.path().join("rules")).unwrap();
+            std::fs::write(dir.path().join("rules").join("ai_params.mes"), "{0}{0 1000 1000 0 6 -1000 1001 1000 200 -20 0 2001 100 50 20 1 1}").unwrap();
+            let sector = SectorId::new(1, 1);
+            let mut start = save(&[(1, "A", TileLoc { x: 79, y: 80 })]);
+            start.players.get_mut(&PlayerId(1)).unwrap().blueprint.sheet.base[7] = charisma;
+            start.followers.push(Follower { map: MAP.into(), sector, index: 0, leader: PlayerId(1), away: None, wait_until: None, warn: 0 });
+            let mut sim = SimApp::new(RulesData::default());
+            sim.use_manual_clock();
+            sim.app.insert_resource(vfs(dir.path()));
+            sim.boot(start);
+            for _ in 0..4 {
+                sim.update();
+            }
+            let follower = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|n| n.1.index == 0).unwrap().0 };
+            sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: follower, seq: 0 })]);
+            sim.update();
+            let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+            assert_eq!(save.followers.len(), 1, "it stays");
+            assert_eq!(save.followers[0].warn & crate::follow::WARN_REACTION != 0, warns, "charisma {charisma}");
+        }
+    }
+
+    #[test]
     fn a_follower_refuses_to_fight_its_own_faction() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;

@@ -266,8 +266,12 @@ of `combat_design.md` come after the original's rules work.
      (0x4adae6); 0 when bound, the leader a Master of Persuasion (0x4ad9c9) or it joined by
      force (0x400). With a reason it leaves (0x45dfc0, LEFT) and says why (0x413a90: `gd_npc`
      1600 / 1700 / 1800 / 2900); else one time in three it complains (0x413df0: 2300).
-   - Not built: the rebuke later (`npc_flags` 0x10000 → 0x4ac4c7 → 0x4adb50 → 0x414290: 5200-
-     5499), the PC's reputation with a faction, prowling attackers noticed less.
+   - The rebuke (`feat/follower-rebuke`): the hit's loss goes through 0x4c0de0, which skips it
+     for a leader of Charisma 20 or more (0x4c0e8e: 0x4b0ee0 with stat 7) and otherwise marks
+     the follower to warn (0x10000 with 0x1000000, 0x4c0f06 / 0x4c0f18): at its next check
+     (`follow::warning`, 0x4ac4c7 → 0x4adb50 → 0x414290) a follower within 20 of its limit says
+     a `gd_npc` 5400 line.
+   - Not built: the PC's reputation with a faction, prowling attackers noticed less.
 7. **Fleeing, surrender, keeping away** (built, `feat/combat-surrender`).
    - `should_flee` is 0x4ab2f0 in full: never from a target below column 3 percent; at or
      below column 0; else when the target's side is column 1 larger, or its levels column 2

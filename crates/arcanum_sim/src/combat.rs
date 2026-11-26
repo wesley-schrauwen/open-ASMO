@@ -2252,12 +2252,23 @@ pub fn leave_reason(row: &[i32; 17], reaction: i32, alignment: (i32, i32), level
 /// the PC by its row's column 9 (0x4a996b → 0x4c0de0; negative in the data); then, with a
 /// [`leave_reason`], it leaves the party (0x45dfc0) and says why (0x413a90 at 0x4a99f3: `gd_npc`
 /// 1600 / 1700 / 1800 for 1-3, 2900 for 7), else one time in three it complains (0x413df0 at
-/// 0x4a9a4d: `gd_npc` 2300). Not built: the 0x10000 flag's rebuke later (0x4ac4c7 → 0x414290).
+/// 0x4a9a4d: `gd_npc` 2300); staying, it warns at its next check ([`crate::follow::warning`]).
 fn leader_hits_follower(commands: &mut Commands, w: &mut CombatWorld, player: PlayerId, source: crate::NpcSource, victim: &Seen) {
     let Some(row) = w.ai_row(source) else { return };
-    w.change_reaction(source, player, row[9]);
-    let Some(reaction) = w.reaction(source, player) else { return };
     let Some(sheet) = w.world.0.as_ref().and_then(|s| s.players.get(&player)).map(|s| s.blueprint.sheet.clone()) else { return };
+    // 0x4c0de0: a leader of Charisma 20 or more loses nothing by its follower (0x4c0e8e:
+    // 0x4b0ee0 with stat 7); else a loss makes the follower warn at its next check (`npc_flags`
+    // 0x10000 with 0x1000000, 0x4c0f06 / 0x4c0f18: [`crate::follow::WARN_REACTION`]).
+    if !(row[9] < 0 && w.rules.0.stats(&sheet)[7] >= 20) {
+        w.change_reaction(source, player, row[9]);
+        if row[9] < 0 {
+            let home = w.map.home_of(source.sector, source.index);
+            if let Some(f) = w.world.0.as_mut().and_then(|s| s.followers.iter_mut().find(|f| f.is(&home))) {
+                f.warn |= crate::follow::WARN_REACTION;
+            }
+        }
+    }
+    let Some(reaction) = w.reaction(source, player) else { return };
     // Persuasion is basic skill 11 (0xb); training 3 is Master.
     let stays = w.npc_int(source, "spell_flags") & OSF_BOUND != 0 || sheet.training[11] >= 3 || w.npc_int(source, "npc_flags") & crate::follow::FORCED != 0;
     let code = leave_reason(&row, reaction, (w.npc_int_stat(source, 0x13), sheet.alignment), (w.npc_int_stat(source, STAT_LEVEL), sheet.level), stays);
