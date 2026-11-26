@@ -1124,6 +1124,53 @@ mod tests {
     }
 
     #[test]
+    fn a_follower_brought_under_a_fifth_calls_to_its_leader() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        use crate::follow::Follower;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        std::fs::create_dir_all(dir.path().join("mes")).unwrap();
+        for file in ["gd_npc_m2m", "gd_npc_m2f", "gd_npc_f2m", "gd_npc_f2f"] {
+            std::fs::write(dir.path().join("mes").join(format!("{file}.mes")), "{5500}{Help me!}").unwrap();
+        }
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let mut b = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(72, 70)).field("hp_pts", Value::Int32(10)).field("critter_fatigue_pts", Value::Int32(500));
+        b.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [4; 16] };
+        std::fs::write(folder.join("G_0F.mob"), b.build()).unwrap();
+        // A foe beside it, hard to hurt.
+        let mut foe = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(73, 70)).field("hp_pts", Value::Int32(2000)).field("critter_fatigue_pts", Value::Int32(2000));
+        foe.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [5; 16] };
+        std::fs::write(folder.join("G_10.mob"), foe.build()).unwrap();
+        let sector = SectorId::new(1, 1);
+        let mut start = save(&[(1, "A", TileLoc { x: 71, y: 70 })]);
+        start.followers.push(Follower { map: MAP.into(), sector, index: 0, leader: PlayerId(1), away: None, wait_until: None, warn: 0 });
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(start);
+        for _ in 0..4 {
+            sim.update();
+        }
+        let id = |sim: &mut SimApp, i: u32| { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == i).unwrap().0 };
+        let (follower, foe) = (id(&mut sim, 0), id(&mut sim, 1));
+        sim.app.world_mut().resource_mut::<crate::combat::CombatStarts>().0.push((foe, follower));
+        let mut calls = 0;
+        for _ in 0..3000 {
+            sim.receive([(PlayerId(1), crate::PlayerIntent::EndTurn)]);
+            sim.update();
+            calls += sim.take_deltas().iter().filter(|(to, d)| *to == PlayerId(1) && matches!(d, LedgerDelta::FloatText { speaker, text, .. } if *speaker == follower && text == "Help me!")).count();
+            if sim.app.world().resource::<LoadedMap>().is_dead(sector, 0) {
+                break;
+            }
+        }
+        let hp = sim.app.world().resource::<LoadedMap>().npc_hp(sector, 0);
+        let following = { let world = sim.app.world_mut(); world.query::<&crate::follow::Following>().iter(world).count() };
+        assert_eq!(calls, 1, "once, as it crosses 20 % ({hp:?}, {following} following)");
+    }
+
+    #[test]
     fn a_follower_refuses_to_fight_its_own_faction() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;

@@ -503,3 +503,6 @@ of `combat_design.md` come after the original's rules work.
      (0x4ae9fb) a follower picked at random (0x4aea3e) that can act (0x45d790) floats a
      `gd_npc` 2400 line (0x413f50 at 0x4aea84). Not built: the 2500 lines for a hit on another
      target than meant (flag 0x8, 0x4b6c29; no stray hits here).
+   - A PC's follower brought under 20 % of its hit points (0x4b50bb-0x4b50f1, before at least
+     20 at 0x4b50d3, after under at 0x4b50e4) calls to its leader: `gd_npc` 5500 (0x4aeab0 →
+     0x414490), once as it crosses, dying or not (`feat/follower-cry`).

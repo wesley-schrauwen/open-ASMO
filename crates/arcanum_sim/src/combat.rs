@@ -2228,6 +2228,11 @@ fn praise_critical(w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &
 /// A follower's remark on its leader's critical hit: `gd_npc` 2400-2499 (0x413f50, arg 0).
 pub const CRITICAL_BARK: u32 = 2400;
 
+/// Under this percent of its hit points a PC's follower calls to it (0x4b50d3 / 0x4b50e4: 0x14).
+pub const LOW_HEALTH_PERCENT: i32 = 20;
+/// Its words: `gd_npc` 5500-5599 (0x414490 at 0x4aeae4).
+pub const LOW_HEALTH_BARK: u32 = 5500;
+
 /// The flee and surrender bark: `gd_npc` lines 3000-3099 (0x413f13 / 0x413f1c: 0xbb8-0xc1b).
 pub const FLEE_BARK: u32 = 3000;
 
@@ -2513,6 +2518,17 @@ fn damage_npc(commands: &mut Commands, w: &mut CombatWorld, attacker_player: Opt
     let Some((left, max)) = w.map.npc_hp(source.sector, source.index) else { return };
     let dealt = outcome.hp.min(left.max(0));
     w.map.hurt_npc(source.sector, source.index, outcome.hp);
+    // A follower of a PC brought under 20 % calls to its leader (0x4b50bb-0x4b50f1 → 0x4aeab0:
+    // `gd_npc` 5500, 0x414490), once as it crosses (before at least 20, 0x4b50d3; after under,
+    // 0x4b50e4), dying or not.
+    if let Some(leader) = victim.leader
+        && outcome.hp > 0
+        && max > 0
+        && left * 100 / max >= LOW_HEALTH_PERCENT
+        && (left - outcome.hp).max(0) * 100 / max < LOW_HEALTH_PERCENT
+    {
+        w.bark(source, victim.net_id, leader, LOW_HEALTH_BARK);
+    }
     // Experience for the damage (0x4b4390) and the kill (0x45da20: a fifth of its worth).
     let (worth, pool) = w.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)).map_or((0, 0), |o| (w.map.prototypes.int(o, "npc_experience_worth").unwrap_or(0), w.map.prototypes.int(o, "npc_experience_pool").unwrap_or(0)));
     let mut xp = 0;
