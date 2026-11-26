@@ -2892,6 +2892,38 @@ mod tests {
     }
 
     #[test]
+    fn a_script_moving_the_pcs_alignment_makes_its_followers_warn() {
+        use crate::follow::{Follower, WARN_EVIL};
+        use crate::script::tests::{always, block, n, op};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let sector = SectorId::new(1, 1);
+        let mut start = save(&[(7, "Virgil", TileLoc { x: 79, y: 80 })]);
+        start.followers.push(Follower { map: MAP.into(), sector, index: 0, leader: PlayerId(7), away: None, wait_until: None, warn: 0 });
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(start);
+        sim.update();
+        sim.update();
+        let npc_object = crate::ScriptObject::Mobile { sector, index: 0 };
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(npc_object, crate::EVENT_DIALOGUE, crate::Attachment::new(0, 0, 702));
+        {
+            let mut scripts = sim.app.world_mut().resource_mut::<crate::Scripts>();
+            let library = scripts.0.get_or_insert_with(Default::default);
+            // Adjust stat 0x13 (alignment) of the PC by -50 (action 0x89).
+            let lines = vec![always(block(0x89, &[n(0x13), op(0, 0), n(-50)])), always(block(1, &[]))];
+            library.insert(702, arcanum_formats::script::Script { description: String::new(), flags: 0, lines });
+        }
+        let npc = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == 0).unwrap().0 };
+        sim.receive([(PlayerId(7), crate::PlayerIntent::Talk { npc, seq: 0 })]);
+        sim.update();
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(save.players[&PlayerId(7)].blueprint.sheet.alignment, -50);
+        assert_eq!(save.followers[0].warn & WARN_EVIL, WARN_EVIL, "down: the evil warning (0x4000000)");
+    }
+
+    #[test]
     fn scripts_give_and_take_effects_and_the_sheet_follows() {
         use crate::script::tests::{always, block, n, op};
         use arcanum_formats::mes::MesFile;
