@@ -1796,7 +1796,7 @@ fn attack_or_approach(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen]
         if let Some(e) = w.combat.0.as_mut() {
             e.ap = (e.ap - cost).max(0);
         }
-        strike(commands, w, all, attacker, victim, &fighter);
+        strike(commands, w, all, attacker, victim, &fighter, Aim::Meant);
         return true;
     }
     // A path towards the target, to the first tile in reach (next to it for melee), as many
@@ -2248,20 +2248,31 @@ pub fn leave_reason(row: &[i32; 17], reaction: i32, alignment: (i32, i32), level
     }
 }
 
+/// How much a follower's reaction to its leader changes when the leader's blow strikes it
+/// (0x4a9650): its row's column 9 (0x4a996b); nothing for a stray hit (the owner's rule, as the
+/// original: the indirect flag jumps past 0x4c0de0 at 0x4a9969), nor a loss to a leader of
+/// Charisma 20 or more (0x4c0e8e).
+pub fn leader_hit_reaction(column_9: i32, charisma: i32, aim: Aim) -> Option<i32> {
+    if aim == Aim::Stray || (column_9 < 0 && charisma >= 20) {
+        return None;
+    }
+    Some(column_9)
+}
+
 /// A PC hit its own follower (0x4a9650, the victim's leader the attacker, 0x4a9951): it likes
 /// the PC by its row's column 9 (0x4a996b → 0x4c0de0; negative in the data); then, with a
 /// [`leave_reason`], it leaves the party (0x45dfc0) and says why (0x413a90 at 0x4a99f3: `gd_npc`
 /// 1600 / 1700 / 1800 for 1-3, 2900 for 7), else one time in three it complains (0x413df0 at
 /// 0x4a9a4d: `gd_npc` 2300); staying, it warns at its next check ([`crate::follow::warning`]).
-fn leader_hits_follower(commands: &mut Commands, w: &mut CombatWorld, player: PlayerId, source: crate::NpcSource, victim: &Seen) {
+fn leader_hits_follower(commands: &mut Commands, w: &mut CombatWorld, player: PlayerId, source: crate::NpcSource, victim: &Seen, aim: Aim) {
     let Some(row) = w.ai_row(source) else { return };
     let Some(sheet) = w.world.0.as_ref().and_then(|s| s.players.get(&player)).map(|s| s.blueprint.sheet.clone()) else { return };
     // 0x4c0de0: a leader of Charisma 20 or more loses nothing by its follower (0x4c0e8e:
     // 0x4b0ee0 with stat 7); else a loss makes the follower warn at its next check (`npc_flags`
     // 0x10000 with 0x1000000, 0x4c0f06 / 0x4c0f18: [`crate::follow::WARN_REACTION`]).
-    if !(row[9] < 0 && w.rules.0.stats(&sheet)[7] >= 20) {
-        w.change_reaction(source, player, row[9]);
-        if row[9] < 0 {
+    if let Some(change) = leader_hit_reaction(row[9], w.rules.0.stats(&sheet)[7], aim) {
+        w.change_reaction(source, player, change);
+        if change < 0 {
             let home = w.map.home_of(source.sector, source.index);
             if let Some(f) = w.world.0.as_mut().and_then(|s| s.followers.iter_mut().find(|f| f.is(&home))) {
                 f.warn |= crate::follow::WARN_REACTION;
@@ -2431,7 +2442,15 @@ pub fn neighbours(at: TileLoc) -> Vec<TileLoc> {
 
 /// One attack and what it does: an NPC victim fights back; its damage, death and the
 /// experience; everyone is told.
-fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen, fighter: &Fighter) {
+/// Whom a blow struck: the target meant, or another in the way (a stray hit, 0x4a9650's
+/// "indirect" flag 1; none are made yet).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Aim {
+    Meant,
+    Stray,
+}
+
+fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen, fighter: &Fighter, aim: Aim) {
     let defender = w.fighter(victim);
     let mut outcome = resolve(fighter, &defender, &mut w.rng);
     if let Some(weapon) = fighter.weapon.as_ref().filter(|w| w.uses_ammo()) {
@@ -2460,7 +2479,7 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     if let (Some(player), Some(source)) = (attacker.player, victim.npc)
         && victim.leader == Some(player)
     {
-        leader_hits_follower(commands, w, player, source, victim);
+        leader_hits_follower(commands, w, player, source, victim, aim);
     }
     apply_effects(commands, w, attacker, victim, fighter, &defender, &outcome);
     rally(commands, w, all, attacker, victim);
@@ -2879,6 +2898,13 @@ mod tests {
         assert!(can_look(&keen, &prototypes, false, Some(&ghost)), "Perception 20");
         let seer = npc(&[("spell_flags", Value::Int32(OSF_SEE_INVISIBLE)), ("critter_stat_base_idx", stats(8))]);
         assert!(can_look(&seer, &prototypes, false, Some(&spelled)), "sees the invisible");
+    }
+
+    #[test]
+    fn stray_hits_leave_a_followers_reaction_alone() {
+        assert_eq!(leader_hit_reaction(-20, 10, Aim::Meant), Some(-20));
+        assert_eq!(leader_hit_reaction(-20, 10, Aim::Stray), None, "a stray hit: no loss, no warning");
+        assert_eq!(leader_hit_reaction(-20, 20, Aim::Meant), None, "charisma 20");
     }
 
     #[test]
