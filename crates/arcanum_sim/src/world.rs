@@ -1260,12 +1260,19 @@ mod tests {
         assert!(sheet(&sim).dead);
         let world = sim.app.world_mut();
         assert!(world.query_filtered::<(), (With<crate::PlayerControlled>, With<crate::Unconscious>)>().iter(world).next().is_some(), "lies down");
+        // A blessing (cause 3), an item's effect (5) and one of cause 2 held while dead.
+        set(&mut sim, &|s| {
+            s.add_effect(10, 3);
+            s.add_effect(11, 5);
+            s.add_effect(12, 2);
+        });
         sim.app.world_mut().resource_mut::<crate::Resurrections>().0 = 1;
         sim.update();
         sim.update();
         let s = sheet(&sim);
         assert!(!s.dead);
         assert_eq!(max - s.hp_damage, crate::resurrected_hp(max).min(max));
+        assert_eq!(s.effects, [arcanum_rules::HeldEffect { id: 12, cause: 2 }], "causes 3-9 cleared (0x4a60b5)");
         assert_eq!((crate::resurrected_hp(40), crate::resurrected_hp(5)), (6, 1), "15 %, at least 1");
     }
 

@@ -242,11 +242,7 @@ pub fn cast_on_critters(
                         }
                     }
                     CritterSpell::CurePoison(n) => t.poison = (t.poison - n).max(0),
-                    CritterSpell::Resurrect => {
-                        let max = rules.0.derived(t).hit_points;
-                        t.dead = false;
-                        t.hp_damage = (max - crate::resurrected_hp(max)).max(0);
-                    }
+                    CritterSpell::Resurrect => crate::unconscious::resurrect(&rules.0, t),
                 }
                 sheets.0.insert(p);
             }
