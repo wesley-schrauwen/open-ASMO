@@ -363,8 +363,13 @@ of `combat_design.md` come after the original's rules work.
      base + 10 (0x4b6389, after the weapon's wear roll; never an NPC's hit on a PC) to knock its
      weapon to its tile (flag 0x2000, 0x4b4fdf → 0x461a90; a weapon broken by the same hit is
      gone). Float "Weapon dropped" (19).
-   - Not built: knocking out (built in step 17), dropping or wearing the weapon from a
-     critical miss, the critical miss's spell weapons (0x4b65d0), 0x44c820.
+   - Critical misses' items (`feat/fumble-items`, `AttackOutcome::fumble_items`): the
+     attacker's critical on itself (0x4b6410 → 0x4b5f40 at 0x4b656c / 0x4b6593) rolls the item
+     effects too, up to the base (field 0x83 through 0x4eab30) + 10: its weapon worn and knocked
+     to its tile (not when destroyed: 0x8000 first), its armour worn where it struck. Floats over
+     the attacker.
+   - Not built: knocking out (built in step 17), 0x4b4390's second 0x4b5f40 call for the same
+     critical miss (unverified), 0x4b65d0 (flags 0x20000 / 0x40000), the critical miss's spell weapons (0x4b65d0), 0x44c820.
 15. **Sight** (built, `feat/sight`).
    - Findings (0x4af260, returns 0 when seen; callers test `== 0`): 1000 for a fleeing, dead or
      stunned watcher (`critter_flags` 0x10a0) or an invisible target (unless the watcher has

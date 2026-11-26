@@ -380,6 +380,10 @@ pub struct AttackOutcome {
     pub fumble_effects: u8,
     #[serde(default)]
     pub fumble_injured: i32,
+    /// A critical miss's wear on the attacker's own items, as [`AttackOutcome::items`] (its
+    /// critical on itself, 0x4b6410 → 0x4b5f40), where [`AttackOutcome::part`] says.
+    #[serde(default)]
+    pub fumble_items: u8,
 }
 
 /// [`AttackOutcome::effects`]: stunned (`combat.mes` 16, `critter_flags` 0x20), knocked down
@@ -532,8 +536,23 @@ fn fumble(attacker: &Fighter, weapon: &Weapon, out: &mut AttackOutcome, rng: &mu
         }
     }
     let part = BodyPart::of_roll(rng.range(1, 100));
+    out.part = part.number();
     out.fumble_effects = critical_effects(attacker, attacker, weapon, part, rng);
     out.fumble_injured = critical_injuries(attacker, attacker, weapon, part, rng);
+    // Its critical on itself rolls the item effects too (0x4b636e; nothing skips them for a
+    // critical miss): its weapon worn and knocked away (gone if destroyed above: 0x8000 is
+    // handled first), the armour where it struck worn; each up to the base + 10.
+    let x = critical_base(attacker, weapon);
+    let kept = armed && out.effects & WEAPON_DESTROYED == 0;
+    if kept && rng.range(1, 100) <= x + 10 {
+        out.fumble_items |= WEAPON_DAMAGED;
+    }
+    if kept && rng.range(1, 100) <= x + 10 {
+        out.fumble_items |= WEAPON_DROPPED;
+    }
+    if rng.range(1, 100) <= x + 10 {
+        out.fumble_items |= ARMOUR_DAMAGED;
+    }
 }
 
 /// A critical hit's stun and knock down (0x4b5f40), `E` as for injuries
@@ -2020,6 +2039,14 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     if let Some(weapon) = fighter.weapon.as_ref().filter(|w| w.uses_ammo()) {
         w.spend_ammo(attacker, weapon.ammo_type, weapon.ammo_per_shot);
     }
+    // A critical miss's wear on the attacker's own items, then its weapon knocked away.
+    if outcome.fumble_items != 0 {
+        let dropped = outcome.fumble_items & WEAPON_DROPPED;
+        outcome.fumble_items = w.wear_items(attacker, &AttackOutcome { items: outcome.fumble_items, ..outcome });
+        if dropped != 0 && outcome.fumble_items & WEAPON_BROKEN == 0 && w.drop_weapon(attacker) {
+            outcome.fumble_items |= WEAPON_DROPPED;
+        }
+    }
     if outcome.items != 0 {
         let dropped = outcome.items & WEAPON_DROPPED;
         outcome.items = w.wear_items(victim, &outcome);
@@ -2390,6 +2417,11 @@ mod tests {
         let mut out = AttackOutcome::default();
         fumble(&shooter, &gun, &mut out, &mut rng);
         assert_eq!(out.effects & (WEAPON_DESTROYED | AMMO_LOST_ALL), WEAPON_DESTROYED | AMMO_LOST_ALL);
+        assert_eq!(out.fumble_items & (WEAPON_DAMAGED | WEAPON_DROPPED), 0, "a destroyed weapon is not worn or dropped");
+        // A melee base of 100 on itself: its weapon worn and knocked away, its armour worn.
+        let mut out = AttackOutcome::default();
+        fumble(&pc, &sword, &mut out, &mut rng);
+        assert_eq!(out.fumble_items, WEAPON_DAMAGED | WEAPON_DROPPED | ARMOUR_DAMAGED);
     }
 
     #[test]
