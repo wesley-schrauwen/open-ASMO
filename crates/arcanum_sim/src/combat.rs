@@ -1106,6 +1106,8 @@ impl crate::LoadedMap {
             o.set_int("hp_damage", damage);
         }
         self.changes.entry(sector).or_default().npc_damage.insert(index, damage);
+        // Its poison gone (owner's call; the original keeps it, 0x4a609a).
+        self.set_npc_poison(sector, index, 0);
         if let Some(art) = self.object_at(sector, index, true).and_then(|o| self.prototypes.art_id(o)) {
             self.set_object_art(sector, index, true, art.0 & !(0x1f << 6 | 0x1f << 14));
         }

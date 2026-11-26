@@ -71,10 +71,12 @@ pub fn resurrect_pcs(mut asked: ResMut<Resurrections>, rules: Res<SimRules>, mut
 pub const RESURRECTION_CLEARS_FROM: u32 = 3;
 
 /// Raises a dead PC's sheet: its effects of [`RESURRECTION_CLEARS_FROM`] and later gone (the
-/// owner's call: cleared on resurrection, as the original's 0x4a6010), then up with
-/// [`resurrected_hp`] of its hit points. Poison stays (0x4a609a).
+/// owner's call: cleared on resurrection, as the original's 0x4a6010) and its poison too (the
+/// owner's call: the original keeps it, 0x4a609a), then up with [`resurrected_hp`] of its hit
+/// points.
 pub fn resurrect(rules: &arcanum_rules::RulesData, sheet: &mut arcanum_rules::CharacterSheet) {
     sheet.remove_effects_from(RESURRECTION_CLEARS_FROM);
+    sheet.poison = 0;
     sheet.dead = false;
     let max = rules.derived(sheet).hit_points;
     sheet.hp_damage = (max - resurrected_hp(max)).max(0);

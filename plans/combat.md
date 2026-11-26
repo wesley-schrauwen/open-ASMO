@@ -336,7 +336,8 @@ of `combat_design.md` come after the original's rules work.
    - Effects cleared (owner's call, `feat/resurrect-effects`, `unconscious::resurrect`): a
      resurrected PC loses its effects of causes 3-9 (blessings, curses, items' and scripts'),
      as the original's reset 0x4a6010 does (0x4ea2e0 for each cause at 0x4a60b5-0x4a60cd);
-     causes 0-2 stay; poison stays (0x4a609a). NPCs keep no effects here.
+     causes 0-2 stay. Poison is cleared too, PCs' and NPCs' (owner's call: the original keeps
+     it, 0x4a609a). NPCs keep no effects here.
    - Not built: a dead PC's items and followers.
 12. **Script events** (built, `feat/combat-events`; hook 0x441980 args: triggerer, attachee,
     extra, event, checked at 0x45da20).
