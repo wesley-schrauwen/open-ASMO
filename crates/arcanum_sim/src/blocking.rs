@@ -109,6 +109,50 @@ pub fn object_blocks(object: &Object, prototypes: &Prototypes, day: bool) -> Blo
     }
 }
 
+/// `flags`: missiles pass it (`OF_SHOOT_THROUGH`).
+pub const OF_SHOOT_THROUGH: i32 = 0x20;
+
+/// How `object` stops a missile in flight (0x43fe00 as 0x4ade00 calls it, flags 0xc: cover mode
+/// 8, critters tested 4):
+/// - walls on the edge they face, door-opening pieces 10, 13, 14, 17-19 only for diagonal steps
+///   and 22, 25, 26, 29-32 never (0x440134, as walking); a Passwalled wall (`spell_flags`
+///   0x100000, 0x44011f) only when not [`OF_SHOOT_THROUGH`] (0x4406c9), any other always;
+/// - portals, closed ones (open art 0x200 or a frame), locked or not, unless shoot-through
+///   (0x4401c3: flag 8 → 0x44063f);
+/// - containers, scenery, projectiles and traps on their tile unless shoot-through, `NO_BLOCK`
+///   or not (0x440431 → 0x44045e).
+///
+/// Critters are tested in flight, not here (0x440415). The ground tile is never tested. Objects
+/// destroyed or off stop nothing (builder's call: 0x4407c0's listing not read).
+pub fn missile_blocks(object: &Object, prototypes: &Prototypes) -> Blocks {
+    let int = |name| prototypes.int(object, name).unwrap_or(0);
+    let flags = int("flags");
+    if flags & (OF_DESTROYED | OF_OFF) != 0 {
+        return Blocks::Nothing;
+    }
+    let shoot_through = flags & OF_SHOOT_THROUGH != 0;
+    match object.object_type {
+        TYPE_WALL => {
+            let Some(art) = prototypes.art_id(object) else { return Blocks::Nothing };
+            let piece = if art.kind() == ArtKind::Wall { (art.0 >> 14) & 0x3f } else { u32::MAX };
+            if OPEN_PIECES.contains(&piece) || (int("spell_flags") & OSF_PASSWALLED != 0 && shoot_through) {
+                Blocks::Nothing
+            } else if DIAGONAL_ONLY_PIECES.contains(&piece) {
+                Blocks::DiagonalEdge(edge_of(art))
+            } else {
+                Blocks::Edge(edge_of(art))
+            }
+        }
+        TYPE_PORTAL => {
+            let Some(art) = prototypes.art_id(object) else { return Blocks::Nothing };
+            let open = art.0 & 0x200 != 0 || (art.0 >> 14) & 0x1f != 0;
+            if open || shoot_through { Blocks::Nothing } else { Blocks::Edge(edge_of(art)) }
+        }
+        TYPE_CONTAINER | TYPE_SCENERY | TYPE_PROJECTILE | TYPE_TRAP if !shoot_through => Blocks::Tile,
+        _ => Blocks::Nothing,
+    }
+}
+
 /// An object's `location` field.
 pub fn object_location(object: &Object) -> Option<TileLoc> {
     match object.field("location")? {
@@ -120,9 +164,18 @@ pub fn object_location(object: &Object) -> Option<TileLoc> {
 impl ObjectBlocking {
     /// Adds what `objects` block.
     pub fn add<'a>(&mut self, objects: impl IntoIterator<Item = &'a Object>, prototypes: &Prototypes, day: bool) {
+        self.add_by(objects, |o| object_blocks(o, prototypes, day));
+    }
+
+    /// Adds what `objects` block for missiles ([`missile_blocks`]).
+    pub fn add_missiles<'a>(&mut self, objects: impl IntoIterator<Item = &'a Object>, prototypes: &Prototypes) {
+        self.add_by(objects, |o| missile_blocks(o, prototypes));
+    }
+
+    fn add_by<'a>(&mut self, objects: impl IntoIterator<Item = &'a Object>, blocks: impl Fn(&Object) -> Blocks) {
         for object in objects {
             let Some(at) = object_location(object) else { continue };
-            match object_blocks(object, prototypes, day) {
+            match blocks(object) {
                 Blocks::Nothing => {}
                 Blocks::Tile => {
                     self.tiles.insert(at);
@@ -165,6 +218,22 @@ mod tests {
     fn portal(art_bits: u32, flags: i32) -> Object {
         let art = (3 << 28) | (3 << 11) | art_bits;
         build(ObjectBuilder::new(TYPE_PORTAL).field("current_aid", Value::Int32(art as i32)).field("portal_flags", Value::Int32(flags)))
+    }
+
+    #[test]
+    fn missiles_stop_at_walls_closed_doors_and_solid_objects() {
+        let p = Prototypes::default();
+        assert_eq!(missile_blocks(&wall(0, 3), &p), Blocks::Edge(3));
+        assert_eq!(missile_blocks(&wall(10, 5), &p), Blocks::DiagonalEdge(5));
+        assert_eq!(missile_blocks(&wall(22, 5), &p), Blocks::Nothing);
+        assert_eq!(missile_blocks(&portal(0, 0), &p), Blocks::Edge(3), "closed, unlocked: a walker opens it, a missile stops");
+        assert_eq!(missile_blocks(&portal(0x200, 0), &p), Blocks::Nothing, "open");
+        let shoot = build(ObjectBuilder::new(TYPE_PORTAL).field("current_aid", Value::Int32((3 << 28) | (3 << 11))).field("flags", Value::Int32(OF_SHOOT_THROUGH)));
+        assert_eq!(missile_blocks(&shoot, &p), Blocks::Nothing, "shoot-through");
+        let crate_no_block = build(ObjectBuilder::new(TYPE_SCENERY).field("flags", Value::Int32(OF_NO_BLOCK)));
+        assert_eq!(missile_blocks(&crate_no_block, &p), Blocks::Tile, "NO_BLOCK still stops a missile");
+        let grille = build(ObjectBuilder::new(TYPE_SCENERY).field("flags", Value::Int32(OF_SHOOT_THROUGH)));
+        assert_eq!(missile_blocks(&grille, &p), Blocks::Nothing);
     }
 
     #[test]

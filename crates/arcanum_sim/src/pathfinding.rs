@@ -35,6 +35,20 @@ pub trait Walkable {
     }
 }
 
+/// A loaded map as a missile sees it ([`LoadedMap::missiles`]): edges and objects only, the
+/// ground never (0x43fe00).
+pub struct MissileView<'a>(pub &'a LoadedMap);
+
+impl Walkable for MissileView<'_> {
+    fn walkable(&self, at: TileLoc) -> bool {
+        !self.0.missiles.tiles.contains(&at)
+    }
+
+    fn edge_blocked(&self, at: TileLoc, dir: usize, diagonal: bool) -> bool {
+        self.0.missiles.edge_blocked(at, dir, diagonal)
+    }
+}
+
 /// A tile is walkable when its sector is loaded, it is inside the map, the sector's tile mask
 /// does not block it, and no object on it blocks ([`ObjectBlocking`](crate::ObjectBlocking)).
 impl Walkable for LoadedMap {
@@ -86,6 +100,21 @@ pub fn step_allowed(map: &impl Walkable, from: TileLoc, to: TileLoc) -> bool {
     if !adjacent(from, to) || !map.walkable(to) {
         return false;
     }
+    let Some(dir) = crate::rotation_of_step(from, to) else { return false };
+    if dir % 2 == 1 {
+        return !crossing_blocked(map, from, dir, false);
+    }
+    let (left, right) = ((dir + 7) % 8, (dir + 1) % 8);
+    let route = |first: usize, second: usize| {
+        let Some(corner) = offset(from, crate::DIRECTIONS[first]) else { return false };
+        !crossing_blocked(map, from, first, true) && !crossing_blocked(map, corner, second, true)
+    };
+    route(left, right) && route(right, left)
+}
+
+/// Whether a step from `from` to its neighbour `to` crosses no blocked edge, as [`step_allowed`]
+/// without the tiles' own test (0x43fe00's edge checks).
+pub fn crossing_clear(map: &impl Walkable, from: TileLoc, to: TileLoc) -> bool {
     let Some(dir) = crate::rotation_of_step(from, to) else { return false };
     if dir % 2 == 1 {
         return !crossing_blocked(map, from, dir, false);
