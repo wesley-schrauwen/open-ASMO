@@ -255,6 +255,8 @@ pub struct LoadedMap {
     pub art: Option<Arc<ArtIndex>>,
     /// What the loaded sectors' objects block.
     pub blocking: crate::ObjectBlocking,
+    /// What they block for missiles in flight ([`crate::blocking::missile_blocks`]).
+    pub missiles: crate::ObjectBlocking,
     /// The map's mobile objects (`G_<guid>.mob` files: NPCs, containers, items on the ground) by
     /// sector, in file name order, read at [`LoadedMap::open`]. Objects carried or inside a
     /// container (flag `INVENTORY`), destroyed or off are left out.
@@ -372,7 +374,10 @@ impl LoadedMap {
     /// ([`ArtIndex::tile_blocks`]), its objects and the map's mobile objects on it.
     pub fn rebuild_blocking(&mut self, id: SectorId) {
         self.blocking.remove_sector(id);
+        self.missiles.remove_sector(id);
         let Some(sector) = self.sectors.get(&id) else { return };
+        self.missiles.add_missiles(&sector.objects, &self.prototypes);
+        self.missiles.add_missiles(self.mobiles.get(&id).into_iter().flatten(), &self.prototypes);
         if let Some(art) = &self.art {
             let (x0, y0) = (id.x() * 64, id.y() * 64);
             for y in 0..64 {
