@@ -1935,9 +1935,32 @@ pub fn sees(map: &impl crate::Walkable, from: TileLoc, rotation: usize, pe: i32,
     crate::tile_distance(from, to) <= sight_reach(pe, prowler) && in_view(rotation, from, to) && line_between(from, to).into_iter().all(|t| map.walkable(t))
 }
 
-/// Whether a watcher notices `to`: sees it, or hears it (0x4af470, its path cost not counted).
-pub fn notices(map: &impl crate::Walkable, from: TileLoc, rotation: usize, pe: i32, to: TileLoc, prowler: Option<i32>) -> bool {
-    sees(map, from, rotation, pe, to, prowler) || i64::from(crate::tile_distance(from, to)) <= crate::prowl::hearing_reach(pe, prowler)
+/// Whether a watcher notices `to`: sees it (when `sight`: [`can_look`]), or hears it (0x4af470,
+/// its path cost not counted).
+pub fn notices(map: &impl crate::Walkable, sight: bool, from: TileLoc, rotation: usize, pe: i32, to: TileLoc, prowler: Option<i32>) -> bool {
+    (sight && sees(map, from, rotation, pe, to, prowler)) || i64::from(crate::tile_distance(from, to)) <= crate::prowl::hearing_reach(pe, prowler)
+}
+
+/// `critter_flags` of a watcher that sees nothing (0x4af287: 0x10a0, stunned 0x20 and blinded
+/// 0x80 among them).
+pub const OCF_SIGHTLESS: i32 = 0x10a0;
+/// `flags` (field 0x13) 0x200 and `spell_flags` (0x14) 0x1: invisible (0x4af2d6 / 0x4af2e7).
+pub const OF_INVISIBLE: i32 = 0x200;
+pub const OSF_INVISIBLE: i32 = 0x1;
+/// `spell_flags` 0x200 of a watcher that sees the invisible (0x4af307).
+pub const OSF_SEE_INVISIBLE: i32 = 0x200;
+
+/// Whether NPC `watcher` can look at all at a target (0x4af260 before the cone and reach): not
+/// sightless ([`OCF_SIGHTLESS`]) or stunned; and an invisible target ([`OF_INVISIBLE`],
+/// [`OSF_INVISIBLE`]; `None`, a PC: never, builder's call) only with Perception 20 (0x4b0ee0
+/// with stat 5: at least 20) or [`OSF_SEE_INVISIBLE`].
+pub fn can_look(watcher: &Object, prototypes: &Prototypes, stunned: bool, target: Option<&Object>) -> bool {
+    let int = |o: &Object, f: &str| prototypes.int(o, f).unwrap_or(0);
+    if stunned || int(watcher, "critter_flags") & OCF_SIGHTLESS != 0 {
+        return false;
+    }
+    let invisible = target.is_some_and(|t| int(t, "flags") & OF_INVISIBLE != 0 || int(t, "spell_flags") & OSF_INVISIBLE != 0);
+    !invisible || npc_stat(watcher, prototypes, 5) >= 20 || int(watcher, "spell_flags") & OSF_SEE_INVISIBLE != 0
 }
 
 /// A critter's facing: its last step's, else its art's rotation (bits 11-13).
@@ -1992,7 +2015,7 @@ pub fn notice_foes(
         for (&pc, pc_at, player, sheet, prowling) in &pcs {
             let Some(saved) = save.players.get(&player.0) else { continue };
             let prowler = prowling.then(|| crate::prowl::prowl_value(rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING)));
-            if !notices(&*map, at.0, rotation, pe, pc_at.0, prowler) {
+            if !notices(&*map, can_look(o, &map.prototypes, false, None), at.0, rotation, pe, pc_at.0, prowler) {
                 continue;
             }
             let towards = crate::reaction_to(&saved.script_state, &key, &reaction, &rules.0, &sheet.0, reputations);
@@ -2057,7 +2080,7 @@ pub fn catch_lock_pickers(
             if int("name") != owner && int("npc_social_class") != SOCIAL_CLASS_GUARD {
                 continue;
             }
-            if !sees(&*map, at.0, facing_of(facing, look), npc_stat(o, &map.prototypes, 5), pc_at.0, prowler) {
+            if !can_look(o, &map.prototypes, false, None) || !sees(&*map, at.0, facing_of(facing, look), npc_stat(o, &map.prototypes, 5), pc_at.0, prowler) {
                 continue;
             }
             if map.attachment(source.object(), crate::pickpocket::EVENT_CATCHING_THIEF).number != 0 {
@@ -2453,7 +2476,10 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
         let own = w.npc_int(source, "npc_faction");
         let Some(o) = w.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { continue };
         let pe = npc_stat(o, &w.map.prototypes, 5);
-        let notices = |x: &Seen| notices(&*w.map, c.at, c.rotation, pe, x.at, None);
+        let notices = |x: &Seen| {
+            let target = x.npc.and_then(|n| w.map.mobiles.get(&n.sector)?.get(n.index as usize));
+            notices(&*w.map, can_look(o, &w.map.prototypes, c.stunned.is_some(), target), c.at, c.rotation, pe, x.at, None)
+        };
         let for_victim = allied(c.leader, own, victim.player, victim.leader, v_faction) && (c.leader.is_some() || notices(victim));
         let for_attacker = allied(c.leader, own, attacker.player, attacker.leader, a_faction) && (c.leader.is_some() || notices(attacker));
         let foe = match (for_victim, for_attacker) {
@@ -2611,6 +2637,37 @@ mod tests {
     }
 
     #[test]
+    fn the_blinded_see_nothing_and_the_invisible_go_unseen() {
+        use arcanum_formats::object::{Array, Object, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let prototypes = Prototypes::default();
+        let stats = |pe: i32| {
+            let mut v = [0i32; 6];
+            v[5] = pe;
+            Value::Array(Some(Array { elem_size: 4, id: 1, data: v.iter().flat_map(|x| x.to_le_bytes()).collect(), bitset: vec![0x3f, 0] }))
+        };
+        fn npc(fields: &[(&'static str, Value)]) -> Object {
+            let mut b = ObjectBuilder::new(arcanum_formats::object::TYPE_NPC);
+            for (f, v) in fields {
+                b = b.field(f, v.clone());
+            }
+            Object::parse_instance(&b.build()).unwrap()
+        }
+        let watcher = npc(&[("critter_stat_base_idx", stats(8))]);
+        assert!(can_look(&watcher, &prototypes, false, None));
+        assert!(!can_look(&watcher, &prototypes, true, None), "stunned");
+        let blind = npc(&[("critter_flags", Value::Int32(OCF_BLINDED)), ("critter_stat_base_idx", stats(8))]);
+        assert!(!can_look(&blind, &prototypes, false, None), "blinded (0x80 of 0x10a0)");
+        let ghost = npc(&[("flags", Value::Int32(OF_INVISIBLE))]);
+        let spelled = npc(&[("spell_flags", Value::Int32(OSF_INVISIBLE))]);
+        assert!(!can_look(&watcher, &prototypes, false, Some(&ghost)) && !can_look(&watcher, &prototypes, false, Some(&spelled)));
+        let keen = npc(&[("critter_stat_base_idx", stats(20))]);
+        assert!(can_look(&keen, &prototypes, false, Some(&ghost)), "Perception 20");
+        let seer = npc(&[("spell_flags", Value::Int32(OSF_SEE_INVISIBLE)), ("critter_stat_base_idx", stats(8))]);
+        assert!(can_look(&seer, &prototypes, false, Some(&spelled)), "sees the invisible");
+    }
+
+    #[test]
     fn shots_need_and_spend_their_rounds() {
         use arcanum_formats::object::{Object, Value};
         use arcanum_formats::test_util::{ObjectBuilder, prototype_id};
@@ -2680,7 +2737,7 @@ mod tests {
         rows[5] = ".....#..............";
         let walled = Grid::parse(&rows);
         assert!(!sees(&walled, t(2, 5), 5, 8, t(9, 5), None), "a wall between");
-        assert!(notices(&walled, t(2, 5), 1, 8, t(4, 5), None), "heard behind it, 2 tiles off");
+        assert!(notices(&walled, true, t(2, 5), 1, 8, t(4, 5), None), "heard behind it, 2 tiles off");
     }
 
     #[test]
