@@ -2202,6 +2202,32 @@ pub fn catch_lock_pickers(
     }
 }
 
+/// A PC's critical hit, one of its followers may remark on (0x4b374b → 0x4b6b90 → 0x4ae9e0):
+/// a hit (flag 0x2, 0x4b6bee) and critical (0x4, 0x4b6c0b) on the target it meant, not on one of
+/// its own followers (0x4b6be4); half the time (0x4ae9fb: random(1, 2) == 1 says nothing) a
+/// follower picked at random (0x4aea3e) that can act (0x45d790) floats a `gd_npc` 2400 line
+/// (0x413f50 at 0x4aea84). Not built: the 2500 lines for a hit on another target than the one
+/// meant (flag 0x8, 0x4b6c29: no stray hits here).
+fn praise_critical(w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen, outcome: &AttackOutcome) {
+    let Some(player) = attacker.player else { return };
+    if !outcome.hit || !outcome.critical || victim.leader == Some(player) || w.rng.range(1, 2) == 1 {
+        return;
+    }
+    let followers: Vec<&Seen> = all.iter().filter(|c| c.leader == Some(player) && c.npc.is_some()).collect();
+    if followers.is_empty() {
+        return;
+    }
+    let pick = followers[if followers.len() > 1 { w.rng.range(0, followers.len() as i32 - 1) as usize } else { 0 }];
+    let Some(source) = pick.npc else { return };
+    if pick.stunned.is_some() || w.map.npc_down(source.sector, source.index) || w.map.is_dead(source.sector, source.index) {
+        return;
+    }
+    w.bark(source, pick.net_id, player, CRITICAL_BARK);
+}
+
+/// A follower's remark on its leader's critical hit: `gd_npc` 2400-2499 (0x413f50, arg 0).
+pub const CRITICAL_BARK: u32 = 2400;
+
 /// The flee and surrender bark: `gd_npc` lines 3000-3099 (0x413f13 / 0x413f1c: 0xbb8-0xc1b).
 pub const FLEE_BARK: u32 = 3000;
 
@@ -2356,6 +2382,7 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     outcome.killed = outcome.hit && outcome.hp > 0 && victim.npc.is_some_and(|n| w.map.npc_hp(n.sector, n.index).is_some_and(|(left, _)| left - outcome.hp < 1));
     crate::ground::broadcast(&w.session, &mut w.outbox, LedgerDelta::Attacked { attacker: attacker.net_id, target: victim.net_id, outcome });
     attack_events(w, attacker, victim, &outcome);
+    praise_critical(w, all, attacker, victim, &outcome);
     apply_effects(commands, w, attacker, victim, fighter, &defender, &outcome);
     rally(commands, w, all, attacker, victim);
     if let Some(player) = victim.player {
