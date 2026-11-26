@@ -2225,6 +2225,64 @@ fn praise_critical(w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &
     w.bark(source, pick.net_id, player, CRITICAL_BARK);
 }
 
+/// Why follower `npc` would leave leader `pc` (0x4ad950 with `p5` 1): 0 it stays; 3 its
+/// reaction at or under its row's column 5 (0x4ada57); 1 the leader's alignment above its own
+/// by more than column 6 (0x4ada95), 2 below by more than column 7 (0x4adaac); 7 its level at
+/// least the leader's + column 8 (0x4adae6). It stays when bound (`spell_flags` 0x8000000), when
+/// the leader is a Master of Persuasion (0x4c60c0 skill 0xb rank 3, 0x4ad9c9) or when it joined
+/// by force (`npc_flags` 0x400, 0x4ada32).
+pub fn leave_reason(row: &[i32; 17], reaction: i32, alignment: (i32, i32), level: (i32, i32), stays: bool) -> u8 {
+    let ((npc_align, pc_align), (npc_level, pc_level)) = (alignment, level);
+    if stays {
+        0
+    } else if reaction <= row[5] {
+        3
+    } else if pc_align > npc_align && pc_align - npc_align > row[6] {
+        1
+    } else if npc_align > pc_align && npc_align - pc_align > row[7] {
+        2
+    } else if pc_level + row[8] <= npc_level {
+        7
+    } else {
+        0
+    }
+}
+
+/// A PC hit its own follower (0x4a9650, the victim's leader the attacker, 0x4a9951): it likes
+/// the PC by its row's column 9 (0x4a996b → 0x4c0de0; negative in the data); then, with a
+/// [`leave_reason`], it leaves the party (0x45dfc0) and says why (0x413a90 at 0x4a99f3: `gd_npc`
+/// 1600 / 1700 / 1800 for 1-3, 2900 for 7), else one time in three it complains (0x413df0 at
+/// 0x4a9a4d: `gd_npc` 2300). Not built: the 0x10000 flag's rebuke later (0x4ac4c7 → 0x414290).
+fn leader_hits_follower(commands: &mut Commands, w: &mut CombatWorld, player: PlayerId, source: crate::NpcSource, victim: &Seen) {
+    let Some(row) = w.ai_row(source) else { return };
+    w.change_reaction(source, player, row[9]);
+    let Some(reaction) = w.reaction(source, player) else { return };
+    let Some(sheet) = w.world.0.as_ref().and_then(|s| s.players.get(&player)).map(|s| s.blueprint.sheet.clone()) else { return };
+    // Persuasion is basic skill 11 (0xb); training 3 is Master.
+    let stays = w.npc_int(source, "spell_flags") & OSF_BOUND != 0 || sheet.training[11] >= 3 || w.npc_int(source, "npc_flags") & crate::follow::FORCED != 0;
+    let code = leave_reason(&row, reaction, (w.npc_int_stat(source, 0x13), sheet.alignment), (w.npc_int_stat(source, STAT_LEVEL), sheet.level), stays);
+    let line = match code {
+        0 => {
+            if w.rng.range(1, 3) == 1 {
+                w.bark(source, victim.net_id, player, 2300);
+            }
+            return;
+        }
+        1 => 1600,
+        2 => 1700,
+        3 => 1800,
+        _ => 2900,
+    };
+    let left = match w.world.0.as_mut() {
+        Some(save) => crate::follow::dismiss(&mut w.map, save, source.sector, source.index),
+        None => false,
+    };
+    if left {
+        commands.entity(victim.entity).remove::<crate::follow::Following>();
+        w.bark(source, victim.net_id, player, line);
+    }
+}
+
 /// A follower's remark on its leader's critical hit: `gd_npc` 2400-2499 (0x413f50, arg 0).
 pub const CRITICAL_BARK: u32 = 2400;
 
@@ -2388,6 +2446,11 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     crate::ground::broadcast(&w.session, &mut w.outbox, LedgerDelta::Attacked { attacker: attacker.net_id, target: victim.net_id, outcome });
     attack_events(w, attacker, victim, &outcome);
     praise_critical(w, all, attacker, victim, &outcome);
+    if let (Some(player), Some(source)) = (attacker.player, victim.npc)
+        && victim.leader == Some(player)
+    {
+        leader_hits_follower(commands, w, player, source, victim);
+    }
     apply_effects(commands, w, attacker, victim, fighter, &defender, &outcome);
     rally(commands, w, all, attacker, victim);
     if let Some(player) = victim.player {
@@ -2642,8 +2705,10 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
             w.events.0.push((source.object(), EVENT_ENTER_COMBAT, player, crate::ScriptObject::Pc(player)));
         }
     }
-    // The victim's reaction to a PC attacker falls to its row's column 10.
+    // The victim's reaction to a PC attacker falls to its row's column 10 (not its own
+    // follower's: that is column 9's change, 0x4a9951).
     if let (Some(player), Some(source)) = (attacker.player, victim.npc)
+        && victim.leader != Some(player)
         && let Some(row) = w.ai_row(source)
         && let Some(now) = w.reaction(source, player)
         && now > row[10]
@@ -2798,6 +2863,18 @@ mod tests {
         assert!(can_look(&keen, &prototypes, false, Some(&ghost)), "Perception 20");
         let seer = npc(&[("spell_flags", Value::Int32(OSF_SEE_INVISIBLE)), ("critter_stat_base_idx", stats(8))]);
         assert!(can_look(&seer, &prototypes, false, Some(&spelled)), "sees the invisible");
+    }
+
+    #[test]
+    fn a_follower_hit_by_its_leader_leaves_for_its_reasons() {
+        // Columns 5-9: reaction floor 0, alignment gaps 40 / 40, level lead 5, the hit's -20.
+        let row = [0, 0, 0, 0, 0, 0, 40, 40, 5, -20, 0, 0, 0, 0, 0, 0, 0];
+        assert_eq!(leave_reason(&row, 10, (0, 0), (3, 3), false), 0, "stays");
+        assert_eq!(leave_reason(&row, 0, (0, 0), (3, 3), false), 3, "loathes it");
+        assert_eq!(leave_reason(&row, 10, (-50, 0), (3, 3), false), 1, "the leader far better");
+        assert_eq!(leave_reason(&row, 10, (50, 0), (3, 3), false), 2, "the leader far worse");
+        assert_eq!(leave_reason(&row, 10, (0, 0), (8, 3), false), 7, "it outranks the leader");
+        assert_eq!(leave_reason(&row, -100, (0, 0), (3, 3), true), 0, "bound, forced or a master persuader");
     }
 
     #[test]

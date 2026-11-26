@@ -575,6 +575,16 @@ pub fn recheck_followers(
     }
 }
 
+/// Follower `(sector, index)` of this map leaves its leader (0x45dfc0 / 0x45e040): no leader,
+/// flag [`LEFT`], where it stands. False when it follows no one.
+pub fn dismiss(map: &mut crate::LoadedMap, save: &mut crate::WorldSave, sector: SectorId, index: u32) -> bool {
+    let Some(pos) = save.followers.iter().position(|f| f.away.is_none() && map.name.as_deref() == Some(f.map.as_str()) && f.sector == sector && f.index == index) else { return false };
+    let mut f = save.followers.remove(pos);
+    let flags = follower_flags(&f, map, &save.other_maps);
+    set_follower_flags(&mut f, map, save, (flags & !(WAITING | FORCED)) | LEFT);
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

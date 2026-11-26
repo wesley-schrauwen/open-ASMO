@@ -258,9 +258,16 @@ of `combat_design.md` come after the original's rules work.
      reaction there.
    - The refusal bark: `gd_npc` 4900 (code 1), 5000 (2), 5100 (3), 4800 (4) (0x414370, table
      0x414478), before the −5.
-   - Not built: the bark of 0x4a9650 (0x413a90 / 0x413df0), a leader hitting its
-     follower (row column 9 and the rebellion test 0x4ad950), the PC's reputation with a
-     faction, prowling attackers noticed less.
+   - A leader hitting its follower (`feat/leader-hits-follower`, `combat::leave_reason`;
+     0x4a9650 when the victim's leader is the attacker, 0x4a9951): its reaction changes by its
+     row's column 9 (0x4a996b), not to column 10; then 0x4ad950 (p5 1): 3 reaction at or under
+     column 5 (0x4ada57), 1 / 2 the leader's alignment above / below its own by more than
+     column 6 / 7 (0x4ada95 / 0x4adaac), 7 its level at least the leader's + column 8
+     (0x4adae6); 0 when bound, the leader a Master of Persuasion (0x4ad9c9) or it joined by
+     force (0x400). With a reason it leaves (0x45dfc0, LEFT) and says why (0x413a90: `gd_npc`
+     1600 / 1700 / 1800 / 2900); else one time in three it complains (0x413df0: 2300).
+   - Not built: the rebuke later (`npc_flags` 0x10000 → 0x4ac4c7 → 0x4adb50 → 0x414290: 5200-
+     5499), the PC's reputation with a faction, prowling attackers noticed less.
 7. **Fleeing, surrender, keeping away** (built, `feat/combat-surrender`).
    - `should_flee` is 0x4ab2f0 in full: never from a target below column 3 percent; at or
      below column 0; else when the target's side is column 1 larger, or its levels column 2
