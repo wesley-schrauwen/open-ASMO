@@ -1171,6 +1171,37 @@ mod tests {
     }
 
     #[test]
+    fn a_follower_its_leader_attacks_likes_it_less_and_may_leave() {
+        use crate::follow::Follower;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        // Column 9: -20 a hit; column 5: it leaves at or under 1000 reaction (always).
+        std::fs::create_dir_all(dir.path().join("rules")).unwrap();
+        std::fs::write(dir.path().join("rules").join("ai_params.mes"), "{0}{0 1000 1000 0 6 1000 1001 1000 2 -20 0 2001 100 50 20 1 1}").unwrap();
+        // The map's NPC 0 at (80, 80) follows the PC.
+        let sector = SectorId::new(1, 1);
+        let mut start = save(&[(1, "A", TileLoc { x: 79, y: 80 })]);
+        start.followers.push(Follower { map: MAP.into(), sector, index: 0, leader: PlayerId(1), away: None, wait_until: None, warn: 0 });
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(start);
+        for _ in 0..4 {
+            sim.update();
+        }
+        let follower = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|n| n.1.index == 0).unwrap().0 };
+        let key = crate::met_key(crate::ScriptObject::Mobile { sector, index: 0 });
+        let base = { let map = sim.app.world().resource::<LoadedMap>(); crate::NpcReaction::of(&map.mobiles[&sector][0], &map.prototypes).base };
+        let before = sim.app.world().resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(1)].script_state.reactions.get(&key).copied().unwrap_or(base);
+        sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: follower, seq: 0 })]);
+        sim.update();
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(save.players[&PlayerId(1)].script_state.reactions.get(&key).copied(), Some(before - 20), "column 9");
+        assert!(save.followers.is_empty(), "it leaves (0x45dfc0)");
+        assert_eq!(sim.app.world().resource::<LoadedMap>().npc_flags(sector, 0).unwrap() & crate::follow::LEFT, crate::follow::LEFT);
+    }
+
+    #[test]
     fn a_follower_refuses_to_fight_its_own_faction() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;
