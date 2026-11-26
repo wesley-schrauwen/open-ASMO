@@ -237,6 +237,8 @@ of `combat_design.md` come after the original's rules work.
      following and attack the nearest fighting NPC when their target is gone; a fight goes on
      while an NPC that follows no PC fights.
    - Distances are radii (owner's rule), not the original's square.
+   - Bystanders (`feat/bystanders`): guards (`npc_social_class` 5, 0x4aa055) do not flee; the
+     others that flee (state 2, 0x4aa0be) bark a `gd_npc` 3000 line (0x4aabe0 → 0x413ea0).
    - Finding: 0x4aee50 is not about attacks: it is the witnesses of a pick on an owned lock
      (callers 0x4c7ee4 / 0x4c7f1d in the skill use 0x4c7160, 0x4550ae, 0x4b4727 / 0x4b474c).
      Built in `feat/lock-witnesses` (`combat::catch_lock_pickers`): NPCs within 10 tiles of the

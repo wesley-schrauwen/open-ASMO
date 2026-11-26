@@ -1293,6 +1293,14 @@ mod tests {
         std::fs::write(folder.join("G_0F.mob"), npc(72, 70, 7, 3)).unwrap();
         std::fs::write(folder.join("G_10.mob"), npc(74, 70, 7, 4)).unwrap();
         std::fs::write(folder.join("G_11.mob"), npc(72, 72, 0, 5)).unwrap();
+        // A guard bystander (social class 5) stands; the fleeing neutral says a gd_npc 3000 line.
+        let mut guard = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(70, 72)).field("npc_social_class", Value::Int32(crate::combat::SOCIAL_CLASS_GUARD));
+        guard.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [6; 16] };
+        std::fs::write(folder.join("G_12.mob"), guard.build()).unwrap();
+        std::fs::create_dir_all(dir.path().join("mes")).unwrap();
+        for file in ["gd_npc_m2m", "gd_npc_m2f", "gd_npc_f2m", "gd_npc_f2f"] {
+            std::fs::write(dir.path().join("mes").join(format!("{file}.mes")), "{3000}{Run!}").unwrap();
+        }
         let mut sim = SimApp::new(RulesData::default());
         sim.use_manual_clock();
         sim.app.insert_resource(vfs(dir.path()));
@@ -1303,22 +1311,25 @@ mod tests {
             let world = sim.app.world_mut();
             let map = world.resource::<LoadedMap>();
             let index_at = |x: u32, y: u32| map.mobiles[&SectorId::new(1, 1)].iter().position(|o| o.object_type == TYPE_NPC && crate::object_location(o) == Some(TileLoc { x, y })).unwrap() as u32;
-            let (foe, ally, neutral) = (index_at(72, 70), index_at(74, 70), index_at(72, 72));
+            let (foe, ally, neutral, guard) = (index_at(72, 70), index_at(74, 70), index_at(72, 72), index_at(70, 72));
             let id = |world: &mut World, i: u32| *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == i).unwrap().0;
-            [id(world, foe), id(world, ally), id(world, neutral)]
+            [id(world, foe), id(world, ally), id(world, neutral), id(world, guard)]
         };
-        let [foe, ally, neutral] = ids;
+        let [foe, ally, neutral, guard] = ids;
         let pc = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::PlayerControlled)>().iter(world).next().unwrap().0 };
         sim.take_deltas();
         sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: foe, seq: 0 })]);
         sim.update();
-        let orders: Vec<Vec<NetId>> = sim.take_deltas().into_iter().filter_map(|(_, d)| match d { LedgerDelta::Combat { order, .. } => Some(order), _ => None }).collect();
+        let deltas = sim.take_deltas();
+        assert!(deltas.iter().any(|(_, d)| matches!(d, LedgerDelta::FloatText { speaker, text, .. } if *speaker == neutral && text == "Run!")), "the neutral barks as it flees");
+        let orders: Vec<Vec<NetId>> = deltas.into_iter().filter_map(|(_, d)| match d { LedgerDelta::Combat { order, .. } => Some(order), _ => None }).collect();
         assert_eq!(orders.last().unwrap(), &vec![pc, foe, ally], "the foe's faction joins; the neutral does not");
         let world = sim.app.world_mut();
         let mut q = world.query::<(&NetId, Option<&crate::combat::Fighting>, Has<crate::Walking>)>();
         let mut state = |id: NetId| q.iter(world).find(|c| *c.0 == id).map(|c| (c.1.map(|f| f.target), c.2)).unwrap();
         assert_eq!(state(ally).0, Some(pc));
         assert_eq!(state(neutral), (None, true), "the neutral walks away");
+        assert_eq!(state(guard), (None, false), "the guard stands");
         let save = world.resource::<WorldState>().0.clone().unwrap();
         assert!(save.players[&PlayerId(1)].script_state.reactions.values().all(|&r| r <= 0), "the victim likes the PC no more than column 10 (0 with no rows)");
     }

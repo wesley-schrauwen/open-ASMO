@@ -2682,12 +2682,17 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
             (true, false) => attacker,
             (false, true) => victim,
             (false, false) => {
-                if c.leader.is_none() && !c.walking && w.npc_int(source, "critter_flags") & OCF_NO_FLEE == 0 && notices(attacker) {
+                // Guards stand (0x4aa055: social class 5); the others flee (state 2, 0x4aa0be)
+                // and bark as they go (0x4aabe0 → 0x413ea0: `gd_npc` 3000).
+                if c.leader.is_none() && !c.walking && w.npc_int(source, "critter_flags") & OCF_NO_FLEE == 0 && w.npc_int(source, "npc_social_class") != SOCIAL_CLASS_GUARD && notices(attacker) {
                     let away = flee_goal(c.at, attacker.at, FLEE_TILES);
                     if let Ok(path) = crate::find_path(&*w.map, c.at, away)
                         && !path.is_empty()
                     {
                         commands.entity(c.entity).insert(crate::Walking { steps: path.into(), progress: 0.0 });
+                        if let Some(player) = player {
+                            w.bark(source, c.net_id, player, FLEE_BARK);
+                        }
                     }
                 }
                 continue;
