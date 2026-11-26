@@ -540,7 +540,13 @@ of `combat_design.md` come after the original's rules work.
      only, the line rather than 0x4201c0's path) as `Aim::Stray`; throws draw no one in and
      change no follower's reaction (with the owner's stray-hit rule); a stray throw draws no
      follower's remark (0x4b6bfc).
-   - Not built: objects other than critters stopping a throw, the 2500 remark (flag 0x8).
+   - Blockers (`feat/throws-blocked`, `combat::first_on_line` / `Met`): 0x4201c0 is a straight
+     line (Bresenham, no pathfinding); 0x43fe00 stops a throw at walls on the crossed edge,
+     closed portals, living critters (0x440415: dead ones let it by) and containers, scenery,
+     projectiles and traps (0x440431) not `OF_SHOOT_THROUGH` (0x20). Built: a living critter
+     takes the throw; a tile that blocks walking stops it (builder's call for the object and
+     wall tests), striking no one; the dead let it by.
+   - Not built: shoot-through objects and critters (`flags` 0x20), the 2500 remark (flag 0x8).
    - Findings for thrown items (not built): 0x4b3c00 removes the thrown item only when the
      thrower is not type 0xf (0x4b3c43); on landing 0x4b2690 reads the projectile's
      `projectile_flags_combat` (field 0x4d): 0x40 places `projectile_parent_weapon` (0x50) at
