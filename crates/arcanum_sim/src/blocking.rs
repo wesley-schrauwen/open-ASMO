@@ -60,6 +60,8 @@ pub struct ObjectBlocking {
     pub edges: HashMap<TileLoc, u8>,
     /// Per tile, the edges blocked only for diagonal steps.
     pub diagonal_edges: HashMap<TileLoc, u8>,
+    /// Missiles only: per tile, what its shoot-through objects cost a shot ([`missile_cost`]).
+    pub costs: HashMap<TileLoc, i32>,
 }
 
 /// How one object blocks.
@@ -153,6 +155,26 @@ pub fn missile_blocks(object: &Object, prototypes: &Prototypes) -> Blocks {
     }
 }
 
+/// `flags`: seen through (`OF_SEE_THROUGH`), and giving cover (`OF_PROVIDES_COVER`).
+pub const OF_SEE_THROUGH: i32 = 0x10;
+pub const OF_PROVIDES_COVER: i32 = 0x4000;
+
+/// What a shoot-through object on a missile's way adds to the shot's difficulty (0x44063f: 50
+/// when not seen through, at 0x440687; else 20 when it gives cover); 0 for anything else.
+pub fn missile_cost(object: &Object, prototypes: &Prototypes) -> i32 {
+    let flags = prototypes.int(object, "flags").unwrap_or(0);
+    let tile_object = matches!(object.object_type, TYPE_CONTAINER | TYPE_SCENERY | TYPE_PROJECTILE | TYPE_TRAP);
+    if !tile_object || flags & (OF_DESTROYED | OF_OFF) != 0 || flags & OF_SHOOT_THROUGH == 0 {
+        0
+    } else if flags & OF_SEE_THROUGH == 0 {
+        50
+    } else if flags & OF_PROVIDES_COVER != 0 {
+        20
+    } else {
+        0
+    }
+}
+
 /// An object's `location` field.
 pub fn object_location(object: &Object) -> Option<TileLoc> {
     match object.field("location")? {
@@ -168,8 +190,14 @@ impl ObjectBlocking {
     }
 
     /// Adds what `objects` block for missiles ([`missile_blocks`]).
-    pub fn add_missiles<'a>(&mut self, objects: impl IntoIterator<Item = &'a Object>, prototypes: &Prototypes) {
-        self.add_by(objects, |o| missile_blocks(o, prototypes));
+    pub fn add_missiles<'a>(&mut self, objects: impl IntoIterator<Item = &'a Object> + Clone, prototypes: &Prototypes) {
+        self.add_by(objects.clone(), |o| missile_blocks(o, prototypes));
+        for object in objects {
+            let cost = missile_cost(object, prototypes);
+            if let (Some(at), true) = (object_location(object), cost > 0) {
+                *self.costs.entry(at).or_default() += cost;
+            }
+        }
     }
 
     fn add_by<'a>(&mut self, objects: impl IntoIterator<Item = &'a Object>, blocks: impl Fn(&Object) -> Blocks) {
@@ -191,6 +219,7 @@ impl ObjectBlocking {
         self.tiles.retain(|t| t.sector() != id);
         self.edges.retain(|t, _| t.sector() != id);
         self.diagonal_edges.retain(|t, _| t.sector() != id);
+        self.costs.retain(|t, _| t.sector() != id);
     }
 
     /// Whether an object blocks the edge of `at` in direction `dir`, for a diagonal step or not.
@@ -234,6 +263,9 @@ mod tests {
         assert_eq!(missile_blocks(&crate_no_block, &p), Blocks::Tile, "NO_BLOCK still stops a missile");
         let grille = build(ObjectBuilder::new(TYPE_SCENERY).field("flags", Value::Int32(OF_SHOOT_THROUGH)));
         assert_eq!(missile_blocks(&grille, &p), Blocks::Nothing);
+        // What it costs a shot (flags of the game's Stone 0x404830, Plant 0x400c30, a bush not seen through).
+        let with = |f: i32| build(ObjectBuilder::new(TYPE_SCENERY).field("flags", Value::Int32(f)));
+        assert_eq!((missile_cost(&with(0x404830), &p), missile_cost(&with(0x400c30), &p), missile_cost(&with(OF_SHOOT_THROUGH), &p), missile_cost(&with(0), &p)), (20, 0, 50, 0));
     }
 
     #[test]

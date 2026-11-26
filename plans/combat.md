@@ -589,3 +589,10 @@ of `combat_design.md` come after the original's rules work.
      the attacker (0x4af260 / 0x4af470 at 0x4c86b3 / 0x4c86c9). Builder's call: the blow that
      starts its fight counts as before it. Not built: knocked down (animation 7, 0x4c867b),
      `critter_flags` 0x40 / 0x1000 (not kept).
+   - Range and cover (`feat/range-and-cover`, `combat::missile_difficulty`,
+     `blocking::missile_cost`): a ranged shot is 5 harder a tile past half the shooter's
+     Perception (0x4c888e-0x4c88c1; a Master of the skill spared, 0x4c8883; NPCs never Masters
+     here); the shoot-through objects on its line add 50 each when not `SEE_THROUGH` (0x10) and
+     20 when seen through but `PROVIDES_COVER` (0x4000) (0x44063f; the target's tile left out).
+     The game's Stone (flags 0x404830) gives cover, 20; plants none. Not built: walls and
+     portals that are shoot-through costing, critters' cost.
