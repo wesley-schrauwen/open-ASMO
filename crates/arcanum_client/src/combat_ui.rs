@@ -90,6 +90,7 @@ pub fn attack_floats(attacker: NetId, target: NetId, outcome: &arcanum_sim::comb
             }
         }
         out.extend(effect_floats(outcome.fumble_effects, outcome.fumble_injured, mes).into_iter().map(|t| (attacker, t, FloatColour::White)));
+        out.extend(item_floats(outcome.fumble_items, mes).into_iter().map(|t| (attacker, t, FloatColour::White)));
     }
     if outcome.dodged {
         out.push((target, mes(11), FloatColour::White));
@@ -104,14 +105,7 @@ pub fn attack_floats(attacker: NetId, target: NetId, outcome: &arcanum_sim::comb
             };
             out.push((target, mes(line), colour));
             out.extend(effect_floats(outcome.effects, outcome.injured, mes).into_iter().map(|t| (target, t, colour)));
-            // Items (0x4b4390): "Armor damaged" (7), "Weapon damaged" (8), "Weapon broken" (23),
-            // "Armor broken" (24), "Weapon dropped" (19).
-            use arcanum_sim::combat::{ARMOUR_BROKEN, ARMOUR_DAMAGED, WEAPON_BROKEN, WEAPON_DAMAGED, WEAPON_DROPPED};
-            for (bit, line) in [(ARMOUR_DAMAGED, 7), (WEAPON_DAMAGED, 8), (ARMOUR_BROKEN, 24), (WEAPON_BROKEN, 23), (WEAPON_DROPPED, 19)] {
-                if outcome.items & bit != 0 {
-                    out.push((target, mes(line), colour));
-                }
-            }
+            out.extend(item_floats(outcome.items, mes).into_iter().map(|t| (target, t, colour)));
         }
         if outcome.hp > 0 {
             out.push((target, format!("{} {}", mes(1), outcome.hp), colour));
@@ -177,6 +171,13 @@ pub const ANIM_ATTACK_ALT: u32 = 21;
 fn facing(from: arcanum_formats::map::TileLoc, to: arcanum_formats::map::TileLoc) -> Option<usize> {
     let step = arcanum_formats::map::TileLoc { x: from.x.checked_add_signed((i64::from(to.x) - i64::from(from.x)).signum() as i32)?, y: from.y.checked_add_signed((i64::from(to.y) - i64::from(from.y)).signum() as i32)? };
     arcanum_sim::rotation_of_step(from, step)
+}
+
+/// Item lines (0x4b4390): "Armor damaged" (7), "Weapon damaged" (8), "Weapon broken" (23),
+/// "Armor broken" (24), "Weapon dropped" (19).
+fn item_floats(items: u8, mes: &dyn Fn(u32) -> String) -> Vec<String> {
+    use arcanum_sim::combat::{ARMOUR_BROKEN, ARMOUR_DAMAGED, WEAPON_BROKEN, WEAPON_DAMAGED, WEAPON_DROPPED};
+    [(ARMOUR_DAMAGED, 7), (WEAPON_DAMAGED, 8), (ARMOUR_BROKEN, 24), (WEAPON_BROKEN, 23), (WEAPON_DROPPED, 19)].into_iter().filter(|(bit, _)| items & bit != 0).map(|(_, line)| mes(line)).collect()
 }
 
 /// A critical's effect lines (0x4b4390): "Stunned" (16), "Unconscious" (17), "Knocked down" (18), "Blinded" (4),
