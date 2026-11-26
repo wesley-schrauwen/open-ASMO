@@ -303,6 +303,8 @@ pub struct Fighter {
     pub armour_class: i32,
     /// How much easier it is to hit, helpless (0x4c8609-0x4c86dc: 50 or 30).
     pub helpless: i32,
+    /// What this shot's distance and line add (attackers: [`missile_difficulty`]).
+    pub situation: i32,
     /// The skills it is trained in (a weapon's speed + 5, 0x465cf0).
     pub trained: Vec<usize>,
     /// A PC (an NPC's critical hits on it only multiply by 1.5 and never blind it).
@@ -551,7 +553,7 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
     let short = (weapon.min_strength - attacker.strength).max(0);
     // The defender's armour: half its class, in the attacker's chance (0x4c875c-0x4c878b).
     let armour = defender.armour_class.max(0) / 2 * chance / 100;
-    let difficulty = -weapon.to_hit + 5 * short + injury_difficulty(attacker.injuries) + armour - defender.helpless;
+    let difficulty = -weapon.to_hit + 5 * short + injury_difficulty(attacker.injuries) + armour - defender.helpless + attacker.situation;
     let mut out = AttackOutcome { multiplier: 100, ..Default::default() };
     if rng.range(1, 100) + difficulty > chance {
         out.fumbled = rng.range(1, 100) <= fumble_chance(chance, attacker.weapon.as_ref());
@@ -1253,6 +1255,7 @@ impl CombatWorld<'_, '_> {
                 resistances: armour_resistances(&worn, prototypes),
                 armour_class: (rules.derived(sheet).ac_adjustment + worn_armour_class(&worn, prototypes)).clamp(0, MAX_ARMOUR_CLASS),
                 helpless: 0,
+                situation: 0,
                 trained: [SKILL_BOW, SKILL_MELEE, SKILL_THROWING, SKILL_FIREARMS].into_iter().filter(|&k| sheet.training[k] > 0).collect(),
                 pc: c.player.is_some(),
                 constitution: rules.stats(sheet)[2],
@@ -1281,6 +1284,7 @@ impl CombatWorld<'_, '_> {
             // Stat 10 as a PC's (DX - 10, builder's call for NPCs).
             armour_class: (prototypes.int(o, "AC").unwrap_or(0) + npc_stat(o, prototypes, 1) - 10 + worn_armour_class(&worn, prototypes)).clamp(0, MAX_ARMOUR_CLASS),
             helpless: 0,
+            situation: 0,
             trained: Vec::new(),
             pc: false,
             constitution: npc_stat(o, prototypes, 2),
@@ -1343,6 +1347,18 @@ impl CombatWorld<'_, '_> {
         }
         let row = self.npc_int(source, "npc_ai_data").max(0) as usize;
         self.ai.0.as_ref()?.get(row).copied()
+    }
+
+    /// [`missile_difficulty`] for `attacker`'s shot with `skill` at `victim`.
+    fn shot_difficulty(&self, attacker: &Seen, victim: &Seen, skill: usize) -> i32 {
+        let (perception, master) = match (&attacker.sheet, attacker.npc) {
+            (Some(sheet), _) => (self.rules.0.stats(sheet)[5], sheet.training.get(skill).is_some_and(|&t| t >= 3)),
+            (None, Some(n)) => (self.npc_int_stat(n, 5), false),
+            _ => (0, false),
+        };
+        let distance = crate::tile_distance(attacker.at, victim.at);
+        let line_cost = line_between(attacker.at, victim.at).into_iter().map(|t| self.map.missiles.costs.get(&t).copied().unwrap_or(0)).sum();
+        missile_difficulty(distance, perception, master, line_cost)
     }
 
     /// Whether NPC `n`'s re-pick for a foe `distance` tiles away would change its hands.
@@ -2604,12 +2620,24 @@ fn helpless(w: &CombatWorld, attacker: &Seen, victim: &Seen) -> i32 {
     0
 }
 
+/// What a missile's way adds to the shot (0x4c8430, ranged skills: 0x4c886f-0x4c890e): 5 a tile
+/// past half the shooter's Perception (0x4c888e-0x4c88c1; not for a Master of the skill,
+/// 0x4c8883), and the cost of the shoot-through objects on its line (0x4ade00 at 0x4c88d7, added
+/// raw: [`crate::blocking::missile_cost`]), the target's tile left out.
+pub fn missile_difficulty(distance: u32, perception: i32, master: bool, line_cost: i32) -> i32 {
+    let far = if master { 0 } else { (5 * (distance as i32 - perception / 2)).max(0) };
+    far + line_cost
+}
+
 /// The two helpless amounts (0x4c864a / 0x4c86d9: 0x32, 0x1e).
 pub const HELPLESS_DOWN: i32 = 50;
 pub const HELPLESS_UNAWARE: i32 = 30;
 
 fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen, fighter: &Fighter, aim: Aim) {
     let defender = Fighter { helpless: helpless(w, attacker, victim), ..w.fighter(victim) };
+    let ranged = fighter.weapon.as_ref().is_some_and(|wp| wp.range > 1);
+    let situation = if ranged { w.shot_difficulty(attacker, victim, fighter.skill()) } else { 0 };
+    let fighter = &Fighter { situation, ..fighter.clone() };
     let mut outcome = resolve(fighter, &defender, &mut w.rng);
     if let Some(weapon) = fighter.weapon.as_ref().filter(|w| w.uses_ammo()) {
         w.spend_ammo(attacker, weapon.ammo_type, weapon.ammo_per_shot);
@@ -3273,6 +3301,14 @@ mod tests {
         let plated = hits(&Fighter { armour_class: 90, ..Default::default() }, &mut rng);
         // 95 % against nothing; AC 90: 45 × 95 / 100 = 42 harder, 53 %.
         assert!(bare > 1800 && (950..1180).contains(&plated), "{bare} {plated}");
+    }
+
+    #[test]
+    fn far_and_covered_shots_are_harder() {
+        assert_eq!(missile_difficulty(4, 8, false, 0), 0, "within half its Perception");
+        assert_eq!(missile_difficulty(10, 8, false, 0), 30, "6 tiles past: 5 each");
+        assert_eq!(missile_difficulty(10, 8, true, 0), 0, "a Master");
+        assert_eq!(missile_difficulty(4, 8, false, 70), 70, "a hedge (50) and a low wall (20)");
     }
 
     #[test]
