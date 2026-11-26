@@ -333,8 +333,14 @@ of `combat_design.md` come after the original's rules work.
    - Built: a shot needs and spends `weapon_ammo_consumption` rounds of its type (builder's call
      for the spending), emptied stacks gone. A PC short of rounds cannot shoot; an NPC fights
      bare-handed.
-   - Not built: a message for the PC, NPCs switching to another weapon, the critical miss's
-     ammunition loss (step 14).
+   - NPCs' weapons (`feat/npc-weapon-choice`, `combat::choose_weapon`): at the start of each
+     turn (builder's call: the original re-picks on 0x4a8570's flags 0x40 / 0x80 of field 0x118
+     and after a weapon breaks, 0x4b83e0) an NPC wields the best of its weapons with rounds
+     enough (0x465170: score `chance × Σ mean damage / 100`, 0x4c62e0 / 0x465f70; ones reaching
+     the target first, 0x465e30), or puts its weapon away for bare hands (0x464c50). Ties: the
+     later item (the original's larger handle).
+   - Not built: a message for the PC (the original shows none), the critical miss's ammunition
+     loss (step 14), the skill gate 0x4c5eb0, other slots (0x4654f0).
 14. **Stuns, knock-downs, critical misses** (built, `feat/combat-stun`).
    - Findings: stunned (0x4b4390 → 0x4357b0: `critter_flags` 0x20, anim goal 57 with a count of
      `(20 - CO) / 2`, checked at 0x43581e) can do nothing (0x45d790 tests 0x60); in turn-based

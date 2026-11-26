@@ -134,6 +134,34 @@ fn is_ammo_of(prototype: u32, ammo_type: i32, prototypes: &Prototypes) -> bool {
     prototypes.get(prototype).is_some_and(|p| p.object_type == TYPE_AMMO && prototypes.int(p, "ammo_type") == Some(ammo_type))
 }
 
+/// The weapon an NPC picks for its hands (0x465170, slot 1004): among its carried weapons with
+/// rounds enough (0x465820 against `weapon_ammo_consumption`), the best `chance × damage / 100`
+/// (the weapon skill's chance, 0x4c62e0; damage the sum of each type's mean, 0x465f70); one that
+/// reaches `distance` tiles first (0x465e30 against 0x441ae0). Its location; `None`: bare hands
+/// (0x464c50). Ties go to the later item (builder's call: the original's larger handle).
+pub fn choose_weapon(inventory: &crate::Inventory, prototypes: &Prototypes, fighter: &Fighter, distance: u32) -> Option<i32> {
+    let mut best: Option<(i32, i32)> = None;
+    let mut reaching: Option<(i32, i32)> = None;
+    for item in &inventory.items {
+        let Some(o) = prototypes.get(item.prototype).filter(|o| o.object_type == arcanum_formats::object::TYPE_WEAPON) else { continue };
+        let weapon = weapon_of(o, prototypes);
+        if weapon.uses_ammo() && ammo_count(inventory, weapon.ammo_type, prototypes) < weapon.ammo_per_shot {
+            continue;
+        }
+        let damage: i32 = (0..DAMAGE_TYPES).map(|i| (weapon.damage[i].0 + weapon.damage[i].1) / 2 + weapon.magic_damage[i]).sum();
+        let armed = Fighter { weapon: Some(weapon), ..fighter.clone() };
+        let skill = armed.skill();
+        let score = weapon_chance(skill, armed.level(skill)) * damage / 100;
+        if best.is_none_or(|b| score >= b.0) {
+            best = Some((score, item.location));
+        }
+        if armed.reach() >= distance && reaching.is_none_or(|b| score >= b.0) {
+            reaching = Some((score, item.location));
+        }
+    }
+    reaching.or(best).map(|b| b.1)
+}
+
 /// Takes `rounds` of `ammo_type` from `inventory`'s stacks, an emptied stack gone (0x4658e0).
 pub fn take_ammo(inventory: &mut crate::Inventory, ammo_type: i32, rounds: i32, prototypes: &Prototypes) {
     let mut left = rounds;
@@ -1153,6 +1181,37 @@ impl CombatWorld<'_, '_> {
     }
 
     /// Destroys the attacker's wielded weapon (0x43cca0).
+    /// Wields the weapon NPC `c` picks for a foe `distance` tiles away ([`choose_weapon`]), or
+    /// puts its weapon away for bare hands (0x464c50).
+    fn arm_npc(&mut self, c: &Seen, distance: u32) {
+        let Some(n) = c.npc else { return };
+        let Some(inv) = self.map.npc_inventory(n.sector, n.index) else { return };
+        let fighter = self.fighter(c);
+        let pick = choose_weapon(&inv, &self.map.prototypes, &Fighter { weapon: None, ..fighter }, distance);
+        if pick == Some(WEAPON_SLOT) || (pick.is_none() && inv.items.iter().all(|i| i.location != WEAPON_SLOT)) {
+            return;
+        }
+        let (prototypes, art) = (self.map.prototypes.clone(), self.map.art.clone());
+        let vfs = self.vfs.as_ref().map(|v| v.0.clone());
+        let guard = vfs.as_ref().and_then(|v| v.read().ok());
+        let info = crate::item_info(&prototypes, |id| crate::world::art_size(guard.as_deref(), art.as_deref(), id));
+        let wearer = crate::Wearer { race: 0, gender: 0 };
+        let moved = match pick {
+            Some(from) => inv.move_item(from, WEAPON_SLOT, wearer, &info),
+            None => {
+                let cells = inv.items.iter().find(|i| i.location == WEAPON_SLOT).and_then(|i| info(i.prototype)).map_or((1, 1), |i| i.cells);
+                match crate::Inventory::free_spot(&inv.occupied(&info), cells) {
+                    Some(spot) => inv.move_item(WEAPON_SLOT, spot, wearer, &info),
+                    None => return,
+                }
+            }
+        };
+        if let Ok(moved) = moved {
+            self.map.set_npc_inventory(n.sector, n.index, moved);
+            crate::ground::save_change(&mut self.world, &self.map, n.sector);
+        }
+    }
+
     /// Drops `c`'s wielded weapon on its tile (0x461a90); whether it had one.
     fn drop_weapon(&mut self, c: &Seen) -> bool {
         let take = |inv: &mut crate::Inventory| {
@@ -1698,6 +1757,11 @@ fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[See
         }
         commands.entity(npc.entity).insert(crate::Walking { steps: path.into(), progress: 0.0 });
         return true;
+    }
+    // Its weapon picked again at each turn's start (builder's call: the original re-picks on
+    // 0x4a8570's flags and after a weapon breaks, 0x4b83e0).
+    if fresh {
+        w.arm_npc(npc, reach_between(npc.at, target.at));
     }
     attack_or_approach(commands, w, all, npc, &target)
 }
@@ -2245,6 +2309,37 @@ mod tests {
         assert!(!should_flee(60, 100, one(1), one(3), &rows[1], 0));
         assert!(should_flee(60, 100, one(1), Party { count: 21, levels: 0 }, &rows[1], 0), "a side 20 larger");
         assert_eq!(flee_goal(TileLoc { x: 10, y: 10 }, TileLoc { x: 9, y: 10 }, 8), TileLoc { x: 18, y: 10 });
+    }
+
+    #[test]
+    fn npcs_pick_the_best_weapon_they_can_use_that_reaches() {
+        use arcanum_formats::object::{Array, Object, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, prototype_id};
+        let ints = |v: [i32; 5]| Value::Array(Some(Array { elem_size: 4, id: 1, data: v.iter().flat_map(|x| x.to_le_bytes()).collect(), bitset: vec![0x1f, 0] }));
+        let mut prototypes = Prototypes::default();
+        // 200 a dagger (2-4), 201 a sword (6-10), 202 a bow (8-12, arrows, 3 a shot), 203 arrows.
+        let weapon = |n: u32, lo: i32, hi: i32, ammo: i32, range: i32| {
+            let b = ObjectBuilder::new(arcanum_formats::object::TYPE_WEAPON).field("weapon_damage_lower_idx", ints([lo, 0, 0, 0, 0])).field("weapon_damage_upper_idx", ints([hi, 0, 0, 0, 0])).field("weapon_ammo_type", Value::Int32(ammo)).field("weapon_ammo_consumption", Value::Int32(if ammo == NO_AMMO { 0 } else { 3 })).field("weapon_range", Value::Int32(range));
+            let mut o = Object::parse_instance(&b.build()).unwrap();
+            o.id = prototype_id(n);
+            o
+        };
+        for o in [weapon(200, 2, 4, NO_AMMO, 1), weapon(201, 6, 10, NO_AMMO, 1), weapon(202, 8, 12, 0, 10)] {
+            prototypes.insert(o);
+        }
+        let mut arrows = Object::parse_instance(&ObjectBuilder::new(TYPE_AMMO).field("ammo_type", Value::Int32(0)).build()).unwrap();
+        arrows.id = prototype_id(203);
+        prototypes.insert(arrows);
+        let item = |prototype, location, quantity| crate::CarriedItem { prototype, location, quantity, keys: vec![], written: 0, wear: Default::default() };
+        let skilled = Fighter { levels: vec![(SKILL_MELEE, 10), (SKILL_BOW, 10)], ..Default::default() };
+        let inv = |items| crate::Inventory { items, ..Default::default() };
+        let melee = inv(vec![item(200, WEAPON_SLOT, 1), item(201, 0, 1)]);
+        assert_eq!(choose_weapon(&melee, &prototypes, &skilled, 1), Some(0), "the sword over the dagger");
+        let archer = inv(vec![item(201, WEAPON_SLOT, 1), item(202, 0, 1), item(203, 1, 2)]);
+        assert_eq!(choose_weapon(&archer, &prototypes, &skilled, 5), Some(WEAPON_SLOT), "2 arrows: the bow cannot shoot");
+        let archer = inv(vec![item(201, WEAPON_SLOT, 1), item(202, 0, 1), item(203, 1, 9)]);
+        assert_eq!(choose_weapon(&archer, &prototypes, &skilled, 5), Some(0), "the bow reaches");
+        assert_eq!(choose_weapon(&inv(vec![item(202, WEAPON_SLOT, 1)]), &prototypes, &skilled, 5), None, "no arrows: bare hands");
     }
 
     #[test]
