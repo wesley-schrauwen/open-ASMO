@@ -1068,6 +1068,62 @@ mod tests {
     }
 
     #[test]
+    fn a_follower_remarks_on_its_leaders_critical_hits() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        use crate::follow::Follower;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        std::fs::create_dir_all(dir.path().join("mes")).unwrap();
+        for file in ["gd_npc_m2m", "gd_npc_m2f", "gd_npc_f2m", "gd_npc_f2f"] {
+            std::fs::write(dir.path().join("mes").join(format!("{file}.mes")), "{2400}{Nice hit!}").unwrap();
+        }
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let npc = |x: u32, y: u32, n: u8, hp: i32| {
+            let mut b = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(x, y)).field("hp_pts", Value::Int32(hp)).field("critter_fatigue_pts", Value::Int32(hp));
+            b.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [n; 16] };
+            b.build()
+        };
+        // Hard to kill or tire: the fight goes on.
+        std::fs::write(folder.join("G_0F.mob"), npc(72, 70, 3, 2000)).unwrap();
+        std::fs::write(folder.join("G_10.mob"), npc(72, 71, 4, 2000)).unwrap();
+        let sector = SectorId::new(1, 1);
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        let mut start = save(&[(1, "A", TileLoc { x: 71, y: 70 })]);
+        let sheet = &mut start.players.get_mut(&PlayerId(1)).unwrap().blueprint.sheet;
+        sheet.base = [20; arcanum_rules::PRIMARY_STATS];
+        sheet.skills[crate::combat::SKILL_MELEE] = 5;
+        sim.boot(start);
+        sim.update();
+        sim.update();
+        let index_at = |sim: &SimApp, x: u32, y: u32| sim.app.world().resource::<LoadedMap>().mobiles[&sector].iter().position(|o| o.object_type == TYPE_NPC && crate::object_location(o) == Some(TileLoc { x, y })).unwrap() as u32;
+        let (foe_index, follower_index) = (index_at(&sim, 72, 70), index_at(&sim, 72, 71));
+        sim.app.world_mut().resource_mut::<WorldState>().0.as_mut().unwrap().followers.push(Follower { map: MAP.into(), sector, index: follower_index, leader: PlayerId(1), away: None, wait_until: None, warn: 0 });
+        for _ in 0..3 {
+            sim.update();
+        }
+        let id = |sim: &mut SimApp, i: u32| { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == i).unwrap().0 };
+        let (foe, follower) = (id(&mut sim, foe_index), id(&mut sim, follower_index));
+        let (mut criticals, mut remarks, mut attacks) = (0, 0, 0);
+        for seq in 0..400 {
+            sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: foe, seq })]);
+            sim.update();
+            for (_, d) in sim.take_deltas() {
+                match d {
+                    LedgerDelta::Attacked { target, outcome, .. } if target == foe && outcome.critical && outcome.hit => criticals += 1,
+                    LedgerDelta::Attacked { .. } => attacks += 1,
+                    LedgerDelta::FloatText { speaker, text, .. } if speaker == follower && text == "Nice hit!" => remarks += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert!(remarks > 0 && remarks <= criticals, "{remarks} remarks on {criticals} criticals (the PC's or the follower's own), {attacks} attacks");
+    }
+
+    #[test]
     fn a_follower_refuses_to_fight_its_own_faction() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;

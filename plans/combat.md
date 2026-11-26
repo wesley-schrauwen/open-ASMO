@@ -497,3 +497,9 @@ of `combat_design.md` come after the original's rules work.
      0x10000, floated "HT n" (0x4b5088, `LedgerDelta::Hurt`). 0x433020 is a particle effect
      on the target (not built); the struct's 0x80 flag changes nothing found.
    - Not built: poison kept through resurrection (0x49d272).
+20. **Barks in fights** (`feat/critical-praise` and on).
+   - A PC's critical hit (0x4b374b → 0x4b6b90): a hit (flag 0x2, 0x4b6bee) and critical (0x4,
+     0x4b6c0b) on the target meant, not on its own follower (0x4b6be4): half the time
+     (0x4ae9fb) a follower picked at random (0x4aea3e) that can act (0x45d790) floats a
+     `gd_npc` 2400 line (0x413f50 at 0x4aea84). Not built: the 2500 lines for a hit on another
+     target than meant (flag 0x8, 0x4b6c29; no stray hits here).
