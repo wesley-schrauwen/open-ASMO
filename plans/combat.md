@@ -281,7 +281,10 @@ of `combat_design.md` come after the original's rules work.
    - Alignment warnings by script (`feat/script-alignment-warns`): action 0x89 moving a PC's
      alignment (0x4b0980 stat 0x13 → 0x4b0db8) marks its followers to warn, up good
      (0x2000000), down evil (0x4000000), as dialogue's change already did.
-   - Not built: the PC's reputation with a faction, prowling attackers noticed less.
+   - Prowling attackers (`feat/prowling-attackers`): the others drawn in by an attack notice a
+     prowling PC by its stealth (0x4a9f10 → 0x4af260 / 0x4af470 with the prowl value), as
+     noticing foes does.
+   - Not built: the PC's reputation with a faction.
 7. **Fleeing, surrender, keeping away** (built, `feat/combat-surrender`).
    - `should_flee` is 0x4ab2f0 in full: never from a target below column 3 percent; at or
      below column 0; else when the target's side is column 1 larger, or its levels column 2
@@ -538,3 +541,8 @@ of `combat_design.md` come after the original's rules work.
      change no follower's reaction (with the owner's stray-hit rule); a stray throw draws no
      follower's remark (0x4b6bfc).
    - Not built: objects other than critters stopping a throw, the 2500 remark (flag 0x8).
+   - Findings for thrown items (not built): 0x4b3c00 removes the thrown item only when the
+     thrower is not type 0xf (0x4b3c43); on landing 0x4b2690 reads the projectile's
+     `projectile_flags_combat` (field 0x4d): 0x40 places `projectile_parent_weapon` (0x50) at
+     the projectile's tile, 0x1000 places it once (0x2000 marks it), else it is destroyed. Where
+     a PC's thrown weapon goes is not settled.
