@@ -191,9 +191,21 @@ impl LoadedMap {
         Some(self.critter_contents(npc))
     }
 
-    /// Keeps NPC `index`'s changed inventory (saved with the sector).
+    /// Keeps NPC `index`'s changed inventory (saved with the sector). An item new to it asks
+    /// the NPC to pick what it wears again (0x466640 at 0x46695a: `npc_flags` 0x40).
     pub fn set_npc_inventory(&mut self, sector: SectorId, index: u32, inventory: Inventory) {
+        let mut before: Vec<u32> = self.npc_inventory(sector, index).map(|i| i.items.iter().map(|i| i.prototype).collect()).unwrap_or_default();
+        let gained = inventory.items.iter().any(|i| match before.iter().position(|&p| p == i.prototype) {
+            Some(at) => {
+                before.swap_remove(at);
+                false
+            }
+            None => true,
+        });
         self.changes.entry(sector).or_default().npc_inventories.insert(index, inventory);
+        if gained && let Some(flags) = self.npc_flags(sector, index) {
+            self.set_npc_flags(sector, index, flags | crate::combat::ONF_REPICK_ALL);
+        }
     }
 
     /// Sets pile `id`'s contents, or removes it; a container keeps its changed contents.
