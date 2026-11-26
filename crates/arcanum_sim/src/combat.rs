@@ -963,6 +963,10 @@ pub struct ScriptChecks {
     pub hits: Vec<HeldHit>,
     pub answered: Vec<(HeldHit, bool)>,
     pub hostile: Vec<(NetId, NetId, crate::ScriptObject, PlayerId)>,
+    /// Lock witnesses with a "catching thief" script to ask (witness, PC, its object, player,
+    /// lock opened), and those whose script let them react ([`catch_lock_pickers`]).
+    pub witnesses: Vec<(NetId, NetId, crate::ScriptObject, PlayerId, bool)>,
+    pub witnessed: Vec<(NetId, NetId, PlayerId, bool)>,
 }
 
 /// Script events: an NPC dying (killer the triggerer), starting and stopping a fight.
@@ -993,6 +997,11 @@ pub fn run_combat_events(mut events: ResMut<CombatEvents>, mut checks: ResMut<Sc
     for (npc, pc, object, player) in std::mem::take(&mut checks.hostile) {
         if host.hook(&mut world, &mut map, &mut outbox, object, EVENT_KILL_ON_SIGHT, player) == crate::HookResult::RunDefault {
             starts.0.push((npc, pc));
+        }
+    }
+    for (npc, pc, object, player, opened) in std::mem::take(&mut checks.witnesses) {
+        if host.hook(&mut world, &mut map, &mut outbox, object, crate::pickpocket::EVENT_CATCHING_THIEF, player) == crate::HookResult::RunDefault {
+            checks.witnessed.push((npc, pc, player, opened));
         }
     }
 }
@@ -2010,11 +2019,15 @@ pub const WITNESS_REACTION: i32 = -20;
 
 /// Witnesses of a pick on an owned lock (0x4aee50): NPCs within [`WITNESS_TILES`] of the lock,
 /// standing, at peace, of the owner's `name` number or guards, who see the PC (0x4af260; the
-/// hearing check's reach is 0 for these calls, table 0x5b50c0 index 0). A lock opened: they
-/// fight the PC (0x4a9650 at once, `softFlag` 0). A failed pick: each likes the PC 20 less and
-/// fights when its reaction is then at or under its row's column 10 (builder's call for the
-/// threshold read by 0x4aaa60). Not built: the script hook 11 (0x441980), the bark (0x5f8488),
-/// the PC's followers' picks counting for their leader (0x45dda0).
+/// hearing check's reach is 0 for these calls, table 0x5b50c0 index 0). One with a "catching
+/// thief" script (event 11, 0x4aefcd: triggerer the PC, attachee the witness) is asked first
+/// ([`ScriptChecks::witnesses`], answered the next tick): "skip" leaves it out (0x4aefd5). A
+/// lock opened: they fight the PC (0x4a9650 at once, `softFlag` 0). A failed pick: each likes
+/// the PC 20 less (0x4af017) and fights when its reaction is then at or under its row's column
+/// 10 (0x4af046, dword 10 of the 0x4aaa60 copy), then barks a `gd_npc` 4000 line ("Stop
+/// that!": 0x414130 → 0x418780 lines 4000-4099, shown through 0x5f8488 = 0x568430) when it can
+/// act (0x45d790). Not built: 0x45d870's skip, the PC's followers' picks counting for their
+/// leader (0x45dda0), the dialogue override's lines.
 #[allow(clippy::too_many_arguments)]
 pub fn catch_lock_pickers(
     mut witnessing: ResMut<crate::lockpick::LockWitnessing>,
@@ -2022,20 +2035,16 @@ pub fn catch_lock_pickers(
     mut world: ResMut<crate::WorldState>,
     rules: Res<crate::SimRules>,
     (mut ai, mut reputations, vfs): (ResMut<AiParams>, ResMut<crate::ReputationTable>, Option<Res<crate::SimVfs>>),
-    mut starts: ResMut<CombatStarts>,
+    (mut starts, mut checks): (ResMut<CombatStarts>, ResMut<ScriptChecks>),
+    (mut generic, mut rng, session, mut outbox): (ResMut<crate::GenericLines>, ResMut<HostRng>, Res<crate::Session>, ResMut<crate::Outbox>),
     npcs: Query<FoeQuery, AtPeace>,
     pcs: Query<QuarryQuery>,
 ) {
-    if witnessing.0.is_empty() {
+    if witnessing.0.is_empty() && checks.witnessed.is_empty() {
         return;
     }
-    let guard = vfs.as_ref().and_then(|v| v.0.read().ok());
-    if ai.0.is_none() {
-        let mes = guard.as_deref().and_then(|v| v.read(AI_PARAMS).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).unwrap_or_default();
-        ai.0 = Some(parse_ai_params(&mes));
-    }
-    let reputations = &*reputations.0.get_or_insert_with(|| guard.as_deref().and_then(|v| v.read(crate::GAME_REP).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).map(|m| crate::ReputationEffects::parse(&m)).unwrap_or_default());
-    let rows = ai.0.as_deref().unwrap_or_default();
+    // Who reacts: the scripts' answers from last tick, then this tick's witnesses.
+    let mut reacting: Vec<(NetId, NetId, PlayerId, bool)> = std::mem::take(&mut checks.witnessed);
     for (player, lock, owner, opened) in std::mem::take(&mut witnessing.0) {
         let Some((&pc, pc_at, _, sheet, prowling)) = pcs.iter().find(|p| p.2.0 == player) else { continue };
         let prowler = prowling.then(|| crate::prowl::prowl_value(rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING)));
@@ -2051,22 +2060,51 @@ pub fn catch_lock_pickers(
             if !sees(&*map, at.0, facing_of(facing, look), npc_stat(o, &map.prototypes, 5), pc_at.0, prowler) {
                 continue;
             }
-            if opened {
-                starts.0.push((npc, pc));
-                continue;
-            }
-            let Some(saved) = world.0.as_mut().and_then(|w| w.players.get_mut(&player)) else { continue };
-            let reaction = crate::NpcReaction::of(o, &map.prototypes);
-            let key = crate::met_key(source.object());
-            let stored = saved.script_state.reactions.get(&key).copied().unwrap_or(reaction.base);
-            saved.script_state.reactions.insert(key.clone(), stored + WITNESS_REACTION);
-            let towards = crate::reaction_to(&saved.script_state, &key, &reaction, &rules.0, &sheet.0, reputations);
-            if rows.get(int("npc_ai_data").max(0) as usize).is_some_and(|row| towards <= row[10]) {
-                starts.0.push((npc, pc));
+            if map.attachment(source.object(), crate::pickpocket::EVENT_CATCHING_THIEF).number != 0 {
+                checks.witnesses.push((npc, pc, source.object(), player, opened));
+            } else {
+                reacting.push((npc, pc, player, opened));
             }
         }
     }
+    if reacting.is_empty() {
+        return;
+    }
+    let guard = vfs.as_ref().and_then(|v| v.0.read().ok());
+    if ai.0.is_none() {
+        let mes = guard.as_deref().and_then(|v| v.read(AI_PARAMS).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).unwrap_or_default();
+        ai.0 = Some(parse_ai_params(&mes));
+    }
+    let reputations = &*reputations.0.get_or_insert_with(|| guard.as_deref().and_then(|v| v.read(crate::GAME_REP).ok()).and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok()).map(|m| crate::ReputationEffects::parse(&m)).unwrap_or_default());
+    let rows = ai.0.as_deref().unwrap_or_default();
+    for (npc, pc, player, opened) in reacting {
+        if opened {
+            starts.0.push((npc, pc));
+            continue;
+        }
+        let Some((_, _, source, _, _)) = npcs.iter().find(|n| *n.0 == npc) else { continue };
+        let Some(o) = map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { continue };
+        let Some(sheet) = pcs.iter().find(|p| *p.0 == pc).map(|p| p.3.0.clone()) else { continue };
+        let Some(saved) = world.0.as_mut().and_then(|w| w.players.get_mut(&player)) else { continue };
+        let reaction = crate::NpcReaction::of(o, &map.prototypes);
+        let key = crate::met_key(source.object());
+        let stored = saved.script_state.reactions.get(&key).copied().unwrap_or(reaction.base);
+        saved.script_state.reactions.insert(key.clone(), stored + WITNESS_REACTION);
+        let towards = crate::reaction_to(&saved.script_state, &key, &reaction, &rules.0, &sheet, reputations);
+        if rows.get(map.prototypes.int(o, "npc_ai_data").unwrap_or(0).max(0) as usize).is_some_and(|row| towards <= row[10]) {
+            starts.0.push((npc, pc));
+        }
+        // The bark, fight or not (0x4af06f).
+        let info = crate::npc_details(&map, source.object(), &mut generic, guard.as_deref());
+        let who = crate::Speaker { npc: &info, pc_name: &sheet.name, pc_female: sheet.gender == arcanum_rules::FEMALE, pc_race: sheet.race };
+        if let Some((text, voice)) = crate::npc_line(&mut generic, guard.as_deref(), &mut rng, &who, crate::Block::Npc, WITNESS_BARK) {
+            crate::ground::broadcast(&session, &mut outbox, LedgerDelta::FloatText { speaker: npc, text, colour: crate::FloatColour::White, voice });
+        }
+    }
 }
+
+/// The witness's bark: `gd_npc` lines 4000-4099 (0x4141b3: 0xfa0-0x1003).
+pub const WITNESS_BARK: u32 = 4000;
 
 /// A tile up to `tiles` away from `from`, straight on past `at`.
 fn flee_goal(at: TileLoc, from: TileLoc, tiles: u32) -> TileLoc {

@@ -243,8 +243,11 @@ of `combat_design.md` come after the original's rules work.
      lock, of its `portal_notify_npc` / `container_notify_npc` name or guards
      (`npc_social_class` 5), who see the PC: an opened lock, they fight it (0x4a9650); a failed
      pick, −20 reaction (0x4af00f → 0x4c0de0) and a fight at or under column 10 (builder's
-     call for 0x4aaa60's threshold). Not built: script hook 11 (0x441980), the bark
-     (0x5f8488), the other callers (bashing locks, 0x4b4390).
+     call for 0x4aaa60's threshold; checked in `feat/witness-bark`: dword 10 at 0x4af046).
+     `feat/witness-bark`: a witness with a "catching thief" script (event 11, 0x4aefcd) is
+     asked first, "skip" leaving it out; after a failed pick each barks a `gd_npc` 4000 line
+     ("Stop that!", 0x414130 → 0x418780 lines 4000-4099). Not built: the other callers
+     (bashing locks, 0x4b4390), the dialogue override's lines.
    - Not built: the bark, followers who like the victim staying out, a leader hitting its
      follower, the PC's reputation with a faction, prowling attackers noticed less.
 7. **Fleeing, surrender, keeping away** (built, `feat/combat-surrender`).
@@ -359,9 +362,13 @@ of `combat_design.md` come after the original's rules work.
      call).
    - Findings: a critical miss rolls its effects once (0x4b3770 skips the hit path at
      0x4b3778); resurrection (0x49d100 → 0x4a6010) keeps poison (0x4a609a / 0x4a60ab), as built.
+   - The PC's auto-switch (0x4b83e0, after a shot short of rounds at 0x4b32a9 and a destroyed
+     weapon at 0x4b5770) runs only with the "auto switch" option on (0x4b8330: key at 0x5b4cbc
+     in the settings table 0x739e70, a missing key reads 0; multiplayer: per-player flag 0x400).
+     Not built: the owner's Options decisions leave this setting out, so it stays off, as the
+     original's default.
    - Not built: a message for the PC (the original shows none), the critical miss's ammunition
-     loss (step 14), the skill gate 0x4c5eb0, the PC's auto-switch after its weapon breaks
-     (0x4b83e0, gated by 0x4b8330).
+     loss (step 14), the skill gate 0x4c5eb0.
 14. **Stuns, knock-downs, critical misses** (built, `feat/combat-stun`).
    - Findings: stunned (0x4b4390 → 0x4357b0: `critter_flags` 0x20, anim goal 57 with a count of
      `(20 - CO) / 2`, checked at 0x43581e) can do nothing (0x45d790 tests 0x60); in turn-based
