@@ -237,9 +237,16 @@ of `combat_design.md` come after the original's rules work.
      following and attack the nearest fighting NPC when their target is gone; a fight goes on
      while an NPC that follows no PC fights.
    - Distances are radii (owner's rule), not the original's square.
+   - Finding: 0x4aee50 is not about attacks: it is the witnesses of a pick on an owned lock
+     (callers 0x4c7ee4 / 0x4c7f1d in the skill use 0x4c7160, 0x4550ae, 0x4b4727 / 0x4b474c).
+     Built in `feat/lock-witnesses` (`combat::catch_lock_pickers`): NPCs within 10 tiles of the
+     lock, of its `portal_notify_npc` / `container_notify_npc` name or guards
+     (`npc_social_class` 5), who see the PC: an opened lock, they fight it (0x4a9650); a failed
+     pick, −20 reaction (0x4af00f → 0x4c0de0) and a fight at or under column 10 (builder's
+     call for 0x4aaa60's threshold). Not built: script hook 11 (0x441980), the bark
+     (0x5f8488), the other callers (bashing locks, 0x4b4390).
    - Not built: the bark, followers who like the victim staying out, a leader hitting its
-     follower, the witnesses' −20 (0x4aee50), the PC's reputation with a faction, prowling
-     attackers noticed less.
+     follower, the PC's reputation with a faction, prowling attackers noticed less.
 7. **Fleeing, surrender, keeping away** (built, `feat/combat-surrender`).
    - `should_flee` is 0x4ab2f0 in full: never from a target below column 3 percent; at or
      below column 0; else when the target's side is column 1 larger, or its levels column 2

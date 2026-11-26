@@ -1026,6 +1026,48 @@ mod tests {
     }
 
     #[test]
+    fn owners_who_see_a_pick_fight_or_like_the_pc_less() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        // The owner (name 4242) next to the PC; a stranger also near.
+        for (file, name, x, payload) in [("G_0F.mob", 4242, 72, 3), ("G_10.mob", 7, 70, 4)] {
+            let mut npc = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(x, 70)).field("name", Value::Int32(name));
+            npc.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [payload; 16] };
+            std::fs::write(folder.join(file), npc.build()).unwrap();
+        }
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        let mut start = save(&[(1, "A", TileLoc { x: 71, y: 70 })]);
+        start.players.get_mut(&PlayerId(1)).unwrap().blueprint.sheet.base = [10; arcanum_rules::PRIMARY_STATS];
+        sim.boot(start);
+        sim.update();
+        sim.update();
+        sim.take_deltas();
+        let owner = { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|n| n.1.index == 0 && n.1.sector == SectorId::new(1, 1)).unwrap().0 };
+        // It faces the PC.
+        let facing = crate::rotation_of_step(TileLoc { x: 72, y: 70 }, TileLoc { x: 71, y: 70 }).unwrap();
+        { let world = sim.app.world_mut(); let e = world.query::<(Entity, &NetId)>().iter(world).find(|q| *q.1 == owner).unwrap().0; world.entity_mut(e).insert(crate::Facing(facing)); }
+        let key = crate::met_key(crate::ScriptObject::Mobile { sector: SectorId::new(1, 1), index: 0 });
+        let stored = |sim: &SimApp| sim.app.world().resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(1)].script_state.reactions.get(&key).copied();
+        // A failed pick: the owner likes the PC 20 less (its reaction stays above column 10).
+        sim.app.world_mut().resource_mut::<crate::lockpick::LockWitnessing>().0.push((PlayerId(1), TileLoc { x: 72, y: 71 }, 4242, false));
+        sim.update();
+        let base = { let map = sim.app.world().resource::<LoadedMap>(); crate::NpcReaction::of(&map.mobiles[&SectorId::new(1, 1)][0], &map.prototypes).base };
+        assert_eq!(stored(&sim), Some(base - 20));
+        // An opened lock: the owner fights the PC.
+        sim.app.world_mut().resource_mut::<crate::lockpick::LockWitnessing>().0.push((PlayerId(1), TileLoc { x: 72, y: 71 }, 4242, true));
+        sim.update();
+        sim.update();
+        let order = sim.take_deltas().into_iter().find_map(|(_, d)| match d { LedgerDelta::Combat { order, .. } if !order.is_empty() => Some(order), _ => None });
+        assert!(order.is_some_and(|o| o.contains(&owner)), "the owner fights");
+    }
+
+    #[test]
     fn allies_of_the_victim_join_and_neutrals_flee() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;

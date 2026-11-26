@@ -25,9 +25,11 @@
 //! - **The tool** is the lockpick the player armed the pick with (the inventory's use box), its
 //!   bonus counted while the PC still carries it; none, no bonus.
 //!
+//! - **Witnesses** (0x4aee50, [`crate::combat::catch_lock_pickers`]): a pick on an owned lock
+//!   is seen by the owners and guards near it.
+//!
 //! Not built: the pick animation and its time, the darkness and critter-flag modifiers, the
-//! witnesses (0x4aee50: the owner's faction or guards within 10 tiles who see it turn hostile),
-//! the difficulty setting, followers picking.
+//! difficulty setting, followers picking.
 
 use arcanum_formats::object::{Object, Prototypes, TYPE_CONTAINER, TYPE_GENERIC, TYPE_PORTAL};
 use bevy_ecs::prelude::*;
@@ -178,6 +180,14 @@ impl LoadedMap {
         self.prototypes.int(object, field).unwrap_or(0)
     }
 
+    /// Whose lock it is (0x4aee50): the `name` number of the NPCs who guard it
+    /// (`portal_notify_npc` 0x31 / `container_notify_npc` 0x3e); 0: nobody's.
+    pub fn lock_owner(&self, target: LockTarget) -> i32 {
+        let Some(object) = self.lock_object(target) else { return 0 };
+        let field = if object.object_type == TYPE_PORTAL { "portal_notify_npc" } else { "container_notify_npc" };
+        self.prototypes.int(object, field).unwrap_or(0)
+    }
+
     /// Where a lock target stands.
     pub fn lock_location(&self, target: LockTarget) -> Option<arcanum_formats::map::TileLoc> {
         crate::object_location(self.lock_object(target)?)
@@ -197,6 +207,11 @@ pub fn picked_flags(flags: i32, outcome: PickOutcome, day: bool) -> i32 {
 /// Pick requests taken from the inbox by `handle_intents`: the player, the lock and the move.
 #[derive(Resource, Debug, Default)]
 pub struct PickLockRequests(pub Vec<(PlayerId, LockTarget, Option<i32>, u32)>);
+
+/// Picks of owned locks this tick, for the witnesses ([`crate::combat::catch_lock_pickers`]):
+/// the player, where the lock is, its owner ([`LoadedMap::lock_owner`]) and whether it opened.
+#[derive(Resource, Debug, Default)]
+pub struct LockWitnessing(pub Vec<(PlayerId, arcanum_formats::map::TileLoc, i32, bool)>);
 
 /// A PC's pick waiting for it to walk in range. `seq` is the move it came with.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -221,6 +236,7 @@ pub fn pick_locks(
     rules: Res<SimRules>,
     mut outbox: ResMut<Outbox>,
     pcs: Query<PickerQuery>,
+    mut witnessing: ResMut<LockWitnessing>,
 ) {
     let mut fresh = std::collections::HashMap::new();
     for (player, target, tool, seq) in requests.0.drain(..) {
@@ -257,6 +273,11 @@ pub fn pick_locks(
             };
             crate::ground::save_change(&mut world, &map, sector);
             crate::ground::broadcast(&session, &mut outbox, LedgerDelta::LockChanged { target: want.target, flags: changed });
+        }
+        // Its owners may see it (0x4c7160 → 0x4aee50 at 0x4c7ee4 / 0x4c7f1d).
+        let owner = map.lock_owner(want.target);
+        if owner != 0 {
+            witnessing.0.push((controlled.0, location, owner, outcome == PickOutcome::Success));
         }
         let message = if outcome == PickOutcome::Success { PICK_SUCCEEDED } else { PICK_FAILED };
         outbox.0.push((controlled.0, LedgerDelta::SkillResult { message }));
