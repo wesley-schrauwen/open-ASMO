@@ -1068,6 +1068,53 @@ mod tests {
     }
 
     #[test]
+    fn a_follower_refuses_to_fight_its_own_faction() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        use crate::follow::Follower;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let npc = |x: u32, y: u32, faction: i32, n: u8| {
+            let mut b = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(x, y)).field("npc_faction", Value::Int32(faction));
+            b.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [n; 16] };
+            b.build()
+        };
+        std::fs::write(folder.join("G_0F.mob"), npc(72, 70, 7, 3)).unwrap();
+        std::fs::write(folder.join("G_10.mob"), npc(71, 71, 7, 4)).unwrap();
+        let sector = SectorId::new(1, 1);
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        let (victim_index, follower_index) = {
+            let map = sim.app.world().resource::<LoadedMap>();
+            let index_at = |x: u32, y: u32| map.mobiles[&sector].iter().position(|o| o.object_type == TYPE_NPC && crate::object_location(o) == Some(TileLoc { x, y })).unwrap() as u32;
+            (index_at(72, 70), index_at(71, 71))
+        };
+        sim.app.world_mut().resource_mut::<WorldState>().0.as_mut().unwrap().followers.push(Follower { map: MAP.into(), sector, index: follower_index, leader: PlayerId(1), away: None, wait_until: None, warn: 0 });
+        for _ in 0..3 {
+            sim.update();
+        }
+        let id = |sim: &mut SimApp, i: u32| { let world = sim.app.world_mut(); *world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == i).unwrap().0 };
+        let (victim, follower) = (id(&mut sim, victim_index), id(&mut sim, follower_index));
+        assert!({ let world = sim.app.world_mut(); world.query::<(&NetId, &crate::follow::Following)>().iter(world).any(|f| *f.0 == follower) }, "it follows");
+        let key = crate::met_key(crate::ScriptObject::Mobile { sector, index: follower_index });
+        let before = sim.app.world().resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(1)].script_state.reactions.get(&key).copied();
+        sim.take_deltas();
+        sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: victim, seq: 0 })]);
+        sim.update();
+        let orders: Vec<Vec<NetId>> = sim.take_deltas().into_iter().filter_map(|(_, d)| match d { LedgerDelta::Combat { order, .. } => Some(order), _ => None }).collect();
+        assert!(!orders.last().unwrap().contains(&follower), "the same faction: it stays out (0x4adcc0 code 2)");
+        let after = sim.app.world().resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(1)].script_state.reactions.get(&key).copied();
+        let base = { let map = sim.app.world().resource::<LoadedMap>(); crate::NpcReaction::of(&map.mobiles[&sector][follower_index as usize], &map.prototypes).base };
+        assert_eq!(after, Some(before.unwrap_or(base) - 5), "and likes its leader 5 less");
+    }
+
+    #[test]
     fn allies_of_the_victim_join_and_neutrals_flee() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;
