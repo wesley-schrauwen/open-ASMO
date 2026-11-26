@@ -583,3 +583,9 @@ of `combat_design.md` come after the original's rules work.
      the attacker's chance (0x4c875c-0x4c878b). Armour class (0x43d880): the `AC` field, worn
      armour's `armor_ac_adj` + `armor_magic_ac_adj` (0x465ba0, the magick part unscaled), and
      stat 10 (AC adjustment: DX − 10, as a PC's for NPCs, builder's call), at most 95.
+   - Helpless targets (`feat/helpless-targets`, `Fighter::helpless`; 0x4c8609-0x4c86dc, one
+     amount): 50 easier when down (out of fatigue or hit points, 0x45d800 at 0x4c8654); 30
+     when stunned (0x20, 0x4c8684) or, not fighting yet (0x4b3d50), it neither sees nor hears
+     the attacker (0x4af260 / 0x4af470 at 0x4c86b3 / 0x4c86c9). Builder's call: the blow that
+     starts its fight counts as before it. Not built: knocked down (animation 7, 0x4c867b),
+     `critter_flags` 0x40 / 0x1000 (not kept).

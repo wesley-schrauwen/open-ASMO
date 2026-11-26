@@ -301,6 +301,8 @@ pub struct Fighter {
     /// Its armour class (0x43d880): the `AC` field, its worn armour's and its AC adjustment
     /// (stat 10), at most 95.
     pub armour_class: i32,
+    /// How much easier it is to hit, helpless (0x4c8609-0x4c86dc: 50 or 30).
+    pub helpless: i32,
     /// The skills it is trained in (a weapon's speed + 5, 0x465cf0).
     pub trained: Vec<usize>,
     /// A PC (an NPC's critical hits on it only multiply by 1.5 and never blind it).
@@ -549,7 +551,7 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
     let short = (weapon.min_strength - attacker.strength).max(0);
     // The defender's armour: half its class, in the attacker's chance (0x4c875c-0x4c878b).
     let armour = defender.armour_class.max(0) / 2 * chance / 100;
-    let difficulty = -weapon.to_hit + 5 * short + injury_difficulty(attacker.injuries) + armour;
+    let difficulty = -weapon.to_hit + 5 * short + injury_difficulty(attacker.injuries) + armour - defender.helpless;
     let mut out = AttackOutcome { multiplier: 100, ..Default::default() };
     if rng.range(1, 100) + difficulty > chance {
         out.fumbled = rng.range(1, 100) <= fumble_chance(chance, attacker.weapon.as_ref());
@@ -1250,6 +1252,7 @@ impl CombatWorld<'_, '_> {
                 unarmed: pc_unarmed(gloves),
                 resistances: armour_resistances(&worn, prototypes),
                 armour_class: (rules.derived(sheet).ac_adjustment + worn_armour_class(&worn, prototypes)).clamp(0, MAX_ARMOUR_CLASS),
+                helpless: 0,
                 trained: [SKILL_BOW, SKILL_MELEE, SKILL_THROWING, SKILL_FIREARMS].into_iter().filter(|&k| sheet.training[k] > 0).collect(),
                 pc: c.player.is_some(),
                 constitution: rules.stats(sheet)[2],
@@ -1277,6 +1280,7 @@ impl CombatWorld<'_, '_> {
             resistances: armour_resistances(&worn, prototypes),
             // Stat 10 as a PC's (DX - 10, builder's call for NPCs).
             armour_class: (prototypes.int(o, "AC").unwrap_or(0) + npc_stat(o, prototypes, 1) - 10 + worn_armour_class(&worn, prototypes)).clamp(0, MAX_ARMOUR_CLASS),
+            helpless: 0,
             trained: Vec::new(),
             pc: false,
             constitution: npc_stat(o, prototypes, 2),
@@ -2569,8 +2573,43 @@ pub fn first_on_line(from: TileLoc, to: TileLoc, others: impl Iterator<Item = (N
     None
 }
 
+/// How much easier `victim` is to hit by `attacker` (0x4c8609-0x4c86dc, one amount): 50 when it
+/// is down (out of fatigue or hit points, 0x45d800; `critter_flags` 0x40 / 0x1000 not kept
+/// here); 30 when stunned (0x20) or, not in a fight (0x4b3d50), it neither sees nor hears the
+/// attacker (0x4af260 / 0x4af470: a blow from behind). Not built: knocked down (animation 7,
+/// 0x503e20: not kept on the host).
+fn helpless(w: &CombatWorld, attacker: &Seen, victim: &Seen) -> i32 {
+    let down = match (victim.player, victim.npc) {
+        (Some(_), _) => w.pc_down(victim) || w.pc_out(victim),
+        (None, Some(n)) => w.map.npc_down(n.sector, n.index),
+        _ => false,
+    };
+    if down {
+        return HELPLESS_DOWN;
+    }
+    if victim.stunned.is_some() {
+        return HELPLESS_UNAWARE;
+    }
+    // Not fighting yet: the blow that starts its fight counts (builder's call for when 0x40000
+    // is set).
+    if let (false, Some(n)) = (victim.fighting, victim.npc)
+        && let Some(o) = w.map.mobiles.get(&n.sector).and_then(|m| m.get(n.index as usize))
+    {
+        let prowler = attacker.sheet.as_ref().filter(|_| attacker.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING)));
+        let target = attacker.npc.and_then(|a| w.map.mobiles.get(&a.sector)?.get(a.index as usize));
+        if !notices(&*w.map, can_look(o, &w.map.prototypes, false, target), victim.at, victim.rotation, npc_stat(o, &w.map.prototypes, 5), attacker.at, prowler) {
+            return HELPLESS_UNAWARE;
+        }
+    }
+    0
+}
+
+/// The two helpless amounts (0x4c864a / 0x4c86d9: 0x32, 0x1e).
+pub const HELPLESS_DOWN: i32 = 50;
+pub const HELPLESS_UNAWARE: i32 = 30;
+
 fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen, fighter: &Fighter, aim: Aim) {
-    let defender = w.fighter(victim);
+    let defender = Fighter { helpless: helpless(w, attacker, victim), ..w.fighter(victim) };
     let mut outcome = resolve(fighter, &defender, &mut w.rng);
     if let Some(weapon) = fighter.weapon.as_ref().filter(|w| w.uses_ammo()) {
         w.spend_ammo(attacker, weapon.ammo_type, weapon.ammo_per_shot);
@@ -3234,6 +3273,16 @@ mod tests {
         let plated = hits(&Fighter { armour_class: 90, ..Default::default() }, &mut rng);
         // 95 % against nothing; AC 90: 45 × 95 / 100 = 42 harder, 53 %.
         assert!(bare > 1800 && (950..1180).contains(&plated), "{bare} {plated}");
+    }
+
+    #[test]
+    fn helpless_targets_are_easier_to_hit() {
+        let novice = Fighter { levels: vec![(SKILL_MELEE, 0)], ..Default::default() };
+        let mut rng = HostRng::default();
+        let hits = |d: &Fighter, rng: &mut HostRng| (0..2000).filter(|_| { let o = resolve(&novice, d, rng); o.hit || o.dodged }).count();
+        let (awake, unaware, down) = (hits(&Fighter::default(), &mut rng), hits(&Fighter { helpless: HELPLESS_UNAWARE, ..Default::default() }, &mut rng), hits(&Fighter { helpless: HELPLESS_DOWN, ..Default::default() }, &mut rng));
+        // 25 %, 55 %, 75 %.
+        assert!((400..600).contains(&awake) && (1000..1200).contains(&unaware) && (1400..1600).contains(&down), "{awake} {unaware} {down}");
     }
 
     #[test]
