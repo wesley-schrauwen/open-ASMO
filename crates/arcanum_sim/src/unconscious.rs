@@ -61,12 +61,25 @@ pub fn resurrect_pcs(mut asked: ResMut<Resurrections>, rules: Res<SimRules>, mut
     }
     let Some(save) = world.0.as_mut() else { return };
     for (&player, saved) in save.players.iter_mut().filter(|(_, s)| s.blueprint.sheet.dead) {
-        let sheet = &mut saved.blueprint.sheet;
-        sheet.dead = false;
-        let max = rules.0.derived(sheet).hit_points;
-        sheet.hp_damage = (max - resurrected_hp(max)).max(0);
+        resurrect(&rules.0, &mut saved.blueprint.sheet);
         sheets.0.insert(player);
     }
+}
+
+/// Effects of these causes and later go on resurrection (0x4a6010: 0x4ea2e0 for causes 3-9 at
+/// 0x4a60b5-0x4a60cd); 0-2 stay.
+pub const RESURRECTION_CLEARS_FROM: u32 = 3;
+
+/// Raises a dead PC's sheet: its effects of [`RESURRECTION_CLEARS_FROM`] and later gone (the
+/// owner's call: cleared on resurrection, as the original's 0x4a6010) and its poison too (the
+/// owner's call: the original keeps it, 0x4a609a), then up with [`resurrected_hp`] of its hit
+/// points.
+pub fn resurrect(rules: &arcanum_rules::RulesData, sheet: &mut arcanum_rules::CharacterSheet) {
+    sheet.remove_effects_from(RESURRECTION_CLEARS_FROM);
+    sheet.poison = 0;
+    sheet.dead = false;
+    let max = rules.derived(sheet).hit_points;
+    sheet.hp_damage = (max - resurrected_hp(max)).max(0);
 }
 
 type ConsciousQuery<'a> = (Entity, &'a PlayerControlled, &'a Sheet, &'a crate::Position, Has<Unconscious>, Has<crate::Walking>);

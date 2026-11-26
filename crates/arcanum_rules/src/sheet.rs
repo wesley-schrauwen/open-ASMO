@@ -144,6 +144,11 @@ impl CharacterSheet {
         self.effects.push(HeldEffect { id, cause });
     }
 
+    /// Drops every effect held for a cause from `first` on (0x4ea2e0, by cause).
+    pub fn remove_effects_from(&mut self, first: u32) {
+        self.effects.retain(|e| e.cause < first);
+    }
+
     /// Drops the oldest hold of effect `id` (0x4ea100); its cause does not matter.
     pub fn remove_effect(&mut self, id: u32) -> bool {
         let Some(i) = self.effects.iter().position(|e| e.id == id) else { return false };
