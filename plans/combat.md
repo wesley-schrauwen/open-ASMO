@@ -273,8 +273,13 @@ of `combat_design.md` come after the original's rules work.
    - Keeping away: at the start of its turn, one turn in 20 (builder's call: the original rolls
      each AI tick), a fighter nearer than its column 15 distance walks back to it.
    - Attackers out of reach walk towards the target until in reach (ranged ones too).
-   - Not built: the surrender bark and action 0x19, ammunition (not found in the attack), weapon
-     switching, the one-shot items of 0x4ac910.
+   - The bark (`feat/surrender-bark`): fleeing or giving up (0x4aabe0 states 2 / 3, gated at
+     0x4aad01-0x4aad2a) the NPC floats a `gd_npc` 3000-3099 line (0x413ea0 → 0x418780 with
+     0xbb8 / 0xc1b; shown by the callback 0x5f8488 at 0x4aad65), for the PC it ran from.
+   - Finding: script action 0x19 (table 0x44adbc, handler 0x44783a → 0x4c42f0) is not
+     surrender: it adds a critter to an NPC's list field 0x104 with the time in 0x105.
+   - Not built: the surrendered NPC's bark each AI turn (0x4aa705 / 0x4aa759), action 0x19,
+     ammunition (not found in the attack; built in step 13), the one-shot items of 0x4ac910.
 8. **Critical hits** (built, `feat/combat-criticals`).
    - The critical chance is a twentieth of the skill chance plus `weapon_magic_crit_hit_chance`
      (unscaled: 0x461590 not read); the multiplier by the weapon's critical effect in three rolls;

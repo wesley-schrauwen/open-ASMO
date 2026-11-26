@@ -1535,6 +1535,12 @@ impl CombatWorld<'_, '_> {
             3 => 5100,
             _ => 4800,
         };
+        self.bark(source, net_id, leader, base);
+    }
+
+    /// NPC `source` (entity `net_id`) floats a `gd_npc` line of block `base` to `leader`'s PC,
+    /// as the callback 0x5f8488 (0x568430) shows it.
+    fn bark(&mut self, source: crate::NpcSource, net_id: NetId, leader: PlayerId, base: u32) {
         let Some(sheet) = self.world.0.as_ref().and_then(|w| w.players.get(&leader)).map(|s| s.blueprint.sheet.clone()) else { return };
         let vfs = self.vfs.as_ref().map(|v| v.0.clone());
         let guard = vfs.as_ref().and_then(|v| v.read().ok());
@@ -1886,6 +1892,11 @@ fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[See
         if flees {
             let from = from_critter.map_or(npc.at, |c| c.at);
             commands.entity(npc.entity).remove::<Fighting>();
+            // Fleeing or giving up, it barks (0x4aabe0 states 2 / 3 → 0x413ea0 at 0x4aad4b,
+            // `gd_npc` 3000-3099), its words for the PC it ran from.
+            if let Some(player) = from_critter.and_then(|c| c.player) {
+                w.bark(source, npc.net_id, player, FLEE_BARK);
+            }
             if let Some(player) = from_critter.and_then(|c| c.player) {
                 w.events.0.push((source.object(), EVENT_EXIT_COMBAT, player, crate::ScriptObject::Pc(player)));
             }
@@ -2188,6 +2199,9 @@ pub fn catch_lock_pickers(
         }
     }
 }
+
+/// The flee and surrender bark: `gd_npc` lines 3000-3099 (0x413f13 / 0x413f1c: 0xbb8-0xc1b).
+pub const FLEE_BARK: u32 = 3000;
 
 /// The witness's bark: `gd_npc` lines 4000-4099 (0x4141b3: 0xfa0-0x1003).
 pub const WITNESS_BARK: u32 = 4000;
