@@ -220,3 +220,8 @@ lights after the walk.
 
 - [ ] Walking towards a trap object with Spot Trap, the PC sometimes stops a tile short with
       "You have spotted a trap!".
+
+## Lock witnesses
+
+- [ ] A failed pick on an owned lock in sight of its owner: the owner floats "Stop that!" (or
+  another gd_npc 4000 line); picked open, the owner attacks.
