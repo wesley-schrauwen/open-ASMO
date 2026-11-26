@@ -412,8 +412,12 @@ of `combat_design.md` come after the original's rules work.
    - Built: critters face their last step (`Facing`; before one, their art's rotation); NPCs
      notice foes (and allies notice in fights) by seeing (`combat::sees`: reach, cone, no tile
      on the line that blocks walking: builder's call for what blocks sight) or hearing.
-   - Not built: light, invisibility, the stealth difficulty terms, the hearing path cost, the
-     watcher's state.
+   - Watcher state and invisibility (`feat/sight-state`, `combat::can_look`): a watcher with
+     `critter_flags` 0x10a0 (stunned 0x20, blinded 0x80; checked at 0x4af287) or stunned sees
+     nothing; a target with `flags` 0x200 or `spell_flags` 0x1 (0x4af2d6 / 0x4af2e7) is seen
+     only with Perception 20 (0x4b0ee0: stat 5 at least 20) or `spell_flags` 0x200 (0x4af307).
+     Hearing is unchanged. PCs are never invisible here (builder's call: nothing sets it yet).
+   - Not built: light, the stealth difficulty terms, the hearing path cost.
 16. **Planning and the cursor** (built, `feat/combat-cursor`; client `combat_ui`, `cursor`).
    - On the PC's turn the tile or NPC under the cursor gives the planned cost (2 a step; an NPC:
      the steps into reach and the attack's cost): the AP bar lights green for what stays, orange
