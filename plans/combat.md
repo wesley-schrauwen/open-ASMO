@@ -570,3 +570,16 @@ of `combat_design.md` come after the original's rules work.
      `projectile_flags_combat` (field 0x4d): 0x40 places `projectile_parent_weapon` (0x50) at
      the projectile's tile, 0x1000 places it once (0x2000 marks it), else it is destroyed. Where
      a PC's thrown weapon goes is not settled.
+22. **To-hit difficulty** (0x4c8430, read in full; the roll `1-100 + difficulty <= chance` at
+    0x4c7259-0x4c7261).
+   - Terms for weapon skills: the weapon's to-hit bonus and 5 a Strength point short (built);
+     the target helpless −50 (dead or down, `critter_flags` 0x40 / 0x1000) or −30 (stunned
+     0x20, or it sees and hears no attacker: 0x4af260 / 0x4af470); a called-shot table
+     (0x5b5798, not built); armour; ranged only: past the weapon's range a sure miss, 5 a tile
+     past half the attacker's Perception (not for a Master of the skill), the missile line's
+     cost (0x4ade00) or a sure miss with a blocker; light `(255 − L) × 30 / 255` (melee
+     Experts and better spared); injuries (built).
+   - Armour (`feat/armour-class`, `Fighter::armour_class`): half the target's armour class in
+     the attacker's chance (0x4c875c-0x4c878b). Armour class (0x43d880): the `AC` field, worn
+     armour's `armor_ac_adj` + `armor_magic_ac_adj` (0x465ba0, the magick part unscaled), and
+     stat 10 (AC adjustment: DX − 10, as a PC's for NPCs, builder's call), at most 95.

@@ -298,6 +298,9 @@ pub struct Fighter {
     pub unarmed: [(i32, i32); DAMAGE_TYPES],
     /// Resistances in percent: damage, fire, electrical, poison, magick.
     pub resistances: [i32; 5],
+    /// Its armour class (0x43d880): the `AC` field, its worn armour's and its AC adjustment
+    /// (stat 10), at most 95.
+    pub armour_class: i32,
     /// The skills it is trained in (a weapon's speed + 5, 0x465cf0).
     pub trained: Vec<usize>,
     /// A PC (an NPC's critical hits on it only multiply by 1.5 and never blind it).
@@ -544,7 +547,9 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
     let chance = weapon_chance(skill, attacker.level(skill));
     let weapon = attacker.weapon.clone().unwrap_or_default();
     let short = (weapon.min_strength - attacker.strength).max(0);
-    let difficulty = -weapon.to_hit + 5 * short + injury_difficulty(attacker.injuries);
+    // The defender's armour: half its class, in the attacker's chance (0x4c875c-0x4c878b).
+    let armour = defender.armour_class.max(0) / 2 * chance / 100;
+    let difficulty = -weapon.to_hit + 5 * short + injury_difficulty(attacker.injuries) + armour;
     let mut out = AttackOutcome { multiplier: 100, ..Default::default() };
     if rng.range(1, 100) + difficulty > chance {
         out.fumbled = rng.range(1, 100) <= fumble_chance(chance, attacker.weapon.as_ref());
@@ -831,6 +836,15 @@ pub fn armour_resistances(worn: &[&Object], prototypes: &Prototypes) -> [i32; 5]
     }
     out.map(|r| r.min(MAX_CHANCE))
 }
+
+/// The armour class worn items give (0x465ba0 over slots 1000-1008: `armor_ac_adj` field 0x98
+/// and its magick part 0x99, unscaled: 0x461590 not read).
+pub fn worn_armour_class(worn: &[&Object], prototypes: &Prototypes) -> i32 {
+    worn.iter().map(|o| prototypes.int(o, "armor_ac_adj").unwrap_or(0) + prototypes.int(o, "armor_magic_ac_adj").unwrap_or(0)).sum()
+}
+
+/// The highest armour class (0x43d923: 0x5f).
+pub const MAX_ARMOUR_CLASS: i32 = 95;
 
 /// The resistances of the armour worn in `inv` (as [`armour_resistances`]).
 pub fn worn_resistances(inv: &crate::Inventory, prototypes: &Prototypes) -> [i32; 5] {
@@ -1235,6 +1249,7 @@ impl CombatWorld<'_, '_> {
                 weapon: item(inv, WEAPON_SLOT).filter(|w| w.object_type == arcanum_formats::object::TYPE_WEAPON).map(|w| weapon_of(w, prototypes)),
                 unarmed: pc_unarmed(gloves),
                 resistances: armour_resistances(&worn, prototypes),
+                armour_class: (rules.derived(sheet).ac_adjustment + worn_armour_class(&worn, prototypes)).clamp(0, MAX_ARMOUR_CLASS),
                 trained: [SKILL_BOW, SKILL_MELEE, SKILL_THROWING, SKILL_FIREARMS].into_iter().filter(|&k| sheet.training[k] > 0).collect(),
                 pc: c.player.is_some(),
                 constitution: rules.stats(sheet)[2],
@@ -1260,6 +1275,8 @@ impl CombatWorld<'_, '_> {
             weapon: item(&inv, WEAPON_SLOT).filter(|w| w.object_type == arcanum_formats::object::TYPE_WEAPON).map(|w| weapon_of(w, prototypes)),
             unarmed: npc_unarmed(o, prototypes),
             resistances: armour_resistances(&worn, prototypes),
+            // Stat 10 as a PC's (DX - 10, builder's call for NPCs).
+            armour_class: (prototypes.int(o, "AC").unwrap_or(0) + npc_stat(o, prototypes, 1) - 10 + worn_armour_class(&worn, prototypes)).clamp(0, MAX_ARMOUR_CLASS),
             trained: Vec::new(),
             pc: false,
             constitution: npc_stat(o, prototypes, 2),
@@ -3206,6 +3223,17 @@ mod tests {
         let mut d = hit();
         shield_damage(&mut d, 0, true);
         assert_eq!(d, [0; DAMAGE_TYPES]);
+    }
+
+    #[test]
+    fn armour_class_makes_hits_harder() {
+        let master = Fighter { levels: vec![(SKILL_MELEE, 20)], ..Default::default() };
+        let mut rng = HostRng::default();
+        let hits = |d: &Fighter, rng: &mut HostRng| (0..2000).filter(|_| { let o = resolve(&master, d, rng); o.hit || o.dodged }).count();
+        let bare = hits(&Fighter::default(), &mut rng);
+        let plated = hits(&Fighter { armour_class: 90, ..Default::default() }, &mut rng);
+        // 95 % against nothing; AC 90: 45 × 95 / 100 = 42 harder, 53 %.
+        assert!(bare > 1800 && (950..1180).contains(&plated), "{bare} {plated}");
     }
 
     #[test]
