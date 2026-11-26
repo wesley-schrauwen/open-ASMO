@@ -105,9 +105,9 @@ pub fn attack_floats(attacker: NetId, target: NetId, outcome: &arcanum_sim::comb
             out.push((target, mes(line), colour));
             out.extend(effect_floats(outcome.effects, outcome.injured, mes).into_iter().map(|t| (target, t, colour)));
             // Items (0x4b4390): "Armor damaged" (7), "Weapon damaged" (8), "Weapon broken" (23),
-            // "Armor broken" (24).
-            use arcanum_sim::combat::{ARMOUR_BROKEN, ARMOUR_DAMAGED, WEAPON_BROKEN, WEAPON_DAMAGED};
-            for (bit, line) in [(ARMOUR_DAMAGED, 7), (WEAPON_DAMAGED, 8), (ARMOUR_BROKEN, 24), (WEAPON_BROKEN, 23)] {
+            // "Armor broken" (24), "Weapon dropped" (19).
+            use arcanum_sim::combat::{ARMOUR_BROKEN, ARMOUR_DAMAGED, WEAPON_BROKEN, WEAPON_DAMAGED, WEAPON_DROPPED};
+            for (bit, line) in [(ARMOUR_DAMAGED, 7), (WEAPON_DAMAGED, 8), (ARMOUR_BROKEN, 24), (WEAPON_BROKEN, 23), (WEAPON_DROPPED, 19)] {
                 if outcome.items & bit != 0 {
                     out.push((target, mes(line), colour));
                 }

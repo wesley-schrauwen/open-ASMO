@@ -208,6 +208,8 @@ lights after the walk.
   stays on the last frame.
 - [ ] A knocked-out NPC falls and lies; when its fatigue is back it plays the get-up and stands.
 - [ ] A poisoned PC or NPC floats "HT 1" (red over PCs) every 15 s of game time.
+- [ ] A critical hit that knocks an NPC's weapon away floats "Weapon dropped" and the weapon lies
+  on the NPC's tile; the NPC fights on bare-handed.
 
 ## Repair
 
