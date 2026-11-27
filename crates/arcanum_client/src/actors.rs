@@ -555,6 +555,11 @@ fn apply_actor_deltas(
             LedgerDelta::GotUp { net_id } => {
                 if let Some(Ok((_, mut a))) = by_id.get(&net_id).map(|&e| actors.get_mut(e)) {
                     a.knocked = false;
+                    // Spawned lying (it joined while the critter lay): stand its art and get up.
+                    if (a.art.0 >> 6) & 0x1f == ANIM_KNOCKED_DOWN {
+                        a.art = arcanum_sim::with_anim(a.art, arcanum_formats::art_id::ANIM_STAND);
+                        a.action = Some((ANIM_GET_UP, 0.0));
+                    }
                 }
             }
             LedgerDelta::Speed { net_id, speed } => {

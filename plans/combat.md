@@ -663,7 +663,9 @@ of `combat_design.md` come after the original's rules work.
      per-critter tick may come sooner); meanwhile 30 easier to hit (0x4c867b), not knocked down
      again (0x435a90's animation test) nor stunned (0x4b5f40); a critical miss knocks the
      attacker down the same way. Clients hold the lie (`Actor::knocked`, posture `Down`) until
-     `LedgerDelta::GotUp` (`feat/hold-the-lie`), then play the get-up.
+     `LedgerDelta::GotUp` (`feat/hold-the-lie`), then play the get-up. While it lies its host
+     art is animation 7 (`feat/lying-on-join`), so a player joining meanwhile spawns it lying,
+     and `GotUp` stands it and plays the get-up.
    - Range and cover (`feat/range-and-cover`, `combat::missile_difficulty`,
      `blocking::missile_cost`): a ranged shot is 5 harder a tile past half the shooter's
      Perception (0x4c888e-0x4c88c1; a Master of the skill spared, 0x4c8883; NPCs never Masters
