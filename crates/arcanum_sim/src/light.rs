@@ -287,7 +287,8 @@ pub const BORNE_TICKS: u64 = 5;
 
 /// Lights the ground round every critter bearing a light (0x467e80 → 0x45fa70 → 0x43ebd0: the
 /// critter's own light, art [`BORNE_LIGHT_ART`], coloured by size): PCs by what they wear, NPCs
-/// by their flags or worn items. Every [`BORNE_TICKS`], at their tiles.
+/// by their flags or worn items; and NPCs' own lights (fields 0x0d-0x12, moved with them by
+/// 0x43e9d9 → 0x4dd020). Every [`BORNE_TICKS`], at their tiles.
 pub fn update_borne_lights(tick: Res<crate::SimTick>, mut map: ResMut<crate::LoadedMap>, vfs: Option<Res<crate::SimVfs>>, pcs: Query<(&crate::Position, &crate::Inventory), With<crate::PlayerControlled>>, npcs: Query<(&crate::Position, &crate::NpcSource)>) {
     if !tick.0.is_multiple_of(BORNE_TICKS) {
         return;
@@ -302,15 +303,22 @@ pub fn update_borne_lights(tick: Res<crate::SimTick>, mut map: ResMut<crate::Loa
     for (at, inventory) in &pcs {
         add(at.0, inventory.borne_light(&prototypes));
     }
+    let mut own = Vec::new();
     for (at, source) in &npcs {
         let Some(o) = map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { continue };
         let worn = map.npc_inventory(source.sector, source.index).map_or(0, |i| i.borne_light(&prototypes));
         add(at.0, (prototypes.int(o, "critter_flags").unwrap_or(0) | worn) & OCF_LIGHTS);
+        // Its own lights (fields 0x0d-0x12) where it stands now (0x43e9d9 → 0x4dd020 moves them).
+        own.extend(object_lights(o, &prototypes).into_iter().map(|l| arcanum_formats::sector::Light { x: at.0.x as i32, y: at.0.y as i32, ..l }));
     }
-    if !lights.is_empty() && !map.light_frames.contains_key(&BORNE_LIGHT_ART) {
+    lights.extend(own);
+    let missing: Vec<u32> = lights.iter().map(|l| l.art_id.0).filter(|a| !map.light_frames.contains_key(a)).collect();
+    if !missing.is_empty() {
         let guard = vfs.as_ref().and_then(|v| v.0.read().ok());
-        let frame = guard.as_deref().and_then(|vfs| map.art.as_ref().and_then(|a| a.path(arcanum_formats::art_id::ArtId(BORNE_LIGHT_ART))).and_then(|p| vfs.read(&p).ok())).and_then(|d| arcanum_formats::art::ArtFile::parse(&d).ok()).and_then(|art| art.decode_frame(0, 0, art.default_palette().ok()?).ok());
-        map.light_frames.insert(BORNE_LIGHT_ART, frame.map(std::sync::Arc::new));
+        for art_id in missing {
+            let frame = guard.as_deref().and_then(|vfs| map.art.as_ref().and_then(|a| a.path(arcanum_formats::art_id::ArtId(art_id))).and_then(|p| vfs.read(&p).ok())).and_then(|d| arcanum_formats::art::ArtFile::parse(&d).ok()).and_then(|art| art.decode_frame(0, 0, art.default_palette().ok()?).ok());
+            map.light_frames.insert(art_id, frame.map(std::sync::Arc::new));
+        }
     }
     if map.borne_lights != lights {
         map.borne_lights = lights;

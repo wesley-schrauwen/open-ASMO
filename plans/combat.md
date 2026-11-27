@@ -694,8 +694,9 @@ of `combat_design.md` come after the original's rules work.
      `light_aid` (field 0x0e, −1 none) with `light_flags` (0x0d) and `light_color` (0x0f,
      `0xRRGGBB`, 0x4d84b0), and its four overlay lights (0x10-0x12), each at its tile and pixel
      offset (fields 2-4), lit as sector lights (`LoadedMap::object_lights`, rebuilt with the
-     blocking). Builder's calls: NPCs' lights stay where their objects were placed; destroyed or
-     off objects carry none. Also: unloading a sector now forgets its missile, sound and light
+     blocking). Builder's call: destroyed or off objects carry none. NPCs' own lights follow them
+     (`feat/npc-lights-follow`: 0x43e9d9 → 0x4dd020 moves an object's lights with it), every 5
+     ticks with the borne lights. Also: unloading a sector now forgets its missile, sound and light
      data too.
    - The bearer's light (`feat/borne-light`, `light::update_borne_lights`): after each wield
      0x467e80 gives the critter its own light (0x45fa70 → 0x43ebd0): art 0x504690(1) =
