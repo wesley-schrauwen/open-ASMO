@@ -542,8 +542,12 @@ of `combat_design.md` come after the original's rules work.
    - A PC's critical hit (0x4b374b → 0x4b6b90): a hit (flag 0x2, 0x4b6bee) and critical (0x4,
      0x4b6c0b) on the target meant, not on its own follower (0x4b6be4): half the time
      (0x4ae9fb) a follower picked at random (0x4aea3e) that can act (0x45d790) floats a
-     `gd_npc` 2400 line (0x413f50 at 0x4aea84). Not built: the 2500 lines for a hit on another
-     target than meant (flag 0x8, 0x4b6c29; no stray hits here).
+     `gd_npc` 2400 line (0x413f50 at 0x4aea84).
+   - Stray remarks (`feat/stray-remark`, `combat::stray_remark`): a PC's hit (flag 0x2) on
+     another than the critter meant (flag 0x8, 0x4b6c29), the one meant not its own follower
+     (0x4b6be4), draws the same pick with mode 1: `gd_npc` 2500-2599 (0x413fce). Both remarks
+     leave out followers joined by force (`npc_flags` 0x400: 0x45e3f0 counts them out at
+     0x45e43b). Not built: the global gate 0x62ac6c (0x4ae9e0), 0x4ad800's veto in 0x413f50.
    - A PC's follower brought under 20 % of its hit points (0x4b50bb-0x4b50f1, before at least
      20 at 0x4b50d3, after under at 0x4b50e4) calls to its leader: `gd_npc` 5500 (0x4aeab0 →
      0x414490), once as it crosses, dying or not (`feat/follower-cry`).

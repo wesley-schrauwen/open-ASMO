@@ -210,6 +210,8 @@ lights after the walk.
 - [ ] A poisoned PC or NPC floats "HT 1" (red over PCs) every 15 s of game time.
 - [ ] An NPC that flees or gives up floats a gd_npc 3000 line; a follower refusing its leader's
   fight floats its reason (4800-5199).
+- [ ] A PC's arrow or throw that hits a critter in the way: half the time one of its followers
+  floats a gd_npc 2500 line.
 - [ ] A critical hit that knocks an NPC's weapon away floats "Weapon dropped" and the weapon lies
   on the NPC's tile; the NPC fights on bare-handed.
 

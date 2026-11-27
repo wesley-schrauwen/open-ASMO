@@ -1885,7 +1885,8 @@ fn attack_or_approach(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen]
         let way = if missile { in_the_way(w, all, attacker, victim) } else { InTheWay::Clear };
         let lands = match way {
             InTheWay::Critter(other) => {
-                strike(commands, w, all, attacker, &other, &fighter, Aim::Stray);
+                let outcome = strike(commands, w, all, attacker, &other, &fighter, Aim::Stray);
+                stray_remark(w, all, attacker, victim, &outcome);
                 other.at
             }
             // Stopped by a wall or object: it strikes that, and nobody (0x4b34a6: an object is
@@ -1895,7 +1896,7 @@ fn attack_or_approach(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen]
                 at
             }
             InTheWay::Clear => {
-                strike(commands, w, all, attacker, victim, &fighter, if thrown { Aim::Thrown } else { Aim::Meant });
+                let _ = strike(commands, w, all, attacker, victim, &fighter, if thrown { Aim::Thrown } else { Aim::Meant });
                 victim.at
             }
         };
@@ -2329,10 +2330,34 @@ pub fn catch_lock_pickers(
 /// meant (flag 0x8, 0x4b6c29: no stray hits here).
 fn praise_critical(w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen, outcome: &AttackOutcome) {
     let Some(player) = attacker.player else { return };
-    if !outcome.hit || !outcome.critical || victim.leader == Some(player) || w.rng.range(1, 2) == 1 {
+    if outcome.hit && outcome.critical && victim.leader != Some(player) {
+        follower_remark(w, all, player, CRITICAL_BARK);
+    }
+}
+
+/// A PC's blow that hit another than its target (0x4b6b90's flag 0x8 at 0x4b6c29: a hit, flag 0x2,
+/// on a critter other than the one meant, not one of its own followers, 0x4b6be4): one of its
+/// followers remarks on it (0x4ae9e0 with mode 1, `gd_npc` 2500-2599 at 0x413fce).
+fn stray_remark(w: &mut CombatWorld, all: &[Seen], attacker: &Seen, meant: &Seen, outcome: &AttackOutcome) {
+    if let Some(player) = attacker.player.filter(|&p| stray_remarked(outcome.hit, meant.leader, p)) {
+        follower_remark(w, all, player, STRAY_BARK);
+    }
+}
+
+/// Whether PC `player`'s stray blow draws a remark: it hit, and the critter meant is not its
+/// own follower (0x4b6be4).
+pub fn stray_remarked(hit: bool, meant_leader: Option<PlayerId>, player: PlayerId) -> bool {
+    hit && meant_leader != Some(player)
+}
+
+/// Half the time (0x4ae9fb) one of `player`'s followers picked at random (0x4aea3e), not joined
+/// by force ([`crate::follow::FORCED`]: 0x45e3f0 counts them out at 0x45e43b), that can act (0x45d790) floats a `gd_npc` line of
+/// block `base` (0x413f50 → 0x4aea97).
+fn follower_remark(w: &mut CombatWorld, all: &[Seen], player: PlayerId, base: u32) {
+    if w.rng.range(1, 2) == 1 {
         return;
     }
-    let followers: Vec<&Seen> = all.iter().filter(|c| c.leader == Some(player) && c.npc.is_some()).collect();
+    let followers: Vec<&Seen> = all.iter().filter(|c| c.leader == Some(player) && c.npc.is_some_and(|n| w.npc_int(n, "npc_flags") & crate::follow::FORCED == 0)).collect();
     if followers.is_empty() {
         return;
     }
@@ -2341,7 +2366,7 @@ fn praise_critical(w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &
     if pick.stunned.is_some() || w.map.npc_down(source.sector, source.index) || w.map.is_dead(source.sector, source.index) {
         return;
     }
-    w.bark(source, pick.net_id, player, CRITICAL_BARK);
+    w.bark(source, pick.net_id, player, base);
 }
 
 /// Why follower `npc` would leave leader `pc` (0x4ad950 with `p5` 1): 0 it stays; 3 its
@@ -2431,6 +2456,9 @@ pub const CRITICAL_BARK: u32 = 2400;
 pub const LOW_HEALTH_PERCENT: i32 = 20;
 /// Its words: `gd_npc` 5500-5599 (0x414490 at 0x4aeae4).
 pub const LOW_HEALTH_BARK: u32 = 5500;
+
+/// The remark on a PC's hit on another than meant: `gd_npc` lines 2500-2599 (0x413fce: 0x9c4-0xa27).
+pub const STRAY_BARK: u32 = 2500;
 
 /// The flee and surrender bark: `gd_npc` lines 3000-3099 (0x413f13 / 0x413f1c: 0xbb8-0xc1b).
 pub const FLEE_BARK: u32 = 3000;
@@ -2692,7 +2720,7 @@ pub const PC_FLAGS: i32 = 0x4030;
 pub const HELPLESS_DOWN: i32 = 50;
 pub const HELPLESS_UNAWARE: i32 = 30;
 
-fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen, fighter: &Fighter, aim: Aim) {
+fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen, fighter: &Fighter, aim: Aim) -> AttackOutcome {
     let defender = Fighter { helpless: helpless(w, attacker, victim), ..w.fighter(victim) };
     let ranged = fighter.weapon.as_ref().is_some_and(|wp| wp.range > 1);
     let situation = if ranged { w.shot_difficulty(all, attacker, victim, fighter.skill()) } else { 0 };
@@ -2739,9 +2767,9 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
         if outcome.hit {
             w.hurt_pc(player, &outcome);
         }
-        return;
+        return outcome;
     }
-    let Some(source) = victim.npc else { return };
+    let Some(source) = victim.npc else { return outcome };
     // One who gave up fights again only when whom it gave up to attacks it (0x4aa620 case 3).
     match victim.surrendered {
         Some(to) if to != attacker.net_id => {}
@@ -2753,15 +2781,16 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
         }
     }
     if !outcome.hit || (outcome.hp <= 0 && outcome.fatigue <= 0 && outcome.effects & KNOCKED_OUT == 0) {
-        return;
+        return outcome;
     }
     // Its taking-damage script is asked first: the damage waits for the answer.
     if w.map.attachment(source.object(), EVENT_TAKING_DAMAGE).number != 0 {
         let hit = HeldHit { attacker_object: object_of(attacker), attacker_player: attacker.player, player: attacker.player.or(attacker.leader).or(victim.leader), victim: victim.net_id, victim_object: source.object(), outcome };
         w.checks.hits.push(hit);
-        return;
+        return outcome;
     }
     damage_npc(commands, w, attacker.player, victim, &outcome);
+    outcome
 }
 
 /// A hit's and a critical miss's effects: stuns, the attacker's weapon destroyed or ammunition
@@ -3188,6 +3217,15 @@ mod tests {
         assert_eq!(leader_hit_reaction(-20, 10, Aim::Meant), Some(-20));
         assert_eq!(leader_hit_reaction(-20, 10, Aim::Stray), None, "a stray hit: no loss, no warning");
         assert_eq!(leader_hit_reaction(-20, 20, Aim::Meant), None, "charisma 20");
+    }
+
+    #[test]
+    fn a_stray_hit_draws_a_remark_unless_the_meant_was_a_follower() {
+        let pc = PlayerId(1);
+        assert!(stray_remarked(true, None, pc), "a hit on another than the foe meant");
+        assert!(!stray_remarked(false, None, pc), "a miss");
+        assert!(!stray_remarked(true, Some(pc), pc), "it meant its own follower");
+        assert!(stray_remarked(true, Some(PlayerId(2)), pc), "another PC's follower");
     }
 
     #[test]
