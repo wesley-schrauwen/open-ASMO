@@ -330,7 +330,9 @@ of `combat_design.md` come after the original's rules work.
      `critter_flags` 0x400 (0x4b052a → 0x4b0533), before the effects (0x4b06f3): fewer action
      points a turn and a slower walk, PCs and NPCs. The only other test, 0x432dfc, skips an
      animation goal 0 after a move (purpose not found). Found nothing for to-hit, step cost or
-     running. Not built: an NPC's walk slowing at once (its pace is set when it spawns); the
+     running. NPCs walked at a fixed 8 before (`feat/lame-pace`): now at their own speed
+     (`npc_speed`), spawned with it and updated within 5 ticks of a change
+     (`update_npc_paces`, `LedgerDelta::Speed`). Not built: the
      ±10 by global 0x458a80(0x4000000) and `spell_flags` 0x4000000 (0x4b04f4-0x4b0518).
 9. **Item wear** (built, `feat/repair`; `arcanum_sim::repair`).
    - A critical hit's two item rolls (each up to the base + 10, 0x4b5f40 flags 0x100000 /

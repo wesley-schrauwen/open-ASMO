@@ -2575,6 +2575,26 @@ pub fn send_npc_health(tick: Res<crate::SimTick>, map: Res<crate::LoadedMap>, se
     }
 }
 
+/// Walks NPCs at their own speed ([`npc_speed`]: Dexterity, 5 less with crippled legs,
+/// 0x4b052a): every [`HEALTH_TICKS`] an NPC whose speed changed (first at its spawn, or a
+/// crippling critical) gets its gait again, and every player is told (`LedgerDelta::Speed`).
+pub fn update_npc_paces(tick: Res<crate::SimTick>, map: Res<crate::LoadedMap>, session: Res<crate::Session>, mut outbox: ResMut<crate::Outbox>, vfs: Option<Res<crate::SimVfs>>, mut npcs: Query<(&NetId, &crate::NpcSource, &mut crate::Appearance, &mut crate::gait::Gait)>) {
+    if !tick.0.is_multiple_of(HEALTH_TICKS) {
+        return;
+    }
+    let guard = vfs.as_ref().and_then(|v| v.0.read().ok());
+    for (&net_id, source, mut look, mut gait) in &mut npcs {
+        let Some(o) = map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { continue };
+        let speed = npc_speed(o, &map.prototypes);
+        if speed == look.speed {
+            continue;
+        }
+        look.speed = speed;
+        *gait = crate::gait::Gait::load(look.art, speed, |p| guard.as_deref().and_then(|v| v.read(p).ok()));
+        crate::ground::broadcast(&session, &mut outbox, LedgerDelta::Speed { net_id, speed });
+    }
+}
+
 /// NPCs' fatigue recovers as PCs' does ([`crate::magick::recover_fatigue`], 0x45e610): every
 /// [`crate::RECOVERY_MS`] of game time by their heal rate `(CO + 1) / 3`; one back above 0 gets
 /// up (0x434de0).
