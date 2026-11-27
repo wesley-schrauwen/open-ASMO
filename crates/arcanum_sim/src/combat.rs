@@ -348,6 +348,8 @@ pub struct Fighter {
     pub knocked_down: bool,
     /// Its Backstab level and training rank.
     pub backstab: (i32, u8),
+    /// Its level (stat 0x11), against an unnoticed stab's critical (0x4c829c).
+    pub level: i32,
     /// This blow's stab ([`stab_of`]; attackers only).
     pub stab: Stab,
     /// Its `critter_flags` (NPCs).
@@ -581,7 +583,8 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
     let weapon = attacker.weapon.clone().unwrap_or_default();
     let short = (weapon.min_strength - attacker.strength).max(0);
     // The defender's armour: half its class, in the attacker's chance (0x4c875c-0x4c878b).
-    let armour = defender.armour_class.max(0) / 2 * chance / 100;
+    // An unnoticed stab by one trained in Backstab skips it (0x4c8743-0x4c875a).
+    let armour = if attacker.stab == Stab::Unnoticed && attacker.backstab.1 >= 1 { 0 } else { defender.armour_class.max(0) / 2 * chance / 100 };
     let difficulty = -weapon.to_hit + 5 * short + injury_difficulty(attacker.injuries) + armour - defender.helpless + attacker.situation;
     let mut out = AttackOutcome { multiplier: 100, ..Default::default() };
     if rng.range(1, 100) + difficulty > chance {
@@ -593,7 +596,7 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
     }
     // A combat skill's critical chance is a twentieth of it (0x4c81a0: skill flag 0x400), plus
     // the weapon's magick part (unscaled: 0x461590 not read).
-    out.critical = rng.range(1, 100) <= chance / 20 + weapon.crit_chance;
+    out.critical = rng.range(1, 100) <= chance / 20 + weapon.crit_chance + stab_critical(attacker.stab, attacker.backstab, defender.level);
     let dodge = weapon_chance(SKILL_DODGE, defender.level(SKILL_DODGE), defender.intelligence);
     if dodge > 0 && rng.range(1, 100) <= dodge {
         out.dodged = true;
@@ -1307,6 +1310,7 @@ impl CombatWorld<'_, '_> {
                 constitution: rules.stats(sheet)[2],
                 intelligence: rules.stats(sheet)[4],
                 backstab: (rules.skill_level(sheet, SKILL_BACKSTAB), sheet.training[SKILL_BACKSTAB]),
+                level: sheet.level,
                 stab: Stab::None,
                 injuries: sheet.injuries,
                 helmet: item(inv, HELMET_SLOT).is_some(),
@@ -1341,6 +1345,7 @@ impl CombatWorld<'_, '_> {
             constitution: npc_stat(o, prototypes, 2),
             intelligence: npc_stat(o, prototypes, 4),
             backstab: npc_skill(o, prototypes, SKILL_BACKSTAB),
+            level: npc_stat(o, prototypes, 0x11),
             stab: Stab::None,
             injuries: prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_INJURIES,
             helmet: item(&inv, HELMET_SLOT).is_some(),
@@ -1403,6 +1408,28 @@ impl CombatWorld<'_, '_> {
         }
         let row = self.npc_int(source, "npc_ai_data").max(0) as usize;
         self.ai.0.as_ref()?.get(row).copied()
+    }
+
+    /// Whether `watcher` sees `other` or hears it at noise 0 (0x4af260 / 0x4af470 at 0x4b2319):
+    /// NPCs by their state ([`can_look`], [`ears`]); PCs by their Perception.
+    fn notices_quietly(&self, watcher: &Seen, other: &Seen) -> bool {
+        let prowler = other.sheet.as_ref().filter(|_| other.prowling).map(|s| crate::prowl::Prowler { level: self.rules.0.skill_level(s, crate::SKILL_PROWLING), intelligence: self.rules.0.stats(s)[4] });
+        let (eyes, ears_pe) = match (&watcher.sheet, watcher.npc) {
+            (Some(sheet), _) => {
+                let pe = self.rules.0.stats(sheet)[5];
+                (Some(pe), Some(pe))
+            }
+            (None, Some(n)) => match self.map.mobiles.get(&n.sector).and_then(|m| m.get(n.index as usize)) {
+                Some(o) => {
+                    let target = other.npc.and_then(|a| self.map.mobiles.get(&a.sector)?.get(a.index as usize));
+                    (can_look(o, &self.map.prototypes, watcher.stunned.is_some(), target).then(|| npc_stat(o, &self.map.prototypes, 5)), ears(o, &self.map.prototypes, watcher.stunned.is_some()))
+                }
+                None => (None, None),
+            },
+            _ => (None, None),
+        };
+        let view = crate::MissileView(&self.map);
+        eyes.is_some_and(|pe| sees(&view, watcher.at, watcher.rotation, pe, other.at, prowler)) || ears_pe.is_some_and(|pe| hears_noise(&view, watcher.at, pe, other.at, prowler, crate::prowl::NOISE_QUIET))
     }
 
     /// [`missile_difficulty`] for `attacker`'s shot with `skill` at `victim`: the line's objects
@@ -2217,7 +2244,12 @@ pub fn ears(listener: &Object, prototypes: &Prototypes, stunned: bool) -> Option
 /// Whether a listener at `from` hears `to` (0x4af470): the distance at most its reach
 /// ([`crate::prowl::hearing_reach`]) less the sound's cost on the line (0x4af640).
 pub fn hears(map: &impl crate::Walkable, from: TileLoc, pe: i32, to: TileLoc, prowler: Option<crate::prowl::Prowler>) -> bool {
-    let reach = crate::prowl::hearing_reach(pe, prowler);
+    hears_noise(map, from, pe, to, prowler, crate::prowl::NOISE_STEP)
+}
+
+/// [`hears`] for a sound of `noise` ([`crate::prowl::noise_reach`]).
+pub fn hears_noise(map: &impl crate::Walkable, from: TileLoc, pe: i32, to: TileLoc, prowler: Option<crate::prowl::Prowler>, noise: usize) -> bool {
+    let reach = crate::prowl::noise_reach(pe, prowler, noise);
     let distance = i64::from(crate::tile_distance(from, to));
     distance <= reach && distance <= reach - i64::from(crate::sound_cost(map, from, to))
 }
@@ -2930,10 +2962,24 @@ pub fn stab_damage(stab: Stab, level: i32) -> i32 {
 
 /// `attacker`'s stab at `victim` (0x4b22da: a melee blow, skill 2, at a critter that does not
 /// have the attacker in view, [`in_view`] as 0x45eff0).
-fn stab_of(fighter: &Fighter, attacker: &Seen, victim: &Seen) -> Stab {
+/// Unnoticed besides (`unnoticed`, 0x4b2327: the target neither sees it nor hears it at noise
+/// 0, [`CombatWorld::notices_quietly`]).
+fn stab_of(fighter: &Fighter, attacker: &Seen, victim: &Seen, unnoticed: bool) -> Stab {
     let melee = fighter.skill() == SKILL_MELEE;
     let (level, rank) = fighter.backstab;
-    if melee && can_backstab(level, rank, fighter.weapon.as_ref().map(|w| w.use_kind), in_view(victim.rotation, victim.at, attacker.at)) { Stab::Behind } else { Stab::None }
+    if !(melee && can_backstab(level, rank, fighter.weapon.as_ref().map(|w| w.use_kind), in_view(victim.rotation, victim.at, attacker.at))) {
+        return Stab::None;
+    }
+    if unnoticed { Stab::Unnoticed } else { Stab::Behind }
+}
+
+/// What an unnoticed stab adds to the critical chance (0x4c827e-0x4c82b6): twice the Backstab
+/// level less the target's level, and 20 more for a Master.
+pub fn stab_critical(stab: Stab, (level, rank): (i32, u8), target_level: i32) -> i32 {
+    if stab != Stab::Unnoticed {
+        return 0;
+    }
+    2 * level - target_level + if rank >= 3 { 20 } else { 0 }
 }
 
 /// The two helpless amounts (0x4c864a / 0x4c86d9: 0x32, 0x1e).
@@ -2944,7 +2990,7 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     let defender = Fighter { helpless: helpless(w, attacker, victim), ..w.fighter(victim) };
     let ranged = fighter.weapon.as_ref().is_some_and(|wp| wp.range > 1);
     let situation = if ranged { w.shot_difficulty(all, attacker, victim, fighter.skill()) } else { 0 };
-    let stab = stab_of(fighter, attacker, victim);
+    let stab = stab_of(fighter, attacker, victim, !w.notices_quietly(victim, attacker));
     let fighter = &Fighter { situation, stab, ..fighter.clone() };
     let mut outcome = resolve(fighter, &defender, &mut w.rng);
     if let Some(weapon) = fighter.weapon.as_ref().filter(|w| w.uses_ammo()) {
@@ -3496,6 +3542,13 @@ mod tests {
         let mut rng = HostRng::default();
         let hit = (0..50).map(|_| resolve(&stabber, &Fighter::default(), &mut rng)).find(|o| o.hit && !o.critical).unwrap();
         assert_eq!(hit.hp, 9, "1 + 8");
+        // Unnoticed: five times it, the armour skipped by the trained, a critical bonus.
+        assert_eq!((stab_critical(Stab::Unnoticed, (8, 0), 5), stab_critical(Stab::Unnoticed, (8, 3), 5), stab_critical(Stab::Behind, (8, 3), 5)), (11, 31, 0));
+        let unseen = Fighter { stab: Stab::Unnoticed, backstab: (8, 1), ..stabber };
+        let plated = Fighter { armour_class: 95, ..Default::default() };
+        let hits = (0..400).filter(|_| resolve(&unseen, &plated, &mut rng).hit).count();
+        assert!(hits > 390, "armour skipped: {hits}");
+        assert_eq!(crate::prowl::noise_reach(10, None, crate::prowl::NOISE_QUIET), 3, "a quiet blow: (6 + 0) / 2");
     }
 
     #[test]
