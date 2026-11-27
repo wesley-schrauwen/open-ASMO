@@ -57,12 +57,15 @@ pub const SKILL_DODGE: usize = 1;
 pub const SKILL_MELEE: usize = 2;
 pub const SKILL_THROWING: usize = 3;
 pub const SKILL_FIREARMS: usize = 13;
-/// The highest chance.
+/// The highest chance of a skill flagged 0x800 in 0x5b6f64 (0x4c63b6 / 0x4c6aaf: dodge among
+/// the combat skills), and the most a resistance holds.
 pub const MAX_CHANCE: i32 = 95;
 
-/// A skill's chance at level `level` (0x4c62e0 / 0x4c69f0): dodge 2 a level, throwing 7 + 25,
-/// bow and melee 5 + 25, firearms (tech) 5 + 25; at most 95.
-/// + 10 at Intelligence 20 or more ([`crate::bright_bonus`], 0x4c6369), before the cap.
+/// A skill's chance at level `level` (0x4c62e0 / 0x4c69f0, table 0x4c63dc): dodge 2 a level,
+/// throwing 7 + 25, bow and melee 5 + 25, firearms (tech) 5 + 25; + 10 at Intelligence 20 or
+/// more ([`crate::bright_bonus`], 0x4c6369). Only dodge stops at 95: bow, melee, throwing and
+/// firearms lack flag 0x800 (0x5b6f64: 0x58f / 0x58d; the roll 0x4c7259 caps nothing), so a
+/// master's chance passes 100 and outweighs the difficulty.
 pub fn weapon_chance(skill: usize, level: i32, intelligence: i32) -> i32 {
     chance_against(skill, level, intelligence, false)
 }
@@ -81,7 +84,8 @@ pub fn chance_against(skill: usize, level: i32, intelligence: i32, warded: bool)
         SKILL_FIREARMS => 5 * level + 25 - if warded { 20 } else { 0 },
         _ => 5 * level + 25,
     };
-    (chance + crate::bright_bonus(intelligence)).clamp(0, MAX_CHANCE)
+    let chance = (chance + crate::bright_bonus(intelligence)).max(0);
+    if skill == SKILL_DODGE { chance.min(MAX_CHANCE) } else { chance }
 }
 
 /// An attack's action points for a weapon of speed `speed` (0x4b7c30).
@@ -3168,8 +3172,9 @@ mod tests {
 
     #[test]
     fn chances_and_costs_follow_the_original() {
-        assert_eq!((weapon_chance(SKILL_MELEE, 0, 8), weapon_chance(SKILL_MELEE, 4, 8), weapon_chance(SKILL_MELEE, 20, 8)), (25, 45, 95));
-        assert_eq!((weapon_chance(SKILL_MELEE, 4, 20), weapon_chance(SKILL_DODGE, 0, 20), weapon_chance(SKILL_MELEE, 15, 20)), (55, 10, 95), "Intelligence 20: + 10, under the cap");
+        assert_eq!((weapon_chance(SKILL_MELEE, 0, 8), weapon_chance(SKILL_MELEE, 4, 8), weapon_chance(SKILL_MELEE, 20, 8)), (25, 45, 125), "no cap: 0x5b6f64 0x58d");
+        assert_eq!(weapon_chance(SKILL_DODGE, 50, 8), 95, "dodge: 0x800, at most 95");
+        assert_eq!((weapon_chance(SKILL_MELEE, 4, 20), weapon_chance(SKILL_DODGE, 0, 20), weapon_chance(SKILL_MELEE, 15, 20)), (55, 10, 110), "Intelligence 20: + 10");
         assert_eq!((weapon_chance(SKILL_DODGE, 5, 8), weapon_chance(SKILL_THROWING, 2, 8)), (10, 39));
         assert_eq!((chance_against(SKILL_FIREARMS, 4, 8, true), chance_against(SKILL_FIREARMS, 4, 8, false), chance_against(SKILL_BOW, 4, 8, true)), (25, 45, 45), "a ward: firearms only");
         assert_eq!((attack_cost(0), attack_cost(9), attack_cost(21), attack_cost(30)), (8, 5, 2, 1));
@@ -3562,8 +3567,8 @@ mod tests {
         let hits = |d: &Fighter, rng: &mut HostRng| (0..2000).filter(|_| { let o = resolve(&master, d, rng); o.hit || o.dodged }).count();
         let bare = hits(&Fighter::default(), &mut rng);
         let plated = hits(&Fighter { armour_class: 90, ..Default::default() }, &mut rng);
-        // 95 % against nothing; AC 90: 45 × 95 / 100 = 42 harder, 53 %.
-        assert!(bare > 1800 && (950..1180).contains(&plated), "{bare} {plated}");
+        // A chance of 125 (no cap): always against nothing; AC 90: 45 × 125 / 100 = 56 harder, 69 %.
+        assert!(bare == 2000 && (1280..1500).contains(&plated), "{bare} {plated}");
     }
 
     #[test]

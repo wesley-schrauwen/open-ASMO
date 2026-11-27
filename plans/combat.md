@@ -43,7 +43,10 @@ of `combat_design.md` come after the original's rules work.
   built, `feat/firearm-ward`, NPC targets);
   + 10 with an Intelligence of 20 or more (0x4c6369 / 0x4c6a62 → 0x4b0ee0 stat 4, effective,
   every skill: built, `feat/bright-skills`; not "effect 4"); the difficulty setting scales
-  a PC's; at most 95.
+  a PC's (0x404590: easy + half, hard − a quarter; no setting here). At most 95 only for skills
+  of flag 0x800 in 0x5b6f64 (0x4c63b6 / 0x4c6aaf): dodge yes; bow, melee, throwing and
+  firearms no (0x58f / 0x58d), and the roll (0x4c7259) caps nothing, so a master's 125 stays
+  (`feat/uncapped-weapons`; before, all were capped).
 - **Difficulty** (0x4c8430): −(the weapon's to-hit and its magick part), + 5 a point of
   Strength short of `weapon_min_strength`, range (bow and throwing below Expert: + 5 a tile past
   PE / 2; out of range impossible), light (`(255 − light) × 30 / 255`), cover, the target's state
