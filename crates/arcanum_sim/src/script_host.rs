@@ -788,7 +788,7 @@ impl ScriptContext for HostWorld<'_> {
         }
         let (Some(a), Some(b)) = (self.tile_of(listener), self.tile_of(target)) else { return false };
         let prowler = match target {
-            ScriptObject::Pc(p) if self.prowling.contains(&target) => self.players.get(&p).map(|s| crate::prowl::Prowler { level: self.rules.skill_level(&s.blueprint.sheet, crate::SKILL_PROWLING), intelligence: self.rules.stats(&s.blueprint.sheet)[4] }),
+            ScriptObject::Pc(p) if self.prowling.contains(&target) => self.players.get(&p).map(|s| crate::prowl::Prowler { level: self.rules.skill_level(&s.blueprint.sheet, crate::SKILL_PROWLING), intelligence: self.rules.stats(&s.blueprint.sheet)[4], look: 0 }),
             _ => None,
         };
         // An NPC hears nothing stunned or down, half asleep ([`crate::combat::ears`]).
