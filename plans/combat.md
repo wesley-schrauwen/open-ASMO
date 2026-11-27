@@ -633,6 +633,22 @@ of `combat_design.md` come after the original's rules work.
      miss, or on the tile where a wall or object stopped it. Builder's call: a PC's item goes
      the same way (the original removes only an NPC's at 0x4b3c4a; a PC's leaves through the
      interface, not traced).
+24. **Light** (`feat/light-schemes`, `arcanum_sim::light`).
+   - Findings (0x4c8923-0x4c8ae0): the term is skipped for an undead attacker (`critter_flags`
+     0x4) and runs for skills of table bit 4 (bow, melee, throwing, Spot Trap, firearms, Pick
+     Locks, Disarm Traps) or the prowling look (flag 0x4000); melee and Pick Locks are spared from
+     Expert, Spot Trap, Disarm Traps and the prowling look from Apprentice. L is the light on the
+     target (0x4dce10: its lit colour, field 0x145) or its tile (0x4d9240); for the prowling look,
+     the prowler's own. `(255 − L) × 30 / 255`, then cut by the attacker's `critter_flags`
+     0x400000 to a quarter, 0x200000 a third, 0x100000 half, 0x80000 three quarters; turned to
+     30 − p by 0x45fb90 (field 0x101 = 0x4e or field 0xdb 0x800: a dark-seer). Hearing has none.
+   - Ambient (0x4a8060 / 0x4a7eb0): `rules/Lighting Schemes.mes` names ten schemes; each file
+     holds 24 hours of outdoor and indoor RGB, empty hours joined linearly. Tile art bit 8
+     (0x5038c0) takes the indoor colour. Luminance: tables 0x739f18 / 30 / 20, `c / 255 × 76.5,
+     150.45, 28.05`.
+   - Built: the schemes read (all ten), the hour's ambient, the luminance and the dark's
+     difficulty. Not built: light sources (0x4dc210 / 0x4d89e0), a map's scheme, applying the
+     term (waits for light sources).
 23. **Backstab** (`feat/backstab`, `combat::Stab`).
    - Eligible (0x45f9d0): a Backstab level (0x4c5eb0 skill 4), the target not having the
      attacker in view (0x45eff0 false), and a weapon whose wielded art (`item_use_aid_fragment`,
