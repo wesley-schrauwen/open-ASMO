@@ -647,8 +647,13 @@ of `combat_design.md` come after the original's rules work.
      (0x5038c0) takes the indoor colour. Luminance: tables 0x739f18 / 30 / 20, `c / 255 × 76.5,
      150.45, 28.05`.
    - Built: the schemes read (all ten), the hour's ambient, the luminance and the dark's
-     difficulty. Not built: light sources (0x4dc210 / 0x4d89e0), a map's scheme, applying the
-     term (waits for light sources).
+     difficulty.
+   - A tile's ambient (`feat/tile-ambient`, `LoadedMap::ambient_at`): the scheme of its sector
+     (0x4d1916; 0 the default, 1; no map has `mapinfo.txt`), the hour's colour, outdoor when the
+     ground art's outdoor flag (bit 8, 0x5038c0) is set (builder's call on which file triple
+     0x4a7eb0 pairs with 0x602ea8). Maps on other schemes: K'na Tha (2, 9), Stillwater Giants
+     Cave (2), The Pit (9), Tulla's Conveyance (10).
+   - Not built: light sources, applying the term.
 23. **Backstab** (`feat/backstab`, `combat::Stab`).
    - Eligible (0x45f9d0): a Backstab level (0x4c5eb0 skill 4), the target not having the
      attacker in view (0x45eff0 false), and a weapon whose wielded art (`item_use_aid_fragment`,

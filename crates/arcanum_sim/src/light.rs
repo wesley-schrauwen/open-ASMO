@@ -5,21 +5,61 @@
 //!   empty hour takes values joined linearly from the nearest given hours round it; the first
 //!   and last are always given. Message 1 is the default.
 //! - **The hour's ambient** (0x4a7eb0, hour 0-23 from 0x45aaa0): the outdoor colour goes to
-//!   0x603408, the indoor one to 0x602ea8. A ground tile whose art has bit 8 (0x5038c0) is lit by
-//!   the indoor colour (0x4dc279).
+//!   one ambient and the indoor one to the other (0x4d8560); a ground tile's outdoor flag (art
+//!   bit 8, 0x5038c0) picks the outdoor colour ([`indoor_tile`]).
 //! - **Luminance** (tables 0x739f18 / 0x739f30 / 0x739f20, built at 0x52c9b0-0x52cab0):
 //!   `tabR[r] + tabG[g] + tabB[b]`, each `channel / 255 × 76.5`, `× 150.45`, `× 28.05`
 //!   (doubles 0x5970d0 / c8 / c0), at most 254.
 //! - **The dark's difficulty** (0x4c8a0d-0x4c8a2d): `(255 − L) × 30 / 255`.
+//! - **Which scheme** (0x4f2361-0x4f238c): the sector's (version 3 and on, 0x4d1916), else the
+//!   default, 1 (no map has a `mapinfo.txt` with `LightScheme`). In the game's maps, K'na Tha
+//!   (2, 9), Stillwater Giants Cave (2), The Pit (9) and Tulla's Conveyance (10) use others.
 //!
-//! Not built: light sources (sector lights, light objects: 0x4dc210 / 0x4d89e0 not read),
-//! which scheme a map uses, the difficulty term itself in to-hit and prowling (it waits for the
+//! Not built: light sources (sector lights, light objects), the difficulty term itself in to-hit and prowling (it waits for the
 //! light sources: an ambient-only night would darken fights beside torches).
 
 /// The schemes' list.
 pub const SCHEMES: &str = "rules/Lighting Schemes.mes";
 /// The default scheme's number in [`SCHEMES`].
 pub const DEFAULT_SCHEME: u32 = 1;
+
+/// Every scheme of [`SCHEMES`] by number, read once.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Schemes(pub std::collections::BTreeMap<u32, Scheme>);
+
+impl Schemes {
+    /// Reads the list and each scheme it names (`rules/<name>.mes`); unreadable ones are left out.
+    pub fn load(vfs: &arcanum_vfs::Vfs) -> Self {
+        let read = |path: &str| vfs.read(path).ok().and_then(|d| arcanum_formats::mes::MesFile::parse(&d).ok());
+        let Some(list) = read(SCHEMES) else { return Self::default() };
+        Self(list.messages.iter().filter(|(n, _)| **n >= DEFAULT_SCHEME).filter_map(|(&n, name)| Some((n, Scheme::parse(&read(&format!("rules/{}.mes", name.trim()))?)?))).collect())
+    }
+
+    /// Scheme `number` (0: the default, 1), else the default.
+    pub fn get(&self, number: u32) -> Option<&Scheme> {
+        self.0.get(&number).or_else(|| self.0.get(&DEFAULT_SCHEME))
+    }
+}
+
+/// Whether ground tile art `art` is lit by the indoor ambient: its outdoor flag, bit 8
+/// (0x5038c0), clear. 0x4dc279 takes 0x602ea8 for the flag set; which file triple 0x4a7eb0
+/// pairs with it was not settled (the parser 0x4a8060 not read): here the file's own order,
+/// outdoor first (builder's call, as the game shows daylight outdoors).
+pub fn indoor_tile(art: arcanum_formats::art_id::ArtId) -> bool {
+    art.0 & 0x100 == 0
+}
+
+impl crate::LoadedMap {
+    /// The ambient colour on tile `at` at `hour` (0x4d89e0 before its lights): the scheme of the
+    /// tile's sector, indoor or outdoor by its ground art. `None` off the loaded sectors or
+    /// without schemes.
+    pub fn ambient_at(&self, at: arcanum_formats::map::TileLoc, hour: u32) -> Option<Rgb> {
+        let sector = self.sectors.get(&at.sector())?;
+        let (x, y) = at.tile_in_sector();
+        let scheme = self.light.get(sector.light_scheme)?;
+        Some(scheme.ambient(hour, indoor_tile(sector.tile(x, y).art_id())))
+    }
+}
 
 /// An RGB colour.
 pub type Rgb = [u8; 3];
