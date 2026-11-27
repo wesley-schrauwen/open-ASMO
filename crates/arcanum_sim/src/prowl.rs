@@ -53,6 +53,9 @@ pub struct Prowler {
     pub injuries: i32,
     /// The light it bears ([`crate::light::borne_light`]): a lantern gives it away.
     pub borne: i32,
+    /// Its worn armour's `armor_silent_move_adj` + `armor_magic_silent_move_adj` (fields
+    /// 0x9c / 0x9d, summed over slots 1000-1008 at 0x4c8c03-0x4c8c91; halved from Apprentice).
+    pub silence: i32,
     /// The watcher's helpless amount (0x4c8603 with table bit 0x8: the watcher's state, as a
     /// target's, [`crate::combat::helpless_by_state`]), and the cover on the line between.
     pub watcher_helpless: i32,
@@ -61,11 +64,13 @@ pub struct Prowler {
 
 impl Prowler {
     /// PC `sheet` prowling on tile `at` of `map` at `hour`.
-    /// `borne`: the light it bears ([`crate::Inventory::borne_light`]).
-    pub fn of(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::CharacterSheet, map: &crate::LoadedMap, at: arcanum_formats::map::TileLoc, hour: u32, borne: i32) -> Self {
+    /// `borne`: the light it bears ([`crate::Inventory::borne_light`]); `inventory` its worn
+    /// armour for its silence.
+    pub fn of(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::CharacterSheet, map: &crate::LoadedMap, at: arcanum_formats::map::TileLoc, hour: u32, borne: i32, inventory: Option<&crate::Inventory>) -> Self {
+        let silence = inventory.map_or(0, |i| armour_silence(i, &map.prototypes, sheet.training[SKILL_PROWLING]));
         let light = map.light_at(at, hour).map(crate::light::luminance);
         let rank = sheet.training[SKILL_PROWLING];
-        Self { level: rules.skill_level(sheet, SKILL_PROWLING), intelligence: rules.stats(sheet)[4], look: light.map_or(0, |l| look_difficulty(rank, l, false, borne)), light, rank, injuries: sheet.injuries, borne, ..Default::default() }
+        Self { level: rules.skill_level(sheet, SKILL_PROWLING), intelligence: rules.stats(sheet)[4], look: light.map_or(0, |l| look_difficulty(rank, l, false, borne)), light, rank, injuries: sheet.injuries, borne, silence, ..Default::default() }
     }
 
     /// With the watcher's helpless amount.
@@ -82,9 +87,26 @@ impl Prowler {
     /// ([`Self::look`]), its injuries, less the watcher's helplessness; then the line (0x4c8be9):
     /// less the cover on it, or for an open line 50 more below Expert (0x4c8bf4).
     pub fn look_total(self) -> i32 {
-        let injuries = 30 * i32::from(self.injuries & 0x80 != 0) + 30 * i32::from(self.injuries & 0x400 != 0);
         let line = if self.cover == 0 && self.rank < 2 { 50 } else { -self.cover };
-        self.look + injuries - self.watcher_helpless + line
+        self.look + self.injury_cost() - self.watcher_helpless + line
+    }
+
+    /// Blinded or lame: + 30 each (0x4c8b0e / 0x4c8b72).
+    fn injury_cost(self) -> i32 {
+        30 * i32::from(self.injuries & 0x80 != 0) + 30 * i32::from(self.injuries & 0x400 != 0)
+    }
+
+    /// The listen's whole difficulty (0x4c8430 for skill 6 with flag 0x2000: no light, no
+    /// line): its injuries, less the watcher's helplessness, less its armour's silence (0x4c8c86:
+    /// heavy armour, a negative adjustment, makes it louder).
+    pub fn listen_total(self) -> i32 {
+        self.injury_cost() - self.watcher_helpless - self.silence
+    }
+
+    /// Its value against a listener of Perception `pe`: [`Self::against`] less
+    /// [`Self::listen_total`], in 0-100 (0x4af5a0).
+    pub fn heard_against(self, pe: i32) -> i32 {
+        (self.against(pe) - self.listen_total()).clamp(0, 100)
     }
 
     /// As seen by a watcher that has dark sight or not ([`look_difficulty`]).
@@ -97,6 +119,14 @@ impl Prowler {
     pub fn seen_against(self, pe: i32) -> i32 {
         (self.against(pe) - self.look_total()).clamp(0, 100)
     }
+}
+
+/// A prowler's worn armour's silence (0x4c8c03-0x4c8c91): each armour's silent-move
+/// adjustment and its magick part (unscaled: 0x461590 not read), summed; halved from Apprentice
+/// (0x4c8c74).
+pub fn armour_silence(inventory: &crate::Inventory, prototypes: &arcanum_formats::object::Prototypes, rank: u8) -> i32 {
+    let sum: i32 = inventory.items.iter().filter(|i| (crate::FIRST_SLOT..=crate::LAST_SLOT).contains(&i.location)).filter_map(|i| prototypes.get(i.prototype)).filter(|o| o.object_type == arcanum_formats::object::TYPE_ARMOR).map(|o| prototypes.int(o, "armor_silent_move_adj").unwrap_or(0) + prototypes.int(o, "armor_magic_silent_move_adj").unwrap_or(0)).sum();
+    if rank >= 1 { sum / 2 } else { sum }
 }
 
 /// What a prowler's own light `l` costs it against a watcher's eyes (0x4af260 → 0x4c8430 with
@@ -143,7 +173,7 @@ pub const NOISE_STEP: usize = 1;
 pub fn noise_reach(perception: i32, prowler: Option<Prowler>, noise: usize) -> i64 {
     let mut perception = perception;
     if let Some(p) = prowler {
-        perception -= perception * p.against(perception).clamp(0, 100) / 100;
+        perception -= perception * p.heard_against(perception) / 100;
     }
     i64::from(((perception - 4).clamp(1, 10) + NOISES[noise] - NOISES[0]) / 2)
 }
@@ -186,6 +216,10 @@ mod tests {
         assert_eq!(Prowler { injuries: 0x480, ..plain }.with_cover(20).look_total(), 40);
         assert_eq!(plain.watched_by(50).look_total(), 0);
         assert_eq!((plain.seen_against(8), plain.with_cover(20).seen_against(8)), (0, 67), "seen in the open, hidden behind a stone");
+        // Heard (0x4c8430 with 0x2000): no light, no line; heavy armour (−20) is louder.
+        let plated = Prowler { silence: -20, ..plain };
+        assert_eq!((plain.heard_against(8), plated.heard_against(8), Prowler { injuries: 0x400, ..plain }.heard_against(8)), (47, 27, 17));
+        assert_eq!(plain.watched_by(50).heard_against(8), 97, "a paralyzed listener");
         let lit = Prowler { level: 8, intelligence: 8, look: 30, rank: 2, ..Default::default() };
         assert_eq!((lit.against(8), lit.seen_against(8)), (47, 17), "seen: the light takes 30 off");
         assert_eq!(hearing_reach(10, None), 6, "(6 + 6) / 2");

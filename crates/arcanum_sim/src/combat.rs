@@ -1438,7 +1438,7 @@ impl CombatWorld<'_, '_> {
             (None, Some(n)) => self.npc_int(n, "critter_flags2") & OCF2_DARK_SIGHT != 0,
             _ => false,
         };
-        let prowler = other.sheet.as_ref().filter(|_| other.prowling).map(|s| crate::prowl::Prowler::of(&self.rules.0, s, &self.map, other.at, self.clock.now.ms / crate::HOUR_MS, other.inventory.as_ref().map_or(0, |i| i.borne_light(&self.map.prototypes))).for_watcher(dark_sight));
+        let prowler = other.sheet.as_ref().filter(|_| other.prowling).map(|s| crate::prowl::Prowler::of(&self.rules.0, s, &self.map, other.at, self.clock.now.ms / crate::HOUR_MS, other.inventory.as_ref().map_or(0, |i| i.borne_light(&self.map.prototypes)), other.inventory.as_ref()).for_watcher(dark_sight));
         let (eyes, ears_pe) = match (&watcher.sheet, watcher.npc) {
             (Some(sheet), _) => {
                 let pe = self.rules.0.stats(sheet)[5];
@@ -2360,7 +2360,7 @@ pub fn notice_foes(
         let alignment = npc_stat(o, &map.prototypes, 0x13);
         for (&pc, pc_at, player, sheet, (prowling, inventory)) in &pcs {
             let Some(saved) = save.players.get(&player.0) else { continue };
-            let prowler = prowling.then(|| crate::prowl::Prowler::of(&rules.0, &sheet.0, &map, pc_at.0, clock.now.ms / crate::HOUR_MS, inventory.map_or(0, |i| i.borne_light(&map.prototypes))).for_watcher(npc_dark_sight(o, &map.prototypes)).watched_by(npc_watcher_helpless(o, &map.prototypes)));
+            let prowler = prowling.then(|| crate::prowl::Prowler::of(&rules.0, &sheet.0, &map, pc_at.0, clock.now.ms / crate::HOUR_MS, inventory.map_or(0, |i| i.borne_light(&map.prototypes)), inventory).for_watcher(npc_dark_sight(o, &map.prototypes)).watched_by(npc_watcher_helpless(o, &map.prototypes)));
             if !notices(&crate::MissileView(&map), can_look(o, &map.prototypes, false, None).then_some(pe), at.0, rotation, ears(o, &map.prototypes, false), pc_at.0, prowler) {
                 continue;
             }
@@ -2417,7 +2417,7 @@ pub fn catch_lock_pickers(
     let mut reacting: Vec<(NetId, NetId, PlayerId, bool)> = std::mem::take(&mut checks.witnessed);
     for (player, lock, owner, opened) in std::mem::take(&mut witnessing.0) {
         let Some((&pc, pc_at, _, sheet, (prowling, inventory))) = pcs.iter().find(|p| p.2.0 == player) else { continue };
-        let prowler = prowling.then(|| crate::prowl::Prowler::of(&rules.0, &sheet.0, &map, pc_at.0, clock.now.ms / crate::HOUR_MS, inventory.map_or(0, |i| i.borne_light(&map.prototypes))));
+        let prowler = prowling.then(|| crate::prowl::Prowler::of(&rules.0, &sheet.0, &map, pc_at.0, clock.now.ms / crate::HOUR_MS, inventory.map_or(0, |i| i.borne_light(&map.prototypes)), inventory));
         for (&npc, at, source, facing, look) in &npcs {
             if !crate::within_radius(at.0, lock, WITNESS_TILES) || map.npc_down(source.sector, source.index) || map.is_dead(source.sector, source.index) {
                 continue;
@@ -2871,7 +2871,7 @@ fn helpless(w: &CombatWorld, attacker: &Seen, victim: &Seen) -> i32 {
     if let (false, Some(n)) = (victim.fighting, victim.npc)
         && let Some(o) = w.map.mobiles.get(&n.sector).and_then(|m| m.get(n.index as usize))
     {
-        let prowler = attacker.sheet.as_ref().filter(|_| attacker.prowling).map(|s| crate::prowl::Prowler::of(&w.rules.0, s, &w.map, attacker.at, w.clock.now.ms / crate::HOUR_MS, attacker.inventory.as_ref().map_or(0, |i| i.borne_light(&w.map.prototypes))).for_watcher(npc_dark_sight(o, &w.map.prototypes)).watched_by(npc_watcher_helpless(o, &w.map.prototypes)));
+        let prowler = attacker.sheet.as_ref().filter(|_| attacker.prowling).map(|s| crate::prowl::Prowler::of(&w.rules.0, s, &w.map, attacker.at, w.clock.now.ms / crate::HOUR_MS, attacker.inventory.as_ref().map_or(0, |i| i.borne_light(&w.map.prototypes)), attacker.inventory.as_ref()).for_watcher(npc_dark_sight(o, &w.map.prototypes)).watched_by(npc_watcher_helpless(o, &w.map.prototypes)));
         let target = attacker.npc.and_then(|a| w.map.mobiles.get(&a.sector)?.get(a.index as usize));
         if !notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, victim.stunned.is_some(), target).then(|| npc_stat(o, &w.map.prototypes, 5)), victim.at, victim.rotation, ears(o, &w.map.prototypes, victim.stunned.is_some()), attacker.at, prowler) {
             return HELPLESS_UNAWARE;
@@ -3337,7 +3337,7 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
         // A prowling PC is noticed less (0x4a9f10 → 0x4af260 / 0x4af470 with its stealth).
         let notices = |x: &Seen| {
             let target = x.npc.and_then(|n| w.map.mobiles.get(&n.sector)?.get(n.index as usize));
-            let prowler = x.sheet.as_ref().filter(|_| x.prowling).map(|s| crate::prowl::Prowler::of(&w.rules.0, s, &w.map, x.at, w.clock.now.ms / crate::HOUR_MS, x.inventory.as_ref().map_or(0, |i| i.borne_light(&w.map.prototypes))).for_watcher(npc_dark_sight(o, &w.map.prototypes)).watched_by(npc_watcher_helpless(o, &w.map.prototypes)));
+            let prowler = x.sheet.as_ref().filter(|_| x.prowling).map(|s| crate::prowl::Prowler::of(&w.rules.0, s, &w.map, x.at, w.clock.now.ms / crate::HOUR_MS, x.inventory.as_ref().map_or(0, |i| i.borne_light(&w.map.prototypes)), x.inventory.as_ref()).for_watcher(npc_dark_sight(o, &w.map.prototypes)).watched_by(npc_watcher_helpless(o, &w.map.prototypes)));
             notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, c.stunned.is_some(), target).then_some(pe), c.at, c.rotation, ears(o, &w.map.prototypes, c.stunned.is_some()), x.at, prowler)
         };
         let for_victim = allied(c.leader, own, victim.player, victim.leader, v_faction, v_kin) && (c.leader.is_some() || notices(victim));
