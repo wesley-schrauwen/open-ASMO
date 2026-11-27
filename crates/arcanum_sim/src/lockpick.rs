@@ -242,6 +242,7 @@ pub fn pick_locks(
     mut outbox: ResMut<Outbox>,
     pcs: Query<PickerQuery>,
     mut witnessing: ResMut<LockWitnessing>,
+    clock: Res<crate::GameClock>,
 ) {
     let mut fresh = std::collections::HashMap::new();
     for (player, target, tool, seq) in requests.0.drain(..) {
@@ -267,7 +268,9 @@ pub fn pick_locks(
         let Some(flags) = map.lock_flags(want.target) else { continue };
         let sheet = &sheet.0;
         let chance = pick_chance(rules.0.skill_level(sheet, SKILL_PICK_LOCKS), rules.0.stats(sheet)[4]);
-        let difficulty = pick_difficulty(map.lock_difficulty(want.target), sheet.training[SKILL_PICK_LOCKS], lockpick_bonus(inventory, want.tool, &map.prototypes));
+        // The dark on the lock (0x4c8923: Pick Locks spared from Expert).
+        let dark = crate::light::skill_dark(sheet.training[SKILL_PICK_LOCKS], 2, map.luminance_at(location, clock.now));
+        let difficulty = pick_difficulty(map.lock_difficulty(want.target), sheet.training[SKILL_PICK_LOCKS], lockpick_bonus(inventory, want.tool, &map.prototypes)) + dark;
         let outcome = roll_pick(chance, difficulty, &mut rng);
         let changed = picked_flags(flags, outcome, map.lock_day);
         if changed != flags {

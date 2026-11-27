@@ -52,10 +52,13 @@ pub fn spot_chance(level: i32, intelligence: i32) -> i32 {
 }
 
 /// A Spot Trap roll (0x4bbe40 → 0x4c7160 case 7).
-pub fn roll_spot(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::CharacterSheet, magical: bool, rng: &mut crate::HostRng) -> bool {
+/// `light`: the luminance where the trap is (the dark adds to the roll below Apprentice,
+/// [`crate::light::skill_dark`]).
+pub fn roll_spot(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::CharacterSheet, magical: bool, light: Option<i32>, rng: &mut crate::HostRng) -> bool {
     let chance = spot_chance(rules.skill_level(sheet, SKILL_SPOT_TRAP), rules.stats(sheet)[4]);
     let training = sheet.training[SKILL_SPOT_TRAP];
-    let mut spotted = rng.range(1, 100) <= chance;
+    let dark = crate::light::skill_dark(training, 1, light);
+    let mut spotted = rng.range(1, 100) + dark <= chance;
     if !spotted && training >= MASTER {
         spotted = rng.range(1, 100) <= chance;
     }
@@ -64,9 +67,11 @@ pub fn roll_spot(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::Charac
 
 /// A Disarm Traps roll (0x4c7160 case 0xf): success, failure, or a critical failure
 /// ([`crate::PickOutcome::Jammed`]).
-pub fn roll_disarm(chance: i32, training: u8, rng: &mut crate::HostRng) -> crate::PickOutcome {
-    let outcome = crate::roll_pick(chance, 0, rng);
-    if outcome == crate::PickOutcome::Failure && training >= MASTER { crate::roll_pick(chance, 0, rng) } else { outcome }
+/// `light`: the luminance where the trap is ([`crate::light::skill_dark`], below Apprentice).
+pub fn roll_disarm(chance: i32, training: u8, light: Option<i32>, rng: &mut crate::HostRng) -> crate::PickOutcome {
+    let dark = crate::light::skill_dark(training, 1, light);
+    let outcome = crate::roll_pick(chance, dark, rng);
+    if outcome == crate::PickOutcome::Failure && training >= MASTER { crate::roll_pick(chance, dark, rng) } else { outcome }
 }
 
 /// The tile a walking PC last rolled for.
@@ -110,6 +115,7 @@ pub fn spot_traps_walking(
     mut outbox: ResMut<Outbox>,
     mut pcs: Query<SpotterQuery>,
     idle: Query<Entity, (With<SpotChecked>, Without<crate::Walking>)>,
+    clock: Res<crate::GameClock>,
 ) {
     // A PC that stopped rolls again on its next walk.
     for entity in &idle {
@@ -123,7 +129,7 @@ pub fn spot_traps_walking(
         commands.entity(entity).insert(SpotChecked(next));
         let mut spotted = false;
         for (sector, index, magical) in unspotted_traps(&map, &mut host, next) {
-            if !roll_spot(&rules.0, &sheet.0, magical, host.rng()) {
+            if !roll_spot(&rules.0, &sheet.0, magical, map.luminance_at(next, clock.now), host.rng()) {
                 continue;
             }
             spotted = true;
@@ -175,6 +181,7 @@ pub fn disarm_traps(
     rules: Res<SimRules>,
     mut outbox: ResMut<Outbox>,
     pcs: Query<DisarmerQuery>,
+    clock: Res<crate::GameClock>,
 ) {
     let mut fresh = std::collections::HashMap::new();
     for (player, target, seq) in requests.0.drain(..) {
@@ -211,7 +218,7 @@ pub fn disarm_traps(
         }
         let sheet = &sheet.0;
         let chance = crate::tech_chance(crate::TECH_DISARM_TRAPS, rules.0.skill_level(sheet, SKILL_DISARM_TRAPS), rules.0.stats(sheet)[4]);
-        match roll_disarm(chance, sheet.training[SKILL_DISARM_TRAPS], host.rng()) {
+        match roll_disarm(chance, sheet.training[SKILL_DISARM_TRAPS], map.luminance_at(location, clock.now), host.rng()) {
             crate::PickOutcome::Success => {
                 map.set_attachment(object, crate::EVENT_USE, crate::Attachment { number: 0, ..attachment });
                 if let Some((sector, ..)) = place {
@@ -245,20 +252,20 @@ mod tests {
         let rules = arcanum_rules::RulesData::default();
         let mut rng = crate::HostRng::default();
         let blind = sheet(0, 0, SKILL_SPOT_TRAP);
-        assert!((0..200).all(|_| !roll_spot(&rules, &blind, false, &mut rng)), "no skill: never");
+        assert!((0..200).all(|_| !roll_spot(&rules, &blind, false, None, &mut rng)), "no skill: never");
         let keen = sheet(5, 0, SKILL_SPOT_TRAP);
-        let seen = (0..1000).filter(|_| roll_spot(&rules, &keen, false, &mut rng)).count();
+        let seen = (0..1000).filter(|_| roll_spot(&rules, &keen, false, None, &mut rng)).count();
         assert!((740..860).contains(&seen), "level 20: 4 a level, 80 %, {seen}");
         assert_eq!((spot_chance(10, 8), spot_chance(10, 20), spot_chance(25, 20)), (40, 50, 95));
-        assert!((0..200).all(|_| !roll_spot(&rules, &keen, true, &mut rng)), "magical: not below Expert");
+        assert!((0..200).all(|_| !roll_spot(&rules, &keen, true, None, &mut rng)), "magical: not below Expert");
         let expert = sheet(5, EXPERT, SKILL_SPOT_TRAP);
-        assert!((0..200).any(|_| roll_spot(&rules, &expert, true, &mut rng)));
+        assert!((0..200).any(|_| roll_spot(&rules, &expert, true, None, &mut rng)));
     }
 
     #[test]
     fn a_master_disarms_more_often() {
         let mut rng = crate::HostRng::default();
-        let won = |training, rng: &mut crate::HostRng| (0..2000).filter(|_| roll_disarm(50, training, rng) == crate::PickOutcome::Success).count();
+        let won = |training, rng: &mut crate::HostRng| (0..2000).filter(|_| roll_disarm(50, training, None, rng) == crate::PickOutcome::Success).count();
         let (plain, master) = (won(0, &mut rng), won(MASTER, &mut rng));
         assert!((900..1100).contains(&plain), "{plain}");
         assert!(master > plain + 300, "{master} vs {plain}");

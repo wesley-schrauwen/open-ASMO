@@ -204,6 +204,23 @@ pub fn luminance([r, g, b]: Rgb) -> i32 {
     entry(r, 76.5) + entry(g, 150.45) + entry(b, 28.05)
 }
 
+/// What the dark adds to a PC's Pick Locks (`spared_from` Expert, 2: 0x4c8954 shares melee's
+/// test), Spot Trap or Disarm Traps (from Apprentice, 1: 0x4c8982) roll of training `rank` at
+/// light `l` ([`dark_difficulty`]); `None` light (no schemes) nothing.
+pub fn skill_dark(rank: u8, spared_from: u8, l: Option<i32>) -> i32 {
+    match l {
+        Some(l) if rank < spared_from => dark_difficulty(l),
+        _ => 0,
+    }
+}
+
+impl crate::LoadedMap {
+    /// The luminance on tile `at` at game time `now` ([`Self::light_at`]).
+    pub fn luminance_at(&self, at: arcanum_formats::map::TileLoc, now: crate::GameTime) -> Option<i32> {
+        self.light_at(at, now.ms / crate::HOUR_MS).map(luminance)
+    }
+}
+
 /// What the dark adds to a skill's difficulty at light `l` (0x4c8a0d-0x4c8a2d): `(255 − L) ×
 /// 15 × 2 / 255`.
 pub fn dark_difficulty(l: i32) -> i32 {
@@ -223,6 +240,7 @@ mod tests {
         assert_eq!(luminance([255, 255, 255]), 254, "76 + 150 + 28");
         assert_eq!(luminance([74, 80, 98]), 22 + 47 + 10);
         assert_eq!((dark_difficulty(254), dark_difficulty(79), dark_difficulty(0)), (0, 20, 30));
+        assert_eq!((skill_dark(0, 1, Some(79)), skill_dark(1, 1, Some(0)), skill_dark(1, 2, Some(0)), skill_dark(2, 2, Some(0)), skill_dark(0, 1, None)), (20, 0, 30, 0, 0), "spared from the rank given; no light data, nothing");
         // A 3 x 3 light frame centred on its tile, its middle pixel 100 grey, a colour key around.
         let mut rgba = vec![0u8; 36];
         rgba[16..20].copy_from_slice(&[100, 100, 100, 255]);
