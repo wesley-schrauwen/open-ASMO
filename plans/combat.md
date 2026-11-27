@@ -39,7 +39,9 @@ of `combat_design.md` come after the original's rules work.
   melee.
 - **Chance** (0x4c62e0 / 0x4c69f0): bow and melee 5 × level + 25, throwing 7 × level + 25,
   dodge 2 × level, firearms (tech 0x4c69f0 index 1, checked) 5 × level + 25, − 20 against
-  `flags` 0x400000; + 10 with effect 4; the difficulty setting scales
+  `spell_flags` 0x400000 of the target (corrected: field 0x14 at 0x4c6a34, firearms only);
+  + 10 with an Intelligence of 20 or more (0x4c6369 / 0x4c6a62 → 0x4b0ee0 stat 4, effective,
+  every skill: built, `feat/bright-skills`; not "effect 4"); the difficulty setting scales
   a PC's; at most 95.
 - **Difficulty** (0x4c8430): −(the weapon's to-hit and its magick part), + 5 a point of
   Strength short of `weapon_min_strength`, range (bow and throwing below Expert: + 5 a tile past

@@ -37,9 +37,10 @@ pub struct Prowling;
 #[derive(Resource, Debug, Default)]
 pub struct ProwlRequests(pub Vec<(PlayerId, bool)>);
 
-/// The Prowling value of a prowler of skill `level` (0x4c62e0).
-pub fn prowl_value(level: i32) -> i32 {
-    if level <= 0 { 0 } else { level * 5 + 25 }
+/// The Prowling value of a prowler of skill `level` and `intelligence` (0x4c62e0: + 10 at
+/// Intelligence 20, 0x4c6369).
+pub fn prowl_value(level: i32, intelligence: i32) -> i32 {
+    (if level <= 0 { 0 } else { level * 5 + 25 }) + crate::bright_bonus(intelligence)
 }
 
 /// How far a listener of `perception` hears, in tiles; `prowler` is the target's prowl value
@@ -75,7 +76,8 @@ mod tests {
 
     #[test]
     fn prowlers_cut_the_listeners_perception() {
-        assert_eq!((prowl_value(0), prowl_value(1), prowl_value(10)), (0, 30, 75));
+        assert_eq!((prowl_value(0, 8), prowl_value(1, 8), prowl_value(10, 8)), (0, 30, 75));
+        assert_eq!(prowl_value(1, 20), 40, "Intelligence 20: + 10");
         assert_eq!(hearing_reach(10, None), 6, "(6 + 6) / 2");
         assert_eq!(hearing_reach(10, Some(50)), 3, "PE 5: (1 + 6) / 2");
         assert_eq!(hearing_reach(20, Some(200)), 3, "at most all of it");

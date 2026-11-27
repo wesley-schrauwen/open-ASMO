@@ -60,10 +60,9 @@ pub const NPC_FENCE: i32 = 0x4000;
 pub const EXPERT: u8 = 2;
 pub const MASTER: u8 = 3;
 
-/// A critter's haggle value (0x4c62e0): skill level 0-20, base Intelligence.
+/// A critter's haggle value (0x4c62e0): skill level 0-20, Intelligence (effective, 0x4b0ee0).
 pub fn haggle(level: i32, intelligence: i32) -> i32 {
-    let bonus = if intelligence >= 20 { 10 } else { 0 };
-    (level * 4 + 10 + bonus).clamp(0, MAX_HAGGLE)
+    (level * 4 + 10 + crate::bright_bonus(intelligence)).clamp(0, MAX_HAGGLE)
 }
 
 /// An item's worth (0x461f20, 0x464370), for `quantity` of it.
@@ -372,7 +371,7 @@ impl BarterWorld<'_> {
             flags: self.map.prototypes.int(npc, "npc_flags").unwrap_or(0),
             reaction,
         };
-        let haggle = haggle(self.rules.0.skill_level(sheet, SKILL_HAGGLE), sheet.base[4]);
+        let haggle = haggle(self.rules.0.skill_level(sheet, SKILL_HAGGLE), self.rules.0.stats(sheet)[4]);
         Some((trader, haggle, sheet.training[SKILL_HAGGLE], info))
     }
 
@@ -610,7 +609,7 @@ fn steal(w: &mut BarterWorld, player: PlayerId, sheet: &arcanum_rules::Character
     let (mut rest, mut item) = stock.take_out(from).ok_or_else(silent)?;
     let victim = w.map.mobiles.get(&open.sector).and_then(|m| m.get(open.index as usize)).ok_or_else(silent)?;
     let perception = crate::pickpocket::perception(victim, &prototypes);
-    let chance = crate::pickpocket::steal_chance(w.rules.0.skill_level(sheet, SKILL_PICK_POCKET), perception);
+    let chance = crate::pickpocket::steal_chance(w.rules.0.skill_level(sheet, SKILL_PICK_POCKET), perception, w.rules.0.stats(sheet)[4]);
     let kind = info(item.prototype);
     let training = sheet.training[SKILL_PICK_POCKET];
     let difficulty = crate::pickpocket::steal_difficulty(from, kind.map_or((1, 1), |k| k.cells), training);

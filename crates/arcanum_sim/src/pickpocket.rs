@@ -56,8 +56,9 @@ const CHANCES: [i32; 19] = [55, 66, 78, 91, 105, 120, 136, 153, 171, 190, 209, 2
 /// Table 0x5b70e4: what a worn item adds, by slot 1000-1008.
 pub const SLOT_DIFFICULTY: [i32; 9] = [50, 30, 30, 30, 70, 70, 1000, 1000, 1000];
 
-/// The chance for a thief of Pick Pocket `level` against a victim of `perception`.
-pub fn steal_chance(level: i32, perception: i32) -> i32 {
+/// The chance for a thief of Pick Pocket `level` and `intelligence` against a victim of
+/// `perception`: the opposed table, then + 10 at Intelligence 20 (0x4c6369 → 0x4b0ee0 stat 4).
+pub fn steal_chance(level: i32, perception: i32, intelligence: i32) -> i32 {
     let diff = level - perception;
     let chance = if diff > 9 {
         100
@@ -66,7 +67,7 @@ pub fn steal_chance(level: i32, perception: i32) -> i32 {
     } else {
         CHANCES[(diff + 9) as usize] / 4
     };
-    chance.min(crate::lockpick::MAX_PICK_CHANCE)
+    (chance + crate::bright_bonus(intelligence)).min(crate::lockpick::MAX_PICK_CHANCE)
 }
 
 /// The difficulty of stealing an item at `location` taking `cells`, for a thief of `training`.
@@ -123,11 +124,12 @@ mod tests {
 
     #[test]
     fn the_chance_follows_the_level_against_perception() {
-        assert_eq!(steal_chance(8, 8), 47, "even: 190 / 4");
-        assert_eq!(steal_chance(0, 9), 13);
-        assert_eq!(steal_chance(18, 9), 81);
-        assert_eq!(steal_chance(20, 5), 95, "10 over: 100, capped");
-        assert_eq!(steal_chance(0, 10), 0);
+        assert_eq!(steal_chance(8, 8, 8), 47, "even: 190 / 4");
+        assert_eq!(steal_chance(0, 9, 8), 13);
+        assert_eq!(steal_chance(18, 9, 8), 81);
+        assert_eq!(steal_chance(20, 5, 8), 95, "10 over: 100, capped");
+        assert_eq!(steal_chance(0, 10, 8), 0);
+        assert_eq!(steal_chance(8, 8, 20), 57, "Intelligence 20: + 10");
     }
 
     #[test]

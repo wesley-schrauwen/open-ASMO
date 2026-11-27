@@ -317,7 +317,7 @@ pub fn to_hit(sheet: &arcanum_rules::CharacterSheet, rules: &arcanum_rules::Rule
     use arcanum_sim::combat::{SKILL_MELEE, weapon_chance, weapon_of};
     let weapon = weapon.filter(|w| w.object_type == arcanum_formats::object::TYPE_WEAPON).map(|w| weapon_of(w, prototypes));
     let skill = weapon.as_ref().map_or(SKILL_MELEE, |w| w.skill);
-    let chance = weapon_chance(skill, rules.skill_level(sheet, skill));
+    let chance = weapon_chance(skill, rules.skill_level(sheet, skill), rules.stats(sheet)[4]);
     let (bonus, min_st) = weapon.as_ref().map_or((0, 0), |w| (w.to_hit, w.min_strength));
     let short = (min_st - rules.stats(sheet)[0]).max(0);
     (chance + bonus - 5 * short).clamp(0, 100)

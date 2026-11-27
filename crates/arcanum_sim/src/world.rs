@@ -1526,7 +1526,7 @@ mod tests {
                 sim.update();
             }
             let level = { let world = sim.app.world(); world.resource::<crate::SimRules>().0.skill_level(&world.resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(1)].blueprint.sheet, crate::SKILL_PROWLING) };
-            assert_eq!(crate::prowl::prowl_value(level), 45, "prowl value 45");
+            assert_eq!(crate::prowl::prowl_value(level, 8), 45, "prowl value 45");
             sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: foe, seq: 0 })]);
             sim.update();
             let world = sim.app.world_mut();
