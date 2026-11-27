@@ -952,3 +952,32 @@ fn light_giving_items_bear_light() {
     eprintln!("{} light-giving items: {lit:?}", lit.len());
     assert!(lit.iter().any(|(n, _)| n.to_lowercase().contains("torch") || n.to_lowercase().contains("lantern")), "{lit:?}");
 }
+
+#[test]
+fn objects_carry_lights() {
+    use arcanum_sim::LoadedMap;
+    let Some(vfs) = vfs() else { return };
+    // The first map sector whose objects carry a light.
+    let mut found = None;
+    'maps: for folder in vfs.list_dir("maps").unwrap_or_default() {
+        let name = folder.trim_start_matches("maps/").to_string();
+        let mut map = LoadedMap::default();
+        map.open(Some(&vfs), &name);
+        for f in vfs.list_dir(&folder).unwrap_or_default().into_iter().filter(|f| f.to_lowercase().ends_with(".sec")).take(40) {
+            let Ok(sec) = arcanum_formats::sector::Sector::parse(&vfs.read(&f).unwrap()) else { continue };
+            if let Some(l) = sec.objects.iter().flat_map(|o| arcanum_sim::light::object_lights(o, &map.prototypes)).next() {
+                found = Some((name, l));
+                break 'maps;
+            }
+        }
+    }
+    let Some((name, light)) = found else { panic!("no object carries a light") };
+    let mut map = LoadedMap::default();
+    map.open(Some(&vfs), &name);
+    let at = arcanum_formats::map::TileLoc { x: light.x as u32, y: light.y as u32 };
+    map.load_sector(Some(&vfs), at.sector());
+    let carried = map.object_lights.get(&at.sector()).map_or(0, Vec::len);
+    let read = map.light_frames.values().filter(|f| f.is_some()).count();
+    eprintln!("{name}: {carried} object lights in the sector, {read} of {} arts read; art {:#x}", map.light_frames.len(), light.art_id.0);
+    assert!(carried > 0 && read > 0);
+}

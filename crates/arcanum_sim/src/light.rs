@@ -108,20 +108,46 @@ pub fn light_pixel(light: &arcanum_formats::sector::Light, frame: &arcanum_forma
     Some(c)
 }
 
+/// The lights objects carry (0x4d9590): the base one of `light_aid` (field 0x0e; −1 none) with
+/// `light_flags` (0x0d) and `light_color` (0x0f, `0xRRGGBB`: 0x4d84b0), and up to four overlay
+/// lights (fields 0x10-0x12) the same way; each at the object's tile and pixel offset (fields
+/// 2-4). Destroyed or off objects carry none (builder's call).
+pub fn object_lights(object: &arcanum_formats::object::Object, prototypes: &arcanum_formats::object::Prototypes) -> Vec<arcanum_formats::sector::Light> {
+    let int = |f: &str| prototypes.int(object, f).unwrap_or(0);
+    let Some(at) = crate::object_location(object) else { return Vec::new() };
+    if int("flags") & (crate::OF_OFF | crate::OF_DESTROYED) != 0 {
+        return Vec::new();
+    }
+    let ints = |f: &str| object.ints(f).or_else(|| prototypes.of(object)?.ints(f)).unwrap_or_default();
+    let base = prototypes.int(object, "light_aid").map(|aid| (int("light_flags"), aid, prototypes.int(object, "light_color").unwrap_or(0xff_ffff)));
+    let (flags, aids, colours) = (ints("overlay_light_flags"), ints("overlay_light_aid"), ints("overlay_light_color"));
+    let overlays = (0..aids.len().min(4)).map(|i| (flags.get(i).copied().unwrap_or(0), aids[i], colours.get(i).copied().unwrap_or(0xff_ffff)));
+    base.into_iter().chain(overlays).filter(|&(_, aid, _)| aid != -1 && aid != 0).map(|(flags, aid, colour)| arcanum_formats::sector::Light {
+        handle: 0,
+        x: at.x as i32,
+        y: at.y as i32,
+        offset_x: int("offset_x"),
+        offset_y: int("offset_y"),
+        flags: flags as u32,
+        art_id: arcanum_formats::art_id::ArtId(aid as u32),
+        color: [(colour >> 16) as u8, (colour >> 8) as u8, colour as u8],
+    }).collect()
+}
+
 /// Adds (or for a darkening light takes away) `add` on `base`, each channel kept in 0-255.
 pub fn combine(base: Rgb, add: Rgb, darkens: bool) -> Rgb {
     std::array::from_fn(|i| if darkens { base[i].saturating_sub(add[i]) } else { base[i].saturating_add(add[i]) })
 }
 
 impl crate::LoadedMap {
-    /// Decodes frame 0 of each light's art in `sector` not read yet.
-    pub(crate) fn read_light_frames(&mut self, vfs: &arcanum_vfs::Vfs, sector: &arcanum_formats::sector::Sector) {
-        for light in &sector.lights {
-            if self.light_frames.contains_key(&light.art_id.0) {
-                continue;
-            }
-            let frame = self.art.as_ref().and_then(|a| a.path(light.art_id)).and_then(|p| vfs.read(&p).ok()).and_then(|d| arcanum_formats::art::ArtFile::parse(&d).ok()).and_then(|art| art.decode_frame(0, 0, art.default_palette().ok()?).ok());
-            self.light_frames.insert(light.art_id.0, frame.map(std::sync::Arc::new));
+    /// Decodes frame 0 of each light's art in sector `id` (its own and its objects') not read
+    /// yet.
+    pub(crate) fn read_light_frames(&mut self, vfs: &arcanum_vfs::Vfs, id: arcanum_formats::map::SectorId) {
+        let own = self.sectors.get(&id).into_iter().flat_map(|s| s.lights.iter());
+        let arts: Vec<arcanum_formats::art_id::ArtId> = own.chain(self.object_lights.get(&id).into_iter().flatten()).map(|l| l.art_id).filter(|a| !self.light_frames.contains_key(&a.0)).collect();
+        for art_id in arts {
+            let frame = self.art.as_ref().and_then(|a| a.path(art_id)).and_then(|p| vfs.read(&p).ok()).and_then(|d| arcanum_formats::art::ArtFile::parse(&d).ok()).and_then(|art| art.decode_frame(0, 0, art.default_palette().ok()?).ok());
+            self.light_frames.insert(art_id.0, frame.map(std::sync::Arc::new));
         }
     }
 
@@ -131,7 +157,7 @@ impl crate::LoadedMap {
         let mut colour = self.ambient_at(at, hour)?;
         let scheme = self.sectors.get(&at.sector()).and_then(|s| self.light.get(s.light_scheme));
         let point = tile_pixel(at);
-        for light in self.sectors.values().flat_map(|s| &s.lights).filter(|l| l.flags & LIGHT_OFF == 0) {
+        for light in self.sectors.values().flat_map(|s| &s.lights).chain(self.object_lights.values().flatten()).filter(|l| l.flags & LIGHT_OFF == 0) {
             let Some(Some(frame)) = self.light_frames.get(&light.art_id.0) else { continue };
             let tint = match (light.flags & LIGHT_OUTDOOR_COLOUR != 0, light.flags & LIGHT_INDOOR_COLOUR != 0, scheme) {
                 (true, _, Some(s)) => s.ambient(hour, false),
@@ -318,6 +344,15 @@ mod tests {
         let (px, py) = tile_pixel(at);
         assert_eq!(light_pixel(&light, &frame, [255; 3], (px + 1, py)), None, "a colour-key pixel");
         assert_eq!((combine([200, 10, 0], [100, 100, 100], false), combine([200, 10, 0], [100, 100, 100], true)), ([255, 110, 100], [100, 0, 0]));
+        // An object's base light and overlay lights (0x4d9590), at its tile and offset.
+        use arcanum_formats::object::{Array, TYPE_SCENERY, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let arr = |v: &[i32]| Value::Array(Some(Array { elem_size: 4, id: 1, data: v.iter().flat_map(|x| x.to_le_bytes()).collect(), bitset: vec![(1u32 << v.len()) - 1, 0] }));
+        let lamp = arcanum_formats::object::Object::parse_instance(&ObjectBuilder::new(TYPE_SCENERY).field("location", Value::Int64(Some(5 | (6i64 << 32)))).field("offset_x", Value::Int32(3)).field("light_aid", Value::Int32(0x9000_0000u32 as i32)).field("light_flags", Value::Int32(0)).field("light_color", Value::Int32(0xff8000)).field("overlay_light_aid", arr(&[-1, 0x9001_0000u32 as i32])).field("overlay_light_flags", arr(&[0, 2])).field("overlay_light_color", arr(&[0, 0xffffff])).build()).unwrap();
+        let lights = object_lights(&lamp, &arcanum_formats::object::Prototypes::default());
+        assert_eq!(lights.len(), 2, "the base and the second overlay; −1 none");
+        assert_eq!((lights[0].x, lights[0].y, lights[0].offset_x, lights[0].color), (5, 6, 3, [255, 128, 0]));
+        assert_eq!(lights[1].flags, 2, "a darkening overlay");
         let open = arcanum_formats::mes::MesFile::parse(b"{0}{}{23}{1, 1, 1, 1, 1, 1}").unwrap();
         assert!(Scheme::parse(&open).is_none(), "the first hour must be given");
     }

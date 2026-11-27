@@ -690,8 +690,15 @@ of `combat_design.md` come after the original's rules work.
      for the bearer: a blow in the dark is easier with a lantern, and a prowler's lantern gives it
      away. In the data: Electric Light (extra large), Lantern and Helm of Light (large), Miner's
      Helmet (medium).
-   - Not built: the bearer's light lighting the ground (0x45fa70 → 0x43ebd0), objects' own
-     lights (0x4d9590), animated light frames, hearing's 0x4c8430 (flag 0x2000) terms.
+   - Objects' lights (`feat/object-lights`, `light::object_lights`, 0x4d9590): an object's
+     `light_aid` (field 0x0e, −1 none) with `light_flags` (0x0d) and `light_color` (0x0f,
+     `0xRRGGBB`, 0x4d84b0), and its four overlay lights (0x10-0x12), each at its tile and pixel
+     offset (fields 2-4), lit as sector lights (`LoadedMap::object_lights`, rebuilt with the
+     blocking). Builder's calls: NPCs' lights stay where their objects were placed; destroyed or
+     off objects carry none. Also: unloading a sector now forgets its missile, sound and light
+     data too.
+   - Not built: the bearer's light lighting the ground (0x45fa70 → 0x43ebd0), animated light
+     frames, hearing's 0x4c8430 (flag 0x2000) terms.
 23. **Backstab** (`feat/backstab`, `combat::Stab`).
    - Eligible (0x45f9d0): a Backstab level (0x4c5eb0 skill 4), the target not having the
      attacker in view (0x45eff0 false), and a weapon whose wielded art (`item_use_aid_fragment`,
