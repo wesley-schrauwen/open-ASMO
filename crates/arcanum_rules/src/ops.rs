@@ -363,7 +363,8 @@ impl RulesData {
             carry_weight: stat(8, 500 * st),
             damage_bonus: stat(9, damage_bonus),
             ac_adjustment: stat(10, dx - 10),
-            speed: stat(11, dx + if dx >= 20 { 5 } else { 0 }),
+            // Crippled legs: 5 slower, before the effects (0x4b052a → 0x4b06f3).
+            speed: stat(11, dx + if dx >= 20 { 5 } else { 0 } - if s.injuries & crate::CRIPPLED_LEGS != 0 { crate::CRIPPLED_LEGS_SPEED } else { 0 }),
             heal_rate: stat(12, (cn + 1) / 3),
             poison_recovery: stat(13, cn),
             reaction: stat(14, reaction_modifier(be)),
@@ -528,6 +529,8 @@ mod tests {
         let s = r.new_sheet();
         let d = r.derived(&s);
         assert_eq!((d.carry_weight, d.damage_bonus, d.ac_adjustment, d.speed), (4000, -1, -2, 8));
+        let lame = CharacterSheet { injuries: CRIPPLED_LEGS, ..s.clone() };
+        assert_eq!(r.derived(&lame).speed, 3, "crippled legs: 5 slower (0x4b052a)");
         assert_eq!((d.heal_rate, d.poison_recovery, d.reaction, d.max_followers), (3, 8, -7, 2));
         // HP = 4 x bought + WP + 2 x (level + ST) + 4 = 0 + 8 + 18 + 4.
         assert_eq!((d.hit_points, d.fatigue), (30, 30));

@@ -323,7 +323,13 @@ of `combat_design.md` come after the original's rules work.
      + 50 to the attacker's difficulty (0x4c8430). A Master healer's Heal cures them (builder's
      call: the rank test not traced). Floats "Blinded", "Crippled arm", "Crippled leg".
    - Not built: stunning, knocking out and down (their mechanics not traced), scars, items
-     dropped or damaged by criticals, crippled legs' effect, critical misses' effects.
+     dropped or damaged by criticals, critical misses' effects.
+   - Crippled legs (`feat/crippled-legs`): 0x4b0490 takes 5 off speed (stat 11) for
+     `critter_flags` 0x400 (0x4b052a → 0x4b0533), before the effects (0x4b06f3): fewer action
+     points a turn and a slower walk, PCs and NPCs. The only other test, 0x432dfc, skips an
+     animation goal 0 after a move (purpose not found). Found nothing for to-hit, step cost or
+     running. Not built: an NPC's walk slowing at once (its pace is set when it spawns); the
+     ±10 by global 0x458a80(0x4000000) and `spell_flags` 0x4000000 (0x4b04f4-0x4b0518).
 9. **Item wear** (built, `feat/repair`; `arcanum_sim::repair`).
    - A critical hit's two item rolls (each up to the base + 10, 0x4b5f40 flags 0x100000 /
      0x4000) wear the armour where it landed (helmet, body, gloves, boots by part, 0x4b54b0) and
