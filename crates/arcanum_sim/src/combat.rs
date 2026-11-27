@@ -1634,6 +1634,17 @@ impl CombatWorld<'_, '_> {
         }
     }
 
+    /// [`Self::bark`] unless the speaker is barred from it ([`bark_vetoed`]): the flee, surrender
+    /// and begging lines (0x413ea0) and the followers' remarks (0x413f50) ask 0x4ad800 first.
+    fn checked_bark(&mut self, speaker: &Seen, to: PlayerId, base: u32) {
+        let Some(source) = speaker.npc else { return };
+        let gone = self.map.is_dead(source.sector, source.index) || self.map.npc_down(source.sector, source.index);
+        let (flags, critter, spell) = (self.npc_int(source, "flags"), self.npc_int(source, "critter_flags"), self.npc_int(source, "spell_flags"));
+        if !bark_vetoed(flags, critter | if speaker.stunned.is_some() { OCF_STUNNED } else { 0 }, spell, gone, speaker.leader, to) {
+            self.bark(source, speaker.net_id, to, base);
+        }
+    }
+
     fn npc_int_stat(&self, source: crate::NpcSource, stat: usize) -> i32 {
         self.map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)).map_or(0, |o| npc_stat(o, &self.map.prototypes, stat))
     }
@@ -2007,7 +2018,7 @@ fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[See
             // Fleeing or giving up, it barks (0x4aabe0 states 2 / 3 → 0x413ea0 at 0x4aad4b,
             // `gd_npc` 3000-3099), its words for the PC it ran from.
             if let Some(player) = from_critter.and_then(|c| c.player) {
-                w.bark(source, npc.net_id, player, FLEE_BARK);
+                w.checked_bark(npc, player, FLEE_BARK);
             }
             if let Some(player) = from_critter.and_then(|c| c.player) {
                 w.events.0.push((source.object(), EVENT_EXIT_COMBAT, player, crate::ScriptObject::Pc(player)));
@@ -2389,7 +2400,7 @@ fn follower_remark(w: &mut CombatWorld, all: &[Seen], player: PlayerId, base: u3
     if pick.stunned.is_some() || w.map.npc_down(source.sector, source.index) || w.map.is_dead(source.sector, source.index) {
         return;
     }
-    w.bark(source, pick.net_id, player, base);
+    w.checked_bark(pick, player, base);
 }
 
 /// Why follower `npc` would leave leader `pc` (0x4ad950 with `p5` 1): 0 it stays; 3 its
@@ -2479,6 +2490,22 @@ pub const CRITICAL_BARK: u32 = 2400;
 pub const LOW_HEALTH_PERCENT: i32 = 20;
 /// Its words: `gd_npc` 5500-5599 (0x414490 at 0x4aeae4).
 pub const LOW_HEALTH_BARK: u32 = 5500;
+
+/// `critter_flags` 0x2000 of an NPC that says nothing (0x4ad84b, with 0x20 and 0x40).
+pub const OCF_MUTE: i32 = 0x2000;
+
+/// Whether an NPC may not bark at PC `to` (0x4ad800 with mode 1, a nonzero reason): destroyed
+/// or off (`flags` 0x3, 0x4ad817); stunned, paralyzed or mute (`critter_flags` 0x2060,
+/// 0x4ad84b) or asleep (0x1000, 0x4ad85b); `spell_flags` 0x10000 (0x4ad890); dead or down
+/// (`gone`: 0x45d8d0 / 0x45d800); or another's follower (0x4c1110 at 0x4ad923-0x4ad937). Not
+/// built: condition 0x3a (0x459380), the dead's `spell_flags` 0x2000000 exception.
+pub fn bark_vetoed(flags: i32, critter_flags: i32, spell_flags: i32, gone: bool, leader: Option<PlayerId>, to: PlayerId) -> bool {
+    flags & (crate::blocking::OF_DESTROYED | crate::blocking::OF_OFF) != 0
+        || critter_flags & (OCF_STUNNED | OCF_PARALYZED | OCF_MUTE | OCF_SLEEPING) != 0
+        || spell_flags & SPELL_NO_DAMAGE != 0
+        || gone
+        || leader.is_some_and(|l| l != to)
+}
 
 /// The remark on a PC's hit on another than meant: `gd_npc` lines 2500-2599 (0x413fce: 0x9c4-0xa27).
 pub const STRAY_BARK: u32 = 2500;
@@ -2813,7 +2840,7 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     match victim.surrendered {
         Some(to) if to != attacker.net_id => {
             if let Some(player) = attacker.player.filter(|_| aim == Aim::Meant && !outcome.killed && victim.stunned.is_none() && !w.map.npc_down(source.sector, source.index)) {
-                w.bark(source, victim.net_id, player, FLEE_BARK);
+                w.checked_bark(victim, player, FLEE_BARK);
             }
         }
         Some(_) => {
@@ -3038,7 +3065,7 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
                     {
                         commands.entity(c.entity).insert(crate::Walking { steps: path.into(), progress: 0.0 });
                         if let Some(player) = player {
-                            w.bark(source, c.net_id, player, FLEE_BARK);
+                            w.checked_bark(c, player, FLEE_BARK);
                         }
                     }
                 }
@@ -3263,6 +3290,19 @@ mod tests {
         assert_eq!(leader_hit_reaction(-20, 10, Aim::Meant), Some(-20));
         assert_eq!(leader_hit_reaction(-20, 10, Aim::Stray), None, "a stray hit: no loss, no warning");
         assert_eq!(leader_hit_reaction(-20, 20, Aim::Meant), None, "charisma 20");
+    }
+
+    #[test]
+    fn some_npcs_may_not_bark() {
+        let (pc, other) = (PlayerId(1), PlayerId(2));
+        assert!(!bark_vetoed(0, 0, 0, false, None, pc));
+        assert!(!bark_vetoed(0, 0, 0, false, Some(pc), pc), "its own leader");
+        assert!(bark_vetoed(0, 0, 0, false, Some(other), pc), "another's follower");
+        assert!(bark_vetoed(crate::blocking::OF_OFF, 0, 0, false, None, pc));
+        for flags in [OCF_STUNNED, OCF_PARALYZED, OCF_MUTE, OCF_SLEEPING] {
+            assert!(bark_vetoed(0, flags, 0, false, None, pc), "{flags:#x}");
+        }
+        assert!(bark_vetoed(0, 0, SPELL_NO_DAMAGE, false, None, pc) && bark_vetoed(0, 0, 0, true, None, pc));
     }
 
     #[test]

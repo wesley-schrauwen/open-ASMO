@@ -562,7 +562,16 @@ of `combat_design.md` come after the original's rules work.
      another than the critter meant (flag 0x8, 0x4b6c29), the one meant not its own follower
      (0x4b6be4), draws the same pick with mode 1: `gd_npc` 2500-2599 (0x413fce). Both remarks
      leave out followers joined by force (`npc_flags` 0x400: 0x45e3f0 counts them out at
-     0x45e43b). Not built: the global gate 0x62ac6c (0x4ae9e0), 0x4ad800's veto in 0x413f50.
+     0x45e43b).
+   - The bark veto (`feat/bark-veto`, `combat::bark_vetoed`): 0x413f50 and 0x413ea0 ask
+     0x4ad800 (mode 1) first, and say nothing on a nonzero reason: the speaker destroyed or
+     off (`flags` 0x3), stunned, paralyzed or mute (`critter_flags` 0x2060), asleep (0x1000),
+     `spell_flags` 0x10000, dead or down, or another's follower (its leader, 0x4c1110, not the
+     PC spoken to). Used for the flee, surrender and begging lines and the followers'
+     remarks. Not built: condition 0x3a (0x459380), the dead's `spell_flags` 0x2000000.
+   - Finding: 0x62ac6c (0x4ae9e0's gate) is the network layer's state (written by the TIG
+     socket code 0x526xxx-0x52axxx): remarks are skipped with the net up and no session
+     (bit 0 without bit 1). Nothing to build.
    - A PC's follower brought under 20 % of its hit points (0x4b50bb-0x4b50f1, before at least
      20 at 0x4b50d3, after under at 0x4b50e4) calls to its leader: `gd_npc` 5500 (0x4aeab0 →
      0x414490), once as it crosses, dying or not (`feat/follower-cry`).
