@@ -1134,6 +1134,30 @@ mod tests {
     }
 
     #[test]
+    fn a_knocked_down_critter_gets_up_after_a_recovery_period() {
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        let pc = { let world = sim.app.world_mut(); world.query_filtered::<Entity, With<crate::PlayerControlled>>().iter(world).next().unwrap() };
+        sim.app.world_mut().entity_mut(pc).insert(crate::combat::KnockedDown { until: None });
+        sim.update();
+        let until = sim.app.world().get::<crate::combat::KnockedDown>(pc).and_then(|d| d.until);
+        assert!(until.is_some(), "its time is set");
+        let now = sim.app.world().resource::<crate::GameClock>().now;
+        sim.app.world_mut().resource_mut::<crate::GameClock>().now = now.plus_ms(crate::RECOVERY_MS / 2);
+        sim.update();
+        assert!(sim.app.world().get::<crate::combat::KnockedDown>(pc).is_some(), "still lying half a period on");
+        sim.app.world_mut().resource_mut::<crate::GameClock>().now = now.plus_ms(crate::RECOVERY_MS + 1000);
+        sim.update();
+        assert!(sim.app.world().get::<crate::combat::KnockedDown>(pc).is_none(), "up after a period");
+    }
+
+    #[test]
     fn a_lamed_npc_walks_slower() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;

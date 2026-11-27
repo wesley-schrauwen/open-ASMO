@@ -338,6 +338,9 @@ pub struct Fighter {
     pub crit_chart: i32,
     /// Stunned now (`critter_flags` 0x20): not stunned again.
     pub stunned: bool,
+    /// Lying from a knock-down ([`KnockedDown`]): neither knocked down again (0x435a90 tests
+    /// animation 7) nor stunned.
+    pub knocked_down: bool,
     /// Its `critter_flags` (NPCs).
     pub flags: i32,
     /// `spell_flags` [`SPELL_NO_DAMAGE`] (NPCs): it takes no damage.
@@ -708,13 +711,13 @@ pub fn critical_effects(attacker: &Fighter, defender: &Fighter, weapon: &Weapon,
     }
     let mut effects = 0;
     let stun = rng.range(1, 100) <= e && rng.range(1, 100) > defender.constitution - 5;
-    if !defender.undead && defender.crit_chart == 0 {
+    if !defender.undead && defender.crit_chart == 0 && !defender.knocked_down {
         let k = x + 5 + if chart == 1 { 10 } else { 0 } + if part == BodyPart::Legs { 10 } else { 0 };
         if rng.range(1, 100) <= k {
             effects |= KNOCKED_DOWN;
         }
     }
-    if stun && !defender.stunned && effects & KNOCKED_DOWN == 0 {
+    if stun && !defender.stunned && !defender.knocked_down && effects & KNOCKED_DOWN == 0 {
         effects |= STUNNED;
         // Knocked out on top (0x100): an NPC, not of flag 0x4000000, another roll and save.
         if !defender.pc && !defender.undead && defender.flags & OCF_NO_KNOCK_OUT == 0 && rng.range(1, 100) <= e && rng.range(1, 100) > defender.constitution - 5 {
@@ -1199,7 +1202,7 @@ pub struct CombatWorld<'w, 's> {
 }
 
 /// A critter as the combat systems see it.
-type CombatantQuery<'a> = (Entity, &'a NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::Sheet>, Option<&'a crate::Inventory>, Option<&'a Fighting>, Has<crate::Walking>, Option<&'a PendingAttack>, Option<&'a crate::follow::Following>, Option<&'a Surrendered>, Option<&'a Stunned>, (Option<&'a crate::Facing>, Option<&'a crate::Appearance>, Has<crate::Prowling>));
+type CombatantQuery<'a> = (Entity, &'a NetId, &'a crate::Position, Option<&'a crate::PlayerControlled>, Option<&'a crate::NpcSource>, Option<&'a crate::Sheet>, Option<&'a crate::Inventory>, Option<&'a Fighting>, Has<crate::Walking>, Option<&'a PendingAttack>, Option<&'a crate::follow::Following>, Option<&'a Surrendered>, Option<&'a Stunned>, (Option<&'a crate::Facing>, Option<&'a crate::Appearance>, Has<crate::Prowling>, Has<KnockedDown>));
 
 /// One critter of the query, copied out.
 #[derive(Clone)]
@@ -1224,6 +1227,8 @@ struct Seen {
     rotation: usize,
     /// A PC prowling ([`crate::Prowling`]).
     prowling: bool,
+    /// Lying from a knock-down ([`KnockedDown`]).
+    knocked_down: bool,
 }
 
 impl Seen {
@@ -1235,8 +1240,9 @@ impl Seen {
 
 fn seen(q: &Query<CombatantQuery>) -> Vec<Seen> {
     q.iter()
-        .map(|(entity, &net_id, at, pc, npc, sheet, inventory, fighting, walking, pending, following, surrendered, stunned, (facing, look, prowling))| Seen {
+        .map(|(entity, &net_id, at, pc, npc, sheet, inventory, fighting, walking, pending, following, surrendered, stunned, (facing, look, prowling, knocked_down))| Seen {
             prowling,
+            knocked_down,
             rotation: facing_of(facing, look),
             stunned: stunned.copied(),
             surrendered: surrendered.map(|s| s.to),
@@ -1286,6 +1292,7 @@ impl CombatWorld<'_, '_> {
                 ammo: 0,
                 crit_chart: 0,
                 stunned: c.stunned.is_some(),
+                knocked_down: c.knocked_down,
                 flags: 0,
                 no_damage: false,
                 warded: false,
@@ -1317,6 +1324,7 @@ impl CombatWorld<'_, '_> {
             ammo: 0,
             crit_chart: prototypes.int(o, "critter_crit_hit_chart").unwrap_or(0),
             stunned: c.stunned.is_some(),
+            knocked_down: c.knocked_down,
             flags: prototypes.int(o, "critter_flags").unwrap_or(0),
             no_damage: prototypes.int(o, "spell_flags").unwrap_or(0) & SPELL_NO_DAMAGE != 0,
             warded: prototypes.int(o, "spell_flags").unwrap_or(0) & OSF_FIREARM_WARD != 0,
@@ -2771,7 +2779,7 @@ fn helpless(w: &CombatWorld, attacker: &Seen, victim: &Seen) -> i32 {
         (None, Some(n)) => (w.map.npc_down(n.sector, n.index), w.npc_int(n, "critter_flags")),
         _ => (false, 0),
     };
-    if let Some(amount) = helpless_by_state(flags, down, false, victim.stunned.is_some()) {
+    if let Some(amount) = helpless_by_state(flags, down, victim.knocked_down, victim.stunned.is_some()) {
         return amount;
     }
     // Not fighting yet: the blow that starts its fight counts (builder's call for when 0x40000
@@ -2805,6 +2813,32 @@ pub fn line_critters_cost(line: &[TileLoc], living: impl Iterator<Item = (TileLo
 
 /// The `flags` of every PC prototype (13 of 13): shoot-through, seen through, cover.
 pub const PC_FLAGS: i32 = 0x4030;
+
+/// A critter lying from a knock-down (goal 62, 0x435a90; animation 7). The goal's handler
+/// (0x431b20) queues no get-up: only 0x434de0 does, from the fatigue recovery tick (0x45e610 at
+/// 0x45e75e) once fatigue is above 0 and the art lies on animation 7. Here it gets up one
+/// recovery period ([`crate::RECOVERY_MS`]) after it fell (builder's call: the original's
+/// per-critter tick may come sooner). While it lies it is 30 easier to hit (0x4c867b) and
+/// cannot be stunned (0x4b5f40).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KnockedDown {
+    /// The game time it gets up, set when first seen ([`get_up_knocked_down`]).
+    pub until: Option<u64>,
+}
+
+/// Gets up the knocked-down critters whose time has come.
+pub fn get_up_knocked_down(mut commands: Commands, clock: Res<crate::GameClock>, mut lying: Query<(Entity, &mut KnockedDown)>) {
+    let now = clock.now.days as u64 * crate::DAY_MS as u64 + clock.now.ms as u64;
+    for (entity, mut down) in &mut lying {
+        match down.until {
+            None => down.until = Some(now + crate::RECOVERY_MS),
+            Some(t) if now >= t => {
+                commands.entity(entity).remove::<KnockedDown>();
+            }
+            Some(_) => {}
+        }
+    }
+}
 
 /// `critter_flags` 0x40: paralyzed (0x4c8642).
 pub const OCF_PARALYZED: i32 = 0x40;
@@ -2927,6 +2961,10 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
 fn apply_effects(commands: &mut Commands, w: &mut CombatWorld, attacker: &Seen, victim: &Seen, fighter: &Fighter, defender: &Fighter, outcome: &AttackOutcome) {
     if outcome.effects & STUNNED != 0 {
         commands.entity(victim.entity).insert(Stunned { left: stun_count(defender.constitution) });
+    }
+    // Knocked down (0x435a90, goal 62): it lies until its fatigue recovery gets it up.
+    if outcome.effects & KNOCKED_DOWN != 0 {
+        commands.entity(victim.entity).insert(KnockedDown { until: None });
     }
     if outcome.fumble_effects & STUNNED != 0 && !fighter.stunned {
         commands.entity(attacker.entity).insert(Stunned { left: stun_count(fighter.constitution) });
@@ -3352,6 +3390,16 @@ mod tests {
         assert_eq!(leader_hit_reaction(-20, 10, Aim::Meant), Some(-20));
         assert_eq!(leader_hit_reaction(-20, 10, Aim::Stray), None, "a stray hit: no loss, no warning");
         assert_eq!(leader_hit_reaction(-20, 20, Aim::Meant), None, "charisma 20");
+    }
+
+    #[test]
+    fn a_knocked_down_critter_is_neither_knocked_down_again_nor_stunned() {
+        let sword = Weapon::default();
+        let pc = Fighter { pc: true, ..Default::default() };
+        let lying = Fighter { knocked_down: true, constitution: -100, ..Default::default() };
+        let mut rng = HostRng::default();
+        assert!((0..300).all(|_| critical_effects(&pc, &lying, &sword, BodyPart::Legs, &mut rng) & (KNOCKED_DOWN | STUNNED) == 0));
+        assert_eq!(helpless_by_state(0, false, true, false), Some(30), "30 easier to hit while it lies");
     }
 
     #[test]
