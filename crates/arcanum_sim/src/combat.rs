@@ -2119,9 +2119,10 @@ pub fn sees(map: &impl crate::Walkable, from: TileLoc, rotation: usize, pe: i32,
 /// Whether a watcher notices `to`: sees it (when `sight`: [`can_look`]), or hears it (0x4af470:
 /// within its hearing reach less what the sound pays on its way, [`crate::sound_cost`] at
 /// 0x4af60c).
-/// `ears` is the Perception it hears with ([`ears`]; `None`: it hears nothing).
-pub fn notices(map: &impl crate::Walkable, sight: bool, from: TileLoc, rotation: usize, pe: i32, ears: Option<i32>, to: TileLoc, prowler: Option<i32>) -> bool {
-    (sight && sees(map, from, rotation, pe, to, prowler)) || ears.is_some_and(|pe| hears(map, from, pe, to, prowler))
+/// `eyes` and `ears` are the Perception it sees ([`can_look`]) and hears ([`ears`]) with; `None`:
+/// not at all.
+pub fn notices(map: &impl crate::Walkable, eyes: Option<i32>, from: TileLoc, rotation: usize, ears: Option<i32>, to: TileLoc, prowler: Option<i32>) -> bool {
+    eyes.is_some_and(|pe| sees(map, from, rotation, pe, to, prowler)) || ears.is_some_and(|pe| hears(map, from, pe, to, prowler))
 }
 
 /// `critter_flags` 0x1000: asleep (0x4af518), hearing with half its Perception.
@@ -2232,7 +2233,7 @@ pub fn notice_foes(
         for (&pc, pc_at, player, sheet, prowling) in &pcs {
             let Some(saved) = save.players.get(&player.0) else { continue };
             let prowler = prowling.then(|| crate::prowl::prowl_value(rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING)));
-            if !notices(&crate::MissileView(&map), can_look(o, &map.prototypes, false, None), at.0, rotation, pe, ears(o, &map.prototypes, false), pc_at.0, prowler) {
+            if !notices(&crate::MissileView(&map), can_look(o, &map.prototypes, false, None).then_some(pe), at.0, rotation, ears(o, &map.prototypes, false), pc_at.0, prowler) {
                 continue;
             }
             let towards = crate::reaction_to(&saved.script_state, &key, &reaction, &rules.0, &sheet.0, reputations);
@@ -2712,7 +2713,7 @@ fn helpless(w: &CombatWorld, attacker: &Seen, victim: &Seen) -> i32 {
     {
         let prowler = attacker.sheet.as_ref().filter(|_| attacker.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING)));
         let target = attacker.npc.and_then(|a| w.map.mobiles.get(&a.sector)?.get(a.index as usize));
-        if !notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, victim.stunned.is_some(), target), victim.at, victim.rotation, npc_stat(o, &w.map.prototypes, 5), ears(o, &w.map.prototypes, victim.stunned.is_some()), attacker.at, prowler) {
+        if !notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, victim.stunned.is_some(), target).then(|| npc_stat(o, &w.map.prototypes, 5)), victim.at, victim.rotation, ears(o, &w.map.prototypes, victim.stunned.is_some()), attacker.at, prowler) {
             return HELPLESS_UNAWARE;
         }
     }
@@ -3005,7 +3006,7 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
         let notices = |x: &Seen| {
             let target = x.npc.and_then(|n| w.map.mobiles.get(&n.sector)?.get(n.index as usize));
             let prowler = x.sheet.as_ref().filter(|_| x.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING)));
-            notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, c.stunned.is_some(), target), c.at, c.rotation, pe, ears(o, &w.map.prototypes, c.stunned.is_some()), x.at, prowler)
+            notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, c.stunned.is_some(), target).then_some(pe), c.at, c.rotation, ears(o, &w.map.prototypes, c.stunned.is_some()), x.at, prowler)
         };
         let for_victim = allied(c.leader, own, victim.player, victim.leader, v_faction, v_kin) && (c.leader.is_some() || notices(victim));
         let for_attacker = allied(c.leader, own, attacker.player, attacker.leader, a_faction, a_kin) && (c.leader.is_some() || notices(attacker));
@@ -3340,8 +3341,8 @@ mod tests {
         rows[5] = ".....#..............";
         let walled = Grid::parse(&rows);
         assert!(!sees(&walled, t(2, 5), 5, 8, t(9, 5), None), "a wall between");
-        assert!(notices(&walled, true, t(2, 5), 1, 8, Some(8), t(4, 5), None), "heard 2 tiles off, the line short of the block");
-        assert!(!notices(&walled, true, t(4, 5), 1, 8, Some(8), t(6, 5), None), "past blocking ground: 8 off the reach of 5");
+        assert!(notices(&walled, Some(8), t(2, 5), 1, Some(8), t(4, 5), None), "heard 2 tiles off, the line short of the block");
+        assert!(!notices(&walled, Some(8), t(4, 5), 1, Some(8), t(6, 5), None), "past blocking ground: 8 off the reach of 5");
         // A wall on the edge crossed hides even a target next to it (0x4af45a).
         let mut edged = Grid::parse(&["...................."; 20]);
         edged.3.edges.insert(t(5, 5), 1 << 5);
