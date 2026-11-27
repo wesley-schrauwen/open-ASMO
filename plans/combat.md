@@ -366,8 +366,14 @@ of `combat_design.md` come after the original's rules work.
      NPC is spawned again.
    - Checked by screenshot: the fight runs at the crash site; the swing itself is for the eye
      (`plans/eye_checks.md`).
-   - Not built: the hit's timing at the action frame (the host resolves at once), speed-scaled
-     frame times, hit effects, projectiles.
+   - The hit's timing (`feat/hit-at-action-frame`): the attack goal charges its cost
+     (0x432700), waits (0x42caa0) for the flag the frame step sets at frame `action_frame − 1`
+     (0x42d051-0x42d05e; art header +0x1c through 0x5030b0), then resolves (0x42a630 →
+     0x4b3bb0 → 0x4b3170); ranged blows the same (0x42ab90 → 0x4b3c00), with no projectile
+     object on the way. Built on the client: a blow's floats and knock-down wait for the swing's
+     action frame (`ArtFrames::action_frame`; at most 1.5 s). Builder's call: the host still
+     resolves at once.
+   - Not built: speed-scaled frame times, hit effects.
    - The swing (`feat/attack-anim`, client `attack_anim`; corrected): 0x42b9c0 picks by the
      goal's target (0xd08), not the attacker: 14 for a thrown weapon (`weapon_flags` 0x40,
      0x42bacb, first; `AttackOutcome::thrown`); 21 at a target lying (animation 7-11) or of
