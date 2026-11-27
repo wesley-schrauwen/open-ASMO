@@ -367,8 +367,13 @@ of `combat_design.md` come after the original's rules work.
    - Checked by screenshot: the fight runs at the crash site; the swing itself is for the eye
      (`plans/eye_checks.md`).
    - Not built: the hit's timing at the action frame (the host resolves at once), speed-scaled
-     frame times, hit effects, projectiles, the weapon code in the art (wielded weapons), thrown
-     weapons' animation 14.
+     frame times, hit effects, projectiles, thrown weapons' animation 14.
+   - Arms in the art (`feat/weapon-art`, `combat::update_weapon_art`, `LedgerDelta::Armed`):
+     0x465020 (on wielding, and with combat mode) sets art bits 0-3 to the wielded weapon's
+     kind (`item_use_aid_fragment` bits 6-9; 1 bare-handed) and bit 19 for armour in slot 1005
+     (a shield), only in combat mode (0x4b3d50, `critter_flags` 0x40000), else 0. Here as a
+     critter enters or leaves a fight, and while it fights; one never in a fight keeps its
+     placed art (builder's call).
 11. **PC death** (built, `feat/pc-death`; owner's call: the original ends the game).
    - A PC whose hit points run out is dead (`CharacterSheet::dead`, `PcStatus::dead`): it lies
      where it fell, takes no turns or requests (moves, uses, rests, talks, picks), and no

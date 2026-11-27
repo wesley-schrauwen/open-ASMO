@@ -2710,6 +2710,52 @@ pub fn update_npc_paces(tick: Res<crate::SimTick>, map: Res<crate::LoadedMap>, s
     }
 }
 
+type WeaponArtQuery<'a> = (&'a NetId, &'a mut crate::Appearance, Option<&'a crate::Inventory>, Option<&'a crate::NpcSource>, Has<Fighting>);
+
+/// The shield slot (0x465090: slot 0x3ed, an armour item, sets art bit 19).
+pub const SHIELD_SLOT: i32 = 1005;
+
+/// The weapon and shield a critter's art shows (0x465020): in combat mode (0x4b3d50:
+/// `critter_flags` 0x40000; here in a fight), its wielded weapon's kind (`item_use_aid_fragment`
+/// bits 6-9, 0x5044f0; 1 bare-handed or a kind 0, 0x465074) and a shield when slot 1005 holds
+/// armour (0x46509d); out of it 0 and none.
+pub fn armed_art(fighting: bool, inventory: Option<&crate::Inventory>, prototypes: &Prototypes) -> (u32, bool) {
+    if !fighting {
+        return (0, false);
+    }
+    let item = |slot: i32| inventory.and_then(|inv| inv.items.iter().find(|i| i.location == slot)).and_then(|i| prototypes.get(i.prototype));
+    let kind = item(WEAPON_SLOT).filter(|w| w.object_type == arcanum_formats::object::TYPE_WEAPON).map_or(0, |w| weapon_of(w, prototypes).use_kind);
+    let shield = item(SHIELD_SLOT).is_some_and(|o| o.object_type == arcanum_formats::object::TYPE_ARMOR);
+    (if kind == 0 { 1 } else { kind }, shield)
+}
+
+/// Sets the weapon and shield bits of a critter's art ([`armed_art`]) as it enters or leaves a
+/// fight (an NPC fighting, or anyone in the fight's order; the original's combat mode toggle),
+/// and while it fights when its arms change; every player is told (`LedgerDelta::Armed`). A
+/// critter never in a fight keeps the art it was placed with (0x465020 runs only on wielding
+/// and combat mode).
+pub fn update_weapon_art(map: Res<crate::LoadedMap>, combat: Res<Combat>, session: Res<crate::Session>, mut outbox: ResMut<crate::Outbox>, mut fought: Local<std::collections::HashSet<NetId>>, mut critters: Query<WeaponArtQuery>) {
+    let order: &[NetId] = combat.0.as_ref().map_or(&[], |e| &e.order);
+    for (&net_id, mut look, inventory, source, fighting) in &mut critters {
+        let now = fighting || order.contains(&net_id);
+        if !now && !fought.remove(&net_id) {
+            continue;
+        }
+        if now {
+            fought.insert(net_id);
+        }
+        let npc_inventory = source.and_then(|s| map.npc_inventory(s.sector, s.index));
+        let inventory = inventory.or(npc_inventory.as_ref());
+        let (weapon, shield) = armed_art(now, inventory, &map.prototypes);
+        let art = arcanum_formats::art_id::CritterArt::from_id(look.art);
+        if look.art.art_type() != 2 || (art.weapon == weapon && art.flag_s == shield) {
+            continue;
+        }
+        look.art = arcanum_formats::art_id::CritterArt { weapon, flag_s: shield, ..art }.id();
+        crate::ground::broadcast(&session, &mut outbox, LedgerDelta::Armed { net_id, weapon, shield });
+    }
+}
+
 /// NPCs' fatigue recovers as PCs' does ([`crate::magick::recover_fatigue`], 0x45e610): every
 /// [`crate::RECOVERY_MS`] of game time by their heal rate `(CO + 1) / 3`; one back above 0 gets
 /// up (0x434de0).
@@ -3627,6 +3673,24 @@ mod tests {
         assert_eq!(dark_to_hit(SKILL_BOW, 0, OCF_UNDEAD, false, 0), 0, "the undead");
         assert_eq!((dark_to_hit(SKILL_BOW, 0, 0x40_0000, false, 0), dark_to_hit(SKILL_BOW, 0, 0x8_0000, false, 0)), (7, 22));
         assert_eq!((dark_to_hit(SKILL_BOW, 0, 0, true, 0), dark_to_hit(SKILL_BOW, 0, 0, true, 254)), (0, 30), "dark sight: the light hinders");
+    }
+
+    #[test]
+    fn arms_show_in_a_fight() {
+        use arcanum_formats::object::{Object, TYPE_ARMOR, TYPE_WEAPON, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, prototype_id};
+        let mut prototypes = Prototypes::default();
+        let mut sword = Object::parse_instance(&ObjectBuilder::new(TYPE_WEAPON).field("item_use_aid_fragment", Value::Int32((6 << 28) | (3 << 6))).build()).unwrap();
+        sword.id = prototype_id(9200);
+        let mut shield = Object::parse_instance(&ObjectBuilder::new(TYPE_ARMOR).build()).unwrap();
+        shield.id = prototype_id(9201);
+        prototypes.insert(sword);
+        prototypes.insert(shield);
+        let held = |p: u32, at: i32| crate::CarriedItem { prototype: p, location: at, quantity: 0, keys: vec![], written: 0, wear: Default::default() };
+        let inv = crate::Inventory { items: vec![held(9200, WEAPON_SLOT), held(9201, SHIELD_SLOT)], ..Default::default() };
+        assert_eq!(armed_art(true, Some(&inv), &prototypes), (3, true), "a sword (kind 3) and a shield");
+        assert_eq!(armed_art(true, None, &prototypes), (1, false), "bare hands");
+        assert_eq!(armed_art(false, Some(&inv), &prototypes), (0, false), "out of combat mode");
     }
 
     #[test]
