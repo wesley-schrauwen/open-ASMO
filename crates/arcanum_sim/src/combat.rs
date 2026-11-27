@@ -57,6 +57,8 @@ pub const SKILL_DODGE: usize = 1;
 pub const SKILL_MELEE: usize = 2;
 pub const SKILL_THROWING: usize = 3;
 pub const SKILL_FIREARMS: usize = 13;
+/// Backstab, a basic skill (its table chance is 0: it adds to blows instead, 0x45f9d0).
+pub const SKILL_BACKSTAB: usize = 4;
 /// The highest chance of a skill flagged 0x800 in 0x5b6f64 (0x4c63b6 / 0x4c6aaf: dodge among
 /// the combat skills), and the most a resistance holds.
 pub const MAX_CHANCE: i32 = 95;
@@ -124,6 +126,9 @@ pub struct Weapon {
     pub worn: i32,
     /// `weapon_flags` [`WEAPON_WEARS_ARMOUR`]: each hit wears the armour it lands on.
     pub wears_armour: bool,
+    /// The kind of its wielded art (`item_use_aid_fragment`, field 0x5f, an item art: bits 6-9,
+    /// 0x5044f0): Backstab takes 2, and 3, 4 or 7 from Expert (0x45fa27-0x45fa53).
+    pub use_kind: u32,
 }
 
 /// `weapon_ammo_type` of weapons that use none (0x465ca0).
@@ -341,6 +346,10 @@ pub struct Fighter {
     /// Lying from a knock-down ([`KnockedDown`]): neither knocked down again (0x435a90 tests
     /// animation 7) nor stunned.
     pub knocked_down: bool,
+    /// Its Backstab level and training rank.
+    pub backstab: (i32, u8),
+    /// This blow's stab ([`stab_of`]; attackers only).
+    pub stab: Stab,
     /// Its `critter_flags` (NPCs).
     pub flags: i32,
     /// `spell_flags` [`SPELL_NO_DAMAGE`] (NPCs): it takes no damage.
@@ -605,7 +614,7 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
         if hi <= 0 {
             continue;
         }
-        let rolled = rng.range(lo.max(0).min(hi), hi);
+        let rolled = rng.range(lo.max(0).min(hi), hi) + if i == 0 { stab_damage(attacker.stab, attacker.backstab.0) } else { 0 };
         let r = defender.resistances[RESISTANCE_OF[i]];
         let r = if i == 4 { r * 3 / 4 } else { r };
         *dealt = if r > 0 { rolled - rolled * r.min(100) / 100 } else { rolled };
@@ -820,6 +829,10 @@ pub fn weapon_of(item: &Object, prototypes: &Prototypes) -> Weapon {
         miss_effect: int("weapon_magic_crit_miss_effect"),
         worn: 0,
         wears_armour: int("weapon_flags") & WEAPON_WEARS_ARMOUR != 0,
+        use_kind: {
+            let aid = arcanum_formats::art_id::ArtId(int("item_use_aid_fragment") as u32);
+            if aid.art_type() == 6 { (aid.0 >> 6) & 0xf } else { 0 }
+        },
     }
 }
 
@@ -882,6 +895,13 @@ pub fn npc_stat(object: &Object, prototypes: &Prototypes, stat: usize) -> i32 {
 }
 
 /// An NPC's skill level: points × 4, at most 20.
+/// NPC skill `k`'s level and training rank (bits 6-7, as dialogue reads them).
+pub fn npc_skill(object: &Object, prototypes: &Prototypes, k: usize) -> (i32, u8) {
+    let (field, i) = if k < 12 { ("critter_basic_skill_idx", k) } else { ("critter_tech_skill_idx", k - 12) };
+    let raw = object.ints(field).or_else(|| prototypes.of(object)?.ints(field)).and_then(|v| v.get(i).copied()).unwrap_or(0);
+    (((raw & 0x3f) * arcanum_rules::LEVELS_PER_POINT).min(arcanum_rules::MAX_SKILL_LEVEL), ((raw >> 6) & 3) as u8)
+}
+
 pub fn npc_skill_level(object: &Object, prototypes: &Prototypes, k: usize) -> i32 {
     let (field, i) = if k < 12 { ("critter_basic_skill_idx", k) } else { ("critter_tech_skill_idx", k - 12) };
     let raw = object.ints(field).or_else(|| prototypes.of(object)?.ints(field)).and_then(|v| v.get(i).copied()).unwrap_or(0);
@@ -1286,6 +1306,8 @@ impl CombatWorld<'_, '_> {
                 pc: c.player.is_some(),
                 constitution: rules.stats(sheet)[2],
                 intelligence: rules.stats(sheet)[4],
+                backstab: (rules.skill_level(sheet, SKILL_BACKSTAB), sheet.training[SKILL_BACKSTAB]),
+                stab: Stab::None,
                 injuries: sheet.injuries,
                 helmet: item(inv, HELMET_SLOT).is_some(),
                 undead: false,
@@ -1318,6 +1340,8 @@ impl CombatWorld<'_, '_> {
             pc: false,
             constitution: npc_stat(o, prototypes, 2),
             intelligence: npc_stat(o, prototypes, 4),
+            backstab: npc_skill(o, prototypes, SKILL_BACKSTAB),
+            stab: Stab::None,
             injuries: prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_INJURIES,
             helmet: item(&inv, HELMET_SLOT).is_some(),
             undead: prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_UNDEAD != 0,
@@ -2877,6 +2901,41 @@ pub fn helpless_by_state(flags: i32, down: bool, knocked_down: bool, stunned: bo
     }
 }
 
+/// A melee blow's stab (0x4b22da-0x4b232a): none, from behind (0x4000: [`can_backstab`]), or
+/// unnoticed besides (0x8000: the target neither sees nor hears the attacker).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Stab {
+    #[default]
+    None,
+    Behind,
+    Unnoticed,
+}
+
+/// Whether an attacker of Backstab `level` and `rank` wielding a weapon of `use_kind` may stab
+/// a target that does not have it in view (0x45f9d0: a level, 0x45eff0 false, a weapon of kind
+/// 2, or 3 / 4 / 7 from Expert).
+pub fn can_backstab(level: i32, rank: u8, use_kind: Option<u32>, in_view: bool) -> bool {
+    level > 0 && !in_view && use_kind.is_some_and(|k| k == 2 || (rank >= 2 && matches!(k, 3 | 4 | 7)))
+}
+
+/// What a stab adds to a hit's normal damage (0x4b6680 at 0x4b67a5-0x4b67d9): the Backstab
+/// level from behind, five times it unnoticed; added to the roll before resistance.
+pub fn stab_damage(stab: Stab, level: i32) -> i32 {
+    match stab {
+        Stab::None => 0,
+        Stab::Behind => level,
+        Stab::Unnoticed => 5 * level,
+    }
+}
+
+/// `attacker`'s stab at `victim` (0x4b22da: a melee blow, skill 2, at a critter that does not
+/// have the attacker in view, [`in_view`] as 0x45eff0).
+fn stab_of(fighter: &Fighter, attacker: &Seen, victim: &Seen) -> Stab {
+    let melee = fighter.skill() == SKILL_MELEE;
+    let (level, rank) = fighter.backstab;
+    if melee && can_backstab(level, rank, fighter.weapon.as_ref().map(|w| w.use_kind), in_view(victim.rotation, victim.at, attacker.at)) { Stab::Behind } else { Stab::None }
+}
+
 /// The two helpless amounts (0x4c864a / 0x4c86d9: 0x32, 0x1e).
 pub const HELPLESS_DOWN: i32 = 50;
 pub const HELPLESS_UNAWARE: i32 = 30;
@@ -2885,7 +2944,8 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     let defender = Fighter { helpless: helpless(w, attacker, victim), ..w.fighter(victim) };
     let ranged = fighter.weapon.as_ref().is_some_and(|wp| wp.range > 1);
     let situation = if ranged { w.shot_difficulty(all, attacker, victim, fighter.skill()) } else { 0 };
-    let fighter = &Fighter { situation, ..fighter.clone() };
+    let stab = stab_of(fighter, attacker, victim);
+    let fighter = &Fighter { situation, stab, ..fighter.clone() };
     let mut outcome = resolve(fighter, &defender, &mut w.rng);
     if let Some(weapon) = fighter.weapon.as_ref().filter(|w| w.uses_ammo()) {
         w.spend_ammo(attacker, weapon.ammo_type, weapon.ammo_per_shot);
@@ -3419,6 +3479,23 @@ mod tests {
         let mut rng = HostRng::default();
         assert!((0..300).all(|_| critical_effects(&pc, &lying, &sword, BodyPart::Legs, &mut rng) & (KNOCKED_DOWN | STUNNED) == 0));
         assert_eq!(helpless_by_state(0, false, true, false), Some(30), "30 easier to hit while it lies");
+    }
+
+    #[test]
+    fn backstabs_need_a_blade_behind_the_back() {
+        assert!(can_backstab(4, 0, Some(2), false), "kind 2, unseen");
+        assert!(!can_backstab(4, 0, Some(2), true), "in view");
+        assert!(!can_backstab(0, 0, Some(2), false), "no skill");
+        assert!(!can_backstab(4, 0, None, false), "bare hands");
+        assert!(!can_backstab(4, 1, Some(3), false) && can_backstab(4, 2, Some(3), false), "kind 3 from Expert");
+        assert!(!can_backstab(4, 3, Some(5), false), "kind 5 never");
+        assert_eq!((stab_damage(Stab::None, 8), stab_damage(Stab::Behind, 8), stab_damage(Stab::Unnoticed, 8)), (0, 8, 40));
+        // A stab's damage lands on the normal roll.
+        let knife = Weapon { skill: SKILL_MELEE, damage: [(1, 1), (0, 0), (0, 0), (0, 0), (0, 0)], use_kind: 2, ..Default::default() };
+        let stabber = Fighter { levels: vec![(SKILL_MELEE, 20)], weapon: Some(knife), backstab: (8, 0), stab: Stab::Behind, ..Default::default() };
+        let mut rng = HostRng::default();
+        let hit = (0..50).map(|_| resolve(&stabber, &Fighter::default(), &mut rng)).find(|o| o.hit && !o.critical).unwrap();
+        assert_eq!(hit.hp, 9, "1 + 8");
     }
 
     #[test]
