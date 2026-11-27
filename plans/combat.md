@@ -683,8 +683,15 @@ of `combat_design.md` come after the original's rules work.
      wholly (−100), else the shoot-through objects' cost comes off, and an open line costs 50 more
      below Expert (0x4c8bf4). In the open an untrained prowler is seen; behind a stone (20) it
      hides. Critters' cover on the line not counted (builder's call). No distance or armour term.
-   - Not built: light objects (0x4dc210), animated light frames, hearing's 0x4c8430 (flag 0x2000)
-     terms.
+   - Borne light (`feat/carried-light`, `light::borne_light` / `borne_scale`): on each wield
+     0x467e80 ORs the worn items' `item_flags` 0x200-0x1000 (`OIF_LIGHT_SMALL`-`_XLARGE`),
+     shifted down by condition (0x461540: at most 25 % by three, 50 % two, 75 % one), and sets
+     the largest as `critter_flags` 0x80000-0x400000 (`OCF_LIGHT_*`). It scales the dark's term
+     for the bearer: a blow in the dark is easier with a lantern, and a prowler's lantern gives it
+     away. In the data: Electric Light (extra large), Lantern and Helm of Light (large), Miner's
+     Helmet (medium).
+   - Not built: the bearer's light lighting the ground (0x45fa70 → 0x43ebd0), objects' own
+     lights (0x4d9590), animated light frames, hearing's 0x4c8430 (flag 0x2000) terms.
 23. **Backstab** (`feat/backstab`, `combat::Stab`).
    - Eligible (0x45f9d0): a Backstab level (0x4c5eb0 skill 4), the target not having the
      attacker in view (0x45eff0 false), and a weapon whose wielded art (`item_use_aid_fragment`,

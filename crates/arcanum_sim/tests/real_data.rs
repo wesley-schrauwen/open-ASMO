@@ -937,3 +937,18 @@ fn sector_lights_brighten_the_night() {
     eprintln!("on the light's tile at midnight: {lit:?} over {dark:?}");
     assert!(luminance(lit) > luminance(dark));
 }
+
+#[test]
+fn light_giving_items_bear_light() {
+    let Some(vfs) = vfs() else { return };
+    let desc = arcanum_formats::mes::MesFile::parse(&vfs.read("mes/description.mes").unwrap()).unwrap();
+    let mut map = arcanum_sim::LoadedMap::default();
+    let start = StartMap::load(&vfs).unwrap();
+    map.open(Some(&vfs), &start.map);
+    let lit: Vec<(String, i32)> = map.prototypes.0.values().filter_map(|o| {
+        let f = map.prototypes.int(o, "item_flags").unwrap_or(0) & arcanum_sim::light::OIF_LIGHTS;
+        (f != 0).then(|| (desc.get(map.prototypes.int(o, "description").unwrap_or(0) as u32).unwrap_or("?").to_string(), f))
+    }).collect();
+    eprintln!("{} light-giving items: {lit:?}", lit.len());
+    assert!(lit.iter().any(|(n, _)| n.to_lowercase().contains("torch") || n.to_lowercase().contains("lantern")), "{lit:?}");
+}
