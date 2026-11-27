@@ -655,7 +655,14 @@ of `combat_design.md` come after the original's rules work.
      0x4c8642-0x4c86d9): paralyzed (`critter_flags` 0x40) or down 50; knocked down (animation 7
      of the current art, 0x503e20 at 0x4c867b) or stunned (0x20) 30; asleep (0x1000) 50; then
      the unaware 30. For PCs and NPCs (types 0xf / 0x10 at 0x4c8621). Built from NPCs'
-     `critter_flags`. Not built: knocked down (not kept on the host).
+     `critter_flags`.
+   - Knocked down (`feat/knocked-down`, `combat::KnockedDown`): the goal 62 handler (0x431b20)
+     queues no get-up; goal 63 comes only from 0x434de0, which the fatigue recovery tick calls
+     (0x45e610 at 0x45e75e) once fatigue is above 0 and the art lies on animation 7. Built: the
+     host keeps it one recovery period (80 000 game ms, builder's call: the original's
+     per-critter tick may come sooner); meanwhile 30 easier to hit (0x4c867b), not knocked down
+     again (0x435a90's animation test) nor stunned (0x4b5f40). Not built: the client holding
+     the lie (it still plays the get-up at once).
    - Range and cover (`feat/range-and-cover`, `combat::missile_difficulty`,
      `blocking::missile_cost`): a ranged shot is 5 harder a tile past half the shooter's
      Perception (0x4c888e-0x4c88c1; a Master of the skill spared, 0x4c8883; NPCs never Masters
