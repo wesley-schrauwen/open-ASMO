@@ -64,13 +64,21 @@ pub const MAX_CHANCE: i32 = 95;
 /// bow and melee 5 + 25, firearms (tech) 5 + 25; at most 95.
 /// + 10 at Intelligence 20 or more ([`crate::bright_bonus`], 0x4c6369), before the cap.
 pub fn weapon_chance(skill: usize, level: i32, intelligence: i32) -> i32 {
+    chance_against(skill, level, intelligence, false)
+}
+
+/// `spell_flags` 0x400000 of a target firearms aim worse at (0x4c6a34-0x4c6a47).
+pub const OSF_FIREARM_WARD: i32 = 0x40_0000;
+
+/// [`weapon_chance`] against a target: firearms 20 less at one of [`OSF_FIREARM_WARD`]
+/// (0x4c6a47, before the Intelligence bonus and the cap).
+pub fn chance_against(skill: usize, level: i32, intelligence: i32, warded: bool) -> i32 {
     let level = level.max(0);
     let chance = match skill {
         SKILL_DODGE => 2 * level,
         SKILL_THROWING => 7 * level + 25,
-        // Tech index 1 of 0x4c69f0 (checked); the − 20 when the target has `flags` 0x400000 is
-        // not counted.
-        SKILL_FIREARMS => 5 * level + 25,
+        // Tech index 1 of 0x4c69f0 (checked), less 20 against a warded target.
+        SKILL_FIREARMS => 5 * level + 25 - if warded { 20 } else { 0 },
         _ => 5 * level + 25,
     };
     (chance + crate::bright_bonus(intelligence)).clamp(0, MAX_CHANCE)
@@ -330,6 +338,8 @@ pub struct Fighter {
     pub flags: i32,
     /// `spell_flags` [`SPELL_NO_DAMAGE`] (NPCs): it takes no damage.
     pub no_damage: bool,
+    /// `spell_flags` [`OSF_FIREARM_WARD`] (NPCs): firearms aim 20 worse at it.
+    pub warded: bool,
 }
 
 /// `critter_flags` 0x20000000: mechanical (with [`OCF_UNDEAD`], never poisoned: 0x4b441d).
@@ -551,7 +561,7 @@ pub const WEAPON_DROPPED: u8 = 16;
 ///   bonus).
 pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> AttackOutcome {
     let skill = attacker.skill();
-    let chance = weapon_chance(skill, attacker.level(skill), attacker.intelligence);
+    let chance = chance_against(skill, attacker.level(skill), attacker.intelligence, defender.warded);
     let weapon = attacker.weapon.clone().unwrap_or_default();
     let short = (weapon.min_strength - attacker.strength).max(0);
     // The defender's armour: half its class, in the attacker's chance (0x4c875c-0x4c878b).
@@ -1272,6 +1282,7 @@ impl CombatWorld<'_, '_> {
                 stunned: c.stunned.is_some(),
                 flags: 0,
                 no_damage: false,
+                warded: false,
             }
             .with_ammo(inv, prototypes);
         }
@@ -1302,6 +1313,7 @@ impl CombatWorld<'_, '_> {
             stunned: c.stunned.is_some(),
             flags: prototypes.int(o, "critter_flags").unwrap_or(0),
             no_damage: prototypes.int(o, "spell_flags").unwrap_or(0) & SPELL_NO_DAMAGE != 0,
+            warded: prototypes.int(o, "spell_flags").unwrap_or(0) & OSF_FIREARM_WARD != 0,
         }
         .with_ammo(&inv, prototypes)
     }
@@ -3157,6 +3169,7 @@ mod tests {
         assert_eq!((weapon_chance(SKILL_MELEE, 0, 8), weapon_chance(SKILL_MELEE, 4, 8), weapon_chance(SKILL_MELEE, 20, 8)), (25, 45, 95));
         assert_eq!((weapon_chance(SKILL_MELEE, 4, 20), weapon_chance(SKILL_DODGE, 0, 20), weapon_chance(SKILL_MELEE, 15, 20)), (55, 10, 95), "Intelligence 20: + 10, under the cap");
         assert_eq!((weapon_chance(SKILL_DODGE, 5, 8), weapon_chance(SKILL_THROWING, 2, 8)), (10, 39));
+        assert_eq!((chance_against(SKILL_FIREARMS, 4, 8, true), chance_against(SKILL_FIREARMS, 4, 8, false), chance_against(SKILL_BOW, 4, 8, true)), (25, 45, 45), "a ward: firearms only");
         assert_eq!((attack_cost(0), attack_cost(9), attack_cost(21), attack_cost(30)), (8, 5, 2, 1));
         assert_eq!(Fighter::default().attack_cost(), 5, "bare hands: speed 10");
         assert_eq!(pc_unarmed(0), [(1, 5), (0, 0), (0, 0), (0, 0), (1, 5)]);
