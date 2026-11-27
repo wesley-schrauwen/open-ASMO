@@ -395,7 +395,8 @@ impl LoadedMap {
         self.missiles.add_missiles(self.mobiles.get(&id).into_iter().flatten(), &self.prototypes);
         self.sound.add(&sector.objects, &self.prototypes);
         self.sound.add(self.mobiles.get(&id).into_iter().flatten(), &self.prototypes);
-        let lights: Vec<arcanum_formats::sector::Light> = sector.objects.iter().chain(self.mobiles.get(&id).into_iter().flatten()).flat_map(|o| crate::light::object_lights(o, &self.prototypes)).collect();
+        // Critters' own lights follow them instead ([`crate::light::update_borne_lights`]).
+        let lights: Vec<arcanum_formats::sector::Light> = sector.objects.iter().chain(self.mobiles.get(&id).into_iter().flatten()).filter(|o| !matches!(o.object_type, arcanum_formats::object::TYPE_PC | arcanum_formats::object::TYPE_NPC)).flat_map(|o| crate::light::object_lights(o, &self.prototypes)).collect();
         self.object_lights.insert(id, lights);
         if let Some(art) = &self.art {
             let (x0, y0) = (id.x() * 64, id.y() * 64);
@@ -691,6 +692,33 @@ mod tests {
         assert_eq!(map.absent.len() + map.sectors.len(), 4, "a 2 x 2 block at the corner");
         assert_eq!(map.sectors.len(), 1, "(1, 1) is within reach");
         assert_eq!(pcs(&mut sim).len(), 1);
+    }
+
+    #[test]
+    fn an_npcs_own_light_goes_where_it_walks() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let mut b = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(72, 70)).field("light_aid", Value::Int32(0x9008_0000u32 as i32)).field("light_color", Value::Int32(0xffffff));
+        b.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
+        std::fs::write(folder.join("G_0F.mob"), b.build()).unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 60, y: 60 })]));
+        sim.update();
+        sim.update();
+        let npc = { let world = sim.app.world_mut(); world.query::<(Entity, &crate::Position)>().iter(world).find(|q| q.1.0 == TileLoc { x: 72, y: 70 }).unwrap().0 };
+        assert!(sim.app.world().resource::<LoadedMap>().object_lights.values().flatten().next().is_none(), "not a placed light");
+        sim.app.world_mut().get_mut::<crate::Position>(npc).unwrap().0 = TileLoc { x: 75, y: 71 };
+        for _ in 0..crate::light::BORNE_TICKS {
+            sim.update();
+        }
+        let lights = &sim.app.world().resource::<LoadedMap>().borne_lights;
+        assert!(lights.iter().any(|l| (l.x, l.y) == (75, 71)), "{lights:?}");
     }
 
     #[test]
