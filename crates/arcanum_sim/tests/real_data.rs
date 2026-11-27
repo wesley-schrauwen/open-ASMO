@@ -912,3 +912,28 @@ fn the_crash_site_is_lit_by_the_default_scheme_outdoors() {
     assert_eq!(map.ambient_at(start.position, 0), Some([74, 80, 98]), "midnight");
     assert_eq!(arcanum_sim::light::luminance([74, 80, 98]), 79);
 }
+
+#[test]
+fn sector_lights_brighten_the_night() {
+    use arcanum_sim::LoadedMap;
+    use arcanum_sim::light::{LIGHT_OFF, luminance};
+    let Some(vfs) = vfs() else { return };
+    // The first map sector with lights on.
+    let found = vfs.list_dir("maps").unwrap_or_default().into_iter().find_map(|folder| {
+        vfs.list_dir(&folder).unwrap_or_default().into_iter().filter(|f| f.to_lowercase().ends_with(".sec")).find_map(|f| {
+            let sec = arcanum_formats::sector::Sector::parse(&vfs.read(&f).ok()?).ok()?;
+            let light = sec.lights.iter().find(|l| l.flags & LIGHT_OFF == 0)?;
+            Some((folder.trim_start_matches("maps/").to_string(), arcanum_formats::map::TileLoc { x: light.x as u32, y: light.y as u32 }))
+        })
+    });
+    let Some((name, at)) = found else { panic!("no lit sector") };
+    let mut map = LoadedMap::default();
+    map.open(Some(&vfs), &name);
+    map.load_sector(Some(&vfs), at.sector());
+    let read = map.light_frames.values().filter(|f| f.is_some()).count();
+    eprintln!("{name}: {} lights, {read} of {} arts read", map.sectors[&at.sector()].lights.len(), map.light_frames.len());
+    assert!(read > 0 && read == map.light_frames.len(), "every light's art reads");
+    let (lit, dark) = (map.light_at(at, 0).unwrap(), map.ambient_at(at, 0).unwrap());
+    eprintln!("on the light's tile at midnight: {lit:?} over {dark:?}");
+    assert!(luminance(lit) > luminance(dark));
+}

@@ -254,6 +254,8 @@ pub struct LoadedMap {
     pub art: Option<Arc<ArtIndex>>,
     /// The lighting schemes, read once and kept ([`crate::light::Schemes`]).
     pub light: Arc<crate::light::Schemes>,
+    /// The loaded sectors' lights' art, frame 0 decoded, by art id (`None`: unreadable).
+    pub light_frames: std::collections::HashMap<u32, Option<Arc<arcanum_formats::art::ArtFrame>>>,
     /// What the loaded sectors' objects block.
     pub blocking: crate::ObjectBlocking,
     /// What they block for missiles in flight ([`crate::blocking::missile_blocks`]).
@@ -366,6 +368,7 @@ impl LoadedMap {
         }
         match vfs.read(&path).map_err(|e| e.to_string()).and_then(|d| Sector::parse(&d).map_err(|e| e.to_string())) {
             Ok(sector) => {
+                self.read_light_frames(vfs, &sector);
                 self.sectors.insert(id, sector);
                 self.rebuild_blocking(id);
                 self.apply_changes(id);
