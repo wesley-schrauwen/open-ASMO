@@ -59,15 +59,19 @@ pub const SLOT_DIFFICULTY: [i32; 9] = [50, 30, 30, 30, 70, 70, 1000, 1000, 1000]
 /// The chance for a thief of Pick Pocket `level` and `intelligence` against a victim of
 /// `perception`: the opposed table, then + 10 at Intelligence 20 (0x4c6369 → 0x4b0ee0 stat 4).
 pub fn steal_chance(level: i32, perception: i32, intelligence: i32) -> i32 {
-    let diff = level - perception;
-    let chance = if diff > 9 {
+    (opposed_chance(level - perception) + crate::bright_bonus(intelligence)).min(crate::lockpick::MAX_PICK_CHANCE)
+}
+
+/// An opposed skill's chance for a level `diff` over the opponent's (0x4c6410): 100 at 10 or
+/// more, 0 at −10 or less, else table 0x5b7068 over 4.
+pub fn opposed_chance(diff: i32) -> i32 {
+    if diff > 9 {
         100
     } else if diff < -9 {
         0
     } else {
         CHANCES[(diff + 9) as usize] / 4
-    };
-    (chance + crate::bright_bonus(intelligence)).min(crate::lockpick::MAX_PICK_CHANCE)
+    }
 }
 
 /// The difficulty of stealing an item at `location` taking `cells`, for a thief of `training`.

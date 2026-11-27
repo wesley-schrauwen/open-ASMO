@@ -486,6 +486,11 @@ of `combat_design.md` come after the original's rules work.
      nothing; a target with `flags` 0x200 or `spell_flags` 0x1 (0x4af2d6 / 0x4af2e7) is seen
      only with Perception 20 (0x4b0ee0: stat 5 at least 20) or `spell_flags` 0x200 (0x4af307).
      Hearing is unchanged. PCs are never invisible here (builder's call: nothing sets it yet).
+   - The prowl value (`feat/prowl-opposed`, `prowl::Prowler`): Prowling is an opposed skill
+     (0x5b6f64 flags 0x298, bit 0x10: the opponent's Perception), so 0x4c62e0 takes 0x4c6410:
+     level − the watcher's PE, 100 at 10 or more, 0 at −10 or less, else table 0x5b7068 / 4;
+     then + 10 at Intelligence 20; no cap. The level-by-five entry of 0x4c63dc never applies.
+     Before, the value was level × 5 + 25 for every watcher.
    - Not built: light, the stealth difficulty terms.
    - What hides a target (`feat/sight-blockers`): 0x4af260 walks the line with the missile's
      flags (0x4ade00, 0xc at 0x4ade93) and a blocker adds 1 past the reach (0x4af45a), so it

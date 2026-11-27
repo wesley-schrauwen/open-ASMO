@@ -2118,14 +2118,14 @@ pub fn hostile(npc_flags: i32, reaction: i32, alignment_gap: i32, row: &[i32; 17
 
 /// How far an NPC of Perception `pe` notices a PC (0x4ab460 / 0x4af260: `clamp(PE, 1, 10)`
 /// tiles, Perception first cut by a prowler's value), or hears it (0x4af470).
-pub fn notice_reach(pe: i32, prowler: Option<i32>) -> u32 {
+pub fn notice_reach(pe: i32, prowler: Option<crate::prowl::Prowler>) -> u32 {
     sight_reach(pe, prowler).max(crate::prowl::hearing_reach(pe, prowler) as u32)
 }
 
 /// How far a watcher of Perception `pe` sees (0x4af260 → 0x4af240): `clamp(PE, 1, 10)` tiles, its
 /// Perception first cut by a prowler's value in percent.
-pub fn sight_reach(pe: i32, prowler: Option<i32>) -> u32 {
-    let seen = pe - prowler.map_or(0, |p| pe * p.clamp(0, 100) / 100);
+pub fn sight_reach(pe: i32, prowler: Option<crate::prowl::Prowler>) -> u32 {
+    let seen = pe - prowler.map_or(0, |p| pe * p.against(pe).clamp(0, 100) / 100);
     seen.clamp(1, 10) as u32
 }
 
@@ -2149,7 +2149,7 @@ pub fn line_between(from: TileLoc, to: TileLoc) -> Vec<TileLoc> {
 /// flags 0xc at 0x4ade93: a blocker adds 1 past the reach, 0x4af45a, so it hides even a near
 /// target; its line cost is dropped, 0x4af45e). `map` is the missiles' view
 /// ([`crate::MissileView`]); critters on the line are left out (all shoot-through in the data).
-pub fn sees(map: &impl crate::Walkable, from: TileLoc, rotation: usize, pe: i32, to: TileLoc, prowler: Option<i32>) -> bool {
+pub fn sees(map: &impl crate::Walkable, from: TileLoc, rotation: usize, pe: i32, to: TileLoc, prowler: Option<crate::prowl::Prowler>) -> bool {
     crate::tile_distance(from, to) <= sight_reach(pe, prowler) && in_view(rotation, from, to) && first_on_line(from, to, std::iter::empty(), |a, b| crate::crossing_clear(map, a, b), |t| map.walkable(t)).is_none()
 }
 
@@ -2158,7 +2158,7 @@ pub fn sees(map: &impl crate::Walkable, from: TileLoc, rotation: usize, pe: i32,
 /// 0x4af60c).
 /// `eyes` and `ears` are the Perception it sees ([`can_look`]) and hears ([`ears`]) with; `None`:
 /// not at all.
-pub fn notices(map: &impl crate::Walkable, eyes: Option<i32>, from: TileLoc, rotation: usize, ears: Option<i32>, to: TileLoc, prowler: Option<i32>) -> bool {
+pub fn notices(map: &impl crate::Walkable, eyes: Option<i32>, from: TileLoc, rotation: usize, ears: Option<i32>, to: TileLoc, prowler: Option<crate::prowl::Prowler>) -> bool {
     eyes.is_some_and(|pe| sees(map, from, rotation, pe, to, prowler)) || ears.is_some_and(|pe| hears(map, from, pe, to, prowler))
 }
 
@@ -2184,7 +2184,7 @@ pub fn ears(listener: &Object, prototypes: &Prototypes, stunned: bool) -> Option
 
 /// Whether a listener at `from` hears `to` (0x4af470): the distance at most its reach
 /// ([`crate::prowl::hearing_reach`]) less the sound's cost on the line (0x4af640).
-pub fn hears(map: &impl crate::Walkable, from: TileLoc, pe: i32, to: TileLoc, prowler: Option<i32>) -> bool {
+pub fn hears(map: &impl crate::Walkable, from: TileLoc, pe: i32, to: TileLoc, prowler: Option<crate::prowl::Prowler>) -> bool {
     let reach = crate::prowl::hearing_reach(pe, prowler);
     let distance = i64::from(crate::tile_distance(from, to));
     distance <= reach && distance <= reach - i64::from(crate::sound_cost(map, from, to))
@@ -2269,7 +2269,7 @@ pub fn notice_foes(
         let alignment = npc_stat(o, &map.prototypes, 0x13);
         for (&pc, pc_at, player, sheet, prowling) in &pcs {
             let Some(saved) = save.players.get(&player.0) else { continue };
-            let prowler = prowling.then(|| crate::prowl::prowl_value(rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING), rules.0.stats(&sheet.0)[4]));
+            let prowler = prowling.then(|| crate::prowl::Prowler { level: rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING), intelligence: rules.0.stats(&sheet.0)[4] });
             if !notices(&crate::MissileView(&map), can_look(o, &map.prototypes, false, None).then_some(pe), at.0, rotation, ears(o, &map.prototypes, false), pc_at.0, prowler) {
                 continue;
             }
@@ -2325,7 +2325,7 @@ pub fn catch_lock_pickers(
     let mut reacting: Vec<(NetId, NetId, PlayerId, bool)> = std::mem::take(&mut checks.witnessed);
     for (player, lock, owner, opened) in std::mem::take(&mut witnessing.0) {
         let Some((&pc, pc_at, _, sheet, prowling)) = pcs.iter().find(|p| p.2.0 == player) else { continue };
-        let prowler = prowling.then(|| crate::prowl::prowl_value(rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING), rules.0.stats(&sheet.0)[4]));
+        let prowler = prowling.then(|| crate::prowl::Prowler { level: rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING), intelligence: rules.0.stats(&sheet.0)[4] });
         for (&npc, at, source, facing, look) in &npcs {
             if !crate::within_radius(at.0, lock, WITNESS_TILES) || map.npc_down(source.sector, source.index) || map.is_dead(source.sector, source.index) {
                 continue;
@@ -2779,7 +2779,7 @@ fn helpless(w: &CombatWorld, attacker: &Seen, victim: &Seen) -> i32 {
     if let (false, Some(n)) = (victim.fighting, victim.npc)
         && let Some(o) = w.map.mobiles.get(&n.sector).and_then(|m| m.get(n.index as usize))
     {
-        let prowler = attacker.sheet.as_ref().filter(|_| attacker.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING), w.rules.0.stats(s)[4]));
+        let prowler = attacker.sheet.as_ref().filter(|_| attacker.prowling).map(|s| crate::prowl::Prowler { level: w.rules.0.skill_level(s, crate::SKILL_PROWLING), intelligence: w.rules.0.stats(s)[4] });
         let target = attacker.npc.and_then(|a| w.map.mobiles.get(&a.sector)?.get(a.index as usize));
         if !notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, victim.stunned.is_some(), target).then(|| npc_stat(o, &w.map.prototypes, 5)), victim.at, victim.rotation, ears(o, &w.map.prototypes, victim.stunned.is_some()), attacker.at, prowler) {
             return HELPLESS_UNAWARE;
@@ -3106,7 +3106,7 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
         // A prowling PC is noticed less (0x4a9f10 → 0x4af260 / 0x4af470 with its stealth).
         let notices = |x: &Seen| {
             let target = x.npc.and_then(|n| w.map.mobiles.get(&n.sector)?.get(n.index as usize));
-            let prowler = x.sheet.as_ref().filter(|_| x.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING), w.rules.0.stats(s)[4]));
+            let prowler = x.sheet.as_ref().filter(|_| x.prowling).map(|s| crate::prowl::Prowler { level: w.rules.0.skill_level(s, crate::SKILL_PROWLING), intelligence: w.rules.0.stats(s)[4] });
             notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, c.stunned.is_some(), target).then_some(pe), c.at, c.rotation, ears(o, &w.map.prototypes, c.stunned.is_some()), x.at, prowler)
         };
         let for_victim = allied(c.leader, own, victim.player, victim.leader, v_faction, v_kin) && (c.leader.is_some() || notices(victim));
@@ -3192,7 +3192,7 @@ mod tests {
         assert!(!hostile(ONF_KOS | ONF_KOS_OVERRIDE, 60, 0, &row), "made peaceful");
         assert!(hostile(0, 0, 0, &row) && !hostile(0, 1, 0, &row), "reaction at or below column 10");
         assert!(!hostile(0, 50, 1000, &row), "alignment: column 11 (2001) is out of reach");
-        assert_eq!((notice_reach(8, None), notice_reach(20, None), notice_reach(8, Some(100))), (8, 10, 3));
+        assert_eq!((notice_reach(8, None), notice_reach(20, None), notice_reach(8, Some(crate::prowl::Prowler { level: 20, intelligence: 8 }))), (8, 10, 3), "a prowler 10 over: 100");
     }
 
     #[test]
@@ -3466,7 +3466,7 @@ mod tests {
         let open = Grid::parse(&["...................."; 20]);
         assert!(sees(&open, t(2, 5), 5, 8, t(9, 5), None));
         assert!(!sees(&open, t(2, 5), 5, 8, t(11, 5), None), "9 tiles: past PE 8");
-        assert!(!sees(&open, t(2, 5), 5, 8, t(9, 5), Some(50)), "a prowler halves it");
+        assert!(!sees(&open, t(2, 5), 5, 8, t(9, 5), Some(crate::prowl::Prowler { level: 9, intelligence: 8 })), "a prowler of 9 against PE 8 (52) halves it");
         let mut rows = vec!["...................."; 20];
         rows[5] = ".....#..............";
         let walled = Grid::parse(&rows);

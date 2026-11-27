@@ -7,8 +7,9 @@
 //!   off: animation 0): here the PC carries [`Prowling`], its [`crate::Appearance`] takes
 //!   animation 5 (later players see it in the `Spawn`), and every player gets
 //!   [`LedgerDelta::Prowling`]. It is not saved (builder's call).
-//! - **Its value** ([`prowl_value`], 0x4c62e0 skill 6): 0 untrained by level, else level × 5 +
-//!   25.
+//! - **Its value** ([`prowl_value`], 0x4c62e0 skill 6 → 0x4c6410): opposed by each watcher's
+//!   Perception (level − PE: 100 at 10 or more, 0 at −10 or less, else table 0x5b7068 / 4), + 10
+//!   at Intelligence 20.
 //! - **Hearing** ([`hearing_reach`], 0x4af470): a listener hears within `(clamp(PE - 4, 1, 10) +
 //!   6) / 2` tiles; against a prowler its Perception first loses the prowler's value in percent
 //!   (at most 100). The difficulty 0x4c8430 takes off (flag 0x2000) is not counted.
@@ -37,18 +38,34 @@ pub struct Prowling;
 #[derive(Resource, Debug, Default)]
 pub struct ProwlRequests(pub Vec<(PlayerId, bool)>);
 
-/// The Prowling value of a prowler of skill `level` and `intelligence` (0x4c62e0: + 10 at
-/// Intelligence 20, 0x4c6369).
-pub fn prowl_value(level: i32, intelligence: i32) -> i32 {
-    (if level <= 0 { 0 } else { level * 5 + 25 }) + crate::bright_bonus(intelligence)
+/// A prowler: its Prowling level and Intelligence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Prowler {
+    pub level: i32,
+    pub intelligence: i32,
 }
 
-/// How far a listener of `perception` hears, in tiles; `prowler` is the target's prowl value
-/// when it prowls (0x4af470 with noise 1).
-pub fn hearing_reach(perception: i32, prowler: Option<i32>) -> i64 {
+impl Prowler {
+    /// Its value against a watcher of Perception `pe` ([`prowl_value`]).
+    pub fn against(self, pe: i32) -> i32 {
+        prowl_value(self.level, self.intelligence, pe)
+    }
+}
+
+/// The Prowling value of a prowler of skill `level` and `intelligence` against a watcher of
+/// Perception `pe` (0x4c62e0 → 0x4c6410: Prowling is opposed, flags 0x298 at 0x5b6f64 with
+/// 0x10, by the watcher's Perception; the level-by-five table entry is not used), + 10 at
+/// Intelligence 20 (0x4c6369); not capped at 95 (no 0x800).
+pub fn prowl_value(level: i32, intelligence: i32, pe: i32) -> i32 {
+    crate::pickpocket::opposed_chance(level - pe) + crate::bright_bonus(intelligence)
+}
+
+/// How far a listener of `perception` hears, in tiles; `prowler` is the target when it prowls
+/// (0x4af470 with noise 1).
+pub fn hearing_reach(perception: i32, prowler: Option<Prowler>) -> i64 {
     let mut perception = perception;
     if let Some(p) = prowler {
-        perception -= perception * p.clamp(0, 100) / 100;
+        perception -= perception * p.against(perception).clamp(0, 100) / 100;
     }
     i64::from(((perception - 4).clamp(1, 10) + 6) / 2)
 }
@@ -76,10 +93,10 @@ mod tests {
 
     #[test]
     fn prowlers_cut_the_listeners_perception() {
-        assert_eq!((prowl_value(0, 8), prowl_value(1, 8), prowl_value(10, 8)), (0, 30, 75));
-        assert_eq!(prowl_value(1, 20), 40, "Intelligence 20: + 10");
+        assert_eq!((prowl_value(0, 8, 8), prowl_value(8, 8, 8), prowl_value(18, 8, 8), prowl_value(0, 8, 18)), (16, 47, 100, 0), "opposed by Perception");
+        assert_eq!(prowl_value(8, 20, 8), 57, "Intelligence 20: + 10");
         assert_eq!(hearing_reach(10, None), 6, "(6 + 6) / 2");
-        assert_eq!(hearing_reach(10, Some(50)), 3, "PE 5: (1 + 6) / 2");
-        assert_eq!(hearing_reach(20, Some(200)), 3, "at most all of it");
+        assert_eq!(hearing_reach(10, Some(Prowler { level: 11, intelligence: 8 })), 3, "level 11 against PE 10: 52, PE 5: (1 + 6) / 2");
+        assert_eq!(hearing_reach(8, Some(Prowler { level: 20, intelligence: 20 })), 3, "110: at most all of it");
     }
 }

@@ -1500,7 +1500,7 @@ mod tests {
             foe.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
             std::fs::write(folder.join("G_0F.mob"), foe.build()).unwrap();
             // A neutral bystander of Perception 14, 6 tiles off, facing away: it hears 8 tiles,
-            // 4 from a prowler of value 45.
+            // 3 from a prowler of level 20 and Intelligence 20 (value 82 against PE 14).
             let mut stats = [0i32; 6];
             stats[5] = 14;
             let stats = Value::Array(Some(Array { elem_size: 4, id: 1, data: stats.iter().flat_map(|x| x.to_le_bytes()).collect(), bitset: vec![0x3f, 0] }));
@@ -1513,7 +1513,7 @@ mod tests {
             let mut start = save(&[(1, "A", TileLoc { x: 71, y: 70 })]);
             let sheet = &mut start.players.get_mut(&PlayerId(1)).unwrap().blueprint.sheet;
             sheet.base = [20; arcanum_rules::PRIMARY_STATS];
-            sheet.skills[crate::SKILL_PROWLING] = 1;
+            sheet.skills[crate::SKILL_PROWLING] = 5;
             sim.boot(start);
             sim.update();
             sim.update();
@@ -1526,7 +1526,8 @@ mod tests {
                 sim.update();
             }
             let level = { let world = sim.app.world(); world.resource::<crate::SimRules>().0.skill_level(&world.resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(1)].blueprint.sheet, crate::SKILL_PROWLING) };
-            assert_eq!(crate::prowl::prowl_value(level, 8), 45, "prowl value 45");
+            // Level 20 against the bystander's PE 14: 72, + 10 for Intelligence 20 (0x4c6410).
+            assert_eq!(level, 20, "Prowling level 20");
             sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: foe, seq: 0 })]);
             sim.update();
             let world = sim.app.world_mut();
