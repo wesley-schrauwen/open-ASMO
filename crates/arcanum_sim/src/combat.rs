@@ -2770,9 +2770,15 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
         return outcome;
     }
     let Some(source) = victim.npc else { return outcome };
-    // One who gave up fights again only when whom it gave up to attacks it (0x4aa620 case 3).
+    // One who gave up fights again only when whom it gave up to attacks it (0x4aa620 case 3,
+    // 0x4aa71b → 0x4ab2a0); attacked by another, it begs that one (0x413ea0 at 0x4aa759,
+    // `gd_npc` 3000-3099) when it can act (0x45d790), from 0x4a9650: blows not thrown.
     match victim.surrendered {
-        Some(to) if to != attacker.net_id => {}
+        Some(to) if to != attacker.net_id => {
+            if let Some(player) = attacker.player.filter(|_| aim == Aim::Meant && !outcome.killed && victim.stunned.is_none() && !w.map.npc_down(source.sector, source.index)) {
+                w.bark(source, victim.net_id, player, FLEE_BARK);
+            }
+        }
         Some(_) => {
             commands.entity(victim.entity).remove::<Surrendered>().insert(Fighting { target: attacker.net_id });
         }

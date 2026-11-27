@@ -305,7 +305,12 @@ of `combat_design.md` come after the original's rules work.
      0xbb8 / 0xc1b; shown by the callback 0x5f8488 at 0x4aad65), for the PC it ran from.
    - Finding: script action 0x19 (table 0x44adbc, handler 0x44783a → 0x4c42f0) is not
      surrender: it adds a critter to an NPC's list field 0x104 with the time in 0x105.
-   - Not built: the surrendered NPC's bark each AI turn (0x4aa705 / 0x4aa759), action 0x19,
+   - Begging (`feat/surrendered-bark`): 0x4aa620's case 3 (field 0xda 0x4000,
+     0x4aab51): attacked by whom it gave up to, or by 0x4ab0b0's pick, it fights (0x4ab2a0);
+     by another, it floats a 3000-3099 line at that one when it can act (0x45d790 → 0x413ea0 at
+     0x4aa759) and calls 0x434980 (not traced). Built for blows not thrown (0x4a9650) from a
+     PC; builder's call: not when the blow kills it. Not built: 0x4ab0b0, 0x434980, the other
+     callers 0x4a9c00 / 0x4a9f10 (each AI tick, which would bark at every foe in sight), action 0x19,
      ammunition (not found in the attack; built in step 13), the one-shot items of 0x4ac910.
 8. **Critical hits** (built, `feat/combat-criticals`).
    - The critical chance is a twentieth of the skill chance plus `weapon_magic_crit_hit_chance`

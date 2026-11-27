@@ -1135,6 +1135,41 @@ mod tests {
     }
 
     #[test]
+    fn a_surrendered_npc_begs_another_attacker() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        std::fs::create_dir_all(dir.path().join("mes")).unwrap();
+        for file in ["gd_npc_m2m", "gd_npc_m2f", "gd_npc_f2m", "gd_npc_f2f"] {
+            std::fs::write(dir.path().join("mes").join(format!("{file}.mes")), "{3000}{Mercy!}").unwrap();
+        }
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let mut b = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(72, 70)).field("hp_pts", Value::Int32(2000)).field("critter_fatigue_pts", Value::Int32(2000));
+        b.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
+        std::fs::write(folder.join("G_0F.mob"), b.build()).unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        let (npc, entity) = { let world = sim.app.world_mut(); world.query::<(Entity, &NetId, &crate::Position)>().iter(world).find(|q| q.2.0 == TileLoc { x: 72, y: 70 }).map(|q| (*q.1, q.0)).unwrap() };
+        // It gave up to someone else: the NPC at (80, 80).
+        let other = { let world = sim.app.world_mut(); world.query::<(&NetId, &crate::Position)>().iter(world).find(|q| q.1.0 == TileLoc { x: 80, y: 80 }).map(|q| *q.0).unwrap() };
+        sim.app.world_mut().entity_mut(entity).insert(crate::combat::Surrendered { to: other });
+        let mut begs = 0;
+        for seq in 0..3 {
+            sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: npc, seq })]);
+            sim.update();
+            begs += sim.take_deltas().into_iter().filter(|(_, d)| matches!(d, LedgerDelta::FloatText { speaker, text, .. } if *speaker == npc && text == "Mercy!")).count();
+        }
+        assert!(begs > 0, "it begs the PC");
+        assert!(sim.app.world().get::<crate::combat::Surrendered>(entity).is_some(), "and does not fight it");
+    }
+
+    #[test]
     fn a_follower_brought_under_a_fifth_calls_to_its_leader() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;
