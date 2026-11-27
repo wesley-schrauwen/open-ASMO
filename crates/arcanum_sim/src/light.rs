@@ -25,9 +25,11 @@
 //!   down to 0 (0x4d8d96-0x4d8e45). The frame's top-left is the light's tile centre plus its
 //!   pixel offset less the frame's centre (0x4de290 → 0x5031c0).
 //!
-//! Not built: light objects (lanterns, 0x4dc210 for objects' lit colour), animated light
+//! Not built: 0x4dc210 (objects' lit colour over their footprint), animated light
 //! frames (frame 0 here), the difficulty term itself in to-hit and prowling (it waits for the
 //! light sources: an ambient-only night would darken fights beside torches).
+
+use bevy_ecs::prelude::*;
 
 /// The schemes' list.
 pub const SCHEMES: &str = "rules/Lighting Schemes.mes";
@@ -157,7 +159,7 @@ impl crate::LoadedMap {
         let mut colour = self.ambient_at(at, hour)?;
         let scheme = self.sectors.get(&at.sector()).and_then(|s| self.light.get(s.light_scheme));
         let point = tile_pixel(at);
-        for light in self.sectors.values().flat_map(|s| &s.lights).chain(self.object_lights.values().flatten()).filter(|l| l.flags & LIGHT_OFF == 0) {
+        for light in self.sectors.values().flat_map(|s| &s.lights).chain(self.object_lights.values().flatten()).chain(&self.borne_lights).filter(|l| l.flags & LIGHT_OFF == 0) {
             let Some(Some(frame)) = self.light_frames.get(&light.art_id.0) else { continue };
             let tint = match (light.flags & LIGHT_OUTDOOR_COLOUR != 0, light.flags & LIGHT_INDOOR_COLOUR != 0, scheme) {
                 (true, _, Some(s)) => s.ambient(hour, false),
@@ -259,6 +261,59 @@ pub fn borne_light(worn: impl Iterator<Item = (i32, i32)>) -> i32 {
         OCF_LIGHT_SMALL
     } else {
         0
+    }
+}
+
+/// The art of a borne light (0x504690(1, 0, 0, 0) at 0x45fa9b: light art 1).
+pub const BORNE_LIGHT_ART: u32 = 0x9008_0000;
+
+/// The colour of a borne light by its size (0x45fa70: 0x45faa5-0x45fb54), `None` for none.
+pub fn borne_colour(flags: i32) -> Option<Rgb> {
+    if flags & OCF_LIGHT_XLARGE != 0 {
+        Some([0xf4, 0xff, 0xff])
+    } else if flags & OCF_LIGHT_LARGE != 0 {
+        Some([0xff, 0xd6, 0xac])
+    } else if flags & OCF_LIGHT_MEDIUM != 0 {
+        Some([0xec, 0x8a, 0x55])
+    } else if flags & OCF_LIGHT_SMALL != 0 {
+        Some([0xa7, 0x58, 0x3a])
+    } else {
+        None
+    }
+}
+
+/// How often the borne lights follow their bearers, in ticks.
+pub const BORNE_TICKS: u64 = 5;
+
+/// Lights the ground round every critter bearing a light (0x467e80 → 0x45fa70 → 0x43ebd0: the
+/// critter's own light, art [`BORNE_LIGHT_ART`], coloured by size): PCs by what they wear, NPCs
+/// by their flags or worn items. Every [`BORNE_TICKS`], at their tiles.
+pub fn update_borne_lights(tick: Res<crate::SimTick>, mut map: ResMut<crate::LoadedMap>, vfs: Option<Res<crate::SimVfs>>, pcs: Query<(&crate::Position, &crate::Inventory), With<crate::PlayerControlled>>, npcs: Query<(&crate::Position, &crate::NpcSource)>) {
+    if !tick.0.is_multiple_of(BORNE_TICKS) {
+        return;
+    }
+    let prototypes = map.prototypes.clone();
+    let mut lights = Vec::new();
+    let mut add = |at: arcanum_formats::map::TileLoc, flags: i32| {
+        if let Some(color) = borne_colour(flags) {
+            lights.push(arcanum_formats::sector::Light { x: at.x as i32, y: at.y as i32, art_id: arcanum_formats::art_id::ArtId(BORNE_LIGHT_ART), color, ..Default::default() });
+        }
+    };
+    for (at, inventory) in &pcs {
+        add(at.0, inventory.borne_light(&prototypes));
+    }
+    for (at, source) in &npcs {
+        let Some(o) = map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { continue };
+        let worn = map.npc_inventory(source.sector, source.index).map_or(0, |i| i.borne_light(&prototypes));
+        add(at.0, (prototypes.int(o, "critter_flags").unwrap_or(0) | worn) & OCF_LIGHTS);
+    }
+    if !lights.is_empty() && !map.light_frames.contains_key(&BORNE_LIGHT_ART) {
+        let guard = vfs.as_ref().and_then(|v| v.0.read().ok());
+        let frame = guard.as_deref().and_then(|vfs| map.art.as_ref().and_then(|a| a.path(arcanum_formats::art_id::ArtId(BORNE_LIGHT_ART))).and_then(|p| vfs.read(&p).ok())).and_then(|d| arcanum_formats::art::ArtFile::parse(&d).ok()).and_then(|art| art.decode_frame(0, 0, art.default_palette().ok()?).ok());
+        map.light_frames.insert(BORNE_LIGHT_ART, frame.map(std::sync::Arc::new));
+    }
+    if map.borne_lights != lights {
+        map.borne_lights = lights;
     }
 }
 
