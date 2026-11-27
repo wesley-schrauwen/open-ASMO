@@ -780,7 +780,8 @@ impl ScriptContext for HostWorld<'_> {
     }
 
     /// Living, and within `(clamp(PE - 4, 1, 10) + 6) / 2` tiles less what the sound pays on its
-    /// way (0x4af470 → 0x4af640, [`crate::combat::hears`]), the larger distance.
+    /// way (0x4af470 → 0x4af640, [`crate::combat::hears`]), the larger distance; an NPC listener
+    /// by its state ([`crate::combat::ears`]).
     fn can_hear(&mut self, listener: ScriptObject, target: ScriptObject) -> bool {
         if self.is_dead(listener) {
             return false;
@@ -790,7 +791,18 @@ impl ScriptContext for HostWorld<'_> {
             ScriptObject::Pc(p) if self.prowling.contains(&target) => self.players.get(&p).map(|s| crate::prowl::prowl_value(self.rules.skill_level(&s.blueprint.sheet, crate::SKILL_PROWLING))),
             _ => None,
         };
-        let pe = self.stat(listener, 5);
+        // An NPC hears nothing stunned or down, half asleep ([`crate::combat::ears`]).
+        let pe = match listener {
+            ScriptObject::Mobile { sector, index } if self.map.npc_down(sector, index) => return false,
+            ScriptObject::Mobile { sector, index } => match self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).filter(|o| o.object_type == arcanum_formats::object::TYPE_NPC) {
+                Some(o) => match crate::combat::ears(o, &self.map.prototypes, false) {
+                    Some(pe) => pe,
+                    None => return false,
+                },
+                None => self.stat(listener, 5),
+            },
+            _ => self.stat(listener, 5),
+        };
         crate::combat::hears(&crate::MissileView(self.map), a, pe, b, prowler)
     }
 
