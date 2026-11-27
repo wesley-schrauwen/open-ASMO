@@ -466,6 +466,11 @@ of `combat_design.md` come after the original's rules work.
      only with Perception 20 (0x4b0ee0: stat 5 at least 20) or `spell_flags` 0x200 (0x4af307).
      Hearing is unchanged. PCs are never invisible here (builder's call: nothing sets it yet).
    - Not built: light, the stealth difficulty terms, the hearing path cost.
+   - What hides a target (`feat/sight-blockers`): 0x4af260 walks the line with the missile's
+     flags (0x4ade00, 0xc at 0x4ade93) and a blocker adds 1 past the reach (0x4af45a), so it
+     hides a target in reach; the line's cost is dropped (0x4af45e). Built: sight stops where a
+     missile does (`MissileView`: walls on the crossed edge, closed portals, solid objects);
+     the ground no longer hides anything. Critters on the line are left out (all shoot-through).
 16. **Planning and the cursor** (built, `feat/combat-cursor`; client `combat_ui`, `cursor`).
    - On the PC's turn the tile or NPC under the cursor gives the planned cost (2 a step; an NPC:
      the steps into reach and the attack's cost): the AP bar lights green for what stays, orange
