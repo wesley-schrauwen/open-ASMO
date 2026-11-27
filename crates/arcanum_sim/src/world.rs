@@ -1166,6 +1166,9 @@ mod tests {
             begs += sim.take_deltas().into_iter().filter(|(_, d)| matches!(d, LedgerDelta::FloatText { speaker, text, .. } if *speaker == npc && text == "Mercy!")).count();
         }
         assert!(begs > 0, "it begs the PC");
+        // The manual clock moves no walker: its flight is set.
+        let away = sim.app.world().get::<crate::Walking>(entity).and_then(|w| w.steps.back().copied());
+        assert!(away.is_some_and(|t| t.x > 72), "and flees it east: {away:?}");
         assert!(sim.app.world().get::<crate::combat::Surrendered>(entity).is_some(), "and does not fight it");
     }
 
