@@ -1431,7 +1431,7 @@ impl CombatWorld<'_, '_> {
     /// Whether `watcher` sees `other` or hears it at noise 0 (0x4af260 / 0x4af470 at 0x4b2319):
     /// NPCs by their state ([`can_look`], [`ears`]); PCs by their Perception.
     fn notices_quietly(&self, watcher: &Seen, other: &Seen) -> bool {
-        let prowler = other.sheet.as_ref().filter(|_| other.prowling).map(|s| crate::prowl::Prowler { level: self.rules.0.skill_level(s, crate::SKILL_PROWLING), intelligence: self.rules.0.stats(s)[4] });
+        let prowler = other.sheet.as_ref().filter(|_| other.prowling).map(|s| crate::prowl::Prowler::of(&self.rules.0, s, &self.map, other.at, self.clock.now.ms / crate::HOUR_MS));
         let (eyes, ears_pe) = match (&watcher.sheet, watcher.npc) {
             (Some(sheet), _) => {
                 let pe = self.rules.0.stats(sheet)[5];
@@ -2202,7 +2202,7 @@ pub fn notice_reach(pe: i32, prowler: Option<crate::prowl::Prowler>) -> u32 {
 /// How far a watcher of Perception `pe` sees (0x4af260 → 0x4af240): `clamp(PE, 1, 10)` tiles, its
 /// Perception first cut by a prowler's value in percent.
 pub fn sight_reach(pe: i32, prowler: Option<crate::prowl::Prowler>) -> u32 {
-    let seen = pe - prowler.map_or(0, |p| pe * p.against(pe).clamp(0, 100) / 100);
+    let seen = pe - prowler.map_or(0, |p| pe * p.seen_against(pe) / 100);
     seen.clamp(1, 10) as u32
 }
 
@@ -2320,7 +2320,7 @@ pub fn notice_foes(
     world: Res<crate::WorldState>,
     rules: Res<crate::SimRules>,
     (mut ai, mut reputations, vfs): (ResMut<AiParams>, ResMut<crate::ReputationTable>, Option<Res<crate::SimVfs>>),
-    (mut starts, mut checks): (ResMut<CombatStarts>, ResMut<ScriptChecks>),
+    (mut starts, mut checks, clock): (ResMut<CombatStarts>, ResMut<ScriptChecks>, Res<crate::GameClock>),
     npcs: Query<FoeQuery, AtPeace>,
     pcs: Query<QuarryQuery>,
     talking: Query<&crate::Conversation>,
@@ -2351,7 +2351,7 @@ pub fn notice_foes(
         let alignment = npc_stat(o, &map.prototypes, 0x13);
         for (&pc, pc_at, player, sheet, prowling) in &pcs {
             let Some(saved) = save.players.get(&player.0) else { continue };
-            let prowler = prowling.then(|| crate::prowl::Prowler { level: rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING), intelligence: rules.0.stats(&sheet.0)[4] });
+            let prowler = prowling.then(|| crate::prowl::Prowler::of(&rules.0, &sheet.0, &map, pc_at.0, clock.now.ms / crate::HOUR_MS));
             if !notices(&crate::MissileView(&map), can_look(o, &map.prototypes, false, None).then_some(pe), at.0, rotation, ears(o, &map.prototypes, false), pc_at.0, prowler) {
                 continue;
             }
@@ -2396,7 +2396,7 @@ pub fn catch_lock_pickers(
     rules: Res<crate::SimRules>,
     (mut ai, mut reputations, vfs): (ResMut<AiParams>, ResMut<crate::ReputationTable>, Option<Res<crate::SimVfs>>),
     (mut starts, mut checks): (ResMut<CombatStarts>, ResMut<ScriptChecks>),
-    (mut generic, mut rng, session, mut outbox): (ResMut<crate::GenericLines>, ResMut<HostRng>, Res<crate::Session>, ResMut<crate::Outbox>),
+    (mut generic, mut rng, session, mut outbox, clock): (ResMut<crate::GenericLines>, ResMut<HostRng>, Res<crate::Session>, ResMut<crate::Outbox>, Res<crate::GameClock>),
     npcs: Query<FoeQuery, AtPeace>,
     pcs: Query<QuarryQuery>,
 ) {
@@ -2407,7 +2407,7 @@ pub fn catch_lock_pickers(
     let mut reacting: Vec<(NetId, NetId, PlayerId, bool)> = std::mem::take(&mut checks.witnessed);
     for (player, lock, owner, opened) in std::mem::take(&mut witnessing.0) {
         let Some((&pc, pc_at, _, sheet, prowling)) = pcs.iter().find(|p| p.2.0 == player) else { continue };
-        let prowler = prowling.then(|| crate::prowl::Prowler { level: rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING), intelligence: rules.0.stats(&sheet.0)[4] });
+        let prowler = prowling.then(|| crate::prowl::Prowler::of(&rules.0, &sheet.0, &map, pc_at.0, clock.now.ms / crate::HOUR_MS));
         for (&npc, at, source, facing, look) in &npcs {
             if !crate::within_radius(at.0, lock, WITNESS_TILES) || map.npc_down(source.sector, source.index) || map.is_dead(source.sector, source.index) {
                 continue;
@@ -2861,7 +2861,7 @@ fn helpless(w: &CombatWorld, attacker: &Seen, victim: &Seen) -> i32 {
     if let (false, Some(n)) = (victim.fighting, victim.npc)
         && let Some(o) = w.map.mobiles.get(&n.sector).and_then(|m| m.get(n.index as usize))
     {
-        let prowler = attacker.sheet.as_ref().filter(|_| attacker.prowling).map(|s| crate::prowl::Prowler { level: w.rules.0.skill_level(s, crate::SKILL_PROWLING), intelligence: w.rules.0.stats(s)[4] });
+        let prowler = attacker.sheet.as_ref().filter(|_| attacker.prowling).map(|s| crate::prowl::Prowler::of(&w.rules.0, s, &w.map, attacker.at, w.clock.now.ms / crate::HOUR_MS));
         let target = attacker.npc.and_then(|a| w.map.mobiles.get(&a.sector)?.get(a.index as usize));
         if !notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, victim.stunned.is_some(), target).then(|| npc_stat(o, &w.map.prototypes, 5)), victim.at, victim.rotation, ears(o, &w.map.prototypes, victim.stunned.is_some()), attacker.at, prowler) {
             return HELPLESS_UNAWARE;
@@ -3327,7 +3327,7 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
         // A prowling PC is noticed less (0x4a9f10 → 0x4af260 / 0x4af470 with its stealth).
         let notices = |x: &Seen| {
             let target = x.npc.and_then(|n| w.map.mobiles.get(&n.sector)?.get(n.index as usize));
-            let prowler = x.sheet.as_ref().filter(|_| x.prowling).map(|s| crate::prowl::Prowler { level: w.rules.0.skill_level(s, crate::SKILL_PROWLING), intelligence: w.rules.0.stats(s)[4] });
+            let prowler = x.sheet.as_ref().filter(|_| x.prowling).map(|s| crate::prowl::Prowler::of(&w.rules.0, s, &w.map, x.at, w.clock.now.ms / crate::HOUR_MS));
             notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, c.stunned.is_some(), target).then_some(pe), c.at, c.rotation, ears(o, &w.map.prototypes, c.stunned.is_some()), x.at, prowler)
         };
         let for_victim = allied(c.leader, own, victim.player, victim.leader, v_faction, v_kin) && (c.leader.is_some() || notices(victim));
@@ -3413,7 +3413,7 @@ mod tests {
         assert!(!hostile(ONF_KOS | ONF_KOS_OVERRIDE, 60, 0, &row), "made peaceful");
         assert!(hostile(0, 0, 0, &row) && !hostile(0, 1, 0, &row), "reaction at or below column 10");
         assert!(!hostile(0, 50, 1000, &row), "alignment: column 11 (2001) is out of reach");
-        assert_eq!((notice_reach(8, None), notice_reach(20, None), notice_reach(8, Some(crate::prowl::Prowler { level: 20, intelligence: 8 }))), (8, 10, 3), "a prowler 10 over: 100");
+        assert_eq!((notice_reach(8, None), notice_reach(20, None), notice_reach(8, Some(crate::prowl::Prowler { level: 20, intelligence: 8, look: 0 }))), (8, 10, 3), "a prowler 10 over: 100");
     }
 
     #[test]
@@ -3731,7 +3731,7 @@ mod tests {
         let open = Grid::parse(&["...................."; 20]);
         assert!(sees(&open, t(2, 5), 5, 8, t(9, 5), None));
         assert!(!sees(&open, t(2, 5), 5, 8, t(11, 5), None), "9 tiles: past PE 8");
-        assert!(!sees(&open, t(2, 5), 5, 8, t(9, 5), Some(crate::prowl::Prowler { level: 9, intelligence: 8 })), "a prowler of 9 against PE 8 (52) halves it");
+        assert!(!sees(&open, t(2, 5), 5, 8, t(9, 5), Some(crate::prowl::Prowler { level: 9, intelligence: 8, look: 0 })), "a prowler of 9 against PE 8 (52) halves it");
         let mut rows = vec!["...................."; 20];
         rows[5] = ".....#..............";
         let walled = Grid::parse(&rows);

@@ -664,8 +664,13 @@ of `combat_design.md` come after the original's rules work.
      and dark sight as found: background 78 "Dark Sight" (`mes/gameback.mes` 1076) for PCs,
      `critter_flags2` 0x800 for NPCs. Noon outdoors costs nothing, the default night 20, the
      pitch dark 30.
+   - The prowling look (`feat/dark-prowling`, `prowl::Prowler::look`): 0x4af260 subtracts
+     0x4c8430 (skill 6, flag 0x4000) from the prowl value; its light term takes the prowler's
+     own light and, for a watcher without dark sight, turns round (30 − p): `30 × L / 255`, so
+     noon costs a prowler 30, the default night 10, the dark nothing. Apprentices and better are
+     spared (0x4c8982). Hearing has no light term.
    - Not built: light objects (0x4dc210), animated light frames, the term in Spot Trap, Pick
-     Locks, Disarm Traps and the prowling look.
+     Locks and Disarm Traps, dark-seeing watchers, 0x4c8430's other prowling terms.
 23. **Backstab** (`feat/backstab`, `combat::Stab`).
    - Eligible (0x45f9d0): a Backstab level (0x4c5eb0 skill 4), the target not having the
      attacker in view (0x45eff0 false), and a weapon whose wielded art (`item_use_aid_fragment`,
