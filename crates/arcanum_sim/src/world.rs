@@ -254,6 +254,8 @@ pub struct LoadedMap {
     pub art: Option<Arc<ArtIndex>>,
     /// The lighting schemes, read once and kept ([`crate::light::Schemes`]).
     pub light: Arc<crate::light::Schemes>,
+    /// The lights the loaded sectors' objects carry ([`crate::light::object_lights`]).
+    pub object_lights: std::collections::HashMap<SectorId, Vec<arcanum_formats::sector::Light>>,
     /// The loaded sectors' lights' art, frame 0 decoded, by art id (`None`: unreadable).
     pub light_frames: std::collections::HashMap<u32, Option<Arc<arcanum_formats::art::ArtFrame>>>,
     /// What the loaded sectors' objects block.
@@ -368,9 +370,9 @@ impl LoadedMap {
         }
         match vfs.read(&path).map_err(|e| e.to_string()).and_then(|d| Sector::parse(&d).map_err(|e| e.to_string())) {
             Ok(sector) => {
-                self.read_light_frames(vfs, &sector);
                 self.sectors.insert(id, sector);
                 self.rebuild_blocking(id);
+                self.read_light_frames(vfs, id);
                 self.apply_changes(id);
             }
             Err(e) => {
@@ -391,6 +393,8 @@ impl LoadedMap {
         self.missiles.add_missiles(self.mobiles.get(&id).into_iter().flatten(), &self.prototypes);
         self.sound.add(&sector.objects, &self.prototypes);
         self.sound.add(self.mobiles.get(&id).into_iter().flatten(), &self.prototypes);
+        let lights: Vec<arcanum_formats::sector::Light> = sector.objects.iter().chain(self.mobiles.get(&id).into_iter().flatten()).flat_map(|o| crate::light::object_lights(o, &self.prototypes)).collect();
+        self.object_lights.insert(id, lights);
         if let Some(art) = &self.art {
             let (x0, y0) = (id.x() * 64, id.y() * 64);
             for y in 0..64 {
@@ -424,6 +428,9 @@ impl LoadedMap {
         for id in &gone {
             self.sectors.remove(id);
             self.blocking.remove_sector(*id);
+            self.missiles.remove_sector(*id);
+            self.sound.remove_sector(*id);
+            self.object_lights.remove(id);
         }
         gone
     }
