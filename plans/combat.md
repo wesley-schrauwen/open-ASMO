@@ -673,8 +673,11 @@ of `combat_design.md` come after the original's rules work.
      melee test at 0x4c8954 matches its index 2), Spot Trap and Disarm Traps (from Apprentice,
      0x4c8982) add the dark at the lock or trap to their roll. Builder's call: a trap spotted on
      use takes the light where the PC stands.
-   - Not built: light objects (0x4dc210), animated light frames, dark-seeing watchers,
-     0x4c8430's other prowling terms.
+   - Dark-seeing watchers (`feat/dark-seeing-watchers`, `Prowler::for_watcher`): for one with
+     dark sight (0x45fb90 at 0x4c8a9b: `critter_flags2` 0x800, a PC of background 78) the term
+     is not turned round, so the dark gives a prowler away (30 in pitch dark) and light hides it.
+   - Not built: light objects (0x4dc210), animated light frames, 0x4c8430's other prowling
+     terms.
 23. **Backstab** (`feat/backstab`, `combat::Stab`).
    - Eligible (0x45f9d0): a Backstab level (0x4c5eb0 skill 4), the target not having the
      attacker in view (0x45eff0 false), and a weapon whose wielded art (`item_use_aid_fragment`,
