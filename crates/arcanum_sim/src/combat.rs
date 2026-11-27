@@ -2839,8 +2839,20 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     // `gd_npc` 3000-3099) when it can act (0x45d790), from 0x4a9650: blows not thrown.
     match victim.surrendered {
         Some(to) if to != attacker.net_id => {
-            if let Some(player) = attacker.player.filter(|_| aim == Aim::Meant && !outcome.killed && victim.stunned.is_none() && !w.map.npc_down(source.sector, source.index)) {
+            let acts = aim == Aim::Meant && !outcome.killed && victim.stunned.is_none() && !w.map.npc_down(source.sector, source.index);
+            if let Some(player) = attacker.player.filter(|_| acts) {
                 w.checked_bark(victim, player, FLEE_BARK);
+            }
+            // Then it flees that one (0x434980 at 0x4aa779: goal 0x19, `ag_flee`, when it can
+            // act, 0x4348e0), as far as a fleeing fighter (builder's call: the goal's handler
+            // not read).
+            if acts {
+                let away = flee_goal(victim.at, attacker.at, FLEE_TILES);
+                if let Ok(path) = crate::find_path(&*w.map, victim.at, away)
+                    && !path.is_empty()
+                {
+                    commands.entity(victim.entity).insert(crate::Walking { steps: path.into(), progress: 0.0 });
+                }
             }
         }
         Some(_) => {

@@ -308,8 +308,10 @@ of `combat_design.md` come after the original's rules work.
    - Begging (`feat/surrendered-bark`): 0x4aa620's case 3 (field 0xda 0x4000,
      0x4aab51): attacked by whom it gave up to, or by 0x4ab0b0's pick, it fights (0x4ab2a0);
      by another, it floats a 3000-3099 line at that one when it can act (0x45d790 → 0x413ea0 at
-     0x4aa759) and calls 0x434980 (not traced). Built for blows not thrown (0x4a9650) from a
-     PC; builder's call: not when the blow kills it. Not built: 0x4ab0b0, 0x434980, the other
+     0x4aa759) and calls 0x434980: goal 0x19, `ag_flee` from that one (0x4349a6; table
+     0x5a164c), when it can act (0x4348e0 → 0x45d790). Built (`feat/begging-flee`): it walks
+     away as a fleeing fighter does, 8 tiles (builder's call: the goal's handler not read). Built for blows not thrown (0x4a9650) from a
+     PC; builder's call: not when the blow kills it. Not built: 0x4ab0b0, the other
      callers 0x4a9c00 / 0x4a9f10 (each AI tick, which would bark at every foe in sight), action 0x19,
      ammunition (not found in the attack; built in step 13), the one-shot items of 0x4ac910.
 8. **Critical hits** (built, `feat/combat-criticals`).
