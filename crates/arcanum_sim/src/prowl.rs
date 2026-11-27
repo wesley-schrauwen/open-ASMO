@@ -40,18 +40,28 @@ pub struct ProwlRequests(pub Vec<(PlayerId, bool)>);
 
 /// A prowler: its Prowling level and Intelligence, and what being seen costs it in the light
 /// ([`look_difficulty`]: sight only, 0x4af39e).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Prowler {
     pub level: i32,
     pub intelligence: i32,
+    /// Against a watcher without dark sight; [`Self::for_watcher`] sets it for one with it.
     pub look: i32,
+    /// The luminance where it stands, and its Prowling rank.
+    pub light: Option<i32>,
+    pub rank: u8,
 }
 
 impl Prowler {
     /// PC `sheet` prowling on tile `at` of `map` at `hour`.
     pub fn of(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::CharacterSheet, map: &crate::LoadedMap, at: arcanum_formats::map::TileLoc, hour: u32) -> Self {
         let light = map.light_at(at, hour).map(crate::light::luminance);
-        Self { level: rules.skill_level(sheet, SKILL_PROWLING), intelligence: rules.stats(sheet)[4], look: light.map_or(0, |l| look_difficulty(sheet.training[SKILL_PROWLING], l)) }
+        let rank = sheet.training[SKILL_PROWLING];
+        Self { level: rules.skill_level(sheet, SKILL_PROWLING), intelligence: rules.stats(sheet)[4], look: light.map_or(0, |l| look_difficulty(rank, l, false)), light, rank }
+    }
+
+    /// As seen by a watcher that has dark sight or not ([`look_difficulty`]).
+    pub fn for_watcher(self, dark_sight: bool) -> Self {
+        Self { look: self.light.map_or(0, |l| look_difficulty(self.rank, l, dark_sight)), ..self }
     }
 
     /// Its value against a watcher's eyes of Perception `pe`: [`Self::against`] less
@@ -64,10 +74,12 @@ impl Prowler {
 /// What a prowler's own light `l` costs it against a watcher's eyes (0x4af260 → 0x4c8430 with
 /// flag 0x4000: L the prowler's lit colour, 0x4c899b): none from Apprentice (0x4c8982); else the
 /// dark's term turned round for a watcher without dark sight (0x4c8a84-0x4c8aa4: `30 − p`), so
-/// `30 × L / 255`: the brighter the prowler stands, the less it hides. Not built: a watcher with
-/// dark sight (then the plain dark term), the prowler's scaling flags, 0x4c8430's other terms.
-pub fn look_difficulty(rank: u8, l: i32) -> i32 {
-    if rank >= 1 { 0 } else { (30 - crate::light::dark_difficulty(l)).max(0) }
+/// `30 × L / 255`: the brighter the prowler stands, the less it hides; for a watcher with dark
+/// sight (0x45fb90 true at 0x4c8a9b) the plain term, so the dark gives it away. Not built: the
+/// prowler's scaling flags, 0x4c8430's other terms.
+pub fn look_difficulty(rank: u8, l: i32, dark_sight: bool) -> i32 {
+    let p = crate::light::dark_difficulty(l);
+    if rank >= 1 { 0 } else if dark_sight { p } else { (30 - p).max(0) }
 }
 
 impl Prowler {
@@ -133,11 +145,14 @@ mod tests {
         assert_eq!((prowl_value(0, 8, 8), prowl_value(8, 8, 8), prowl_value(18, 8, 8), prowl_value(0, 8, 18)), (16, 47, 100, 0), "opposed by Perception");
         assert_eq!(prowl_value(8, 20, 8), 57, "Intelligence 20: + 10");
         // A prowler's own light against eyes (0x4c8a84): noon 30, the default night 10, pitch dark 0.
-        assert_eq!((look_difficulty(0, 254), look_difficulty(0, 79), look_difficulty(0, 0), look_difficulty(1, 254)), (30, 10, 0, 0));
-        let lit = Prowler { level: 8, intelligence: 8, look: 30 };
+        assert_eq!((look_difficulty(0, 254, false), look_difficulty(0, 79, false), look_difficulty(0, 0, false), look_difficulty(1, 254, false)), (30, 10, 0, 0));
+        assert_eq!((look_difficulty(0, 0, true), look_difficulty(0, 254, true)), (30, 0), "a dark-seeing watcher: the dark gives it away");
+        let p = Prowler { light: Some(0), ..Default::default() };
+        assert_eq!((p.for_watcher(false).look, p.for_watcher(true).look), (0, 30));
+        let lit = Prowler { level: 8, intelligence: 8, look: 30, ..Default::default() };
         assert_eq!((lit.against(8), lit.seen_against(8)), (47, 17), "seen: the light takes 30 off");
         assert_eq!(hearing_reach(10, None), 6, "(6 + 6) / 2");
-        assert_eq!(hearing_reach(10, Some(Prowler { level: 11, intelligence: 8, look: 0 })), 3, "level 11 against PE 10: 52, PE 5: (1 + 6) / 2");
-        assert_eq!(hearing_reach(8, Some(Prowler { level: 20, intelligence: 20, look: 0 })), 3, "110: at most all of it");
+        assert_eq!(hearing_reach(10, Some(Prowler { level: 11, intelligence: 8, ..Default::default() })), 3, "level 11 against PE 10: 52, PE 5: (1 + 6) / 2");
+        assert_eq!(hearing_reach(8, Some(Prowler { level: 20, intelligence: 20, ..Default::default() })), 3, "110: at most all of it");
     }
 }
