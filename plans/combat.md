@@ -659,7 +659,13 @@ of `combat_design.md` come after the original's rules work.
      pixel; 0x8 / 0x10 take the outdoor / indoor ambient as the colour; channels add saturating
      at 255, a 0x2 light subtracts down to 0. Frame 0 of each light's art is decoded on sector
      load. On the start map a light lifts midnight's 74, 80, 98 to 118, 127, 156.
-   - Not built: light objects (0x4dc210), animated light frames, applying the term.
+   - In to-hit (`feat/dark-to-hit`, `combat::dark_to_hit`): the light on the target's tile
+     (builder's call: 0x4dce10's lit colour of the target itself not built), the scaling flags
+     and dark sight as found: background 78 "Dark Sight" (`mes/gameback.mes` 1076) for PCs,
+     `critter_flags2` 0x800 for NPCs. Noon outdoors costs nothing, the default night 20, the
+     pitch dark 30.
+   - Not built: light objects (0x4dc210), animated light frames, the term in Spot Trap, Pick
+     Locks, Disarm Traps and the prowling look.
 23. **Backstab** (`feat/backstab`, `combat::Stab`).
    - Eligible (0x45f9d0): a Backstab level (0x4c5eb0 skill 4), the target not having the
      attacker in view (0x45eff0 false), and a weapon whose wielded art (`item_use_aid_fragment`,

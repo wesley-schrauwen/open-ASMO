@@ -1220,6 +1220,8 @@ pub struct CombatWorld<'w, 's> {
     pub checks: ResMut<'w, ScriptChecks>,
     pub reputations: ResMut<'w, crate::ReputationTable>,
     pub inventories: ResMut<'w, crate::script_host::ScriptInventories>,
+    /// The time of day, for the light (0x4c8a06).
+    pub clock: Res<'w, crate::GameClock>,
     /// NPCs made to fight this tick (their `Fighting` lands after the system).
     pub joined: Local<'s, Vec<NetId>>,
 }
@@ -1408,6 +1410,22 @@ impl CombatWorld<'_, '_> {
         }
         let row = self.npc_int(source, "npc_ai_data").max(0) as usize;
         self.ai.0.as_ref()?.get(row).copied()
+    }
+
+    /// What the dark adds to `attacker`'s blow at `victim` with `skill` ([`dark_to_hit`]): the
+    /// light on the target's tile (builder's call for 0x4dce10, the target's own lit colour).
+    fn dark_difficulty(&self, attacker: &Seen, victim: &Seen, skill: usize) -> i32 {
+        let hour = self.clock.now.ms / crate::HOUR_MS;
+        let Some(light) = self.map.light_at(victim.at, hour) else { return 0 };
+        let (rank, flags, dark_sight) = match (&attacker.sheet, attacker.npc) {
+            (Some(sheet), _) => (sheet.training.get(skill).copied().unwrap_or(0), 0, sheet.background == DARK_SIGHT_BACKGROUND),
+            (None, Some(n)) => {
+                let Some(o) = self.map.mobiles.get(&n.sector).and_then(|m| m.get(n.index as usize)) else { return 0 };
+                (npc_skill(o, &self.map.prototypes, skill).1, self.npc_int(n, "critter_flags"), self.npc_int(n, "critter_flags2") & OCF2_DARK_SIGHT != 0)
+            }
+            _ => return 0,
+        };
+        dark_to_hit(skill, rank, flags, dark_sight, crate::light::luminance(light))
     }
 
     /// Whether `watcher` sees `other` or hears it at noise 0 (0x4af260 / 0x4af470 at 0x4b2319):
@@ -2991,6 +3009,37 @@ pub fn stab_critical(stab: Stab, (level, rank): (i32, u8), target_level: i32) ->
     2 * level - target_level + if rank >= 3 { 20 } else { 0 }
 }
 
+/// The "Dark Sight" background (block 78 of `rules/backgrnd.mes`, `mes/gameback.mes` 1076):
+/// 0x45fb90 tests 0x4c2690 for 0x4e.
+pub const DARK_SIGHT_BACKGROUND: u32 = 78;
+/// `critter_flags2` 0x800: a critter that sees in the dark (0x45fbdf).
+pub const OCF2_DARK_SIGHT: i32 = 0x800;
+
+/// What the dark adds to a weapon skill's difficulty at light `l` (0x4c8923-0x4c8ac7): none for
+/// an undead attacker (`critter_flags` 0x4) or melee from Expert (0x4c8954); else
+/// [`crate::light::dark_difficulty`], cut by the attacker's `critter_flags` 0x400000 to a
+/// quarter, 0x200000 a third, 0x100000 half, 0x80000 three quarters (0x4c8a2f-0x4c8a7c); for one
+/// that sees in the dark (0x45fb90) 30 less it (0x4c8aa4 / 0x4c8ac1).
+pub fn dark_to_hit(skill: usize, rank: u8, critter_flags: i32, dark_sight: bool, l: i32) -> i32 {
+    if critter_flags & OCF_UNDEAD != 0 || (skill == SKILL_MELEE && rank >= 2) {
+        return 0;
+    }
+    let p = crate::light::dark_difficulty(l);
+    let p = if critter_flags & 0x40_0000 != 0 {
+        p / 4
+    } else if critter_flags & 0x20_0000 != 0 {
+        p / 3
+    } else if critter_flags & 0x10_0000 != 0 {
+        p / 2
+    } else if critter_flags & 0x8_0000 != 0 {
+        p * 3 / 4
+    } else {
+        p
+    };
+    let p = if dark_sight { 30 - p } else { p };
+    p.max(0)
+}
+
 /// The two helpless amounts (0x4c864a / 0x4c86d9: 0x32, 0x1e).
 pub const HELPLESS_DOWN: i32 = 50;
 pub const HELPLESS_UNAWARE: i32 = 30;
@@ -2998,7 +3047,7 @@ pub const HELPLESS_UNAWARE: i32 = 30;
 fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen, fighter: &Fighter, aim: Aim) -> AttackOutcome {
     let defender = Fighter { helpless: helpless(w, attacker, victim), ..w.fighter(victim) };
     let ranged = fighter.weapon.as_ref().is_some_and(|wp| wp.range > 1);
-    let situation = if ranged { w.shot_difficulty(all, attacker, victim, fighter.skill()) } else { 0 };
+    let situation = if ranged { w.shot_difficulty(all, attacker, victim, fighter.skill()) } else { 0 } + w.dark_difficulty(attacker, victim, fighter.skill());
     let stab = stab_of(fighter, attacker, victim, !w.notices_quietly(victim, attacker));
     let fighter = &Fighter { situation, stab, ..fighter.clone() };
     let mut outcome = resolve(fighter, &defender, &mut w.rng);
@@ -3558,6 +3607,16 @@ mod tests {
         let hits = (0..400).filter(|_| resolve(&unseen, &plated, &mut rng).hit).count();
         assert!(hits > 390, "armour skipped: {hits}");
         assert_eq!(crate::prowl::noise_reach(10, None, crate::prowl::NOISE_QUIET), 3, "a quiet blow: (6 + 0) / 2");
+    }
+
+    #[test]
+    fn the_dark_makes_blows_harder() {
+        assert_eq!(dark_to_hit(SKILL_BOW, 0, 0, false, 79), 20, "the default night: (255 - 79) × 30 / 255");
+        assert_eq!(dark_to_hit(SKILL_BOW, 0, 0, false, 254), 0, "noon");
+        assert_eq!((dark_to_hit(SKILL_MELEE, 2, 0, false, 0), dark_to_hit(SKILL_MELEE, 1, 0, false, 0)), (0, 30), "melee Experts are spared");
+        assert_eq!(dark_to_hit(SKILL_BOW, 0, OCF_UNDEAD, false, 0), 0, "the undead");
+        assert_eq!((dark_to_hit(SKILL_BOW, 0, 0x40_0000, false, 0), dark_to_hit(SKILL_BOW, 0, 0x8_0000, false, 0)), (7, 22));
+        assert_eq!((dark_to_hit(SKILL_BOW, 0, 0, true, 0), dark_to_hit(SKILL_BOW, 0, 0, true, 254)), (0, 30), "dark sight: the light hinders");
     }
 
     #[test]
