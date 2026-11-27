@@ -252,6 +252,8 @@ pub struct LoadedMap {
     /// The art index, for the ground tiles that block (`tilename.mes` flags); `None` if its
     /// files could not be read (then no tile art blocks).
     pub art: Option<Arc<ArtIndex>>,
+    /// The lighting schemes, read once and kept ([`crate::light::Schemes`]).
+    pub light: Arc<crate::light::Schemes>,
     /// What the loaded sectors' objects block.
     pub blocking: crate::ObjectBlocking,
     /// What they block for missiles in flight ([`crate::blocking::missile_blocks`]).
@@ -285,9 +287,13 @@ impl LoadedMap {
     pub fn open(&mut self, vfs: Option<&Vfs>, name: &str) {
         let prototypes = std::mem::take(&mut self.prototypes);
         let art = self.art.take();
+        let light = std::mem::take(&mut self.light);
         let lock_day = self.lock_day;
-        *self = Self { name: Some(name.to_string()), prototypes, art, lock_day, ..Self::default() };
+        *self = Self { name: Some(name.to_string()), prototypes, art, light, lock_day, ..Self::default() };
         let Some(vfs) = vfs else { return };
+        if self.light.0.is_empty() {
+            self.light = Arc::new(crate::light::Schemes::load(vfs));
+        }
         if self.prototypes.is_empty() {
             let (prototypes, errors) = load_prototypes(vfs);
             self.prototypes = Arc::new(prototypes);

@@ -890,3 +890,25 @@ fn every_lighting_scheme_reads() {
     }
     assert_eq!(read, 10, "the ten schemes");
 }
+
+#[test]
+fn the_crash_site_is_lit_by_the_default_scheme_outdoors() {
+    use std::sync::{Arc, RwLock};
+    use arcanum_rules::{CharacterBlueprint, CharacterSheet, RulesData};
+    use arcanum_sim::{LoadedMap, PlayerId, SimApp, SimVfs, WorldState};
+    let Some(vfs) = vfs() else { return };
+    let start = StartMap::load(&vfs).unwrap();
+    let mut world = WorldState::default();
+    world.add_player(Some(&start), PlayerId(1), CharacterBlueprint { sheet: CharacterSheet::default(), gold: 0, items: vec![], prototype: None });
+    let mut sim = SimApp::new(RulesData::default());
+    sim.use_manual_clock();
+    sim.app.insert_resource(SimVfs(Arc::new(RwLock::new(vfs))));
+    sim.boot(world.0.unwrap());
+    sim.update();
+    sim.update();
+    let map = sim.app.world().resource::<LoadedMap>();
+    assert_eq!(map.light.0.len(), 10, "ten schemes");
+    assert_eq!(map.ambient_at(start.position, 12), Some([255, 255, 255]), "noon outdoors");
+    assert_eq!(map.ambient_at(start.position, 0), Some([74, 80, 98]), "midnight");
+    assert_eq!(arcanum_sim::light::luminance([74, 80, 98]), 79);
+}
