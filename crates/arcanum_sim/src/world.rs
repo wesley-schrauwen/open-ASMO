@@ -256,6 +256,8 @@ pub struct LoadedMap {
     pub light: Arc<crate::light::Schemes>,
     /// The lights the loaded sectors' objects carry ([`crate::light::object_lights`]).
     pub object_lights: std::collections::HashMap<SectorId, Vec<arcanum_formats::sector::Light>>,
+    /// The lights critters bear ([`crate::light::update_borne_lights`]).
+    pub borne_lights: Vec<arcanum_formats::sector::Light>,
     /// The loaded sectors' lights' art, frame 0 decoded, by art id (`None`: unreadable).
     pub light_frames: std::collections::HashMap<u32, Option<Arc<arcanum_formats::art::ArtFrame>>>,
     /// What the loaded sectors' objects block.
@@ -689,6 +691,33 @@ mod tests {
         assert_eq!(map.absent.len() + map.sectors.len(), 4, "a 2 x 2 block at the corner");
         assert_eq!(map.sectors.len(), 1, "(1, 1) is within reach");
         assert_eq!(pcs(&mut sim).len(), 1);
+    }
+
+    #[test]
+    fn a_pc_wearing_a_lantern_lights_its_tile() {
+        use arcanum_formats::object::{Object, Value};
+        use arcanum_formats::test_util::{ObjectBuilder, prototype_id};
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut lantern = Object::parse_instance(&ObjectBuilder::new(arcanum_formats::object::TYPE_GENERIC).field("item_flags", Value::Int32(0x800)).build()).unwrap();
+        lantern.id = prototype_id(9100);
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        let mut prototypes = Prototypes::default();
+        prototypes.insert(lantern);
+        sim.app.world_mut().resource_mut::<LoadedMap>().prototypes = Arc::new(prototypes);
+        sim.boot(save(&[(1, "A", TileLoc { x: 70, y: 70 })]));
+        sim.update();
+        sim.update();
+        let pc = { let world = sim.app.world_mut(); world.query_filtered::<Entity, With<crate::PlayerControlled>>().iter(world).next().unwrap() };
+        sim.app.world_mut().get_mut::<crate::Inventory>(pc).unwrap().items.push(crate::CarriedItem { prototype: 9100, location: crate::FIRST_SLOT, quantity: 0, keys: vec![], written: 0, wear: Default::default() });
+        for _ in 0..crate::light::BORNE_TICKS {
+            sim.update();
+        }
+        let lights = &sim.app.world().resource::<LoadedMap>().borne_lights;
+        assert_eq!(lights.len(), 1);
+        assert_eq!(((lights[0].x, lights[0].y), lights[0].color, lights[0].art_id.0), ((70, 70), [0xff, 0xd6, 0xac], crate::light::BORNE_LIGHT_ART), "a large light at the PC");
     }
 
     #[test]

@@ -697,8 +697,13 @@ of `combat_design.md` come after the original's rules work.
      blocking). Builder's calls: NPCs' lights stay where their objects were placed; destroyed or
      off objects carry none. Also: unloading a sector now forgets its missile, sound and light
      data too.
-   - Not built: the bearer's light lighting the ground (0x45fa70 → 0x43ebd0), animated light
-     frames, hearing's 0x4c8430 (flag 0x2000) terms.
+   - The bearer's light (`feat/borne-light`, `light::update_borne_lights`): after each wield
+     0x467e80 gives the critter its own light (0x45fa70 → 0x43ebd0): art 0x504690(1) =
+     0x90080000, coloured by size (0x45faa5-0x45fb54: extra large F4FFFF, large FFD6AC, medium
+     EC8A55, small A7583A). Here every 5 ticks at each bearer's tile (PCs by what they wear, NPCs
+     by flags or worn items), so a lantern lights its bearer and the ground round it.
+   - Not built: animated light frames, 0x4dc210 (objects' lit colour over their footprint),
+     hearing's 0x4c8430 (flag 0x2000) terms.
 23. **Backstab** (`feat/backstab`, `combat::Stab`).
    - Eligible (0x45f9d0): a Backstab level (0x4c5eb0 skill 4), the target not having the
      attacker in view (0x45eff0 false), and a weapon whose wielded art (`item_use_aid_fragment`,
