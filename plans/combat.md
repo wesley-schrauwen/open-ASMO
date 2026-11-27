@@ -623,8 +623,12 @@ of `combat_design.md` come after the original's rules work.
      amount): 50 easier when down (out of fatigue or hit points, 0x45d800 at 0x4c8654); 30
      when stunned (0x20, 0x4c8684) or, not fighting yet (0x4b3d50), it neither sees nor hears
      the attacker (0x4af260 / 0x4af470 at 0x4c86b3 / 0x4c86c9). Builder's call: the blow that
-     starts its fight counts as before it. Not built: knocked down (animation 7, 0x4c867b),
-     `critter_flags` 0x40 / 0x1000 (not kept).
+     starts its fight counts as before it.
+   - By state (`feat/helpless-flags`, `combat::helpless_by_state`, read in full
+     0x4c8642-0x4c86d9): paralyzed (`critter_flags` 0x40) or down 50; knocked down (animation 7
+     of the current art, 0x503e20 at 0x4c867b) or stunned (0x20) 30; asleep (0x1000) 50; then
+     the unaware 30. For PCs and NPCs (types 0xf / 0x10 at 0x4c8621). Built from NPCs'
+     `critter_flags`. Not built: knocked down (not kept on the host).
    - Range and cover (`feat/range-and-cover`, `combat::missile_difficulty`,
      `blocking::missile_cost`): a ranged shot is 5 harder a tile past half the shooter's
      Perception (0x4c888e-0x4c88c1; a Master of the skill spared, 0x4c8883; NPCs never Masters
