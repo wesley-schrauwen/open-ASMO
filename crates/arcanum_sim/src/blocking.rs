@@ -160,11 +160,33 @@ pub const OF_SEE_THROUGH: i32 = 0x10;
 pub const OF_PROVIDES_COVER: i32 = 0x4000;
 
 /// What a shoot-through object on a missile's way adds to the shot's difficulty (0x44063f: 50
-/// when not seen through, at 0x440687; else 20 when it gives cover); 0 for anything else.
+/// when not seen through, at 0x440687; else 20 when it gives cover); 0 for anything else:
+/// containers, scenery, projectiles and traps; a Passwalled wall (0x44028e → the same block)
+/// not of the door-opening pieces; a closed portal (0x4401c3). Critters pay by [`cover_cost`]
+/// in flight.
 pub fn missile_cost(object: &Object, prototypes: &Prototypes) -> i32 {
-    let flags = prototypes.int(object, "flags").unwrap_or(0);
-    let tile_object = matches!(object.object_type, TYPE_CONTAINER | TYPE_SCENERY | TYPE_PROJECTILE | TYPE_TRAP);
-    if !tile_object || flags & (OF_DESTROYED | OF_OFF) != 0 || flags & OF_SHOOT_THROUGH == 0 {
+    let int = |name| prototypes.int(object, name).unwrap_or(0);
+    let flags = int("flags");
+    if flags & (OF_DESTROYED | OF_OFF) != 0 {
+        return 0;
+    }
+    let counts = match object.object_type {
+        TYPE_CONTAINER | TYPE_SCENERY | TYPE_PROJECTILE | TYPE_TRAP => true,
+        TYPE_WALL => {
+            let piece = prototypes.art_id(object).filter(|a| a.kind() == ArtKind::Wall).map_or(u32::MAX, |a| (a.0 >> 14) & 0x3f);
+            int("spell_flags") & OSF_PASSWALLED != 0 && !OPEN_PIECES.contains(&piece) && !DIAGONAL_ONLY_PIECES.contains(&piece)
+        }
+        TYPE_PORTAL => prototypes.art_id(object).is_some_and(|a| a.0 & 0x200 == 0 && (a.0 >> 14) & 0x1f == 0),
+        _ => false,
+    };
+    if counts { cover_cost(flags) } else { 0 }
+}
+
+/// What a shoot-through thing of `flags` on a missile's way costs (0x440671-0x440695): 50 when
+/// not seen through, 20 when seen through but giving cover, else 0; 0 when not shoot-through
+/// (it stops the missile instead).
+pub fn cover_cost(flags: i32) -> i32 {
+    if flags & OF_SHOOT_THROUGH == 0 {
         0
     } else if flags & OF_SEE_THROUGH == 0 {
         50
@@ -172,6 +194,14 @@ pub fn missile_cost(object: &Object, prototypes: &Prototypes) -> i32 {
         20
     } else {
         0
+    }
+}
+
+/// An object's `location` field.
+pub fn object_location(object: &Object) -> Option<TileLoc> {
+    match object.field("location")? {
+        Value::Int64(Some(packed)) => Some(TileLoc::from_packed(*packed)),
+        _ => None,
     }
 }
 
@@ -227,13 +257,6 @@ impl SoundCosts {
     }
 }
 
-/// An object's `location` field.
-pub fn object_location(object: &Object) -> Option<TileLoc> {
-    match object.field("location")? {
-        Value::Int64(Some(packed)) => Some(TileLoc::from_packed(*packed)),
-        _ => None,
-    }
-}
 
 impl ObjectBlocking {
     /// Adds what `objects` block.
@@ -335,6 +358,12 @@ mod tests {
         // What it costs a shot (flags of the game's Stone 0x404830, Plant 0x400c30, a bush not seen through).
         let with = |f: i32| build(ObjectBuilder::new(TYPE_SCENERY).field("flags", Value::Int32(f)));
         assert_eq!((missile_cost(&with(0x404830), &p), missile_cost(&with(0x400c30), &p), missile_cost(&with(OF_SHOOT_THROUGH), &p), missile_cost(&with(0), &p)), (20, 0, 50, 0));
+        // A closed shoot-through portal (the game has one, not seen through) and a Passwalled
+        // shoot-through wall pay as objects; open, or a door-opening piece, nothing.
+        let door = |bits: u32, f: i32| build(ObjectBuilder::new(TYPE_PORTAL).field("current_aid", Value::Int32(((3 << 28) | (3 << 11) | bits) as i32)).field("flags", Value::Int32(f)));
+        assert_eq!((missile_cost(&door(0, OF_SHOOT_THROUGH), &p), missile_cost(&door(0x200, OF_SHOOT_THROUGH), &p)), (50, 0));
+        let passwalled = |piece: u32| build(ObjectBuilder::new(TYPE_WALL).field("current_aid", Value::Int32(((1 << 28) | (piece << 14) | (3 << 11)) as i32)).field("flags", Value::Int32(0x4030)).field("spell_flags", Value::Int32(OSF_PASSWALLED)));
+        assert_eq!((missile_cost(&passwalled(0), &p), missile_cost(&passwalled(10), &p), missile_cost(&wall(0, 3), &p)), (20, 0, 0));
     }
 
     #[test]

@@ -1349,16 +1349,35 @@ impl CombatWorld<'_, '_> {
         self.ai.0.as_ref()?.get(row).copied()
     }
 
-    /// [`missile_difficulty`] for `attacker`'s shot with `skill` at `victim`.
-    fn shot_difficulty(&self, attacker: &Seen, victim: &Seen, skill: usize) -> i32 {
+    /// [`missile_difficulty`] for `attacker`'s shot with `skill` at `victim`: the line's objects
+    /// ([`crate::blocking::missile_cost`]) and the living critters standing on it
+    /// ([`Self::critters_cost`]).
+    fn shot_difficulty(&self, all: &[Seen], attacker: &Seen, victim: &Seen, skill: usize) -> i32 {
         let (perception, master) = match (&attacker.sheet, attacker.npc) {
             (Some(sheet), _) => (self.rules.0.stats(sheet)[5], sheet.training.get(skill).is_some_and(|&t| t >= 3)),
             (None, Some(n)) => (self.npc_int_stat(n, 5), false),
             _ => (0, false),
         };
         let distance = crate::tile_distance(attacker.at, victim.at);
-        let line_cost = line_between(attacker.at, victim.at).into_iter().map(|t| self.map.missiles.costs.get(&t).copied().unwrap_or(0)).sum();
-        missile_difficulty(distance, perception, master, line_cost)
+        let line = line_between(attacker.at, victim.at);
+        let objects: i32 = line.iter().map(|t| self.map.missiles.costs.get(t).copied().unwrap_or(0)).sum();
+        missile_difficulty(distance, perception, master, objects + self.critters_cost(all, attacker, victim, &line))
+    }
+
+    /// What the living critters on `line` cost a shot (0x44064d-0x44066a: types 0xf / 0x10, the
+    /// dead skipped by 0x45d8d0, then their `flags` through [`crate::blocking::cover_cost`]).
+    /// NPCs by their own flags; PCs by their prototypes' 0x4030 (shoot-through, seen through,
+    /// cover: 20, all 13 alike). A PC's own followers, which its shot passes (owner's rule),
+    /// still cost (builder's call).
+    fn critters_cost(&self, all: &[Seen], attacker: &Seen, victim: &Seen, line: &[TileLoc]) -> i32 {
+        let living = all.iter().filter(|c| c.net_id != attacker.net_id && c.net_id != victim.net_id).filter_map(|c| match (c.player, c.npc) {
+            (Some(_), _) if self.pc_down(c) => None,
+            (Some(_), _) => Some((c.at, PC_FLAGS)),
+            (None, Some(n)) if self.map.is_dead(n.sector, n.index) => None,
+            (None, Some(n)) => Some((c.at, self.npc_int(n, "flags"))),
+            _ => None,
+        });
+        line_critters_cost(line, living)
     }
 
     /// Whether NPC `n`'s re-pick for a foe `distance` tiles away would change its hands.
@@ -2660,6 +2679,15 @@ pub fn missile_difficulty(distance: u32, perception: i32, master: bool, line_cos
     far + line_cost
 }
 
+/// What the living critters (tile, `flags`) standing on `line` cost a shot
+/// ([`crate::blocking::cover_cost`] each).
+pub fn line_critters_cost(line: &[TileLoc], living: impl Iterator<Item = (TileLoc, i32)>) -> i32 {
+    living.filter(|(at, _)| line.contains(at)).map(|(_, flags)| crate::blocking::cover_cost(flags)).sum()
+}
+
+/// The `flags` of every PC prototype (13 of 13): shoot-through, seen through, cover.
+pub const PC_FLAGS: i32 = 0x4030;
+
 /// The two helpless amounts (0x4c864a / 0x4c86d9: 0x32, 0x1e).
 pub const HELPLESS_DOWN: i32 = 50;
 pub const HELPLESS_UNAWARE: i32 = 30;
@@ -2667,7 +2695,7 @@ pub const HELPLESS_UNAWARE: i32 = 30;
 fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &Seen, victim: &Seen, fighter: &Fighter, aim: Aim) {
     let defender = Fighter { helpless: helpless(w, attacker, victim), ..w.fighter(victim) };
     let ranged = fighter.weapon.as_ref().is_some_and(|wp| wp.range > 1);
-    let situation = if ranged { w.shot_difficulty(attacker, victim, fighter.skill()) } else { 0 };
+    let situation = if ranged { w.shot_difficulty(all, attacker, victim, fighter.skill()) } else { 0 };
     let fighter = &Fighter { situation, ..fighter.clone() };
     let mut outcome = resolve(fighter, &defender, &mut w.rng);
     if let Some(weapon) = fighter.weapon.as_ref().filter(|w| w.uses_ammo()) {
@@ -3350,6 +3378,10 @@ mod tests {
         assert_eq!(missile_difficulty(10, 8, false, 0), 30, "6 tiles past: 5 each");
         assert_eq!(missile_difficulty(10, 8, true, 0), 0, "a Master");
         assert_eq!(missile_difficulty(4, 8, false, 70), 70, "a hedge (50) and a low wall (20)");
+        // Critters on the line: the game's 0x4030 (cover, 20); one not seen through 50.
+        let line = line_between(TileLoc { x: 0, y: 0 }, TileLoc { x: 6, y: 0 });
+        let living = [(TileLoc { x: 2, y: 0 }, PC_FLAGS), (TileLoc { x: 4, y: 0 }, crate::blocking::OF_SHOOT_THROUGH), (TileLoc { x: 4, y: 1 }, PC_FLAGS), (TileLoc { x: 6, y: 0 }, PC_FLAGS)];
+        assert_eq!(line_critters_cost(&line, living.into_iter()), 70, "off the line and the target's tile left out");
     }
 
     #[test]

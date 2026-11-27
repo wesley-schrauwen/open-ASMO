@@ -611,5 +611,12 @@ of `combat_design.md` come after the original's rules work.
      Perception (0x4c888e-0x4c88c1; a Master of the skill spared, 0x4c8883; NPCs never Masters
      here); the shoot-through objects on its line add 50 each when not `SEE_THROUGH` (0x10) and
      20 when seen through but `PROVIDES_COVER` (0x4000) (0x44063f; the target's tile left out).
-     The game's Stone (flags 0x404830) gives cover, 20; plants none. Not built: walls and
-     portals that are shoot-through costing, critters' cost.
+     The game's Stone (flags 0x404830) gives cover, 20; plants none.
+   - Critters, walls and portals (`feat/cover-critters`, `blocking::cover_cost`,
+     `combat::line_critters_cost`): the same block (0x440671-0x440695) prices living critters
+     on the line (types 0xf / 0x10 at 0x44064d, the dead skipped by 0x45d8d0), Passwalled walls
+     (0x44028e) and closed portals (0x4401c3) that are shoot-through. Every critter prototype
+     is 0x4030 (shoot-through, seen through, cover): 20 a critter. The game has one portal
+     shoot-through but not seen through (50) and two walls that give cover (20). Builder's
+     calls: a wall's or portal's cost counts on its own tile, as objects', the shooter's and
+     target's left out; a PC's followers its shot passes still cost.
