@@ -148,20 +148,29 @@ impl Lying {
     }
 }
 
-/// The attack animation of critter art `art` (0x42b9c0 → 0x503f60): 20 when its body's (table
-/// 0x5be980: human, elf 1, half-ogre 2) or monster's (0x5be994, by bits 23-27) entry is set, else
-/// 21; unique NPCs 20. Not built: 14 for thrown weapons, 21 forced by `flags` 0x80 or while
-/// knocked down.
-pub fn attack_anim(art: arcanum_formats::art_id::ArtId) -> u32 {
-    const BODIES: [u32; 5] = [1, 0, 0, 2, 1];
+/// The attack animation at a target of art `target` (0x42b9c0; the goal's second object,
+/// 0xd08): 14 for a thrown weapon (`weapon_flags` 0x40, 0x42bacb, tested first); 21 at a target
+/// lying (animation 7-11, 0x42baf1-0x42bb2f; `flags` 0x80 too, 0x42bae3, not known here); else
+/// by 0x503f60 on the target's art: critters 20 (0x502710 gives index 0 for them, table
+/// 0x5be980 entry 1), monsters by table 0x5be994 (bits 23-27: set 20, else 21), others 20.
+pub fn attack_anim(thrown: bool, target: Option<arcanum_formats::art_id::ArtId>, target_lying: bool) -> u32 {
     const MONSTERS: [u32; 32] = [0, 0, 1, 2, 1, 1, 1, 1, 2, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 1, 1, 0, 2, 2, 2, 1, 1, 1];
-    let set = match art.art_type() {
-        2 => BODIES.get(((art.0 >> 24) & 7) as usize).copied().unwrap_or(1),
-        0xc => MONSTERS[((art.0 >> 23) & 0x1f) as usize],
+    if thrown {
+        return ANIM_THROW;
+    }
+    let lying = target_lying || target.is_some_and(|t| t.art_type() == 2 && (7..=11).contains(&((t.0 >> 6) & 0x1f)));
+    if lying {
+        return ANIM_ATTACK_ALT;
+    }
+    let set = match target.map(|t| (t.art_type(), t.0)) {
+        Some((0xc, id)) => MONSTERS[((id >> 23) & 0x1f) as usize],
         _ => 1,
     };
     if set != 0 { ANIM_ATTACK } else { ANIM_ATTACK_ALT }
 }
+
+/// A thrown weapon's swing (0x42bb49).
+pub const ANIM_THROW: u32 = 14;
 
 /// The two attack animations (0x42b9c0).
 pub const ANIM_ATTACK: u32 = 20;
@@ -232,10 +241,10 @@ fn apply_combat_deltas(
         apply(&delta, &mut view, floats.as_deref_mut(), &is_pc, &text);
         // The attacker swings, facing its target; a killed NPC's death plays when it comes back.
         if let LedgerDelta::Attacked { attacker, target, outcome } = &delta {
-            let to = actors.iter().find(|a| a.net_id == *target).map(|a| (a.at, a.art));
+            let to = actors.iter().find(|a| a.net_id == *target).map(|a| (a.at, a.art, a.posture != crate::actors::Posture::Standing || a.knocked));
             if let Some(mut a) = actors.iter_mut().find(|a| a.net_id == *attacker) {
-                a.action = Some((attack_anim(a.art), 0.0));
-                if let Some(r) = to.and_then(|(at, _)| facing(a.at, at)) {
+                a.action = Some((attack_anim(outcome.thrown, to.map(|t| t.1), to.is_some_and(|t| t.2)), 0.0));
+                if let Some(r) = to.and_then(|(at, ..)| facing(a.at, at)) {
                     a.rotation = r;
                 }
             }
@@ -461,10 +470,14 @@ mod tests {
     }
 
     #[test]
-    fn attackers_swing_by_their_body_facing_the_target() {
+    fn attackers_swing_by_their_target_facing_it() {
         use arcanum_formats::art_id::CritterArt;
         let body = |body| CritterArt { body, male: true, ..Default::default() }.id();
-        assert_eq!([0, 1, 2, 3, 4].map(|b| attack_anim(body(b))), [20, 21, 21, 20, 20], "table 0x5be980");
+        assert_eq!([0, 1, 2, 3, 4].map(|b| attack_anim(false, Some(body(b)), false)), [20; 5], "critters: 20 whatever the body");
+        assert_eq!(attack_anim(true, Some(body(0)), false), 14, "thrown");
+        assert_eq!((attack_anim(false, Some(body(0)), true), attack_anim(false, Some(CritterArt { anim: 7, ..CritterArt::from_id(body(0)) }.id()), false)), (21, 21), "at one lying");
+        let monster = |n: u32| arcanum_formats::art_id::ArtId((0xc << 28) | (n << 23));
+        assert_eq!((attack_anim(false, Some(monster(2)), false), attack_anim(false, Some(monster(0)), false)), (20, 21), "table 0x5be994");
         let t = |x, y| arcanum_formats::map::TileLoc { x, y };
         assert_eq!(facing(t(10, 10), t(15, 10)), arcanum_sim::rotation_of_step(t(10, 10), t(11, 10)));
         assert_eq!(facing(t(10, 10), t(10, 10)), None);
