@@ -72,8 +72,6 @@ pub struct Npc {
 #[derive(Resource, Debug, Default)]
 pub struct PopulatedSectors(pub BTreeSet<SectorId>);
 
-/// The walking speed NPCs are announced with until their stats are read (they do not move yet).
-pub const NPC_SPEED: i32 = 8;
 
 /// NPCs a script changed (switched off or on, destroyed, transformed, new art): [`spawn_npcs`]
 /// spawns them again as they are now.
@@ -107,8 +105,9 @@ pub fn spawn_npcs(
     let spawn = |commands: &mut Commands, ids: &mut NetIds, outbox: &mut Outbox, sector: SectorId, index: usize, object: &Object| {
         let (Some(position), Some(art), Some(prototype)) = (crate::object_location(object), map.prototypes.art_id(object), object.prototype.prototype()) else { return };
         let net_id = ids.0.allocate();
-        let look = Appearance { art, speed: NPC_SPEED };
-        let gait = Gait::load(art, NPC_SPEED, |p| vfs_guard.as_deref().and_then(|v| v.read(p).ok()));
+        let speed = crate::combat::npc_speed(object, &map.prototypes);
+        let look = Appearance { art, speed };
+        let gait = Gait::load(art, speed, |p| vfs_guard.as_deref().and_then(|v| v.read(p).ok()));
         let mut npc = commands.spawn((net_id, Npc { prototype }, crate::NpcSource { sector, index: index as u32 }, Position(position), look, gait));
         // A corpse, or one knocked out, thinks no more: no standpoints, no wandering.
         if !map.npc_down(sector, index as u32) {
@@ -1132,6 +1131,38 @@ mod tests {
             }
         }
         assert!(remarks > 0 && remarks <= criticals, "{remarks} remarks on {criticals} criticals (the PC's or the follower's own), {attacks} attacks");
+    }
+
+    #[test]
+    fn a_lamed_npc_walks_slower() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let mut b = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(72, 70));
+        b.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
+        std::fs::write(folder.join("G_0F.mob"), b.build()).unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        let (npc, entity) = { let world = sim.app.world_mut(); world.query::<(Entity, &NetId, &crate::Position)>().iter(world).find(|q| q.2.0 == TileLoc { x: 72, y: 70 }).map(|q| (*q.1, q.0)).unwrap() };
+        let speed = |sim: &SimApp| sim.app.world().get::<Appearance>(entity).unwrap().speed;
+        let index = sim.app.world().get::<crate::NpcSource>(entity).unwrap().index;
+        let whole = { let map = sim.app.world().resource::<LoadedMap>(); crate::combat::npc_speed(&map.mobiles[&SectorId::new(1, 1)][index as usize], &map.prototypes) };
+        assert_eq!(speed(&sim), whole, "spawned at its own speed");
+        // A critical cripples its legs.
+        sim.app.world_mut().resource_mut::<LoadedMap>().injure_npc(SectorId::new(1, 1), index, crate::combat::OCF_CRIPPLED_LEGS);
+        sim.take_deltas();
+        for _ in 0..crate::combat::HEALTH_TICKS {
+            sim.update();
+        }
+        assert_eq!(speed(&sim), whole - 5);
+        assert!(sim.take_deltas().iter().any(|(_, d)| matches!(d, LedgerDelta::Speed { net_id, speed } if *net_id == npc && *speed == whole - 5)), "every player is told");
     }
 
     #[test]
