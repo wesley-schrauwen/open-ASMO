@@ -520,7 +520,8 @@ of `combat_design.md` come after the original's rules work.
      (fists' 1-5, saps), and a critical knocks out (0x4b5f40 flag 0x100: after a stun, an NPC
      without `critter_flags` 0x4000000, another roll up to `E` and a CO save at − 5): fatigue to
      its most + 10-20 (0x4cef00(10, 20)). Float "Unconscious" (17).
-   - Below 1 an NPC is down (0x45d800): it lies on animation 7's last frame, loses its turns,
+   - Below 1 an NPC is down (0x45d800; never the undead, `critter_flags` 0x4 at 0x45d847,
+     `feat/undead-tireless`): it lies on animation 7's last frame, loses its turns,
      counts for no side, notices nothing and does not wander. Its fatigue recovers by
      `(CO + 1) / 3` every 80 000 game ms (as PCs', 0x45e610); above 0 it gets up.
    - The client (`feat/npc-get-up`, `combat_ui::Lying`): a knocked-out NPC falls (7) when

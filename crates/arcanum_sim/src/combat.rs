@@ -1083,9 +1083,11 @@ impl crate::LoadedMap {
         Some((max - int("critter_fatigue_damage"), max))
     }
 
-    /// Whether NPC `index` is out of the fight: dead, or knocked out (fatigue below 1, 0x45d800).
+    /// Whether NPC `index` is out of the fight: dead, or knocked out (fatigue below 1, 0x45d800;
+    /// never the undead, `critter_flags` 0x4 at 0x45d847).
     pub fn npc_down(&self, sector: arcanum_formats::map::SectorId, index: u32) -> bool {
-        self.is_dead(sector, index) || self.npc_fatigue(sector, index).is_some_and(|(left, _)| left < 1)
+        let undead = self.mobiles.get(&sector).and_then(|m| m.get(index as usize)).is_some_and(|o| self.prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_UNDEAD != 0);
+        self.is_dead(sector, index) || (!undead && self.npc_fatigue(sector, index).is_some_and(|(left, _)| left < 1))
     }
 
     /// Sets NPC `index`'s fatigue damage, kept in [`crate::LoadedMap::changes`].
@@ -3345,6 +3347,19 @@ mod tests {
         assert_eq!(leader_hit_reaction(-20, 10, Aim::Meant), Some(-20));
         assert_eq!(leader_hit_reaction(-20, 10, Aim::Stray), None, "a stray hit: no loss, no warning");
         assert_eq!(leader_hit_reaction(-20, 20, Aim::Meant), None, "charisma 20");
+    }
+
+    #[test]
+    fn the_undead_never_tire_out() {
+        use arcanum_formats::object::Value;
+        let tired = |flags: i32| {
+            let o = Object::parse_instance(&arcanum_formats::test_util::ObjectBuilder::new(arcanum_formats::object::TYPE_NPC).field("critter_flags", Value::Int32(flags)).field("critter_fatigue_damage", Value::Int32(500)).build()).unwrap();
+            let mut map = crate::LoadedMap::default();
+            map.mobiles.insert(arcanum_formats::map::SectorId::new(0, 0), vec![o]);
+            map.npc_down(arcanum_formats::map::SectorId::new(0, 0), 0)
+        };
+        assert!(tired(0), "out of fatigue: down");
+        assert!(!tired(OCF_UNDEAD), "undead: never down by fatigue");
     }
 
     #[test]
