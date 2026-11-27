@@ -1148,6 +1148,8 @@ mod tests {
         sim.update();
         let until = sim.app.world().get::<crate::combat::KnockedDown>(pc).and_then(|d| d.until);
         assert!(until.is_some(), "its time is set");
+        let anim = |sim: &SimApp| (sim.app.world().get::<Appearance>(pc).unwrap().art.0 >> 6) & 0x1f;
+        assert_eq!(anim(&sim), crate::combat::ANIM_LYING, "joiners spawn it lying");
         let now = sim.app.world().resource::<crate::GameClock>().now;
         sim.app.world_mut().resource_mut::<crate::GameClock>().now = now.plus_ms(crate::RECOVERY_MS / 2);
         sim.update();
@@ -1156,6 +1158,7 @@ mod tests {
         sim.app.world_mut().resource_mut::<crate::GameClock>().now = now.plus_ms(crate::RECOVERY_MS + 1000);
         sim.update();
         assert!(sim.app.world().get::<crate::combat::KnockedDown>(pc).is_none(), "up after a period");
+        assert_eq!(anim(&sim), arcanum_formats::art_id::ANIM_STAND, "standing again");
         let id = *sim.app.world().get::<NetId>(pc).unwrap();
         assert!(sim.take_deltas().iter().any(|(_, d)| matches!(d, LedgerDelta::GotUp { net_id } if *net_id == id)), "every player is told");
     }

@@ -2826,15 +2826,29 @@ pub struct KnockedDown {
     pub until: Option<u64>,
 }
 
+type LyingQuery<'a> = (Entity, &'a NetId, &'a mut KnockedDown, Option<&'a mut crate::Appearance>, Has<crate::Prowling>);
+
+/// Art animation 7: knocked down, lying on its last frame.
+pub const ANIM_LYING: u32 = 7;
+
 /// Gets up the knocked-down critters whose time has come; every player is told
-/// (`LedgerDelta::GotUp`).
-pub fn get_up_knocked_down(mut commands: Commands, clock: Res<crate::GameClock>, session: Res<crate::Session>, mut outbox: ResMut<crate::Outbox>, mut lying: Query<(Entity, &NetId, &mut KnockedDown)>) {
+/// (`LedgerDelta::GotUp`). While one lies its art is animation 7, so players who join meanwhile
+/// spawn it lying; up, it is back to standing (or prowling, animation 5).
+pub fn get_up_knocked_down(mut commands: Commands, clock: Res<crate::GameClock>, session: Res<crate::Session>, mut outbox: ResMut<crate::Outbox>, mut lying: Query<LyingQuery>) {
     let now = clock.now.days as u64 * crate::DAY_MS as u64 + clock.now.ms as u64;
-    for (entity, &net_id, mut down) in &mut lying {
+    for (entity, &net_id, mut down, look, prowling) in &mut lying {
         match down.until {
-            None => down.until = Some(now + crate::RECOVERY_MS),
+            None => {
+                down.until = Some(now + crate::RECOVERY_MS);
+                if let Some(mut look) = look {
+                    look.art = crate::gait::with_anim(look.art, ANIM_LYING);
+                }
+            }
             Some(t) if now >= t => {
                 commands.entity(entity).remove::<KnockedDown>();
+                if let Some(mut look) = look {
+                    look.art = crate::gait::with_anim(look.art, if prowling { crate::prowl::ANIM_PROWL } else { arcanum_formats::art_id::ANIM_STAND });
+                }
                 crate::ground::broadcast(&session, &mut outbox, LedgerDelta::GotUp { net_id });
             }
             Some(_) => {}
