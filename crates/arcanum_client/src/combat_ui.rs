@@ -220,11 +220,12 @@ fn apply_combat_deltas(
     party: Res<crate::actors::Party>,
     vfs: Option<Res<VfsResource>>,
     mut mes: Local<Option<arcanum_formats::mes::MesFile>>,
-    mut actors: Query<&mut crate::actors::Actor>,
+    mut actors: Query<(&mut crate::actors::Actor, Option<&crate::animation::ArtAnimation>)>,
     mut dying: ResMut<Dying>,
     mut health: ResMut<NpcHealth>,
+    (time, frames, mut held): (Res<Time>, Res<Assets<crate::art_loader::ArtFrames>>, Local<HeldBlows>),
 ) {
-    if deltas.0.is_empty() {
+    if deltas.0.is_empty() && held.is_empty() {
         return;
     }
     if mes.is_none() {
@@ -238,32 +239,61 @@ fn apply_combat_deltas(
             health.0.insert(net_id, (hit_points, fatigue));
             continue;
         }
-        apply(&delta, &mut view, floats.as_deref_mut(), &is_pc, &text);
-        // The attacker swings, facing its target; a killed NPC's death plays when it comes back.
+        // The attacker swings, facing its target; what the blow does shows when the swing
+        // lands (below); a killed NPC's death plays when it comes back.
         if let LedgerDelta::Attacked { attacker, target, outcome } = &delta {
-            let to = actors.iter().find(|a| a.net_id == *target).map(|a| (a.at, a.art, a.posture != crate::actors::Posture::Standing || a.knocked));
-            if let Some(mut a) = actors.iter_mut().find(|a| a.net_id == *attacker) {
+            let to = actors.iter().find(|a| a.0.net_id == *target).map(|(a, _)| (a.at, a.art, a.posture != crate::actors::Posture::Standing || a.knocked));
+            if let Some((mut a, _)) = actors.iter_mut().find(|a| a.0.net_id == *attacker) {
                 a.action = Some((attack_anim(outcome.thrown, to.map(|t| t.1), to.is_some_and(|t| t.2)), 0.0));
                 if let Some(r) = to.and_then(|(at, ..)| facing(a.at, at)) {
                     a.rotation = r;
                 }
             }
             // Killed or knocked out: the fall plays when the host spawns it again lying.
-            use arcanum_sim::combat::{KNOCKED_DOWN, KNOCKED_OUT};
-            let out = outcome.effects & KNOCKED_OUT != 0;
-            if outcome.killed || out {
+            if outcome.killed || outcome.effects & arcanum_sim::combat::KNOCKED_OUT != 0 {
                 dying.0.insert(*target);
             }
-            // Knocked down (goal 62, animation 7): it lies until the host gets it up (goal 63,
-            // animation 8: `LedgerDelta::GotUp`).
-            for (who, fell) in [(*target, outcome.effects & KNOCKED_DOWN != 0 && !outcome.killed && !out), (*attacker, outcome.fumble_effects & KNOCKED_DOWN != 0)] {
-                if fell && let Some(mut a) = actors.iter_mut().find(|a| a.net_id == who) {
-                    a.knocked = true;
-                }
+            held.push((delta, 0.0));
+            continue;
+        }
+        apply(&delta, &mut view, floats.as_deref_mut(), &is_pc, &text);
+    }
+    // A blow lands on the swing's action frame (0x42caa0 waits for 0x42d051's flag, set at
+    // frame `action_frame - 1`; then 0x42a630 → 0x4b3170): its floats and knock-down show then.
+    // The host has resolved it already (builder's call: only its showing waits); at most
+    // [`BLOW_WAIT_SECS`] when the art does not load.
+    let dt = time.delta_secs();
+    let mut i = 0;
+    while i < held.len() {
+        held[i].1 += dt;
+        let LedgerDelta::Attacked { attacker, target, outcome } = held[i].0.clone() else { held.swap_remove(i); continue };
+        let landed = actors.iter().find(|a| a.0.net_id == attacker).is_none_or(|(a, anim)| {
+            let action = anim.and_then(|anim| frames.get(&anim.art).map(|f| (anim.clock.frame, f.action_frame)));
+            a.action.is_none() || action.is_some_and(|(frame, at)| at > 0 && frame + 1 >= at as usize)
+        });
+        if !landed && held[i].1 < BLOW_WAIT_SECS {
+            i += 1;
+            continue;
+        }
+        let (delta, _) = held.remove(i);
+        apply(&delta, &mut view, floats.as_deref_mut(), &is_pc, &text);
+        // Knocked down (goal 62, animation 7): it lies until the host gets it up (goal 63,
+        // animation 8: `LedgerDelta::GotUp`).
+        use arcanum_sim::combat::{KNOCKED_DOWN, KNOCKED_OUT};
+        let out = outcome.effects & KNOCKED_OUT != 0;
+        for (who, fell) in [(target, outcome.effects & KNOCKED_DOWN != 0 && !outcome.killed && !out), (attacker, outcome.fumble_effects & KNOCKED_DOWN != 0)] {
+            if fell && let Some((mut a, _)) = actors.iter_mut().find(|a| a.0.net_id == who) {
+                a.knocked = true;
             }
         }
     }
 }
+
+/// Blows waiting for their swing to land, with the seconds waited.
+type HeldBlows = Vec<(LedgerDelta, f32)>;
+
+/// The longest a blow's showing waits for its swing (s).
+pub const BLOW_WAIT_SECS: f32 = 1.5;
 
 /// `mes/combat.mes`.
 pub const COMBAT_MES: &str = "mes/combat.mes";

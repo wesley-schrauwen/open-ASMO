@@ -75,6 +75,8 @@ pub struct ArtFrames {
     pub sizes: Vec<UVec2>,
     /// Playback speed from the file, in frames per second.
     pub frame_rate: u32,
+    /// The frame a swing lands on (art header +0x1c, read by 0x5030b0; 0 none).
+    pub action_frame: u32,
     /// Every rotation in the file (1 or 8), rotation 0 first (the same as the fields above).
     pub rotations: Vec<ArtRotation>,
 }
@@ -160,7 +162,7 @@ impl AssetLoader for ArtFramesLoader {
         let Some(first) = rotations.first().filter(|r| !r.frames.is_empty()).cloned() else {
             return Err(ArtLoadError::Art(ArtError::NoFrames));
         };
-        Ok(ArtFrames { frames: first.frames, centers: first.centers, sizes: first.sizes, frame_rate: art.frame_rate, rotations })
+        Ok(ArtFrames { frames: first.frames, centers: first.centers, sizes: first.sizes, frame_rate: art.frame_rate, action_frame: art.action_frame, rotations })
     }
 
     fn extensions(&self) -> &[&str] {
