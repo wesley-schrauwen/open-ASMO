@@ -524,7 +524,9 @@ of `combat_design.md` come after the original's rules work.
    - PCs out of fatigue (`feat/pc-out-turn`): 0x4b7c90 ends the current actor's turn (AP to 0,
      0x4b7cbd → 0x4b7690); fatigue damage that knocks a critter out calls it (0x45d5a0, at
      0x45d653), and turn starts skip critters that cannot act (0x4b7580 → 0x45d790: hit points
-     or fatigue below 1, flags 0x60). Built: an unconscious PC's turn passes; NPCs pick
+     or fatigue below 1, flags 0x60). Built: an unconscious PC's turn passes; an NPC with
+     `critter_flags` 0x60 (stunned or paralyzed by its flags) loses its turns and notices no
+     foe (`feat/paralyzed-turns`, `OCF_HELD`); NPCs pick
      unconscious PCs last (0x4ab460 adds 1000 to a downed target's score, does not exclude it).
    - Finding: the original has no "all PCs down" end of the fight in the functions read; here a
      fight still ends when no PC has hit points (unchanged). 0x4b6c90, 0x4af260 / 0x4af470's

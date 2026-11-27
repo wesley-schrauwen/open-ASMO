@@ -1135,6 +1135,41 @@ mod tests {
     }
 
     #[test]
+    fn a_paralyzed_npc_loses_its_turns() {
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let mut b = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(72, 70)).field("hp_pts", Value::Int32(2000)).field("critter_fatigue_pts", Value::Int32(2000)).field("critter_flags", Value::Int32(crate::combat::OCF_PARALYZED));
+        b.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
+        std::fs::write(folder.join("G_0F.mob"), b.build()).unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        let npc = { let world = sim.app.world_mut(); world.query::<(&NetId, &crate::Position)>().iter(world).find(|q| q.1.0 == TileLoc { x: 72, y: 70 }).map(|q| *q.0).unwrap() };
+        let (mut struck, mut its_blows) = (0, 0);
+        for seq in 0..40 {
+            sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: npc, seq })]);
+            sim.update();
+            sim.receive([(PlayerId(1), crate::PlayerIntent::EndTurn)]);
+            sim.update();
+            for (_, d) in sim.take_deltas() {
+                match d {
+                    LedgerDelta::Attacked { attacker, .. } if attacker == npc => its_blows += 1,
+                    LedgerDelta::Attacked { .. } => struck += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert!(struck > 0 && its_blows == 0, "struck {struck} times, struck back {its_blows}");
+    }
+
+    #[test]
     fn a_surrendered_npc_begs_another_attacker() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;
