@@ -472,7 +472,8 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      2 (magical). In the data: 30000 magical (0x6), 30001-30006 mechanical (0x5), all run once
      (flag 4); 30007, "Trap source", has flags 0 and is not one. The scripts have no lines.
    - **The hook** (0x441980): a use (event 1) of an object whose trap is not spotted makes a PC
-     roll Spot Trap (0x4bbe40, skill 7); spotting it cancels the use. Otherwise, spotted or not,
+     roll Spot Trap (0x4bbe40, skill 7: a basic skill, 0x4c62e0, 4 a level, 0x4c6350; corrected
+     in `feat/spot-chance` from Pick Locks' 6); spotting it cancels the use. Otherwise, spotted or not,
      the trap springs (corrected 2026-11-25: the agent's "spotted cancels" is wrong; 0x441980
      rolls only when 0x4bbfe0 says not spotted). NPCs never roll and spring traps too.
    - **Springing** (0x4bcb70 / 0x4bcdc0): `mes/trap.mes` 1 "Trap!" over the triggerer; the
