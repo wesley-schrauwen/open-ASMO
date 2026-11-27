@@ -15,7 +15,18 @@
 //!   default, 1 (no map has a `mapinfo.txt` with `LightScheme`). In the game's maps, K'na Tha
 //!   (2, 9), Stillwater Giants Cave (2), The Pit (9) and Tulla's Conveyance (10) use others.
 //!
-//! Not built: light sources (sector lights, light objects), the difficulty term itself in to-hit and prowling (it waits for the
+//! - **Lights** ([`crate::LoadedMap::light_at`], 0x4d89e0 with flag 1): on the ambient, each
+//!   sector light not off (flag 0x1, 0x4d8b8f) whose art frame covers the sample point (the
+//!   tile's centre, `loc_to_xy` + (0x28, 0x14)) adds its art pixel there, a colour-key pixel
+//!   nothing (0x4d8bf1-0x4d8c27). The art is the falloff (no radius). A coloured light
+//!   multiplies the pixel by its colour (the product tables 0x739ea4…; white uses the pixel
+//!   as is, 0x4de46d); flags 0x8 / 0x10 take the outdoor / indoor ambient as that colour
+//!   (0x4d8c30). Each channel adds, saturating at 255 (0x4d8e4c-0x4d8e93); flag 0x2 subtracts,
+//!   down to 0 (0x4d8d96-0x4d8e45). The frame's top-left is the light's tile centre plus its
+//!   pixel offset less the frame's centre (0x4de290 → 0x5031c0).
+//!
+//! Not built: light objects (lanterns, 0x4dc210 for objects' lit colour), animated light
+//! frames (frame 0 here), the difficulty term itself in to-hit and prowling (it waits for the
 //! light sources: an ambient-only night would darken fights beside torches).
 
 /// The schemes' list.
@@ -58,6 +69,80 @@ impl crate::LoadedMap {
         let (x, y) = at.tile_in_sector();
         let scheme = self.light.get(sector.light_scheme)?;
         Some(scheme.ambient(hour, indoor_tile(sector.tile(x, y).art_id())))
+    }
+}
+
+/// The light flags (0x4d8b8f, 0x4d8d83, 0x4d8c30).
+pub const LIGHT_OFF: u32 = 0x1;
+pub const LIGHT_DARKENS: u32 = 0x2;
+pub const LIGHT_OUTDOOR_COLOUR: u32 = 0x8;
+pub const LIGHT_INDOOR_COLOUR: u32 = 0x10;
+
+/// A tile's centre in the original's screen pixels (`loc_to_xy` 0x4b8680 + (0x28, 0x14)).
+pub fn tile_pixel(at: arcanum_formats::map::TileLoc) -> (i64, i64) {
+    let (x, y) = (i64::from(at.x), i64::from(at.y));
+    (40 * (y - x), 20 * (x + y) + 20)
+}
+
+/// What `light` (art `frame`) adds at screen point `(px, py)`: its pixel there, tinted by
+/// `tint` unless white; `None` off its frame or on a colour-key pixel.
+pub fn light_pixel(light: &arcanum_formats::sector::Light, frame: &arcanum_formats::art::ArtFrame, tint: Rgb, (px, py): (i64, i64)) -> Option<Rgb> {
+    let (cx, cy) = tile_pixel(arcanum_formats::map::TileLoc { x: light.x as u32, y: light.y as u32 });
+    let left = cx + i64::from(light.offset_x) - i64::from(frame.info.center_x);
+    let top = cy + i64::from(light.offset_y) - i64::from(frame.info.center_y);
+    let (lx, ly) = (px - left, py - top);
+    if lx < 0 || ly < 0 || lx >= i64::from(frame.info.width) || ly >= i64::from(frame.info.height) {
+        return None;
+    }
+    let i = (ly as usize * frame.info.width as usize + lx as usize) * 4;
+    let p = frame.rgba.get(i..i + 4)?;
+    if p[3] == 0 {
+        return None;
+    }
+    let mut c = [p[0], p[1], p[2]];
+    if tint != [255, 255, 255] {
+        for (ch, t) in c.iter_mut().zip(tint) {
+            *ch = (u16::from(*ch) * u16::from(t) / 255) as u8;
+        }
+    }
+    Some(c)
+}
+
+/// Adds (or for a darkening light takes away) `add` on `base`, each channel kept in 0-255.
+pub fn combine(base: Rgb, add: Rgb, darkens: bool) -> Rgb {
+    std::array::from_fn(|i| if darkens { base[i].saturating_sub(add[i]) } else { base[i].saturating_add(add[i]) })
+}
+
+impl crate::LoadedMap {
+    /// Decodes frame 0 of each light's art in `sector` not read yet.
+    pub(crate) fn read_light_frames(&mut self, vfs: &arcanum_vfs::Vfs, sector: &arcanum_formats::sector::Sector) {
+        for light in &sector.lights {
+            if self.light_frames.contains_key(&light.art_id.0) {
+                continue;
+            }
+            let frame = self.art.as_ref().and_then(|a| a.path(light.art_id)).and_then(|p| vfs.read(&p).ok()).and_then(|d| arcanum_formats::art::ArtFile::parse(&d).ok()).and_then(|art| art.decode_frame(0, 0, art.default_palette().ok()?).ok());
+            self.light_frames.insert(light.art_id.0, frame.map(std::sync::Arc::new));
+        }
+    }
+
+    /// The light on tile `at` at `hour` (0x4d9240 → 0x4d89e0): its ambient ([`Self::ambient_at`])
+    /// and every loaded sector's lights that reach it.
+    pub fn light_at(&self, at: arcanum_formats::map::TileLoc, hour: u32) -> Option<Rgb> {
+        let mut colour = self.ambient_at(at, hour)?;
+        let scheme = self.sectors.get(&at.sector()).and_then(|s| self.light.get(s.light_scheme));
+        let point = tile_pixel(at);
+        for light in self.sectors.values().flat_map(|s| &s.lights).filter(|l| l.flags & LIGHT_OFF == 0) {
+            let Some(Some(frame)) = self.light_frames.get(&light.art_id.0) else { continue };
+            let tint = match (light.flags & LIGHT_OUTDOOR_COLOUR != 0, light.flags & LIGHT_INDOOR_COLOUR != 0, scheme) {
+                (true, _, Some(s)) => s.ambient(hour, false),
+                (_, true, Some(s)) => s.ambient(hour, true),
+                _ => light.color,
+            };
+            if let Some(add) = light_pixel(light, frame, tint, point) {
+                colour = combine(colour, add, light.flags & LIGHT_DARKENS != 0);
+            }
+        }
+        Some(colour)
     }
 }
 
@@ -138,6 +223,19 @@ mod tests {
         assert_eq!(luminance([255, 255, 255]), 254, "76 + 150 + 28");
         assert_eq!(luminance([74, 80, 98]), 22 + 47 + 10);
         assert_eq!((dark_difficulty(254), dark_difficulty(79), dark_difficulty(0)), (0, 20, 30));
+        // A 3 x 3 light frame centred on its tile, its middle pixel 100 grey, a colour key around.
+        let mut rgba = vec![0u8; 36];
+        rgba[16..20].copy_from_slice(&[100, 100, 100, 255]);
+        let info = arcanum_formats::art::FrameInfo { width: 3, height: 3, data_size: 0, center_x: 1, center_y: 1, delta_x: 0, delta_y: 0 };
+        let frame = arcanum_formats::art::ArtFrame { info, rgba };
+        let at = arcanum_formats::map::TileLoc { x: 10, y: 10 };
+        let light = arcanum_formats::sector::Light { x: 10, y: 10, ..Default::default() };
+        assert_eq!(light_pixel(&light, &frame, [255, 255, 255], tile_pixel(at)), Some([100, 100, 100]), "white: the pixel");
+        assert_eq!(light_pixel(&light, &frame, [255, 0, 128], tile_pixel(at)), Some([100, 0, 50]), "tinted");
+        assert_eq!(light_pixel(&light, &frame, [255; 3], tile_pixel(arcanum_formats::map::TileLoc { x: 11, y: 10 })), None, "off its frame");
+        let (px, py) = tile_pixel(at);
+        assert_eq!(light_pixel(&light, &frame, [255; 3], (px + 1, py)), None, "a colour-key pixel");
+        assert_eq!((combine([200, 10, 0], [100, 100, 100], false), combine([200, 10, 0], [100, 100, 100], true)), ([255, 110, 100], [100, 0, 0]));
         let open = arcanum_formats::mes::MesFile::parse(b"{0}{}{23}{1, 1, 1, 1, 1, 1}").unwrap();
         assert!(Scheme::parse(&open).is_none(), "the first hour must be given");
     }

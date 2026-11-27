@@ -653,7 +653,13 @@ of `combat_design.md` come after the original's rules work.
      ground art's outdoor flag (bit 8, 0x5038c0) is set (builder's call on which file triple
      0x4a7eb0 pairs with 0x602ea8). Maps on other schemes: K'na Tha (2, 9), Stillwater Giants
      Cave (2), The Pit (9), Tulla's Conveyance (10).
-   - Not built: light sources, applying the term.
+   - Sector lights (`feat/sector-lights`, `LoadedMap::light_at`, 0x4d89e0): on the ambient,
+     each light not off (0x1) whose art frame covers the tile's centre adds its art pixel there
+     (colour key: nothing); the art is the falloff, no radius. Coloured lights multiply the
+     pixel; 0x8 / 0x10 take the outdoor / indoor ambient as the colour; channels add saturating
+     at 255, a 0x2 light subtracts down to 0. Frame 0 of each light's art is decoded on sector
+     load. On the start map a light lifts midnight's 74, 80, 98 to 118, 127, 156.
+   - Not built: light objects (0x4dc210), animated light frames, applying the term.
 23. **Backstab** (`feat/backstab`, `combat::Stab`).
    - Eligible (0x45f9d0): a Backstab level (0x4c5eb0 skill 4), the target not having the
      attacker in view (0x45eff0 false), and a weapon whose wielded art (`item_use_aid_fragment`,
