@@ -2396,7 +2396,8 @@ pub fn catch_lock_pickers(
     rules: Res<crate::SimRules>,
     (mut ai, mut reputations, vfs): (ResMut<AiParams>, ResMut<crate::ReputationTable>, Option<Res<crate::SimVfs>>),
     (mut starts, mut checks): (ResMut<CombatStarts>, ResMut<ScriptChecks>),
-    (mut generic, mut rng, session, mut outbox, clock): (ResMut<crate::GenericLines>, ResMut<HostRng>, Res<crate::Session>, ResMut<crate::Outbox>, Res<crate::GameClock>),
+    (mut generic, mut rng, session, mut outbox): (ResMut<crate::GenericLines>, ResMut<HostRng>, Res<crate::Session>, ResMut<crate::Outbox>),
+    clock: Res<crate::GameClock>,
     npcs: Query<FoeQuery, AtPeace>,
     pcs: Query<QuarryQuery>,
 ) {
