@@ -2088,10 +2088,12 @@ pub fn line_between(from: TileLoc, to: TileLoc) -> Vec<TileLoc> {
 }
 
 /// Whether a watcher sees `to` (0x4af260 returning 0): in reach ([`sight_reach`]), in view
-/// ([`in_view`]) and with nothing between that blocks walking (0x4ade00; builder's call: which
-/// objects block sight in 0x43fe00 was not read).
+/// ([`in_view`]) and with nothing between that stops a missile (0x4ade00 with the missile's
+/// flags 0xc at 0x4ade93: a blocker adds 1 past the reach, 0x4af45a, so it hides even a near
+/// target; its line cost is dropped, 0x4af45e). `map` is the missiles' view
+/// ([`crate::MissileView`]); critters on the line are left out (all shoot-through in the data).
 pub fn sees(map: &impl crate::Walkable, from: TileLoc, rotation: usize, pe: i32, to: TileLoc, prowler: Option<i32>) -> bool {
-    crate::tile_distance(from, to) <= sight_reach(pe, prowler) && in_view(rotation, from, to) && line_between(from, to).into_iter().all(|t| map.walkable(t))
+    crate::tile_distance(from, to) <= sight_reach(pe, prowler) && in_view(rotation, from, to) && first_on_line(from, to, std::iter::empty(), |a, b| crate::crossing_clear(map, a, b), |t| map.walkable(t)).is_none()
 }
 
 /// Whether a watcher notices `to`: sees it (when `sight`: [`can_look`]), or hears it (0x4af470,
@@ -2180,7 +2182,7 @@ pub fn notice_foes(
         for (&pc, pc_at, player, sheet, prowling) in &pcs {
             let Some(saved) = save.players.get(&player.0) else { continue };
             let prowler = prowling.then(|| crate::prowl::prowl_value(rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING)));
-            if !notices(&*map, can_look(o, &map.prototypes, false, None), at.0, rotation, pe, pc_at.0, prowler) {
+            if !notices(&crate::MissileView(&map), can_look(o, &map.prototypes, false, None), at.0, rotation, pe, pc_at.0, prowler) {
                 continue;
             }
             let towards = crate::reaction_to(&saved.script_state, &key, &reaction, &rules.0, &sheet.0, reputations);
@@ -2245,7 +2247,7 @@ pub fn catch_lock_pickers(
             if int("name") != owner && int("npc_social_class") != SOCIAL_CLASS_GUARD {
                 continue;
             }
-            if !can_look(o, &map.prototypes, false, None) || !sees(&*map, at.0, facing_of(facing, look), npc_stat(o, &map.prototypes, 5), pc_at.0, prowler) {
+            if !can_look(o, &map.prototypes, false, None) || !sees(&crate::MissileView(&map), at.0, facing_of(facing, look), npc_stat(o, &map.prototypes, 5), pc_at.0, prowler) {
                 continue;
             }
             if map.attachment(source.object(), crate::pickpocket::EVENT_CATCHING_THIEF).number != 0 {
@@ -2633,7 +2635,7 @@ fn helpless(w: &CombatWorld, attacker: &Seen, victim: &Seen) -> i32 {
     {
         let prowler = attacker.sheet.as_ref().filter(|_| attacker.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING)));
         let target = attacker.npc.and_then(|a| w.map.mobiles.get(&a.sector)?.get(a.index as usize));
-        if !notices(&*w.map, can_look(o, &w.map.prototypes, false, target), victim.at, victim.rotation, npc_stat(o, &w.map.prototypes, 5), attacker.at, prowler) {
+        if !notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, false, target), victim.at, victim.rotation, npc_stat(o, &w.map.prototypes, 5), attacker.at, prowler) {
             return HELPLESS_UNAWARE;
         }
     }
@@ -2910,7 +2912,7 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
         let notices = |x: &Seen| {
             let target = x.npc.and_then(|n| w.map.mobiles.get(&n.sector)?.get(n.index as usize));
             let prowler = x.sheet.as_ref().filter(|_| x.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING)));
-            notices(&*w.map, can_look(o, &w.map.prototypes, c.stunned.is_some(), target), c.at, c.rotation, pe, x.at, prowler)
+            notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, c.stunned.is_some(), target), c.at, c.rotation, pe, x.at, prowler)
         };
         let for_victim = allied(c.leader, own, victim.player, victim.leader, v_faction, v_kin) && (c.leader.is_some() || notices(victim));
         let for_attacker = allied(c.leader, own, attacker.player, attacker.leader, a_faction, a_kin) && (c.leader.is_some() || notices(attacker));
@@ -3234,6 +3236,11 @@ mod tests {
         let walled = Grid::parse(&rows);
         assert!(!sees(&walled, t(2, 5), 5, 8, t(9, 5), None), "a wall between");
         assert!(notices(&walled, true, t(2, 5), 1, 8, t(4, 5), None), "heard behind it, 2 tiles off");
+        // A wall on the edge crossed hides even a target next to it (0x4af45a).
+        let mut edged = Grid::parse(&["...................."; 20]);
+        edged.3.edges.insert(t(5, 5), 1 << 5);
+        assert!(!sees(&edged, t(5, 5), 5, 8, t(6, 5), None), "the wall faces the step");
+        assert!(sees(&edged, t(5, 4), 5, 8, t(6, 4), None), "the row beside it");
     }
 
     #[test]
