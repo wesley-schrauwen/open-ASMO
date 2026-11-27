@@ -645,7 +645,10 @@ of `combat_design.md` come after the original's rules work.
      (0x4c8743-0x4c875a); the critical chance + 2 × the level − the target's level (stat 0x11,
      0x4c8287-0x4c82a7), + 20 for a Master (0x4c82b6). The noise table 0x5b50c0 is 2, 8, 15, 1
      (`prowl::NOISES`): a quiet blow is heard within `clamp(PE' − 4, 1, 10) / 2` tiles.
-   - Not built: which weapons the kinds are (art letters), 0x4a58d9's use of skill 4.
+   - The kinds from the data (`feat/backstab-weapons`): 2 daggers (Dagger, Stiletto, Railroad
+     Spike), 3 swords, 4 axes, 7 great swords; 5 maces, 1 boomerangs, 6 pistols, 8 bows, 10
+     rifles, 13 staves. So: a dagger always, a sword, axe or great sword from Expert.
+   - Not built: 0x4a58d9's use of skill 4.
 22. **To-hit difficulty** (0x4c8430, read in full; the roll `1-100 + difficulty <= chance` at
     0x4c7259-0x4c7261).
    - Terms for weapon skills: the weapon's to-hit bonus and 5 a Strength point short (built);

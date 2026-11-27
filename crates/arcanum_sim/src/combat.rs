@@ -2944,11 +2944,20 @@ pub enum Stab {
 }
 
 /// Whether an attacker of Backstab `level` and `rank` wielding a weapon of `use_kind` may stab
-/// a target that does not have it in view (0x45f9d0: a level, 0x45eff0 false, a weapon of kind
-/// 2, or 3 / 4 / 7 from Expert).
+/// a target that does not have it in view (0x45f9d0: a level, 0x45eff0 false, a dagger, or from
+/// Expert a sword, axe or great sword).
 pub fn can_backstab(level: i32, rank: u8, use_kind: Option<u32>, in_view: bool) -> bool {
-    level > 0 && !in_view && use_kind.is_some_and(|k| k == 2 || (rank >= 2 && matches!(k, 3 | 4 | 7)))
+    level > 0 && !in_view && use_kind.is_some_and(|k| k == KIND_DAGGER || (rank >= 2 && matches!(k, KIND_SWORD | KIND_AXE | KIND_GREAT_SWORD)))
 }
+
+/// Wielded-art kinds ([`Weapon::use_kind`]), named from the game's weapon prototypes: 2 the
+/// daggers (Dagger, Stiletto, Railroad Spike), 3 swords (Sword, Rapier, Falchion), 4 axes, 7
+/// great swords (Claymore, Broadsword, Flamberge); 5 maces and hammers, 1 boomerangs and
+/// chakrams, 6 pistols, 8 bows, 10 rifles, 13 staves.
+pub const KIND_DAGGER: u32 = 2;
+pub const KIND_SWORD: u32 = 3;
+pub const KIND_AXE: u32 = 4;
+pub const KIND_GREAT_SWORD: u32 = 7;
 
 /// What a stab adds to a hit's normal damage (0x4b6680 at 0x4b67a5-0x4b67d9): the Backstab
 /// level from behind, five times it unnoticed; added to the roll before resistance.
