@@ -2096,10 +2096,19 @@ pub fn sees(map: &impl crate::Walkable, from: TileLoc, rotation: usize, pe: i32,
     crate::tile_distance(from, to) <= sight_reach(pe, prowler) && in_view(rotation, from, to) && first_on_line(from, to, std::iter::empty(), |a, b| crate::crossing_clear(map, a, b), |t| map.walkable(t)).is_none()
 }
 
-/// Whether a watcher notices `to`: sees it (when `sight`: [`can_look`]), or hears it (0x4af470,
-/// its path cost not counted).
+/// Whether a watcher notices `to`: sees it (when `sight`: [`can_look`]), or hears it (0x4af470:
+/// within its hearing reach less what the sound pays on its way, [`crate::sound_cost`] at
+/// 0x4af60c).
 pub fn notices(map: &impl crate::Walkable, sight: bool, from: TileLoc, rotation: usize, pe: i32, to: TileLoc, prowler: Option<i32>) -> bool {
-    (sight && sees(map, from, rotation, pe, to, prowler)) || i64::from(crate::tile_distance(from, to)) <= crate::prowl::hearing_reach(pe, prowler)
+    (sight && sees(map, from, rotation, pe, to, prowler)) || hears(map, from, pe, to, prowler)
+}
+
+/// Whether a listener at `from` hears `to` (0x4af470): the distance at most its reach
+/// ([`crate::prowl::hearing_reach`]) less the sound's cost on the line (0x4af640).
+pub fn hears(map: &impl crate::Walkable, from: TileLoc, pe: i32, to: TileLoc, prowler: Option<i32>) -> bool {
+    let reach = crate::prowl::hearing_reach(pe, prowler);
+    let distance = i64::from(crate::tile_distance(from, to));
+    distance <= reach && distance <= reach - i64::from(crate::sound_cost(map, from, to))
 }
 
 /// `spell_flags` 0x8000000: a follower bound to its leader (0x459040's table): it always
@@ -3235,12 +3244,17 @@ mod tests {
         rows[5] = ".....#..............";
         let walled = Grid::parse(&rows);
         assert!(!sees(&walled, t(2, 5), 5, 8, t(9, 5), None), "a wall between");
-        assert!(notices(&walled, true, t(2, 5), 1, 8, t(4, 5), None), "heard behind it, 2 tiles off");
+        assert!(notices(&walled, true, t(2, 5), 1, 8, t(4, 5), None), "heard 2 tiles off, the line short of the block");
+        assert!(!notices(&walled, true, t(4, 5), 1, 8, t(6, 5), None), "past blocking ground: 8 off the reach of 5");
         // A wall on the edge crossed hides even a target next to it (0x4af45a).
         let mut edged = Grid::parse(&["...................."; 20]);
         edged.3.edges.insert(t(5, 5), 1 << 5);
         assert!(!sees(&edged, t(5, 5), 5, 8, t(6, 5), None), "the wall faces the step");
         assert!(sees(&edged, t(5, 4), 5, 8, t(6, 4), None), "the row beside it");
+        // Hearing (0x4af470): PE 10 hears 6 tiles; a wall crossed costs 2 (0x4400ba).
+        assert!(hears(&edged, t(1, 8), 10, t(7, 8), None) && !hears(&edged, t(1, 8), 10, t(8, 8), None), "6 tiles in the open");
+        assert!(hears(&edged, t(2, 5), 10, t(6, 5), None) && !hears(&edged, t(1, 5), 10, t(6, 5), None), "4 past the wall");
+        assert_eq!(crate::sound_cost(&edged, t(5, 6), t(6, 4)), 0, "round the wall's corner: the cheaper route");
     }
 
     #[test]

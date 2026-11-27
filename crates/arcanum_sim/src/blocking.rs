@@ -175,6 +175,58 @@ pub fn missile_cost(object: &Object, prototypes: &Prototypes) -> i32 {
     }
 }
 
+/// What a sound pays on its way (0x4af640: 0x43fe00 with flags 0x20 for each step of the line):
+/// every wall on the edge crossed 2 (0x4400ba from the tile left, 0x4404b8 on the tile entered),
+/// whatever its piece; a closed portal there 1 (0x4401f1 / 0x4405ef; open art 0x200 or a frame
+/// costs nothing); entering ground that blocks 8 (0x4d7180 at 0x440384 → 0x440390). Objects and
+/// critters cost nothing (the cost block 0x44063f needs flag 8).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SoundCosts {
+    /// Ground tiles whose art blocks.
+    pub ground: HashSet<TileLoc>,
+    /// Per tile, how many walls face each direction.
+    pub walls: HashMap<TileLoc, [u8; 8]>,
+    /// Per tile, the edges a closed portal faces.
+    pub portals: HashMap<TileLoc, u8>,
+}
+
+/// A wall on a crossed edge (0x4400ba), a closed portal (0x4401f1), ground that blocks (0x440390).
+pub const SOUND_WALL: i32 = 2;
+pub const SOUND_PORTAL: i32 = 1;
+pub const SOUND_GROUND: i32 = 8;
+
+impl SoundCosts {
+    /// Adds the walls and closed portals of `objects`.
+    pub fn add<'a>(&mut self, objects: impl IntoIterator<Item = &'a Object>, prototypes: &Prototypes) {
+        for object in objects {
+            let Some(at) = object_location(object) else { continue };
+            if prototypes.int(object, "flags").unwrap_or(0) & (OF_DESTROYED | OF_OFF) != 0 {
+                continue;
+            }
+            let Some(art) = prototypes.art_id(object) else { continue };
+            match object.object_type {
+                TYPE_WALL => self.walls.entry(at).or_default()[edge_of(art)] += 1,
+                TYPE_PORTAL if art.0 & 0x200 == 0 && (art.0 >> 14) & 0x1f == 0 => *self.portals.entry(at).or_default() |= 1 << edge_of(art),
+                _ => {}
+            }
+        }
+    }
+
+    /// Forgets sector `id`.
+    pub fn remove_sector(&mut self, id: arcanum_formats::map::SectorId) {
+        self.ground.retain(|t| t.sector() != id);
+        self.walls.retain(|t, _| t.sector() != id);
+        self.portals.retain(|t, _| t.sector() != id);
+    }
+
+    /// What the edge of `at` in direction `dir` costs: its walls and closed portal.
+    pub fn edge(&self, at: TileLoc, dir: usize) -> i32 {
+        let walls = self.walls.get(&at).map_or(0, |w| i32::from(w[dir]));
+        let portal = self.portals.get(&at).is_some_and(|p| p >> dir & 1 == 1);
+        walls * SOUND_WALL + if portal { SOUND_PORTAL } else { 0 }
+    }
+}
+
 /// An object's `location` field.
 pub fn object_location(object: &Object) -> Option<TileLoc> {
     match object.field("location")? {
@@ -247,6 +299,23 @@ mod tests {
     fn portal(art_bits: u32, flags: i32) -> Object {
         let art = (3 << 28) | (3 << 11) | art_bits;
         build(ObjectBuilder::new(TYPE_PORTAL).field("current_aid", Value::Int32(art as i32)).field("portal_flags", Value::Int32(flags)))
+    }
+
+    #[test]
+    fn sounds_pay_for_walls_and_closed_doors() {
+        let p = Prototypes::default();
+        let at = |b: ObjectBuilder| build(b.field("location", Value::Int64(Some(5 | (5i64 << 32)))));
+        let piece = |kind: u32, bits: u32| Value::Int32(((kind << 28) | (3 << 11) | bits) as i32);
+        let objects = [
+            at(ObjectBuilder::new(TYPE_WALL).field("current_aid", piece(1, 22 << 14))),
+            at(ObjectBuilder::new(TYPE_PORTAL).field("current_aid", piece(3, 0))),
+            at(ObjectBuilder::new(TYPE_PORTAL).field("current_aid", piece(3, 0x200))),
+        ];
+        let mut sound = SoundCosts::default();
+        sound.add(&objects, &p);
+        let t = TileLoc { x: 5, y: 5 };
+        assert_eq!(sound.edge(t, 3), SOUND_WALL + SOUND_PORTAL, "any wall piece, the closed door; the open one nothing");
+        assert_eq!(sound.edge(t, 5), 0);
     }
 
     #[test]

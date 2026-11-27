@@ -33,6 +33,17 @@ pub trait Walkable {
     fn edge_blocked(&self, _at: TileLoc, _dir: usize, _diagonal: bool) -> bool {
         false
     }
+
+    /// What a sound pays crossing the edge of `at` in direction `dir` (0x4af640's walls and
+    /// portals); nothing unless the map says.
+    fn sound_edge(&self, _at: TileLoc, _dir: usize) -> i32 {
+        0
+    }
+
+    /// What a sound pays entering `at` (0x4af640's blocking ground); nothing unless the map says.
+    fn sound_ground(&self, _at: TileLoc) -> i32 {
+        0
+    }
 }
 
 /// A loaded map as a missile sees it ([`LoadedMap::missiles`]): edges and objects only, the
@@ -46,6 +57,14 @@ impl Walkable for MissileView<'_> {
 
     fn edge_blocked(&self, at: TileLoc, dir: usize, diagonal: bool) -> bool {
         self.0.missiles.edge_blocked(at, dir, diagonal)
+    }
+
+    fn sound_edge(&self, at: TileLoc, dir: usize) -> i32 {
+        self.0.sound.edge(at, dir)
+    }
+
+    fn sound_ground(&self, at: TileLoc) -> i32 {
+        if self.0.sound.ground.contains(&at) { crate::blocking::SOUND_GROUND } else { 0 }
     }
 }
 
@@ -125,6 +144,35 @@ pub fn crossing_clear(map: &impl Walkable, from: TileLoc, to: TileLoc) -> bool {
         !crossing_blocked(map, from, first, true) && !crossing_blocked(map, corner, second, true)
     };
     route(left, right) && route(right, left)
+}
+
+/// What one step of a sound from `from` to its neighbour `to` pays (0x43fe00 with flags 0x20):
+/// the walls and closed portals on the edges crossed, then the ground it enters. A diagonal step
+/// pays the cheaper of its two L-shaped routes' edges (builder's call: 0x43fe00's diagonal case
+/// not read).
+pub fn sound_step(map: &impl Walkable, from: TileLoc, to: TileLoc) -> i32 {
+    let Some(dir) = crate::rotation_of_step(from, to) else { return 0 };
+    let crossing = |at: TileLoc, dir: usize| offset(at, crate::DIRECTIONS[dir]).map_or(0, |next| map.sound_edge(at, dir) + map.sound_edge(next, (dir + 4) % 8));
+    let edges = if dir % 2 == 1 {
+        crossing(from, dir)
+    } else {
+        let (left, right) = ((dir + 7) % 8, (dir + 1) % 8);
+        let route = |first: usize, second: usize| offset(from, crate::DIRECTIONS[first]).map_or(0, |corner| crossing(from, first) + crossing(corner, second));
+        route(left, right).min(route(right, left))
+    };
+    edges + map.sound_ground(to)
+}
+
+/// What a sound from `from` to `to` pays along the straight line (0x4af640: the sum of its
+/// steps, 0x4af6d1 flags 0x20; the same tile 0).
+pub fn sound_cost(map: &impl Walkable, from: TileLoc, to: TileLoc) -> i32 {
+    let mut at = from;
+    let mut cost = 0;
+    for next in crate::combat::line_between(from, to).into_iter().chain((from != to).then_some(to)) {
+        cost += sound_step(map, at, next);
+        at = next;
+    }
+    cost
 }
 
 /// The octile distance between two tiles, in step costs.
@@ -220,6 +268,16 @@ pub(crate) mod tests {
 
         fn edge_blocked(&self, at: TileLoc, dir: usize, diagonal: bool) -> bool {
             self.3.edge_blocked(at, dir, diagonal)
+        }
+
+        /// Each blocked edge as one wall.
+        fn sound_edge(&self, at: TileLoc, dir: usize) -> i32 {
+            if self.3.edge_blocked(at, dir, false) { crate::blocking::SOUND_WALL } else { 0 }
+        }
+
+        /// `#` as blocking ground.
+        fn sound_ground(&self, at: TileLoc) -> i32 {
+            if self.0.contains(&at) { crate::blocking::SOUND_GROUND } else { 0 }
         }
     }
 

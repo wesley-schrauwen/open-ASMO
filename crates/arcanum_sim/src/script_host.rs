@@ -779,8 +779,8 @@ impl ScriptContext for HostWorld<'_> {
         Some(ScriptObject::Carried { holder: p, prototype: item })
     }
 
-    /// Living, and within `(clamp(PE - 4, 1, 10) + 6) / 2` tiles, the larger distance (0x4af470;
-    /// builder's call: prowling and the obstruction penalty 0x4af640 are not counted).
+    /// Living, and within `(clamp(PE - 4, 1, 10) + 6) / 2` tiles less what the sound pays on its
+    /// way (0x4af470 → 0x4af640, [`crate::combat::hears`]), the larger distance.
     fn can_hear(&mut self, listener: ScriptObject, target: ScriptObject) -> bool {
         if self.is_dead(listener) {
             return false;
@@ -790,8 +790,8 @@ impl ScriptContext for HostWorld<'_> {
             ScriptObject::Pc(p) if self.prowling.contains(&target) => self.players.get(&p).map(|s| crate::prowl::prowl_value(self.rules.skill_level(&s.blueprint.sheet, crate::SKILL_PROWLING))),
             _ => None,
         };
-        let reach = crate::prowl::hearing_reach(self.stat(listener, 5), prowler);
-        (i64::from(a.x) - i64::from(b.x)).abs().max((i64::from(a.y) - i64::from(b.y)).abs()) <= reach
+        let pe = self.stat(listener, 5);
+        crate::combat::hears(&crate::MissileView(self.map), a, pe, b, prowler)
     }
 
     fn is_open(&mut self, object: ScriptObject) -> bool {

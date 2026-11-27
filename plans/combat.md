@@ -465,12 +465,21 @@ of `combat_design.md` come after the original's rules work.
      nothing; a target with `flags` 0x200 or `spell_flags` 0x1 (0x4af2d6 / 0x4af2e7) is seen
      only with Perception 20 (0x4b0ee0: stat 5 at least 20) or `spell_flags` 0x200 (0x4af307).
      Hearing is unchanged. PCs are never invisible here (builder's call: nothing sets it yet).
-   - Not built: light, the stealth difficulty terms, the hearing path cost.
+   - Not built: light, the stealth difficulty terms.
    - What hides a target (`feat/sight-blockers`): 0x4af260 walks the line with the missile's
      flags (0x4ade00, 0xc at 0x4ade93) and a blocker adds 1 past the reach (0x4af45a), so it
      hides a target in reach; the line's cost is dropped (0x4af45e). Built: sight stops where a
      missile does (`MissileView`: walls on the crossed edge, closed portals, solid objects);
      the ground no longer hides anything. Critters on the line are left out (all shoot-through).
+   - The hearing path cost (`feat/hearing-cost`, `combat::hears`, `sound_cost`): 0x4af470
+     takes 0x4af640's cost off the reach (0x4af60c). 0x4af640 sums 0x43fe00 with flags 0x20
+     over the line's steps (0x4af6d1): every wall on the crossed edge 2 whatever its piece
+     (0x4400ba, 0x4404b8), a closed portal 1 (0x4401f1, 0x4405ef), entering ground that blocks
+     8 (0x4d7180 at 0x440384 → 0x440390); objects and critters nothing (the cost block needs
+     flag 8). Used by NPCs noticing and the scripts' can-hear. Builder's call: a diagonal step
+     pays the cheaper of its two L-shaped routes. Not built: no line (0x4af6c0: 100), a stunned
+     (0xda 0x20) or down listener (0x45d800), the 0x1000 listener's halved Perception
+     (0x4af518), the sound table's other noises (0x5b50c0).
 16. **Planning and the cursor** (built, `feat/combat-cursor`; client `combat_ui`, `cursor`).
    - On the PC's turn the tile or NPC under the cursor gives the planned cost (2 a step; an NPC:
      the steps into reach and the attack's cost): the AP bar lights green for what stays, orange
