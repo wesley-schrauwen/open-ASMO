@@ -640,8 +640,12 @@ of `combat_design.md` come after the original's rules work.
      Only melee blows at critters (0x4b22da, skill 2): flag 0x4000; 0x8000 besides when the
      target neither sees nor hears the attacker (0x4b2327, hearing with noise 0).
    - Damage (0x4b6680, normal damage only): + the level from behind, + 5 × it unnoticed
-     (0x4b67bf-0x4b67d9), on the roll before resistance. Built: from behind.
-   - Not built here: the unnoticed stab (next PR); which weapons the kinds are (art letters).
+     (0x4b67bf-0x4b67d9), on the roll before resistance.
+   - Unnoticed (`feat/backstab-unnoticed`): no armour term for one trained in Backstab
+     (0x4c8743-0x4c875a); the critical chance + 2 × the level − the target's level (stat 0x11,
+     0x4c8287-0x4c82a7), + 20 for a Master (0x4c82b6). The noise table 0x5b50c0 is 2, 8, 15, 1
+     (`prowl::NOISES`): a quiet blow is heard within `clamp(PE' − 4, 1, 10) / 2` tiles.
+   - Not built: which weapons the kinds are (art letters), 0x4a58d9's use of skill 4.
 22. **To-hit difficulty** (0x4c8430, read in full; the roll `1-100 + difficulty <= chance` at
     0x4c7259-0x4c7261).
    - Terms for weapon skills: the weapon's to-hit bonus and 5 a Strength point short (built);

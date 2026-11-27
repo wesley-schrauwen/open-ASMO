@@ -63,11 +63,23 @@ pub fn prowl_value(level: i32, intelligence: i32, pe: i32) -> i32 {
 /// How far a listener of `perception` hears, in tiles; `prowler` is the target when it prowls
 /// (0x4af470 with noise 1).
 pub fn hearing_reach(perception: i32, prowler: Option<Prowler>) -> i64 {
+    noise_reach(perception, prowler, NOISE_STEP)
+}
+
+/// The noise table (0x5b50c0): what a sound of each loudness adds over 0 (0x4af5e4-0x4af5f2).
+pub const NOISES: [i32; 4] = [2, 8, 15, 1];
+/// Noise 0, quiet (a blade in the back, 0x4b2319), and 1, a step (noticing, 0x4c86c9).
+pub const NOISE_QUIET: usize = 0;
+pub const NOISE_STEP: usize = 1;
+
+/// How far a listener of `perception` hears a sound of `noise` ([`NOISES`]): `(clamp(PE' − 4, 1,
+/// 10) + table[noise] − table[0]) / 2` tiles (0x4af470).
+pub fn noise_reach(perception: i32, prowler: Option<Prowler>, noise: usize) -> i64 {
     let mut perception = perception;
     if let Some(p) = prowler {
         perception -= perception * p.against(perception).clamp(0, 100) / 100;
     }
-    i64::from(((perception - 4).clamp(1, 10) + 6) / 2)
+    i64::from(((perception - 4).clamp(1, 10) + NOISES[noise] - NOISES[0]) / 2)
 }
 
 /// Turns prowling on or off as asked; every player in the world is told.
