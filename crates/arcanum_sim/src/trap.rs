@@ -46,7 +46,7 @@ const MASTER: u8 = 3;
 
 /// A Spot Trap roll (0x4bbe40 → 0x4c7160 case 7).
 pub fn roll_spot(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::CharacterSheet, magical: bool, rng: &mut crate::HostRng) -> bool {
-    let chance = crate::pick_chance(rules.skill_level(sheet, SKILL_SPOT_TRAP), sheet.base[4]);
+    let chance = crate::pick_chance(rules.skill_level(sheet, SKILL_SPOT_TRAP), rules.stats(sheet)[4]);
     let training = sheet.training[SKILL_SPOT_TRAP];
     let mut spotted = rng.range(1, 100) <= chance;
     if !spotted && training >= MASTER {
@@ -203,7 +203,7 @@ pub fn disarm_traps(
             continue;
         }
         let sheet = &sheet.0;
-        let chance = crate::tech_chance(crate::TECH_DISARM_TRAPS, rules.0.skill_level(sheet, SKILL_DISARM_TRAPS), sheet.base[4]);
+        let chance = crate::tech_chance(crate::TECH_DISARM_TRAPS, rules.0.skill_level(sheet, SKILL_DISARM_TRAPS), rules.0.stats(sheet)[4]);
         match roll_disarm(chance, sheet.training[SKILL_DISARM_TRAPS], host.rng()) {
             crate::PickOutcome::Success => {
                 map.set_attachment(object, crate::EVENT_USE, crate::Attachment { number: 0, ..attachment });

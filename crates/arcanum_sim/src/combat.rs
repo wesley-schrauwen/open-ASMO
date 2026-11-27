@@ -62,7 +62,8 @@ pub const MAX_CHANCE: i32 = 95;
 
 /// A skill's chance at level `level` (0x4c62e0 / 0x4c69f0): dodge 2 a level, throwing 7 + 25,
 /// bow and melee 5 + 25, firearms (tech) 5 + 25; at most 95.
-pub fn weapon_chance(skill: usize, level: i32) -> i32 {
+/// + 10 at Intelligence 20 or more ([`crate::bright_bonus`], 0x4c6369), before the cap.
+pub fn weapon_chance(skill: usize, level: i32, intelligence: i32) -> i32 {
     let level = level.max(0);
     let chance = match skill {
         SKILL_DODGE => 2 * level,
@@ -72,7 +73,7 @@ pub fn weapon_chance(skill: usize, level: i32) -> i32 {
         SKILL_FIREARMS => 5 * level + 25,
         _ => 5 * level + 25,
     };
-    chance.clamp(0, MAX_CHANCE)
+    (chance + crate::bright_bonus(intelligence)).clamp(0, MAX_CHANCE)
 }
 
 /// An attack's action points for a weapon of speed `speed` (0x4b7c30).
@@ -151,7 +152,7 @@ pub fn choose_weapon(inventory: &crate::Inventory, prototypes: &Prototypes, figh
         let damage: i32 = (0..DAMAGE_TYPES).map(|i| (weapon.damage[i].0 + weapon.damage[i].1) / 2 + weapon.magic_damage[i]).sum();
         let armed = Fighter { weapon: Some(weapon), ..fighter.clone() };
         let skill = armed.skill();
-        let score = weapon_chance(skill, armed.level(skill)) * damage / 100;
+        let score = weapon_chance(skill, armed.level(skill), armed.intelligence) * damage / 100;
         if best.is_none_or(|b| score >= b.0) {
             best = Some((score, item.location));
         }
@@ -311,6 +312,8 @@ pub struct Fighter {
     pub pc: bool,
     /// Constitution, against critical injuries (0x45f060).
     pub constitution: i32,
+    /// Intelligence: at 20 or more its chances rise by 10 ([`crate::bright_bonus`]).
+    pub intelligence: i32,
     /// Its injuries (`critter_flags` 0x80-0x400: [`OCF_BLINDED`] …).
     pub injuries: i32,
     /// It wears a helmet (slot 1000).
@@ -548,7 +551,7 @@ pub const WEAPON_DROPPED: u8 = 16;
 ///   bonus).
 pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> AttackOutcome {
     let skill = attacker.skill();
-    let chance = weapon_chance(skill, attacker.level(skill));
+    let chance = weapon_chance(skill, attacker.level(skill), attacker.intelligence);
     let weapon = attacker.weapon.clone().unwrap_or_default();
     let short = (weapon.min_strength - attacker.strength).max(0);
     // The defender's armour: half its class, in the attacker's chance (0x4c875c-0x4c878b).
@@ -565,7 +568,7 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
     // A combat skill's critical chance is a twentieth of it (0x4c81a0: skill flag 0x400), plus
     // the weapon's magick part (unscaled: 0x461590 not read).
     out.critical = rng.range(1, 100) <= chance / 20 + weapon.crit_chance;
-    let dodge = weapon_chance(SKILL_DODGE, defender.level(SKILL_DODGE));
+    let dodge = weapon_chance(SKILL_DODGE, defender.level(SKILL_DODGE), defender.intelligence);
     if dodge > 0 && rng.range(1, 100) <= dodge {
         out.dodged = true;
         return out;
@@ -1260,6 +1263,7 @@ impl CombatWorld<'_, '_> {
                 trained: [SKILL_BOW, SKILL_MELEE, SKILL_THROWING, SKILL_FIREARMS].into_iter().filter(|&k| sheet.training[k] > 0).collect(),
                 pc: c.player.is_some(),
                 constitution: rules.stats(sheet)[2],
+                intelligence: rules.stats(sheet)[4],
                 injuries: sheet.injuries,
                 helmet: item(inv, HELMET_SLOT).is_some(),
                 undead: false,
@@ -1289,6 +1293,7 @@ impl CombatWorld<'_, '_> {
             trained: Vec::new(),
             pc: false,
             constitution: npc_stat(o, prototypes, 2),
+            intelligence: npc_stat(o, prototypes, 4),
             injuries: prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_INJURIES,
             helmet: item(&inv, HELMET_SLOT).is_some(),
             undead: prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_UNDEAD != 0,
@@ -2246,7 +2251,7 @@ pub fn notice_foes(
         let alignment = npc_stat(o, &map.prototypes, 0x13);
         for (&pc, pc_at, player, sheet, prowling) in &pcs {
             let Some(saved) = save.players.get(&player.0) else { continue };
-            let prowler = prowling.then(|| crate::prowl::prowl_value(rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING)));
+            let prowler = prowling.then(|| crate::prowl::prowl_value(rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING), rules.0.stats(&sheet.0)[4]));
             if !notices(&crate::MissileView(&map), can_look(o, &map.prototypes, false, None).then_some(pe), at.0, rotation, ears(o, &map.prototypes, false), pc_at.0, prowler) {
                 continue;
             }
@@ -2302,7 +2307,7 @@ pub fn catch_lock_pickers(
     let mut reacting: Vec<(NetId, NetId, PlayerId, bool)> = std::mem::take(&mut checks.witnessed);
     for (player, lock, owner, opened) in std::mem::take(&mut witnessing.0) {
         let Some((&pc, pc_at, _, sheet, prowling)) = pcs.iter().find(|p| p.2.0 == player) else { continue };
-        let prowler = prowling.then(|| crate::prowl::prowl_value(rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING)));
+        let prowler = prowling.then(|| crate::prowl::prowl_value(rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING), rules.0.stats(&sheet.0)[4]));
         for (&npc, at, source, facing, look) in &npcs {
             if !crate::within_radius(at.0, lock, WITNESS_TILES) || map.npc_down(source.sector, source.index) || map.is_dead(source.sector, source.index) {
                 continue;
@@ -2756,7 +2761,7 @@ fn helpless(w: &CombatWorld, attacker: &Seen, victim: &Seen) -> i32 {
     if let (false, Some(n)) = (victim.fighting, victim.npc)
         && let Some(o) = w.map.mobiles.get(&n.sector).and_then(|m| m.get(n.index as usize))
     {
-        let prowler = attacker.sheet.as_ref().filter(|_| attacker.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING)));
+        let prowler = attacker.sheet.as_ref().filter(|_| attacker.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING), w.rules.0.stats(s)[4]));
         let target = attacker.npc.and_then(|a| w.map.mobiles.get(&a.sector)?.get(a.index as usize));
         if !notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, victim.stunned.is_some(), target).then(|| npc_stat(o, &w.map.prototypes, 5)), victim.at, victim.rotation, ears(o, &w.map.prototypes, victim.stunned.is_some()), attacker.at, prowler) {
             return HELPLESS_UNAWARE;
@@ -3083,7 +3088,7 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
         // A prowling PC is noticed less (0x4a9f10 → 0x4af260 / 0x4af470 with its stealth).
         let notices = |x: &Seen| {
             let target = x.npc.and_then(|n| w.map.mobiles.get(&n.sector)?.get(n.index as usize));
-            let prowler = x.sheet.as_ref().filter(|_| x.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING)));
+            let prowler = x.sheet.as_ref().filter(|_| x.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING), w.rules.0.stats(s)[4]));
             notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, c.stunned.is_some(), target).then_some(pe), c.at, c.rotation, ears(o, &w.map.prototypes, c.stunned.is_some()), x.at, prowler)
         };
         let for_victim = allied(c.leader, own, victim.player, victim.leader, v_faction, v_kin) && (c.leader.is_some() || notices(victim));
@@ -3149,8 +3154,9 @@ mod tests {
 
     #[test]
     fn chances_and_costs_follow_the_original() {
-        assert_eq!((weapon_chance(SKILL_MELEE, 0), weapon_chance(SKILL_MELEE, 4), weapon_chance(SKILL_MELEE, 20)), (25, 45, 95));
-        assert_eq!((weapon_chance(SKILL_DODGE, 5), weapon_chance(SKILL_THROWING, 2)), (10, 39));
+        assert_eq!((weapon_chance(SKILL_MELEE, 0, 8), weapon_chance(SKILL_MELEE, 4, 8), weapon_chance(SKILL_MELEE, 20, 8)), (25, 45, 95));
+        assert_eq!((weapon_chance(SKILL_MELEE, 4, 20), weapon_chance(SKILL_DODGE, 0, 20), weapon_chance(SKILL_MELEE, 15, 20)), (55, 10, 95), "Intelligence 20: + 10, under the cap");
+        assert_eq!((weapon_chance(SKILL_DODGE, 5, 8), weapon_chance(SKILL_THROWING, 2, 8)), (10, 39));
         assert_eq!((attack_cost(0), attack_cost(9), attack_cost(21), attack_cost(30)), (8, 5, 2, 1));
         assert_eq!(Fighter::default().attack_cost(), 5, "bare hands: speed 10");
         assert_eq!(pc_unarmed(0), [(1, 5), (0, 0), (0, 0), (0, 0), (1, 5)]);

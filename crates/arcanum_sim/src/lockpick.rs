@@ -58,7 +58,13 @@ pub enum LockTarget {
     Container(GroundItemId),
 }
 
-/// The chance in percent for a picker of skill `level` and base Intelligence `intelligence`.
+/// What a critter of `intelligence` 20 or more adds to every skill's chance (0x4c6369 /
+/// 0x4c6a62: 0x4b0ee0 with stat 4, the effective Intelligence through 0x4b0490).
+pub fn bright_bonus(intelligence: i32) -> i32 {
+    if intelligence >= 20 { 10 } else { 0 }
+}
+
+/// The chance in percent for a picker of skill `level` and Intelligence `intelligence`.
 pub fn pick_chance(level: i32, intelligence: i32) -> i32 {
     tech_chance(TECH_PICK_LOCKS, level, intelligence)
 }
@@ -70,8 +76,8 @@ pub const TECH_PICK_LOCKS: usize = 2;
 pub const TECH_DISARM_TRAPS: usize = 3;
 
 /// A technological skill's chance (0x4c69f0, table 0x4c6ad8): Repair 4 a level, Firearms 5 + 25,
-/// Pick Locks 6, Disarm Traps 4 + 20 (none at level 0); + 10 with a base Intelligence of 20 or
-/// more (0x4b0ee0 stat 4); at most 95.
+/// Pick Locks 6, Disarm Traps 4 + 20 (none at level 0); + 10 with an Intelligence of 20 or
+/// more (0x4b0ee0 stat 4, effective: 0x4b0490); at most 95.
 pub fn tech_chance(tech: usize, level: i32, intelligence: i32) -> i32 {
     let level = level.max(0);
     let chance = match tech {
@@ -81,8 +87,7 @@ pub fn tech_chance(tech: usize, level: i32, intelligence: i32) -> i32 {
         _ if level == 0 => 0,
         _ => level * 4 + 20,
     };
-    let bonus = if intelligence >= 20 { 10 } else { 0 };
-    (chance + bonus).clamp(0, MAX_PICK_CHANCE)
+    (chance + bright_bonus(intelligence)).clamp(0, MAX_PICK_CHANCE)
 }
 
 /// The difficulty of a lock of `lock` difficulty, for a picker of `training` rank with a tool
@@ -261,7 +266,7 @@ pub fn pick_locks(
         commands.entity(entity).remove::<PendingPick>();
         let Some(flags) = map.lock_flags(want.target) else { continue };
         let sheet = &sheet.0;
-        let chance = pick_chance(rules.0.skill_level(sheet, SKILL_PICK_LOCKS), sheet.base[4]);
+        let chance = pick_chance(rules.0.skill_level(sheet, SKILL_PICK_LOCKS), rules.0.stats(sheet)[4]);
         let difficulty = pick_difficulty(map.lock_difficulty(want.target), sheet.training[SKILL_PICK_LOCKS], lockpick_bonus(inventory, want.tool, &map.prototypes));
         let outcome = roll_pick(chance, difficulty, &mut rng);
         let changed = picked_flags(flags, outcome, map.lock_day);

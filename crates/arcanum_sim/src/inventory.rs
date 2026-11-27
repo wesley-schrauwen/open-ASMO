@@ -496,7 +496,7 @@ pub fn apply_inventory_requests(
             }
             InventoryRequest::Repair { from } => {
                 let sheet = &sheet.0;
-                let chance = crate::tech_chance(crate::TECH_REPAIR, rules.0.skill_level(sheet, crate::repair::SKILL_REPAIR), sheet.base[4]);
+                let chance = crate::tech_chance(crate::TECH_REPAIR, rules.0.skill_level(sheet, crate::repair::SKILL_REPAIR), rules.0.stats(sheet)[4]);
                 let mut changed = inventory.clone();
                 match changed.items.iter_mut().find(|i| i.location == from) {
                     Some(item) => {
