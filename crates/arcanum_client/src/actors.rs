@@ -66,7 +66,7 @@ pub struct ActorDeltas(pub Vec<LedgerDelta>);
 impl ActorDeltas {
     /// Whether this module handles `delta`.
     pub fn wants(delta: &LedgerDelta) -> bool {
-        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. } | LedgerDelta::PartyLeader { .. } | LedgerDelta::PcStatus { .. } | LedgerDelta::Speed { .. } | LedgerDelta::Teleported { .. } | LedgerDelta::Prowling { .. } | LedgerDelta::GotUp { .. })
+        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. } | LedgerDelta::PartyLeader { .. } | LedgerDelta::PcStatus { .. } | LedgerDelta::Speed { .. } | LedgerDelta::Teleported { .. } | LedgerDelta::Prowling { .. } | LedgerDelta::GotUp { .. } | LedgerDelta::Armed { .. })
     }
 }
 
@@ -550,6 +550,11 @@ fn apply_actor_deltas(
                 if let Some(Ok((_, mut a))) = by_id.get(&net_id).map(|&e| actors.get_mut(e)) {
                     a.prowling = on;
                     a.art = arcanum_sim::with_anim(a.art, if on { arcanum_sim::prowl::ANIM_PROWL } else { arcanum_formats::art_id::ANIM_STAND });
+                }
+            }
+            LedgerDelta::Armed { net_id, weapon, shield } => {
+                if let Some(Ok((_, mut a))) = by_id.get(&net_id).map(|&e| actors.get_mut(e)) {
+                    a.art = CritterArt { weapon, flag_s: shield, ..CritterArt::from_id(a.art) }.id();
                 }
             }
             LedgerDelta::GotUp { net_id } => {

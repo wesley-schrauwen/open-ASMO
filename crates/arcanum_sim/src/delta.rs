@@ -201,6 +201,9 @@ pub enum LedgerDelta {
     Teleported { net_id: NetId, to: TileLoc },
     /// A PC's speed stat changed (it raised its dexterity): clients time its walk from it.
     Speed { net_id: NetId, speed: i32 },
+    /// A critter's art shows weapon `weapon` (art bits 0-3) and a shield or not (bit 19)
+    /// ([`crate::combat::update_weapon_art`]): clients set those bits of its art.
+    Armed { net_id: NetId, weapon: u32, shield: bool },
     /// A knocked-down critter got up ([`crate::combat::KnockedDown`]): clients play its get-up.
     GotUp { net_id: NetId },
     /// The fight as it now stands ([`crate::combat`]): who fights in turn order, whose turn it
