@@ -532,6 +532,9 @@ pub struct AttackOutcome {
     /// critical on itself, 0x4b6410 → 0x4b5f40), where [`AttackOutcome::part`] says.
     #[serde(default)]
     pub fumble_items: u8,
+    /// A thrown weapon's blow (the attack animation 14, 0x42bacb).
+    #[serde(default)]
+    pub thrown: bool,
 }
 
 /// [`AttackOutcome::effects`]: stunned (`combat.mes` 16, `critter_flags` 0x20), knocked down
@@ -3107,6 +3110,7 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     let stab = stab_of(fighter, attacker, victim, !w.notices_quietly(victim, attacker));
     let fighter = &Fighter { situation, stab, ..fighter.clone() };
     let mut outcome = resolve(fighter, &defender, &mut w.rng);
+    outcome.thrown = fighter.skill() == SKILL_THROWING;
     if let Some(weapon) = fighter.weapon.as_ref().filter(|w| w.uses_ammo()) {
         w.spend_ammo(attacker, weapon.ammo_type, weapon.ammo_per_shot);
     }

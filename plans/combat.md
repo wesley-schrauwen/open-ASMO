@@ -367,7 +367,12 @@ of `combat_design.md` come after the original's rules work.
    - Checked by screenshot: the fight runs at the crash site; the swing itself is for the eye
      (`plans/eye_checks.md`).
    - Not built: the hit's timing at the action frame (the host resolves at once), speed-scaled
-     frame times, hit effects, projectiles, thrown weapons' animation 14.
+     frame times, hit effects, projectiles.
+   - The swing (`feat/attack-anim`, client `attack_anim`; corrected): 0x42b9c0 picks by the
+     goal's target (0xd08), not the attacker: 14 for a thrown weapon (`weapon_flags` 0x40,
+     0x42bacb, first; `AttackOutcome::thrown`); 21 at a target lying (animation 7-11) or of
+     `flags` 0x80 (not known on clients); else 0x503f60 on the target's art: critters 20 (the
+     body table is never indexed: 0x502710 gives 0 for them), monsters by table 0x5be994.
    - Arms in the art (`feat/weapon-art`, `combat::update_weapon_art`, `LedgerDelta::Armed`):
      0x465020 (on wielding, and with combat mode) sets art bits 0-3 to the wielded weapon's
      kind (`item_use_aid_fragment` bits 6-9; 1 bare-handed) and bit 19 for armour in slot 1005
