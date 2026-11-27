@@ -3,7 +3,7 @@
 //!
 //! - **A trap** is a trap script ([`crate::is_trap`]) attached to an object's use (event 1).
 //! - **Spotting** (0x4bbe40, Spot Trap, skill 7, 0x4c7160 case 7): when a PC uses an object
-//!   whose trap is not spotted. The chance is the skill's (0x4c69f0, as [`crate::pick_chance`]);
+//!   whose trap is not spotted. The chance is the skill's ([`spot_chance`], 0x4c62e0: 4 a level);
 //!   a Master who fails rolls again; a success below Expert on a magical trap fails. Spotted,
 //!   the object gets flag [`OF_TRAP_SPOTTED`] (0x4bc090) and the PC is told `mes/trap.mes` 0.
 //! - **Disarming** (Disarm Traps, skill 15, 0x4c7160 case 0xf → 0x4bc7b0): only a spotted trap.
@@ -44,9 +44,16 @@ pub const DISARM_FAILED: u32 = 561;
 const EXPERT: u8 = 2;
 const MASTER: u8 = 3;
 
+/// Spot Trap's chance (0x4c62e0, a basic skill: 0x4c71b9 sends skills under 12 there): 4 a
+/// level (0x4c6350, table 0x4c63dc entry 7), + 10 at Intelligence 20, at most 95 (flag 0x884
+/// holds 0x800).
+pub fn spot_chance(level: i32, intelligence: i32) -> i32 {
+    (level.max(0) * 4 + crate::bright_bonus(intelligence)).clamp(0, crate::MAX_PICK_CHANCE)
+}
+
 /// A Spot Trap roll (0x4bbe40 → 0x4c7160 case 7).
 pub fn roll_spot(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::CharacterSheet, magical: bool, rng: &mut crate::HostRng) -> bool {
-    let chance = crate::pick_chance(rules.skill_level(sheet, SKILL_SPOT_TRAP), rules.stats(sheet)[4]);
+    let chance = spot_chance(rules.skill_level(sheet, SKILL_SPOT_TRAP), rules.stats(sheet)[4]);
     let training = sheet.training[SKILL_SPOT_TRAP];
     let mut spotted = rng.range(1, 100) <= chance;
     if !spotted && training >= MASTER {
@@ -241,7 +248,8 @@ mod tests {
         assert!((0..200).all(|_| !roll_spot(&rules, &blind, false, &mut rng)), "no skill: never");
         let keen = sheet(5, 0, SKILL_SPOT_TRAP);
         let seen = (0..1000).filter(|_| roll_spot(&rules, &keen, false, &mut rng)).count();
-        assert!((850..1000).contains(&seen), "level 20: 95 %, {seen}");
+        assert!((740..860).contains(&seen), "level 20: 4 a level, 80 %, {seen}");
+        assert_eq!((spot_chance(10, 8), spot_chance(10, 20), spot_chance(25, 20)), (40, 50, 95));
         assert!((0..200).all(|_| !roll_spot(&rules, &keen, true, &mut rng)), "magical: not below Expert");
         let expert = sheet(5, EXPERT, SKILL_SPOT_TRAP);
         assert!((0..200).any(|_| roll_spot(&rules, &expert, true, &mut rng)));

@@ -2755,7 +2755,7 @@ mod tests {
         {
             let world = sim.app.world_mut();
             let mut sheet = world.query::<&mut crate::Sheet>().single_mut(world).unwrap();
-            sheet.0.base = [20, 20, 20, 20, 8, 20, 20, 20];
+            sheet.0.base = [20; 8];
             sheet.0.skills[crate::SKILL_SPOT_TRAP] = 5;
         }
         send_move(&mut sim, 7, 1, &[(71, 70), (72, 70), (73, 70), (74, 70)]);
@@ -2763,7 +2763,7 @@ mod tests {
             sim.update();
         }
         let flags = sim.app.world().resource::<LoadedMap>().object_flags(sector, index, true).unwrap();
-        assert_eq!(flags & crate::OF_TRAP_SPOTTED, crate::OF_TRAP_SPOTTED, "spotted (95 %)");
+        assert_eq!(flags & crate::OF_TRAP_SPOTTED, crate::OF_TRAP_SPOTTED, "spotted (90 %: level 20 and Intelligence 20)");
         assert_eq!(position(&mut sim, 7), TileLoc { x: 72, y: 70 }, "stopped before it");
     }
 
