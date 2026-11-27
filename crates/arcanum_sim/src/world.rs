@@ -1152,9 +1152,12 @@ mod tests {
         sim.app.world_mut().resource_mut::<crate::GameClock>().now = now.plus_ms(crate::RECOVERY_MS / 2);
         sim.update();
         assert!(sim.app.world().get::<crate::combat::KnockedDown>(pc).is_some(), "still lying half a period on");
+        sim.take_deltas();
         sim.app.world_mut().resource_mut::<crate::GameClock>().now = now.plus_ms(crate::RECOVERY_MS + 1000);
         sim.update();
         assert!(sim.app.world().get::<crate::combat::KnockedDown>(pc).is_none(), "up after a period");
+        let id = *sim.app.world().get::<NetId>(pc).unwrap();
+        assert!(sim.take_deltas().iter().any(|(_, d)| matches!(d, LedgerDelta::GotUp { net_id } if *net_id == id)), "every player is told");
     }
 
     #[test]

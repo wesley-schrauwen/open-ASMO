@@ -245,11 +245,11 @@ fn apply_combat_deltas(
             if outcome.killed || out {
                 dying.0.insert(*target);
             }
-            // Knocked down (goal 62, animation 7), then up again (goal 63, animation 8).
+            // Knocked down (goal 62, animation 7): it lies until the host gets it up (goal 63,
+            // animation 8: `LedgerDelta::GotUp`).
             for (who, fell) in [(*target, outcome.effects & KNOCKED_DOWN != 0 && !outcome.killed && !out), (*attacker, outcome.fumble_effects & KNOCKED_DOWN != 0)] {
                 if fell && let Some(mut a) = actors.iter_mut().find(|a| a.net_id == who) {
-                    a.action = Some((crate::actors::ANIM_KNOCKED_DOWN, 0.0));
-                    a.then = Some(crate::actors::ANIM_GET_UP);
+                    a.knocked = true;
                 }
             }
         }
