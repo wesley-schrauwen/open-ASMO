@@ -874,10 +874,11 @@ pub fn npc_max_hp(object: &Object, prototypes: &Prototypes) -> i32 {
     4 * prototypes.int(object, "hp_pts").unwrap_or(0) + prototypes.int(object, "hp_adj").unwrap_or(0) + stat(6) + 2 * (stat(17) + stat(0)) + 4
 }
 
-/// An NPC's speed (stat 11 from Dexterity, as a PC's).
+/// An NPC's speed (stat 11 from Dexterity, as a PC's; 5 less with crippled legs, 0x4b052a).
 pub fn npc_speed(object: &Object, prototypes: &Prototypes) -> i32 {
     let dx = npc_stat(object, prototypes, 1);
-    dx + if dx >= 20 { 5 } else { 0 }
+    let lame = prototypes.int(object, "critter_flags").unwrap_or(0) & OCF_CRIPPLED_LEGS != 0;
+    dx + if dx >= 20 { 5 } else { 0 } - if lame { arcanum_rules::CRIPPLED_LEGS_SPEED } else { 0 }
 }
 
 /// An NPC's damage bonus (stat 9 from Strength, as a PC's).

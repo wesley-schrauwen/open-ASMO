@@ -56,6 +56,11 @@ impl Draft {
     }
 }
 
+/// `critter_flags` 0x400 in [`CharacterSheet::injuries`]: legs crippled.
+pub const CRIPPLED_LEGS: i32 = 0x400;
+/// What crippled legs take off speed (stat 11, 0x4b052a → 0x4b0533).
+pub const CRIPPLED_LEGS_SPEED: i32 = 5;
+
 /// One character: accepted values plus a draft of unaccepted changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
