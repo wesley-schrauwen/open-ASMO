@@ -2826,14 +2826,16 @@ pub struct KnockedDown {
     pub until: Option<u64>,
 }
 
-/// Gets up the knocked-down critters whose time has come.
-pub fn get_up_knocked_down(mut commands: Commands, clock: Res<crate::GameClock>, mut lying: Query<(Entity, &mut KnockedDown)>) {
+/// Gets up the knocked-down critters whose time has come; every player is told
+/// (`LedgerDelta::GotUp`).
+pub fn get_up_knocked_down(mut commands: Commands, clock: Res<crate::GameClock>, session: Res<crate::Session>, mut outbox: ResMut<crate::Outbox>, mut lying: Query<(Entity, &NetId, &mut KnockedDown)>) {
     let now = clock.now.days as u64 * crate::DAY_MS as u64 + clock.now.ms as u64;
-    for (entity, mut down) in &mut lying {
+    for (entity, &net_id, mut down) in &mut lying {
         match down.until {
             None => down.until = Some(now + crate::RECOVERY_MS),
             Some(t) if now >= t => {
                 commands.entity(entity).remove::<KnockedDown>();
+                crate::ground::broadcast(&session, &mut outbox, LedgerDelta::GotUp { net_id });
             }
             Some(_) => {}
         }
@@ -2965,6 +2967,9 @@ fn apply_effects(commands: &mut Commands, w: &mut CombatWorld, attacker: &Seen, 
     // Knocked down (0x435a90, goal 62): it lies until its fatigue recovery gets it up.
     if outcome.effects & KNOCKED_DOWN != 0 {
         commands.entity(victim.entity).insert(KnockedDown { until: None });
+    }
+    if outcome.fumble_effects & KNOCKED_DOWN != 0 {
+        commands.entity(attacker.entity).insert(KnockedDown { until: None });
     }
     if outcome.fumble_effects & STUNNED != 0 && !fighter.stunned {
         commands.entity(attacker.entity).insert(Stunned { left: stun_count(fighter.constitution) });

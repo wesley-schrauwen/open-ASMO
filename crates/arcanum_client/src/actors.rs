@@ -66,7 +66,7 @@ pub struct ActorDeltas(pub Vec<LedgerDelta>);
 impl ActorDeltas {
     /// Whether this module handles `delta`.
     pub fn wants(delta: &LedgerDelta) -> bool {
-        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. } | LedgerDelta::PartyLeader { .. } | LedgerDelta::PcStatus { .. } | LedgerDelta::Speed { .. } | LedgerDelta::Teleported { .. } | LedgerDelta::Prowling { .. })
+        matches!(delta, LedgerDelta::Spawn { .. } | LedgerDelta::StateSync { .. } | LedgerDelta::Resync { .. } | LedgerDelta::Despawn { .. } | LedgerDelta::PartyLeader { .. } | LedgerDelta::PcStatus { .. } | LedgerDelta::Speed { .. } | LedgerDelta::Teleported { .. } | LedgerDelta::Prowling { .. } | LedgerDelta::GotUp { .. })
     }
 }
 
@@ -299,6 +299,8 @@ pub struct Actor {
     pub action: Option<(u32, f32)>,
     /// The animation to play once after it (getting up after a fall).
     pub then: Option<u32>,
+    /// Knocked down by a blow: it lies until the host says it got up (`LedgerDelta::GotUp`).
+    pub knocked: bool,
 }
 
 /// Longest an action is held when its art does not load or finish.
@@ -522,7 +524,7 @@ fn apply_actor_deltas(
                 let rotation = CritterArt::from_id(art).rotation as usize;
                 let pc = matches!(kind, arcanum_sim::EntityKind::Pc { .. });
                 let prowling = pc && CritterArt::from_id(art).anim == arcanum_sim::prowl::ANIM_PROWL;
-                let mut actor = Actor { net_id, art, gait, own_gait: gait, pc, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling, action: dying.as_mut().is_some_and(|d| d.0.remove(&net_id)).then_some(((art.0 >> 6) & 0x1f, 0.0)), then: None };
+                let mut actor = Actor { net_id, art, gait, own_gait: gait, pc, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling, action: dying.as_mut().is_some_and(|d| d.0.remove(&net_id)).then_some(((art.0 >> 6) & 0x1f, 0.0)), then: None, knocked: false };
                 // An NPC spawned lying, then again standing, gets up.
                 if !pc && lying.as_mut().is_some_and(|l| l.gets_up(net_id, art)) {
                     actor.action = Some((ANIM_GET_UP, 0.0));
@@ -548,6 +550,11 @@ fn apply_actor_deltas(
                 if let Some(Ok((_, mut a))) = by_id.get(&net_id).map(|&e| actors.get_mut(e)) {
                     a.prowling = on;
                     a.art = arcanum_sim::with_anim(a.art, if on { arcanum_sim::prowl::ANIM_PROWL } else { arcanum_formats::art_id::ANIM_STAND });
+                }
+            }
+            LedgerDelta::GotUp { net_id } => {
+                if let Some(Ok((_, mut a))) = by_id.get(&net_id).map(|&e| actors.get_mut(e)) {
+                    a.knocked = false;
                 }
             }
             LedgerDelta::Speed { net_id, speed } => {
@@ -948,8 +955,9 @@ pub fn next_posture(posture: Posture, down: bool, finished: bool, dt: f32) -> Po
     }
 }
 
-/// Knocks down the PCs whose fatigue fell below 1 and gets them up again once it is back
-/// above 0 and the get-up has played.
+/// Knocks down the PCs whose fatigue fell below 1, and critters knocked down by a blow, and
+/// gets them up again once their fatigue is back above 0 or the host says they got up and the
+/// get-up has played.
 fn update_postures(time: Res<Time>, party: Res<Party>, mut actors: Query<(&mut Actor, &ArtAnimation)>) {
     for (mut actor, animation) in &mut actors {
         // An action ends when it has played (its art loaded and finished), or after a while.
@@ -958,7 +966,7 @@ fn update_postures(time: Res<Time>, party: Res<Party>, mut actors: Query<(&mut A
             let done = animation.finished || secs >= ACTION_LIMIT_SECS || actor.walking();
             actor.action = if done { actor.then.take().map(|next| (next, 0.0)) } else { Some((anim, secs)) };
         }
-        let down = actor.pc && unconscious(&party, actor.net_id);
+        let down = (actor.pc && unconscious(&party, actor.net_id)) || actor.knocked;
         let finished = matches!(actor.posture, Posture::GettingUp(_)) && animation.finished;
         let next = next_posture(actor.posture, down, finished, time.delta_secs());
         if next != actor.posture {
@@ -1042,7 +1050,7 @@ mod tests {
 
     fn actor() -> Actor {
         let art = arcanum_sim::pc_art(0, true);
-        Actor { net_id: NetId(0), art, gait: Gait::human(17), own_gait: Gait::human(17), pc: true, at: t(10, 10), rotation: 4, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling: false, action: None, then: None }
+        Actor { net_id: NetId(0), art, gait: Gait::human(17), own_gait: Gait::human(17), pc: true, at: t(10, 10), rotation: 4, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling: false, action: None, then: None, knocked: false }
     }
 
     #[test]
