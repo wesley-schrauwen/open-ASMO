@@ -1788,7 +1788,9 @@ pub fn run_combat(mut commands: Commands, mut w: CombatWorld, critters: Query<Co
                 true
             }
             Some(c) if c.walking || c.pending.is_some() => false,
-            Some(c) if c.npc.is_some_and(|n| w.map.npc_down(n.sector, n.index)) => true,
+            // Down, or stunned or paralyzed by its flags: it cannot act (0x4b7580 → 0x45d790,
+            // `critter_flags` 0x60), and its turn passes.
+            Some(c) if c.npc.is_some_and(|n| w.map.npc_down(n.sector, n.index) || w.npc_int(n, "critter_flags") & OCF_HELD != 0) => true,
             Some(c) if c.npc.is_some() => {
                 let acted = npc_turn(&mut commands, &mut w, c, &all, e.fresh);
                 if let Some(e) = w.combat.0.as_mut() {
@@ -2232,7 +2234,7 @@ pub fn notice_foes(
     let busy: Vec<NetId> = talking.iter().map(|c| c.npc).collect();
     for (&npc, at, source, facing, look) in &npcs {
         let rotation = facing_of(facing, look);
-        if map.npc_down(source.sector, source.index) || busy.contains(&npc) {
+        if map.npc_down(source.sector, source.index) || busy.contains(&npc) || map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)).is_some_and(|o| map.prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_HELD != 0) {
             continue;
         }
         let Some(o) = map.mobiles.get(&source.sector).and_then(|m| m.get(source.index as usize)) else { continue };
@@ -2763,6 +2765,8 @@ pub const PC_FLAGS: i32 = 0x4030;
 
 /// `critter_flags` 0x40: paralyzed (0x4c8642).
 pub const OCF_PARALYZED: i32 = 0x40;
+/// `critter_flags` of a critter that cannot act (0x45d790: 0x60, stunned and paralyzed).
+pub const OCF_HELD: i32 = OCF_STUNNED | OCF_PARALYZED;
 
 /// The helpless amount a target's state gives, in 0x4c8430's order: paralyzed
 /// ([`OCF_PARALYZED`], 0x4c8642) or down (0x45d800 at 0x4c8654) 50; knocked down (animation 7,
