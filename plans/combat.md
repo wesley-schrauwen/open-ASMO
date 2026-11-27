@@ -633,6 +633,15 @@ of `combat_design.md` come after the original's rules work.
      miss, or on the tile where a wall or object stopped it. Builder's call: a PC's item goes
      the same way (the original removes only an NPC's at 0x4b3c4a; a PC's leaves through the
      interface, not traced).
+23. **Backstab** (`feat/backstab`, `combat::Stab`).
+   - Eligible (0x45f9d0): a Backstab level (0x4c5eb0 skill 4), the target not having the
+     attacker in view (0x45eff0 false), and a weapon whose wielded art (`item_use_aid_fragment`,
+     an item art, bits 6-9 through 0x5044f0) is kind 2, or 3 / 4 / 7 from Expert (0x45fa41).
+     Only melee blows at critters (0x4b22da, skill 2): flag 0x4000; 0x8000 besides when the
+     target neither sees nor hears the attacker (0x4b2327, hearing with noise 0).
+   - Damage (0x4b6680, normal damage only): + the level from behind, + 5 × it unnoticed
+     (0x4b67bf-0x4b67d9), on the roll before resistance. Built: from behind.
+   - Not built here: the unnoticed stab (next PR); which weapons the kinds are (art letters).
 22. **To-hit difficulty** (0x4c8430, read in full; the roll `1-100 + difficulty <= chance` at
     0x4c7259-0x4c7261).
    - Terms for weapon skills: the weapon's to-hit bonus and 5 a Strength point short (built);
