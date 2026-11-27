@@ -49,6 +49,12 @@ pub struct Prowler {
     /// The luminance where it stands, and its Prowling rank.
     pub light: Option<i32>,
     pub rank: u8,
+    /// Its injuries (`critter_flags` 0x80 blinded, 0x400 lame: + 30 each, 0x4c8b0e / 0x4c8b72).
+    pub injuries: i32,
+    /// The watcher's helpless amount (0x4c8603 with table bit 0x8: the watcher's state, as a
+    /// target's, [`crate::combat::helpless_by_state`]), and the cover on the line between.
+    pub watcher_helpless: i32,
+    pub cover: i32,
 }
 
 impl Prowler {
@@ -56,7 +62,26 @@ impl Prowler {
     pub fn of(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::CharacterSheet, map: &crate::LoadedMap, at: arcanum_formats::map::TileLoc, hour: u32) -> Self {
         let light = map.light_at(at, hour).map(crate::light::luminance);
         let rank = sheet.training[SKILL_PROWLING];
-        Self { level: rules.skill_level(sheet, SKILL_PROWLING), intelligence: rules.stats(sheet)[4], look: light.map_or(0, |l| look_difficulty(rank, l, false)), light, rank }
+        Self { level: rules.skill_level(sheet, SKILL_PROWLING), intelligence: rules.stats(sheet)[4], look: light.map_or(0, |l| look_difficulty(rank, l, false)), light, rank, injuries: sheet.injuries, ..Default::default() }
+    }
+
+    /// With the watcher's helpless amount.
+    pub fn watched_by(self, helpless: i32) -> Self {
+        Self { watcher_helpless: helpless, ..self }
+    }
+
+    /// With `cover` on the line from the watcher.
+    pub fn with_cover(self, cover: i32) -> Self {
+        Self { cover, ..self }
+    }
+
+    /// The look's whole difficulty (0x4c8430 for skill 6 with flag 0x4000): the light
+    /// ([`Self::look`]), its injuries, less the watcher's helplessness; then the line (0x4c8be9):
+    /// less the cover on it, or for an open line 50 more below Expert (0x4c8bf4).
+    pub fn look_total(self) -> i32 {
+        let injuries = 30 * i32::from(self.injuries & 0x80 != 0) + 30 * i32::from(self.injuries & 0x400 != 0);
+        let line = if self.cover == 0 && self.rank < 2 { 50 } else { -self.cover };
+        self.look + injuries - self.watcher_helpless + line
     }
 
     /// As seen by a watcher that has dark sight or not ([`look_difficulty`]).
@@ -67,7 +92,7 @@ impl Prowler {
     /// Its value against a watcher's eyes of Perception `pe`: [`Self::against`] less
     /// [`Self::look`], in 0-100 (0x4af3b9).
     pub fn seen_against(self, pe: i32) -> i32 {
-        (self.against(pe) - self.look).clamp(0, 100)
+        (self.against(pe) - self.look_total()).clamp(0, 100)
     }
 }
 
@@ -149,10 +174,17 @@ mod tests {
         assert_eq!((look_difficulty(0, 0, true), look_difficulty(0, 254, true)), (30, 0), "a dark-seeing watcher: the dark gives it away");
         let p = Prowler { light: Some(0), ..Default::default() };
         assert_eq!((p.for_watcher(false).look, p.for_watcher(true).look), (0, 30));
-        let lit = Prowler { level: 8, intelligence: 8, look: 30, ..Default::default() };
+        // The rest of the look (0x4c8aed-0x4c8bf7): in the open below Expert 50 more; cover takes
+        // its cost off; blind or lame 30 more each; a paralyzed watcher 50 less.
+        let plain = Prowler { level: 8, intelligence: 8, ..Default::default() };
+        assert_eq!((plain.look_total(), plain.with_cover(20).look_total(), Prowler { rank: 2, ..plain }.look_total()), (50, -20, 0));
+        assert_eq!(Prowler { injuries: 0x480, ..plain }.with_cover(20).look_total(), 40);
+        assert_eq!(plain.watched_by(50).look_total(), 0);
+        assert_eq!((plain.seen_against(8), plain.with_cover(20).seen_against(8)), (0, 67), "seen in the open, hidden behind a stone");
+        let lit = Prowler { level: 8, intelligence: 8, look: 30, rank: 2, ..Default::default() };
         assert_eq!((lit.against(8), lit.seen_against(8)), (47, 17), "seen: the light takes 30 off");
         assert_eq!(hearing_reach(10, None), 6, "(6 + 6) / 2");
-        assert_eq!(hearing_reach(10, Some(Prowler { level: 11, intelligence: 8, ..Default::default() })), 3, "level 11 against PE 10: 52, PE 5: (1 + 6) / 2");
-        assert_eq!(hearing_reach(8, Some(Prowler { level: 20, intelligence: 20, ..Default::default() })), 3, "110: at most all of it");
+        assert_eq!(hearing_reach(10, Some(Prowler { level: 11, intelligence: 8, rank: 2, ..Default::default() })), 3, "level 11 against PE 10: 52, PE 5: (1 + 6) / 2");
+        assert_eq!(hearing_reach(8, Some(Prowler { level: 20, intelligence: 20, rank: 2, ..Default::default() })), 3, "110: at most all of it");
     }
 }
