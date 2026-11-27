@@ -482,9 +482,13 @@ of `combat_design.md` come after the original's rules work.
      (0x4400ba, 0x4404b8), a closed portal 1 (0x4401f1, 0x4405ef), entering ground that blocks
      8 (0x4d7180 at 0x440384 → 0x440390); objects and critters nothing (the cost block needs
      flag 8). Used by NPCs noticing and the scripts' can-hear. Builder's call: a diagonal step
-     pays the cheaper of its two L-shaped routes. Not built: no line (0x4af6c0: 100), a stunned
-     (0xda 0x20) or down listener (0x45d800), the 0x1000 listener's halved Perception
-     (0x4af518), the sound table's other noises (0x5b50c0).
+     pays the cheaper of its two L-shaped routes. Not built: no line (0x4af6c0: 100), the sound
+     table's other noises (0x5b50c0).
+   - The listener (`feat/listener-state`, `combat::ears`): a stunned listener (`critter_flags`
+     0x20 at 0x4af49b, or stunned by a blow) or a down one (0x45d800 at 0x4af4b1) hears nothing;
+     one asleep (0x1000, 0x4af518) hears with half its Perception, halved before a prowler's
+     cut (0x4af5a0-0x4af5ca: `r -= r × clamp(prowl − difficulty, 0, 100) / 100`, the magic
+     0xae147ae1 a division by −100). Scripts' can-hear too, for NPC listeners.
 16. **Planning and the cursor** (built, `feat/combat-cursor`; client `combat_ui`, `cursor`).
    - On the PC's turn the tile or NPC under the cursor gives the planned cost (2 a step; an NPC:
      the steps into reach and the attack's cost): the AP bar lights green for what stays, orange

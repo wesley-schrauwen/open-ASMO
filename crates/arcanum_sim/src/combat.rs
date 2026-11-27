@@ -2119,8 +2119,29 @@ pub fn sees(map: &impl crate::Walkable, from: TileLoc, rotation: usize, pe: i32,
 /// Whether a watcher notices `to`: sees it (when `sight`: [`can_look`]), or hears it (0x4af470:
 /// within its hearing reach less what the sound pays on its way, [`crate::sound_cost`] at
 /// 0x4af60c).
-pub fn notices(map: &impl crate::Walkable, sight: bool, from: TileLoc, rotation: usize, pe: i32, to: TileLoc, prowler: Option<i32>) -> bool {
-    (sight && sees(map, from, rotation, pe, to, prowler)) || hears(map, from, pe, to, prowler)
+/// `ears` is the Perception it hears with ([`ears`]; `None`: it hears nothing).
+pub fn notices(map: &impl crate::Walkable, sight: bool, from: TileLoc, rotation: usize, pe: i32, ears: Option<i32>, to: TileLoc, prowler: Option<i32>) -> bool {
+    (sight && sees(map, from, rotation, pe, to, prowler)) || ears.is_some_and(|pe| hears(map, from, pe, to, prowler))
+}
+
+/// `critter_flags` 0x1000: asleep (0x4af518), hearing with half its Perception.
+pub const OCF_SLEEPING: i32 = 0x1000;
+/// `critter_flags` 0x20: stunned (0x4af49b, 0x4c8684).
+pub const OCF_STUNNED: i32 = 0x20;
+
+/// The Perception NPC `listener` hears with (0x4af470): none when stunned (`critter_flags`
+/// 0x20 at 0x4af49b, or [`Stunned`]) or down (0x45d800 at 0x4af4b1: callers leave the down
+/// out); half asleep ([`OCF_SLEEPING`], 0x4af518-0x4af526, before a prowler's cut).
+pub fn ears(listener: &Object, prototypes: &Prototypes, stunned: bool) -> Option<i32> {
+    let flags = prototypes.int(listener, "critter_flags").unwrap_or(0);
+    let pe = npc_stat(listener, prototypes, 5);
+    if stunned || flags & OCF_STUNNED != 0 {
+        None
+    } else if flags & OCF_SLEEPING != 0 {
+        Some(pe / 2)
+    } else {
+        Some(pe)
+    }
 }
 
 /// Whether a listener at `from` hears `to` (0x4af470): the distance at most its reach
@@ -2211,7 +2232,7 @@ pub fn notice_foes(
         for (&pc, pc_at, player, sheet, prowling) in &pcs {
             let Some(saved) = save.players.get(&player.0) else { continue };
             let prowler = prowling.then(|| crate::prowl::prowl_value(rules.0.skill_level(&sheet.0, crate::SKILL_PROWLING)));
-            if !notices(&crate::MissileView(&map), can_look(o, &map.prototypes, false, None), at.0, rotation, pe, pc_at.0, prowler) {
+            if !notices(&crate::MissileView(&map), can_look(o, &map.prototypes, false, None), at.0, rotation, pe, ears(o, &map.prototypes, false), pc_at.0, prowler) {
                 continue;
             }
             let towards = crate::reaction_to(&saved.script_state, &key, &reaction, &rules.0, &sheet.0, reputations);
@@ -2691,7 +2712,7 @@ fn helpless(w: &CombatWorld, attacker: &Seen, victim: &Seen) -> i32 {
     {
         let prowler = attacker.sheet.as_ref().filter(|_| attacker.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING)));
         let target = attacker.npc.and_then(|a| w.map.mobiles.get(&a.sector)?.get(a.index as usize));
-        if !notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, false, target), victim.at, victim.rotation, npc_stat(o, &w.map.prototypes, 5), attacker.at, prowler) {
+        if !notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, victim.stunned.is_some(), target), victim.at, victim.rotation, npc_stat(o, &w.map.prototypes, 5), ears(o, &w.map.prototypes, victim.stunned.is_some()), attacker.at, prowler) {
             return HELPLESS_UNAWARE;
         }
     }
@@ -2984,7 +3005,7 @@ fn rally(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: &
         let notices = |x: &Seen| {
             let target = x.npc.and_then(|n| w.map.mobiles.get(&n.sector)?.get(n.index as usize));
             let prowler = x.sheet.as_ref().filter(|_| x.prowling).map(|s| crate::prowl::prowl_value(w.rules.0.skill_level(s, crate::SKILL_PROWLING)));
-            notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, c.stunned.is_some(), target), c.at, c.rotation, pe, x.at, prowler)
+            notices(&crate::MissileView(&w.map), can_look(o, &w.map.prototypes, c.stunned.is_some(), target), c.at, c.rotation, pe, ears(o, &w.map.prototypes, c.stunned.is_some()), x.at, prowler)
         };
         let for_victim = allied(c.leader, own, victim.player, victim.leader, v_faction, v_kin) && (c.leader.is_some() || notices(victim));
         let for_attacker = allied(c.leader, own, attacker.player, attacker.leader, a_faction, a_kin) && (c.leader.is_some() || notices(attacker));
@@ -3178,6 +3199,9 @@ mod tests {
             Object::parse_instance(&b.build()).unwrap()
         }
         let watcher = npc(&[("critter_stat_base_idx", stats(8))]);
+        // The listener's state (0x4af49b / 0x4af518): stunned deaf, asleep half.
+        let listener = |flags: i32| npc(&[("critter_flags", Value::Int32(flags)), ("critter_stat_base_idx", stats(8))]);
+        assert_eq!((ears(&listener(0), &prototypes, false), ears(&listener(OCF_STUNNED), &prototypes, false), ears(&listener(0), &prototypes, true), ears(&listener(OCF_SLEEPING), &prototypes, false)), (Some(8), None, None, Some(4)));
         assert!(can_look(&watcher, &prototypes, false, None));
         assert!(!can_look(&watcher, &prototypes, true, None), "stunned");
         let blind = npc(&[("critter_flags", Value::Int32(OCF_BLINDED)), ("critter_stat_base_idx", stats(8))]);
@@ -3316,8 +3340,8 @@ mod tests {
         rows[5] = ".....#..............";
         let walled = Grid::parse(&rows);
         assert!(!sees(&walled, t(2, 5), 5, 8, t(9, 5), None), "a wall between");
-        assert!(notices(&walled, true, t(2, 5), 1, 8, t(4, 5), None), "heard 2 tiles off, the line short of the block");
-        assert!(!notices(&walled, true, t(4, 5), 1, 8, t(6, 5), None), "past blocking ground: 8 off the reach of 5");
+        assert!(notices(&walled, true, t(2, 5), 1, 8, Some(8), t(4, 5), None), "heard 2 tiles off, the line short of the block");
+        assert!(!notices(&walled, true, t(4, 5), 1, 8, Some(8), t(6, 5), None), "past blocking ground: 8 off the reach of 5");
         // A wall on the edge crossed hides even a target next to it (0x4af45a).
         let mut edged = Grid::parse(&["...................."; 20]);
         edged.3.edges.insert(t(5, 5), 1 << 5);
