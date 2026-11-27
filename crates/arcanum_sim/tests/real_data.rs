@@ -869,3 +869,24 @@ fn backstab_weapon_kinds_are_daggers_swords_axes_and_great_swords() {
     }
     assert!(!by[&5].iter().any(|n| n == "Dagger"), "maces are another kind");
 }
+
+#[test]
+fn every_lighting_scheme_reads() {
+    use arcanum_formats::mes::MesFile;
+    use arcanum_sim::light::{SCHEMES, Scheme, luminance};
+    let Some(vfs) = vfs() else { return };
+    let list = MesFile::parse(&vfs.read(SCHEMES).unwrap()).unwrap();
+    let mut read = 0;
+    for (&number, name) in list.messages.iter().filter(|(n, _)| **n >= 1) {
+        let mes = MesFile::parse(&vfs.read(&format!("rules/{}.mes", name.trim())).unwrap()).unwrap();
+        let scheme = Scheme::parse(&mes).unwrap_or_else(|| panic!("scheme {number} {name}"));
+        if number == 1 {
+            // Lighting Default: noon outdoors full white, night blue-grey, indoors always 74, 80, 98.
+            assert_eq!(luminance(scheme.ambient(12, false)), 254);
+            assert_eq!((scheme.ambient(0, false), scheme.ambient(12, true)), ([74, 80, 98], [74, 80, 98]));
+            assert_eq!(scheme.ambient(5, false), [74 + (213 - 74) / 2, 80 + (182 - 80) / 2, 98 + (222 - 98) / 2], "5 AM halfway from 4 to 6");
+        }
+        read += 1;
+    }
+    assert_eq!(read, 10, "the ten schemes");
+}

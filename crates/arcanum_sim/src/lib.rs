@@ -27,6 +27,7 @@ pub mod barter;
 pub mod ground;
 pub mod inventory;
 pub mod keys;
+pub mod light;
 pub mod lockpick;
 pub mod pickpocket;
 pub mod poison;
