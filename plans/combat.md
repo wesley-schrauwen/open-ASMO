@@ -703,8 +703,12 @@ of `combat_design.md` come after the original's rules work.
      0x90080000, coloured by size (0x45faa5-0x45fb54: extra large F4FFFF, large FFD6AC, medium
      EC8A55, small A7583A). Here every 5 ticks at each bearer's tile (PCs by what they wear, NPCs
      by flags or worn items), so a lantern lights its bearer and the ground round it.
-   - Not built: animated light frames, 0x4dc210 (objects' lit colour over their footprint),
-     hearing's 0x4c8430 (flag 0x2000) terms.
+   - The listen (`feat/prowl-hearing`, `Prowler::listen_total`): hearing's 0x4c8430 (flag
+     0x2000) has no light and no line, but the watcher's state (as sight's), the prowler blind
+     or lame + 30 each, and its worn armour's `armor_silent_move_adj` + magick part summed and
+     taken off (0x4c8c03-0x4c8c91; halved from Apprentice, 0x4c8c74): heavy armour, a negative
+     adjustment, makes it louder. The magick part unscaled (0x461590 not read).
+   - Not built: animated light frames, 0x4dc210 (objects' lit colour over their footprint).
 23. **Backstab** (`feat/backstab`, `combat::Stab`).
    - Eligible (0x45f9d0): a Backstab level (0x4c5eb0 skill 4), the target not having the
      attacker in view (0x45eff0 false), and a weapon whose wielded art (`item_use_aid_fragment`,
