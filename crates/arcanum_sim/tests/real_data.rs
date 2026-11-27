@@ -838,3 +838,34 @@ fn written_items_open_text_that_exists() {
     assert!(by_kind.values().sum::<usize>() > 10);
     assert!(missing.len() * 10 < by_kind.values().sum::<usize>(), "{missing:?}");
 }
+
+#[test]
+fn backstab_weapon_kinds_are_daggers_swords_axes_and_great_swords() {
+    use std::sync::{Arc, RwLock};
+    use arcanum_rules::{CharacterBlueprint, CharacterSheet, RulesData};
+    use arcanum_sim::{LoadedMap, PlayerId, SimApp, SimVfs, WorldState};
+    let Some(vfs) = vfs() else { return };
+    let desc = arcanum_formats::mes::MesFile::parse(&vfs.read("mes/description.mes").unwrap()).unwrap();
+    let start = StartMap::load(&vfs).unwrap();
+    let mut world = WorldState::default();
+    world.add_player(Some(&start), PlayerId(1), CharacterBlueprint { sheet: CharacterSheet::default(), gold: 0, items: vec![], prototype: None });
+    let mut sim = SimApp::new(RulesData::default());
+    sim.use_manual_clock();
+    sim.app.insert_resource(SimVfs(Arc::new(RwLock::new(vfs))));
+    sim.boot(world.0.unwrap());
+    sim.update();
+    sim.update();
+    let map = sim.app.world().resource::<LoadedMap>();
+    let mut by: std::collections::BTreeMap<u32, Vec<String>> = Default::default();
+    for o in map.prototypes.0.values().filter(|o| o.object_type == arcanum_formats::object::TYPE_WEAPON) {
+        let w = arcanum_sim::combat::weapon_of(o, &map.prototypes);
+        let d = map.prototypes.int(o, "description").unwrap_or(0);
+        by.entry(w.use_kind).or_default().push(desc.get(d as u32).unwrap_or("?").to_string());
+    }
+    // The kinds Backstab takes (0x45fa27-0x45fa53): daggers, then swords, axes and great swords.
+    use arcanum_sim::combat::{KIND_AXE, KIND_DAGGER, KIND_GREAT_SWORD, KIND_SWORD};
+    for (kind, name) in [(KIND_DAGGER, "Dagger"), (KIND_SWORD, "Sword"), (KIND_AXE, "Rusty Axe"), (KIND_GREAT_SWORD, "Claymore")] {
+        assert!(by.get(&kind).is_some_and(|v| v.iter().any(|n| n == name)), "{name} is kind {kind}: {by:?}");
+    }
+    assert!(!by[&5].iter().any(|n| n == "Dagger"), "maces are another kind");
+}
