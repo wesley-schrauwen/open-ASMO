@@ -44,6 +44,12 @@ pub trait Walkable {
     fn sound_ground(&self, _at: TileLoc) -> i32 {
         0
     }
+
+    /// What the shoot-through objects on `at` cost a missile or a look (0x44063f); nothing
+    /// unless the map says.
+    fn line_cost(&self, _at: TileLoc) -> i32 {
+        0
+    }
 }
 
 /// A loaded map as a missile sees it ([`LoadedMap::missiles`]): edges and objects only, the
@@ -65,6 +71,10 @@ impl Walkable for MissileView<'_> {
 
     fn sound_ground(&self, at: TileLoc) -> i32 {
         if self.0.sound.ground.contains(&at) { crate::blocking::SOUND_GROUND } else { 0 }
+    }
+
+    fn line_cost(&self, at: TileLoc) -> i32 {
+        self.0.missiles.costs.get(&at).copied().unwrap_or(0)
     }
 }
 

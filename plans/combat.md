@@ -676,7 +676,14 @@ of `combat_design.md` come after the original's rules work.
    - Dark-seeing watchers (`feat/dark-seeing-watchers`, `Prowler::for_watcher`): for one with
      dark sight (0x45fb90 at 0x4c8a9b: `critter_flags2` 0x800, a PC of background 78) the term
      is not turned round, so the dark gives a prowler away (30 in pitch dark) and light hides it.
-   - Not built: light objects (0x4dc210), animated light frames, 0x4c8430's other prowling
+   - The look's other terms (`feat/prowl-cover`, `Prowler::look_total`; 0x4c8430, prowling's
+     table entry 0x298): the watcher's state as a target's (bit 0x8: paralyzed or down 50,
+     knocked down or stunned 30, asleep 50 easier); the prowler blinded or lame + 30 each (bits
+     0x80 / 0x200: 0x4c8b0e / 0x4c8b72); then the line (0x4ade00, 0x4c8bc6): a blocker hides it
+     wholly (−100), else the shoot-through objects' cost comes off, and an open line costs 50 more
+     below Expert (0x4c8bf4). In the open an untrained prowler is seen; behind a stone (20) it
+     hides. Critters' cover on the line not counted (builder's call). No distance or armour term.
+   - Not built: light objects (0x4dc210), animated light frames, hearing's 0x4c8430 (flag 0x2000)
      terms.
 23. **Backstab** (`feat/backstab`, `combat::Stab`).
    - Eligible (0x45f9d0): a Backstab level (0x4c5eb0 skill 4), the target not having the
