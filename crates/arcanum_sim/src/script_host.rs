@@ -821,7 +821,9 @@ impl ScriptContext for HostWorld<'_> {
     fn spot_trap(&mut self, pc: ScriptObject, magical: bool) -> bool {
         let ScriptObject::Pc(p) = pc else { return false };
         let Some(sheet) = self.players.get(&p).map(|s| s.blueprint.sheet.clone()) else { return false };
-        crate::trap::roll_spot(self.rules, &sheet, magical, self.rng)
+        // The light where the PC stands (builder's call: the trapped object's own not looked up).
+        let light = self.tile_of(pc).and_then(|at| self.map.luminance_at(at, self.now));
+        crate::trap::roll_spot(self.rules, &sheet, magical, light, self.rng)
     }
 
     /// The object's flag is kept and sent to every player (the original keeps it per PC in
