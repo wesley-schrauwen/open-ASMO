@@ -51,6 +51,8 @@ pub struct Prowler {
     pub rank: u8,
     /// Its injuries (`critter_flags` 0x80 blinded, 0x400 lame: + 30 each, 0x4c8b0e / 0x4c8b72).
     pub injuries: i32,
+    /// The light it bears ([`crate::light::borne_light`]): a lantern gives it away.
+    pub borne: i32,
     /// The watcher's helpless amount (0x4c8603 with table bit 0x8: the watcher's state, as a
     /// target's, [`crate::combat::helpless_by_state`]), and the cover on the line between.
     pub watcher_helpless: i32,
@@ -59,10 +61,11 @@ pub struct Prowler {
 
 impl Prowler {
     /// PC `sheet` prowling on tile `at` of `map` at `hour`.
-    pub fn of(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::CharacterSheet, map: &crate::LoadedMap, at: arcanum_formats::map::TileLoc, hour: u32) -> Self {
+    /// `borne`: the light it bears ([`crate::Inventory::borne_light`]).
+    pub fn of(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::CharacterSheet, map: &crate::LoadedMap, at: arcanum_formats::map::TileLoc, hour: u32, borne: i32) -> Self {
         let light = map.light_at(at, hour).map(crate::light::luminance);
         let rank = sheet.training[SKILL_PROWLING];
-        Self { level: rules.skill_level(sheet, SKILL_PROWLING), intelligence: rules.stats(sheet)[4], look: light.map_or(0, |l| look_difficulty(rank, l, false)), light, rank, injuries: sheet.injuries, ..Default::default() }
+        Self { level: rules.skill_level(sheet, SKILL_PROWLING), intelligence: rules.stats(sheet)[4], look: light.map_or(0, |l| look_difficulty(rank, l, false, borne)), light, rank, injuries: sheet.injuries, borne, ..Default::default() }
     }
 
     /// With the watcher's helpless amount.
@@ -86,7 +89,7 @@ impl Prowler {
 
     /// As seen by a watcher that has dark sight or not ([`look_difficulty`]).
     pub fn for_watcher(self, dark_sight: bool) -> Self {
-        Self { look: self.light.map_or(0, |l| look_difficulty(self.rank, l, dark_sight)), ..self }
+        Self { look: self.light.map_or(0, |l| look_difficulty(self.rank, l, dark_sight, self.borne)), ..self }
     }
 
     /// Its value against a watcher's eyes of Perception `pe`: [`Self::against`] less
@@ -100,10 +103,11 @@ impl Prowler {
 /// flag 0x4000: L the prowler's lit colour, 0x4c899b): none from Apprentice (0x4c8982); else the
 /// dark's term turned round for a watcher without dark sight (0x4c8a84-0x4c8aa4: `30 − p`), so
 /// `30 × L / 255`: the brighter the prowler stands, the less it hides; for a watcher with dark
-/// sight (0x45fb90 true at 0x4c8a9b) the plain term, so the dark gives it away. Not built: the
-/// prowler's scaling flags, 0x4c8430's other terms.
-pub fn look_difficulty(rank: u8, l: i32, dark_sight: bool) -> i32 {
-    let p = crate::light::dark_difficulty(l);
+/// sight (0x45fb90 true at 0x4c8a9b) the plain term, so the dark gives it away. The light it
+/// bears (`borne`) cuts the term first ([`crate::light::borne_scale`]), so a lit lantern turns
+/// it round to near 30.
+pub fn look_difficulty(rank: u8, l: i32, dark_sight: bool, borne: i32) -> i32 {
+    let p = crate::light::borne_scale(crate::light::dark_difficulty(l), borne);
     if rank >= 1 { 0 } else if dark_sight { p } else { (30 - p).max(0) }
 }
 
@@ -170,8 +174,9 @@ mod tests {
         assert_eq!((prowl_value(0, 8, 8), prowl_value(8, 8, 8), prowl_value(18, 8, 8), prowl_value(0, 8, 18)), (16, 47, 100, 0), "opposed by Perception");
         assert_eq!(prowl_value(8, 20, 8), 57, "Intelligence 20: + 10");
         // A prowler's own light against eyes (0x4c8a84): noon 30, the default night 10, pitch dark 0.
-        assert_eq!((look_difficulty(0, 254, false), look_difficulty(0, 79, false), look_difficulty(0, 0, false), look_difficulty(1, 254, false)), (30, 10, 0, 0));
-        assert_eq!((look_difficulty(0, 0, true), look_difficulty(0, 254, true)), (30, 0), "a dark-seeing watcher: the dark gives it away");
+        assert_eq!((look_difficulty(0, 254, false, 0), look_difficulty(0, 79, false, 0), look_difficulty(0, 0, false, 0), look_difficulty(1, 254, false, 0)), (30, 10, 0, 0));
+        assert_eq!(look_difficulty(0, 0, false, crate::light::OCF_LIGHT_XLARGE), 23, "a lantern in the dark: 30 - 30 / 4");
+        assert_eq!((look_difficulty(0, 0, true, 0), look_difficulty(0, 254, true, 0)), (30, 0), "a dark-seeing watcher: the dark gives it away");
         let p = Prowler { light: Some(0), ..Default::default() };
         assert_eq!((p.for_watcher(false).look, p.for_watcher(true).look), (0, 30));
         // The rest of the look (0x4c8aed-0x4c8bf7): in the open below Expert 50 more; cover takes

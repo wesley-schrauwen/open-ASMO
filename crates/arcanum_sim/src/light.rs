@@ -204,6 +204,66 @@ pub fn luminance([r, g, b]: Rgb) -> i32 {
     entry(r, 76.5) + entry(g, 150.45) + entry(b, 28.05)
 }
 
+/// `critter_flags` of a critter bearing a light (0x467e80; names from the string table):
+/// `OCF_LIGHT_SMALL` 0x80000, `_MEDIUM` 0x100000, `_LARGE` 0x200000, `_XLARGE` 0x400000.
+pub const OCF_LIGHT_SMALL: i32 = 0x8_0000;
+pub const OCF_LIGHT_MEDIUM: i32 = 0x10_0000;
+pub const OCF_LIGHT_LARGE: i32 = 0x20_0000;
+pub const OCF_LIGHT_XLARGE: i32 = 0x40_0000;
+pub const OCF_LIGHTS: i32 = OCF_LIGHT_SMALL | OCF_LIGHT_MEDIUM | OCF_LIGHT_LARGE | OCF_LIGHT_XLARGE;
+/// `item_flags` of a light-giving item, `OIF_LIGHT_SMALL` 0x200 to `_XLARGE` 0x1000.
+pub const OIF_LIGHTS: i32 = 0x1e00;
+
+/// The light a critter bears from its worn items (0x467e80, slots 1000-1008): each item's
+/// `item_flags` 0x200-0x1000, shifted down by its condition (0x461540, `100 × hp / most`: at
+/// most 25 by three, 50 by two, 75 by one, 0x467efe-0x467f17), all ORed; the largest bit wins
+/// (0x467f55-0x467f7e). `worn` gives each item's flags and condition.
+pub fn borne_light(worn: impl Iterator<Item = (i32, i32)>) -> i32 {
+    let bits = worn.fold(0, |acc, (flags, condition)| {
+        let shift = if condition <= 25 { 3 } else if condition <= 50 { 2 } else if condition <= 75 { 1 } else { 0 };
+        acc | ((flags & OIF_LIGHTS) >> shift) & OIF_LIGHTS
+    });
+    if bits & 0x1000 != 0 {
+        OCF_LIGHT_XLARGE
+    } else if bits & 0x800 != 0 {
+        OCF_LIGHT_LARGE
+    } else if bits & 0x400 != 0 {
+        OCF_LIGHT_MEDIUM
+    } else if bits & 0x200 != 0 {
+        OCF_LIGHT_SMALL
+    } else {
+        0
+    }
+}
+
+/// The dark's term `p` for a bearer of light `flags` (0x4c8a2f-0x4c8a7c): a quarter with an
+/// extra-large light, a third large, half medium, three quarters small.
+pub fn borne_scale(p: i32, flags: i32) -> i32 {
+    if flags & OCF_LIGHT_XLARGE != 0 {
+        p / 4
+    } else if flags & OCF_LIGHT_LARGE != 0 {
+        p / 3
+    } else if flags & OCF_LIGHT_MEDIUM != 0 {
+        p / 2
+    } else if flags & OCF_LIGHT_SMALL != 0 {
+        p * 3 / 4
+    } else {
+        p
+    }
+}
+
+impl crate::Inventory {
+    /// The light its wearer bears ([`borne_light`]).
+    pub fn borne_light(&self, prototypes: &arcanum_formats::object::Prototypes) -> i32 {
+        borne_light(self.items.iter().filter(|i| (crate::FIRST_SLOT..=crate::LAST_SLOT).contains(&i.location)).filter_map(|i| {
+            let o = prototypes.get(i.prototype)?;
+            let most = crate::repair::item_max_hp(i, prototypes);
+            let condition = if most > 0 { 100 * (most - i.wear.damage) / most } else { 100 };
+            Some((prototypes.int(o, "item_flags").unwrap_or(0), condition))
+        }))
+    }
+}
+
 /// What the dark adds to a PC's Pick Locks (`spared_from` Expert, 2: 0x4c8954 shares melee's
 /// test), Spot Trap or Disarm Traps (from Apprentice, 1: 0x4c8982) roll of training `rank` at
 /// light `l` ([`dark_difficulty`]); `None` light (no schemes) nothing.
@@ -240,6 +300,10 @@ mod tests {
         assert_eq!(luminance([255, 255, 255]), 254, "76 + 150 + 28");
         assert_eq!(luminance([74, 80, 98]), 22 + 47 + 10);
         assert_eq!((dark_difficulty(254), dark_difficulty(79), dark_difficulty(0)), (0, 20, 30));
+        // Borne light (0x467e80): the largest wins; a worn-out lantern gives less.
+        assert_eq!(borne_light([(0x1000, 100), (0x200, 100)].into_iter()), OCF_LIGHT_XLARGE);
+        assert_eq!((borne_light([(0x1000, 60)].into_iter()), borne_light([(0x1000, 20)].into_iter()), borne_light([(0x200, 20)].into_iter())), (OCF_LIGHT_LARGE, OCF_LIGHT_SMALL, 0));
+        assert_eq!((borne_scale(30, OCF_LIGHT_XLARGE), borne_scale(30, OCF_LIGHT_LARGE), borne_scale(30, OCF_LIGHT_MEDIUM), borne_scale(30, OCF_LIGHT_SMALL), borne_scale(30, 0)), (7, 10, 15, 22, 30));
         assert_eq!((skill_dark(0, 1, Some(79)), skill_dark(1, 1, Some(0)), skill_dark(1, 2, Some(0)), skill_dark(2, 2, Some(0)), skill_dark(0, 1, None)), (20, 0, 30, 0, 0), "spared from the rank given; no light data, nothing");
         // A 3 x 3 light frame centred on its tile, its middle pixel 100 grey, a colour key around.
         let mut rgba = vec![0u8; 36];
