@@ -2690,22 +2690,17 @@ pub fn first_on_line(from: TileLoc, to: TileLoc, others: impl Iterator<Item = (N
     None
 }
 
-/// How much easier `victim` is to hit by `attacker` (0x4c8609-0x4c86dc, one amount): 50 when it
-/// is down (out of fatigue or hit points, 0x45d800; `critter_flags` 0x40 / 0x1000 not kept
-/// here); 30 when stunned (0x20) or, not in a fight (0x4b3d50), it neither sees nor hears the
-/// attacker (0x4af260 / 0x4af470: a blow from behind). Not built: knocked down (animation 7,
-/// 0x503e20: not kept on the host).
+/// How much easier `victim` is to hit by `attacker` (0x4c8609-0x4c86dc, one amount): by its
+/// state first ([`helpless_by_state`]); else 30 when, not in a fight (0x4b3d50), it neither sees
+/// nor hears the attacker (0x4af260 / 0x4af470: a blow from behind).
 fn helpless(w: &CombatWorld, attacker: &Seen, victim: &Seen) -> i32 {
-    let down = match (victim.player, victim.npc) {
-        (Some(_), _) => w.pc_down(victim) || w.pc_out(victim),
-        (None, Some(n)) => w.map.npc_down(n.sector, n.index),
-        _ => false,
+    let (down, flags) = match (victim.player, victim.npc) {
+        (Some(_), _) => (w.pc_down(victim) || w.pc_out(victim), 0),
+        (None, Some(n)) => (w.map.npc_down(n.sector, n.index), w.npc_int(n, "critter_flags")),
+        _ => (false, 0),
     };
-    if down {
-        return HELPLESS_DOWN;
-    }
-    if victim.stunned.is_some() {
-        return HELPLESS_UNAWARE;
+    if let Some(amount) = helpless_by_state(flags, down, false, victim.stunned.is_some()) {
+        return amount;
     }
     // Not fighting yet: the blow that starts its fight counts (builder's call for when 0x40000
     // is set).
@@ -2738,6 +2733,25 @@ pub fn line_critters_cost(line: &[TileLoc], living: impl Iterator<Item = (TileLo
 
 /// The `flags` of every PC prototype (13 of 13): shoot-through, seen through, cover.
 pub const PC_FLAGS: i32 = 0x4030;
+
+/// `critter_flags` 0x40: paralyzed (0x4c8642).
+pub const OCF_PARALYZED: i32 = 0x40;
+
+/// The helpless amount a target's state gives, in 0x4c8430's order: paralyzed
+/// ([`OCF_PARALYZED`], 0x4c8642) or down (0x45d800 at 0x4c8654) 50; knocked down (animation 7,
+/// 0x4c867b) or stunned (0x20 or [`Stunned`], 0x4c8684) 30; asleep ([`OCF_SLEEPING`], 0x4c8688)
+/// 50. PCs have no such flags here; knocked down is not kept on the host (always false).
+pub fn helpless_by_state(flags: i32, down: bool, knocked_down: bool, stunned: bool) -> Option<i32> {
+    if flags & OCF_PARALYZED != 0 || down {
+        Some(HELPLESS_DOWN)
+    } else if knocked_down || stunned || flags & OCF_STUNNED != 0 {
+        Some(HELPLESS_UNAWARE)
+    } else if flags & OCF_SLEEPING != 0 {
+        Some(HELPLESS_DOWN)
+    } else {
+        None
+    }
+}
 
 /// The two helpless amounts (0x4c864a / 0x4c86d9: 0x32, 0x1e).
 pub const HELPLESS_DOWN: i32 = 50;
@@ -3456,6 +3470,13 @@ mod tests {
 
     #[test]
     fn helpless_targets_are_easier_to_hit() {
+        assert_eq!(helpless_by_state(0, false, false, false), None);
+        assert_eq!(helpless_by_state(OCF_PARALYZED, false, false, false), Some(50), "paralyzed");
+        assert_eq!(helpless_by_state(0, true, false, false), Some(50), "down");
+        assert_eq!(helpless_by_state(OCF_STUNNED, false, false, false), Some(30), "stunned by flag");
+        assert_eq!(helpless_by_state(0, false, false, true), Some(30), "stunned by a blow");
+        assert_eq!(helpless_by_state(OCF_STUNNED | OCF_SLEEPING, false, false, false), Some(30), "stunned is tested before asleep");
+        assert_eq!(helpless_by_state(OCF_SLEEPING, false, false, false), Some(50), "asleep");
         let novice = Fighter { levels: vec![(SKILL_MELEE, 0)], ..Default::default() };
         let mut rng = HostRng::default();
         let hits = |d: &Fighter, rng: &mut HostRng| (0..2000).filter(|_| { let o = resolve(&novice, d, rng); o.hit || o.dodged }).count();
