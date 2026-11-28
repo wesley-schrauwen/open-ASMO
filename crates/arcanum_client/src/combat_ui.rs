@@ -245,6 +245,7 @@ fn apply_combat_deltas(
             let to = actors.iter().find(|a| a.0.net_id == *target).map(|(a, _)| (a.at, a.art, a.posture != crate::actors::Posture::Standing || a.knocked));
             if let Some((mut a, _)) = actors.iter_mut().find(|a| a.0.net_id == *attacker) {
                 a.action = Some((attack_anim(outcome.thrown, to.map(|t| t.1), to.is_some_and(|t| t.2)), 0.0));
+                a.swing = Some(outcome.speed);
                 if let Some(r) = to.and_then(|(at, ..)| facing(a.at, at)) {
                     a.rotation = r;
                 }

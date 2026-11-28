@@ -301,6 +301,8 @@ pub struct Actor {
     pub then: Option<u32>,
     /// Knocked down by a blow: it lies until the host says it got up (`LedgerDelta::GotUp`).
     pub knocked: bool,
+    /// The weapon speed of the swing it plays ([`arcanum_sim::combat::swing_frame_millis`]).
+    pub swing: Option<i32>,
 }
 
 /// Longest an action is held when its art does not load or finish.
@@ -524,7 +526,7 @@ fn apply_actor_deltas(
                 let rotation = CritterArt::from_id(art).rotation as usize;
                 let pc = matches!(kind, arcanum_sim::EntityKind::Pc { .. });
                 let prowling = pc && CritterArt::from_id(art).anim == arcanum_sim::prowl::ANIM_PROWL;
-                let mut actor = Actor { net_id, art, gait, own_gait: gait, pc, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling, action: dying.as_mut().is_some_and(|d| d.0.remove(&net_id)).then_some(((art.0 >> 6) & 0x1f, 0.0)), then: None, knocked: false };
+                let mut actor = Actor { net_id, art, gait, own_gait: gait, pc, at: position, rotation, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling, action: dying.as_mut().is_some_and(|d| d.0.remove(&net_id)).then_some(((art.0 >> 6) & 0x1f, 0.0)), then: None, knocked: false, swing: None };
                 // An NPC spawned lying, then again standing, gets up.
                 if !pc && lying.as_mut().is_some_and(|l| l.gets_up(net_id, art)) {
                     actor.action = Some((ANIM_GET_UP, 0.0));
@@ -1011,6 +1013,7 @@ fn place_actors(
     vfs: Option<Res<VfsResource>>,
     mut exists: Local<HashMap<String, bool>>,
     mut actors: Query<(&Actor, &mut ArtAnimation, &mut Transform)>,
+    frames: Res<Assets<ArtFrames>>,
 ) {
     let Some(client) = client else { return };
     let Some(origin) = client.origin else { return };
@@ -1038,7 +1041,10 @@ fn place_actors(
         let handle = assets.get_handle::<ArtFrames>(&path).unwrap_or_else(|| assets.load(path));
         let changed = animation.art != handle;
         animation.set(&handle, actor.rotation);
-        animation.frame_millis = walking.then_some(actor.gait.frame_millis);
+        // A swing plays at its weapon's speed (0x432700).
+        let swinging = actor.action.is_some_and(|(anim, _)| matches!(anim, 14 | 20 | 21));
+        let swing = actor.swing.filter(|_| swinging && !walking).and_then(|speed| frames.get(&handle).map(|f| arcanum_sim::combat::swing_frame_millis(f.frame_rate, speed)));
+        animation.frame_millis = if walking { Some(actor.gait.frame_millis) } else { swing };
         // Standing holds the frame the art id names; walking plays; falling, getting up,
         // attacks and deaths play once.
         let lying = actor.posture != Posture::Standing || (actor.action.is_some() && !walking);
@@ -1060,7 +1066,7 @@ mod tests {
 
     fn actor() -> Actor {
         let art = arcanum_sim::pc_art(0, true);
-        Actor { net_id: NetId(0), art, gait: Gait::human(17), own_gait: Gait::human(17), pc: true, at: t(10, 10), rotation: 4, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling: false, action: None, then: None, knocked: false }
+        Actor { net_id: NetId(0), art, gait: Gait::human(17), own_gait: Gait::human(17), pc: true, at: t(10, 10), rotation: 4, steps: VecDeque::new(), progress: 0.0, slide: Vec2::ZERO, posture: Posture::Standing, prowling: false, action: None, then: None, knocked: false, swing: None }
     }
 
     #[test]

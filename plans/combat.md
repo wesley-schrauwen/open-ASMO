@@ -383,7 +383,12 @@ of `combat_design.md` come after the original's rules work.
      object on the way. Built on the client: a blow's floats and knock-down wait for the swing's
      action frame (`ArtFrames::action_frame`; at most 1.5 s). Builder's call: the host still
      resolves at once.
-   - Not built: speed-scaled frame times, hit effects.
+   - Swing speed (`feat/swing-speed`, `combat::swing_frame_millis`, `AttackOutcome::speed`):
+     the attack goal's first state (0x432700, 0x43285e-0x4328c2) sets a frame's time to the
+     art's `1000 / rate` less 10 ms a point of weapon speed over 10 (0x465cf0: 10 bare-handed,
+     the weapon's + 5 trained), within 30-800 ms; the critter's speed stat plays no part. The
+     client plays the swing at that pace.
+   - Not built: hit effects.
    - The swing (`feat/attack-anim`, client `attack_anim`; corrected): 0x42b9c0 picks by the
      goal's target (0xd08), not the attacker: 14 for a thrown weapon (`weapon_flags` 0x40,
      0x42bacb, first; `AttackOutcome::thrown`); 21 at a target lying (animation 7-11) or of
