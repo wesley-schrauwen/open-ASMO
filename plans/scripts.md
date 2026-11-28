@@ -496,8 +496,18 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      rolls Spot Trap for the unspotted trap objects (type 17; not doors or containers) on the
      tile its next step enters, once a tile per walk; spotting one marks it, says
      `mes/trap.mes` 0 and stops the walk before the step. Traps a PC set (`flags` 0x1000000)
-     are known. Followers do not roll yet.
-   - **Not built:** stepping onto a trap object (what springs it was not found); the arrow
+     are known. Followers do not roll yet (the original's do: 0x427110 rolls for any walker,
+     a follower with its own Spot Trap; a leaderless NPC knows every trap a PC did not set).
+   - **Stepping onto a trap object** (built, `feat/step-on-traps`; 0x4305d0 at 0x430ca8-0x430d0f):
+     after a step onto a tile with a trap object (list mask 0x20000, the first only) the walk
+     ends there (0x430cf7) and the walker uses it (event 1, 0x430ce3: triggerer the walker,
+     attachee the trap; the answer ignored). The use runs the trap as above: the Spot Trap roll
+     when not spotted (a success keeps it, 0x4419d6), else it springs. After the run a trap
+     object whose script number is now 0 is destroyed (0x441a5f-0x441a80, field 0x14f the
+     type 17; through 0x43cca0, so its destroy event too). The original lets any walker spring
+     one (no type test; the mover's field 0x14 bits 6 clear, 0x430ca8, not decoded); here PCs
+     only (builder's call).
+   - **Not built:** the arrow
      trap's attack roll (0x4b3170 from its source object, 30007); recovered parts on a critical
      success (0x4bc9c0, table 0x5b5f80); setting traps (0x4bc480, table 0x5b5f60); the eye candy
      (`rules/TrapEyeCandy.mes` N × 10 + 0-2); the client's way to arm Disarm Traps (the bottom

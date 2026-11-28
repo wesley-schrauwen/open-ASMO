@@ -19,7 +19,11 @@
 //!   spotting it stops the walk before the step. Doors and containers are not checked this way.
 //!   NPCs know their traps (0x4bbfe0); the original's followers roll too (not built).
 //!
-//! Not built: stepping onto a trap object (what springs it was not found); the recovered trap
+//! - **Stepping onto a trap object** (0x4305d0, 0x430ca8-0x430d0f): the walk ends on its tile
+//!   and the PC uses it (event 1) ([`spring_stepped_traps`]). The original lets any walker do
+//!   it; here PCs only (builder's call).
+//!
+//! Not built: the recovered trap
 //! parts on a critical success for an Expert or Master (0x4bc9c0, table
 //! 0x5b5f80; the critical success roll 0x4c81a0 is not decoded); setting traps (0x4bc480);
 //! the eye candy (`rules/TrapEyeCandy.mes` N × 10 + 2 on a spotted trap); scenery and trap
@@ -144,6 +148,32 @@ pub fn spot_traps_walking(
             if let Some(text) = text {
                 outbox.0.push((controlled.0, LedgerDelta::ScriptMessage { text }));
             }
+        }
+    }
+}
+
+/// PCs that stepped onto a trap object this tick, and the tile ([`crate::walk`] stops them there).
+#[derive(Resource, Debug, Default)]
+pub struct SteppedOnTraps(pub Vec<(PlayerId, arcanum_formats::map::TileLoc)>);
+
+/// The first trap object (type 17) on tile `at`, not off or destroyed (0x430cba: list mask
+/// 0x20000, its first object only).
+pub fn trap_object_at(map: &LoadedMap, at: arcanum_formats::map::TileLoc) -> Option<(arcanum_formats::map::SectorId, u32)> {
+    let sector = at.sector();
+    let index = map.mobiles.get(&sector)?.iter().position(|o| {
+        o.object_type == arcanum_formats::object::TYPE_TRAP && crate::object_location(o) == Some(at) && map.prototypes.int(o, "flags").unwrap_or(0) & (crate::OF_OFF | crate::OF_DESTROYED) == 0
+    })?;
+    Some((sector, index as u32))
+}
+
+/// A PC that stepped onto a trap object uses it (0x4305d0 at 0x430ce3: event 1, the walker the
+/// triggerer; its answer ignored): the trap's script rolls the PC's Spot Trap if it has not
+/// spotted it, a spotted trap or a failed roll springs it, and a sprung trap object is then
+/// destroyed ([`crate::run_hook`]).
+pub fn spring_stepped_traps(mut stepped: ResMut<SteppedOnTraps>, mut map: ResMut<LoadedMap>, mut world: ResMut<WorldState>, mut host: crate::script_host::ScriptHost, mut outbox: ResMut<Outbox>) {
+    for (player, at) in std::mem::take(&mut stepped.0) {
+        if let Some((sector, index)) = trap_object_at(&map, at) {
+            host.hook(&mut world, &mut map, &mut outbox, crate::ScriptObject::Mobile { sector, index }, crate::EVENT_USE, player);
         }
     }
 }

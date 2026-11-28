@@ -2872,6 +2872,38 @@ mod tests {
     }
 
     #[test]
+    fn a_pc_stepping_onto_a_trap_object_springs_it() {
+        use arcanum_formats::object::{Object, TYPE_TRAP, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "Virgil", TileLoc { x: 70, y: 70 })]));
+        // A mechanical trap of 2 damage on (73, 70); the PC has no Spot Trap.
+        let sector = SectorId::new(1, 1);
+        let index = {
+            let mut map = sim.app.world_mut().resource_mut::<LoadedMap>();
+            let trap = Object::parse_instance(&ObjectBuilder::new(TYPE_TRAP).field("location", Value::Int64(Some(73 | (70i64 << 32)))).build()).unwrap();
+            let list = map.mobiles.entry(sector).or_default();
+            list.push(trap);
+            let index = list.len() as u32 - 1;
+            map.set_attachment(crate::ScriptObject::Mobile { sector, index }, crate::EVENT_USE, crate::Attachment { flags: 0, counters: [2, 2, 0, 0], number: 30001 });
+            index
+        };
+        let trap = arcanum_formats::script::Script { description: "Mechanical trap".into(), flags: crate::TRAP_MECHANICAL | arcanum_formats::script::RUN_ONCE, lines: vec![] };
+        sim.app.world_mut().resource_mut::<crate::Scripts>().0.get_or_insert_with(Default::default).insert(30001, trap);
+        send_move(&mut sim, 7, 1, &[(71, 70), (72, 70), (73, 70), (74, 70)]);
+        for _ in 0..ticks_for(4) {
+            sim.update();
+        }
+        assert_eq!(position(&mut sim, 7), TileLoc { x: 73, y: 70 }, "the walk ends on the trap (0x430cf7)");
+        let save = sim.app.world().resource::<WorldState>().0.clone().unwrap();
+        assert_eq!(save.players[&PlayerId(7)].blueprint.sheet.hp_damage, 2, "sprung on the PC");
+        let map = sim.app.world().resource::<LoadedMap>();
+        assert_eq!(map.attachment(crate::ScriptObject::Mobile { sector, index }, crate::EVENT_USE).number, 0, "run once");
+        assert_ne!(map.object_flags(sector, index, true).unwrap() & crate::OF_DESTROYED, 0, "the trap object destroyed (0x441a80)");
+    }
+
+    #[test]
     fn players_learn_which_npcs_their_pc_has_met() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());
