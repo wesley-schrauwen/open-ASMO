@@ -222,7 +222,7 @@ of `combat_design.md` come after the original's rules work.
    - A PC at 0 hit points lies down as an unconscious one does until healed (builder's call,
      replaced by step 11's owner's call).
    - Real data: all 2399 scripts run to an end.
-   - Not built: hit / miss events (7 / 8 not traced).
+   - Hit / miss events: built in step 12.
    - Fate on blows (`feat/fate-attacks`, `combat::Fate`): after the roll and the dodge 0x4b3170
      asks 0x4f5270 (field 0xfe): a PC attacker's "critical success on next attack" (option 2,
      0x4b36a2) makes the blow a critical hit whatever came before (0x4b36b4: flags | 0x6), used
@@ -422,16 +422,25 @@ of `combat_design.md` come after the original's rules work.
     extra, event, checked at 0x45da20).
    - Hit 7 / miss 8 on the PC's weapon (triggerer the attacker; 0x4b37a3 / 0x4b3972), then
      critical hit 34 / miss 35 (0x4b37cd / 0x4b399c); critter hits 26 on the NPC attacker
-     (triggerer the victim; 0x4b37fc); leader killing 20 on each follower of the killing PC
+     (triggerer the victim; 0x4b37fc). The weapon item is the attachee, the victim the extra;
+     unarmed blows run none (0x4b3778-0x4b378b). The original runs 7 before the damage
+     (0x4b37a3) and ignores every answer. Ranged blows run them at 0x4b2f90 / 0x4b3119 (34 / 35
+     there only for weapon type 5) and a projectile's on arrival, on `projectile_parent_weapon`
+     (0x4b2b7f / 0x4b2f06, from 0x4b2870). Leader killing 20 on each follower of the killing PC
      (triggerer the dead, 0x45db95). The original ignores their answers; here they run after
      the attack rather than before its damage.
    - Taking damage 23 on the NPC victim (0x4b446b, checked: a 0 answer jumps past the damage,
-     0x4b447f): the damage waits a tick for the answer.
+     0x4b447f): the damage waits a tick for the answer. The original runs it for any victim,
+     PCs too (0x4b43ed-0x4b4446 tests no type), not for damage a script's run deals (guard
+     0x5fc26c); PCs carry no scripts here, so for them it is nothing.
    - Will kill on sight 22 on a noticing NPC (0x4ae179, checked: a 0 answer is "not hostile",
      0x4ae183): the fight starts after its answer.
    - Not built: NPCs' weapons' scripts (their items are no script objects), 15 / 16 (0x4a8570,
-     their order unclear), 2 destroy (0x43cd0e), 23 on PCs, 22 in hostility checks other than
-     noticing.
+     their order unclear), 2 destroy for items destroyed in fights (0x43cd0e; script action 0x44
+     runs it: `feat/destroy-event`), 22 in hostility checks other than noticing.
+   - Finding, not built: 0x4b5a46 runs event 18 on a victim (triggerer the attacker, extra the
+     weapon) in the damage path after 0x45d8d0; a 0 answer, or flags 0xda tests by the
+     critical's 0x400000 (0x4b5a03-0x4b5a25), lead to 0x45a540. Its meaning not traced.
    - Real data: prototypes attach 7 (10), 8 (7), 26 (9), 23 (3), 22 (1).
 13. **Ammunition** (built, `feat/ammunition`).
    - Findings: ammunition is carried items of type 6 (`ammo_quantity` field 0x8e, `ammo_type`
@@ -461,7 +470,9 @@ of `combat_design.md` come after the original's rules work.
      longer fits taken off (0x4651d4). The fit test's race comes from the art's body (builder's
      call).
    - Findings: a critical miss rolls its effects once (0x4b3770 skips the hit path at
-     0x4b3778); resurrection (0x49d100 → 0x4a6010) keeps poison (0x4a609a / 0x4a60ab), as built.
+     0x4b3778); the reset 0x4a6010 keeps poison (0x4a609a / 0x4a60ab). Correction: 0x49d100 is no
+     resurrection: it restores a multiplayer character joining a game (sole caller 0x49cc70,
+     the `.mpc` loader), keeping its poison over the reset (0x49d272 / 0x49d288).
    - The PC's auto-switch (0x4b83e0, after a shot short of rounds at 0x4b32a9 and a destroyed
      weapon at 0x4b5770) runs only with the "auto switch" option on (0x4b8330: key at 0x5b4cbc
      in the settings table 0x739e70, a missing key reads 0; multiplayer: per-player flag 0x400).
@@ -609,7 +620,8 @@ of `combat_design.md` come after the original's rules work.
      its damage at +0x44): cut by damage resistance (worn armour), spared by `spell_flags`
      0x10000, floated "HT n" (0x4b5088, `LedgerDelta::Hurt`). 0x433020 is a particle effect
      on the target (not built); the struct's 0x80 flag changes nothing found.
-   - Not built: poison kept through resurrection (0x49d272).
+   - Poison through resurrection: cleared (owner's call, step 11). 0x49d272 is the
+     multiplayer join's restore, not resurrection.
 20. **Barks in fights** (`feat/critical-praise` and on).
    - A PC's critical hit (0x4b374b → 0x4b6b90): a hit (flag 0x2, 0x4b6bee) and critical (0x4,
      0x4b6c0b) on the target meant, not on its own follower (0x4b6be4): half the time
