@@ -694,6 +694,9 @@ pub fn fumble_chance(chance: i32, weapon: Option<&Weapon>) -> i32 {
     c.max(2)
 }
 
+/// The critical miss charts whose weapons can blow up (0x4b650f).
+pub const EXPLODING_CHARTS: std::ops::RangeInclusive<i32> = 6..=8;
+
 /// What half the critical misses do to the attacker (0x4b6410), `Y` its weapon's critical miss
 /// effect: the weapon destroyed (chart not 5, a roll up to `Y + 1`); a shooter's ammunition, all
 /// of it (up to `Y + 1`) or five shots' worth (else up to `Y + 11`); then a critical of its own on
@@ -703,6 +706,12 @@ fn fumble(attacker: &Fighter, weapon: &Weapon, out: &mut AttackOutcome, rng: &mu
     let y = if armed { weapon.miss_effect } else { 0 };
     let chart = if armed { weapon.miss_chart } else { 5 };
     if chart != 5 && rng.range(1, 100) <= y + 1 {
+        out.effects |= WEAPON_DESTROYED;
+    }
+    // Charts 6-8 (the grenade launcher, flame throwers, the Inferno Hammer, tesla weapons) blow
+    // up on another roll up to `Y + 1` (0x4b650f-0x4b6531, flag 0x10000): destroyed too
+    // (0x4b4f28 adds 0x8000), with effect 0x37 on the attacker (0x44c820, not built).
+    if EXPLODING_CHARTS.contains(&chart) && rng.range(1, 100) <= y + 1 {
         out.effects |= WEAPON_DESTROYED;
     }
     if armed && weapon.uses_ammo() {
@@ -3871,6 +3880,18 @@ mod tests {
         fumble(&shooter, &gun, &mut out, &mut rng);
         assert_eq!(out.effects & (WEAPON_DESTROYED | AMMO_LOST_ALL), WEAPON_DESTROYED | AMMO_LOST_ALL);
         assert_eq!(out.fumble_items & (WEAPON_DAMAGED | WEAPON_DROPPED), 0, "a destroyed weapon is not worn or dropped");
+        // Charts 6-8 roll twice to be destroyed (Y 0: about 2 in 100, against 1 in 100).
+        let destroyed = |chart: i32, rng: &mut HostRng| {
+            let w = Weapon { miss_chart: chart, ..Default::default() };
+            let f = Fighter { weapon: Some(w.clone()), crit_chart: 5, ..Default::default() };
+            (0..40_000).filter(|_| {
+                let mut out = AttackOutcome::default();
+                fumble(&f, &w, &mut out, rng);
+                out.effects & WEAPON_DESTROYED != 0
+            }).count()
+        };
+        let (plain, flame) = (destroyed(1, &mut rng), destroyed(7, &mut rng));
+        assert!((300..500).contains(&plain) && (650..950).contains(&flame), "{plain} / {flame}");
         // A melee base of 100 on itself: its weapon worn and knocked away, its armour worn.
         let mut out = AttackOutcome::default();
         fumble(&pc, &sword, &mut out, &mut rng);

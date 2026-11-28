@@ -484,6 +484,14 @@ of `combat_design.md` come after the original's rules work.
      least 2. Half of them (0x4b6410) have effects with `Y` the weapon's critical miss effect:
      destroyed (chart not 5, up to `Y + 1`); a shooter's ammunition all lost (up to `Y + 1`) or
      five shots' worth (up to `Y + 11`); then the attacker's own critical on itself.
+   - Blowing up (`feat/weapon-explodes`, `combat::EXPLODING_CHARTS`): a weapon of critical miss
+     chart 6, 7 or 8 (the Grenade Launcher; Bronwyck's Gun, the Flame Thrower, the Inferno
+     Hammer; the Tesla Rod and Gun) rolls again up to `Y + 1` (0x4b650f-0x4b6531, flag
+     0x10000): destroyed (0x4b4f28 adds 0x8000, float 22) with effect 0x37 (0x44c820 →
+     0x44c7a0, the 0x5e2fb0 effects: not built). Real data: every weapon's `Y` is 0.
+   - Finding: a weapon of object `flags` 0x400000 is never worn, destroyed or blown up
+     (0x4b4e81 clears 0x4000 / 0x8000 / 0x10000; armour has no such test). No prototype has
+     it; carried items keep no flags of their own here. Not built.
    - Built: all of that but knocking out and the real-time stun count (a stun ends with the
      fight, builder's call); knocked down plays the fall and the get-up on the client.
      Floats "Stunned", "Knocked down", "Weapon destroyed", "Ammo lost".
@@ -497,7 +505,7 @@ of `combat_design.md` come after the original's rules work.
      to its tile (not when destroyed: 0x8000 first), its armour worn where it struck. Floats over
      the attacker.
    - Not built: knocking out (built in step 17), 0x4b4390's second 0x4b5f40 call for the same
-     critical miss (unverified), 0x4b65d0 (flags 0x20000 / 0x40000), the critical miss's spell weapons (0x4b65d0), 0x44c820.
+     critical miss (unverified), 0x4b65d0 (flags 0x20000 / 0x40000), the critical miss's spell weapons (0x4b65d0).
 15. **Sight** (built, `feat/sight`).
    - Findings (0x4af260, returns 0 when seen; callers test `== 0`): 1000 for a fleeing, dead or
      stunned watcher (`critter_flags` 0x10a0) or an invisible target (unless the watcher has
