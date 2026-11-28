@@ -26,7 +26,7 @@
 //!   damage does; a PC with no hit points left takes no turns.
 //!
 //! Not built yet: stunning, knocking down and knocking out, scars, dropped and damaged items,
-//! critical misses' effects, called shots, the light, range and
+//! critical misses' effects, the light, range and
 //! cover terms, ammunition, PC death.
 
 use arcanum_formats::map::TileLoc;

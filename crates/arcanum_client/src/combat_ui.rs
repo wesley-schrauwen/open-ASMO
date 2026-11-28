@@ -25,7 +25,7 @@
 //!   an NPC `hoverattack` (555).
 //!
 //! Not built: the hit effects (AnimFX by damage, 0x433020), projectiles (0x4b39b0),
-//! called shots, the button's pressed look.
+//! the button's pressed look.
 
 use arcanum_sim::{FloatColour, LedgerDelta, NetId, PlayerIntent};
 use bevy::prelude::*;
