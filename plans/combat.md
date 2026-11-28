@@ -761,10 +761,18 @@ of `combat_design.md` come after the original's rules work.
    - Terms for weapon skills: the weapon's to-hit bonus and 5 a Strength point short (built);
      the target helpless −50 (dead or down, `critter_flags` 0x40 / 0x1000) or −30 (stunned
      0x20, or it sees and hears no attacker: 0x4af260 / 0x4af470); a called-shot table
-     (0x5b5798, not built); armour; ranged only: past the weapon's range a sure miss, 5 a tile
+     (0x5b5798: built, `feat/called-shots`); armour; ranged only: past the weapon's range a sure miss, 5 a tile
      past half the attacker's Perception (not for a Master of the skill), the missile line's
      cost (0x4ade00) or a sure miss with a blocker; light `(255 − L) × 30 / 255` (melee
      Experts and better spared); injuries (built).
+   - Called shots (`feat/called-shots`, `PlayerIntent::Aim`, `Fighter::aim`): an aimed blow (A
+     flag 0x1, part at A+0x40, 0x4b3510 / 0x4b3529) is harder by table 0x5b5798 (0x4b5f30 at
+     0x4c870e, subtracted at 0x4c8739): head 50, arms or legs 30, the torso not aimable; for
+     weapon skills (table bit 0x1). Its critical chance gains a fifth of that (0x4c81f8-0x4c821d:
+     10 or 6), its critical base 10 (0x4b6088), and it lands where aimed (0x4b31ee). An aim lasts
+     one blow (0x4b23b0 zeroes it). Not built: the 2/3 cut of the penalty under a condition
+     not settled (0x4c871a-0x4c8737), the client's way to aim (the original's not found: owner's
+     call).
    - Armour (`feat/armour-class`, `Fighter::armour_class`): half the target's armour class in
      the attacker's chance (0x4c875c-0x4c878b). Armour class (0x43d880): the `AC` field, worn
      armour's `armor_ac_adj` + `armor_magic_ac_adj` (0x465ba0, the magick part unscaled), and

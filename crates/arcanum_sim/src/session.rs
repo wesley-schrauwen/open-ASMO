@@ -105,6 +105,13 @@ pub fn handle_intents(
             PlayerIntent::Prowl { on } => prowls.0.push((player, on)),
             PlayerIntent::Attack { target, seq } => fights.attacks.push((player, target, seq)),
             PlayerIntent::EndTurn => fights.end_turn.push(player),
+            PlayerIntent::Aim { part } => {
+                if crate::combat::aimed_part(part).is_some() {
+                    fights.aims.insert(player, part);
+                } else {
+                    fights.aims.remove(&player);
+                }
+            }
             PlayerIntent::Choose { option } => talks.choose.push((player, option)),
             PlayerIntent::EndTalk => talks.end.push(player),
             PlayerIntent::Vote { id, yes } => votes.0.push((player, id, yes)),

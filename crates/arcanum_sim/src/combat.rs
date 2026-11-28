@@ -348,6 +348,8 @@ pub struct Fighter {
     pub knocked_down: bool,
     /// Its Backstab level and training rank.
     pub backstab: (i32, u8),
+    /// A called shot's part (A+0x40 with flag 0x1, 0x4b3510 / 0x4b3529).
+    pub aim: Option<BodyPart>,
     /// A fate point waits on this blow (attackers only, 0x4b3697-0x4b36f5): a PC's "critical
     /// success on next attack" (option 2) makes it a critical hit whatever the roll and the
     /// dodge; a PC target's "critical failure on next opponent attack" (3) a critical miss.
@@ -596,7 +598,7 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
     // The defender's armour: half its class, in the attacker's chance (0x4c875c-0x4c878b).
     // An unnoticed stab by one trained in Backstab skips it (0x4c8743-0x4c875a).
     let armour = if attacker.stab == Stab::Unnoticed && attacker.backstab.1 >= 1 { 0 } else { defender.armour_class.max(0) / 2 * chance / 100 };
-    let difficulty = -weapon.to_hit + 5 * short + injury_difficulty(attacker.injuries) + armour - defender.helpless + attacker.situation;
+    let difficulty = -weapon.to_hit + 5 * short + injury_difficulty(attacker.injuries) + armour - defender.helpless + attacker.situation + attacker.aim.map_or(0, called_shot_penalty);
     let mut out = AttackOutcome { multiplier: 100, ..Default::default() };
     let missed = match attacker.fate {
         Fate::CriticalHit => false,
@@ -619,7 +621,9 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
     }
     // A combat skill's critical chance is a twentieth of it (0x4c81a0: skill flag 0x400), plus
     // the weapon's magick part (unscaled: 0x461590 not read).
-    out.critical = rng.range(1, 100) <= chance / 20 + weapon.crit_chance + stab_critical(attacker.stab, attacker.backstab, defender.level);
+    // An aimed blow's critical chance takes a fifth of its penalty (0x4c81f8-0x4c821d).
+    let aimed = attacker.aim.map_or(0, called_shot_penalty) / 5;
+    out.critical = rng.range(1, 100) <= chance / 20 + weapon.crit_chance + stab_critical(attacker.stab, attacker.backstab, defender.level) + aimed;
     if attacker.fate == Fate::CriticalHit {
         out.critical = true;
     }
@@ -650,7 +654,8 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
     }
     if out.critical {
         out.multiplier = critical_multiplier(attacker, defender, &weapon, rng);
-        let part = BodyPart::of_roll(rng.range(1, 100));
+        // An aimed blow lands where it was aimed (0x4b31ee), else where the roll says (0x4b65a0).
+        let part = attacker.aim.unwrap_or_else(|| BodyPart::of_roll(rng.range(1, 100)));
         out.part = part.number();
         out.effects = critical_effects(attacker, defender, &weapon, part, rng);
         out.injured = critical_injuries(attacker, defender, &weapon, part, rng);
@@ -768,7 +773,29 @@ pub fn critical_effects(attacker: &Fighter, defender: &Fighter, weapon: &Weapon,
 /// The base of a critical hit's rolls (0x4b5f40): the weapon's critical effect, none for ranged
 /// weapons.
 fn critical_base(attacker: &Fighter, weapon: &Weapon) -> i32 {
-    if attacker.weapon.is_some() && weapon.range <= 1 { weapon.crit_effect } else { 0 }
+    let base = if attacker.weapon.is_some() && weapon.range <= 1 { weapon.crit_effect } else { 0 };
+    // Aimed: 10 more (0x4b6084-0x4b6088).
+    base + if attacker.aim.is_some() { 10 } else { 0 }
+}
+
+/// What aiming at `part` adds to a blow's difficulty (table 0x5b5798 through 0x4b5f30,
+/// subtracted at 0x4c8739): the head 50, arms or legs 30; the torso cannot be aimed at.
+pub fn called_shot_penalty(part: BodyPart) -> i32 {
+    match part {
+        BodyPart::Torso => 0,
+        BodyPart::Head => 50,
+        BodyPart::Arms | BodyPart::Legs => 30,
+    }
+}
+
+/// The part a called shot of number `part` aims at (1 head, 2 arms, 3 legs; else none).
+pub fn aimed_part(part: u8) -> Option<BodyPart> {
+    match part {
+        1 => Some(BodyPart::Head),
+        2 => Some(BodyPart::Arms),
+        3 => Some(BodyPart::Legs),
+        _ => None,
+    }
 }
 
 /// The multiplier of a critical hit (0x4b5f40): × 3 on a roll up to the base + 10, else × 2 on a
@@ -1003,6 +1030,8 @@ impl Encounter {
 pub struct CombatRequests {
     pub attacks: Vec<(PlayerId, NetId, u32)>,
     pub end_turn: Vec<PlayerId>,
+    /// The part each PC aims its next blow at ([`aimed_part`]; used up on it).
+    pub aims: std::collections::BTreeMap<PlayerId, u8>,
 }
 
 /// Fights started elsewhere (dialogue `co`, script action 0x24): the NPC and whom it attacks.
@@ -1341,6 +1370,7 @@ impl CombatWorld<'_, '_> {
                 level: sheet.level,
                 stab: Stab::None,
                 fate: Fate::None,
+                aim: None,
                 injuries: sheet.injuries,
                 helmet: item(inv, HELMET_SLOT).is_some(),
                 undead: false,
@@ -1377,6 +1407,7 @@ impl CombatWorld<'_, '_> {
             level: npc_stat(o, prototypes, 0x11),
             stab: Stab::None,
             fate: Fate::None,
+            aim: None,
             injuries: prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_INJURIES,
             helmet: item(&inv, HELMET_SLOT).is_some(),
             undead: prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_UNDEAD != 0,
@@ -3169,7 +3200,9 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
         (None, Some(p)) if w.consume_fate(p, FATE_OPPONENT_FAILS) => Fate::CriticalMiss,
         _ => Fate::None,
     };
-    let fighter = &Fighter { situation, stab, fate, ..fighter.clone() };
+    // A PC's aim lasts one blow (0x4b23b0 zeroes A+0x40); weapon skills only (table bit 0x1).
+    let called = attacker.player.and_then(|p| w.requests.aims.remove(&p)).and_then(aimed_part);
+    let fighter = &Fighter { situation, stab, fate, aim: called, ..fighter.clone() };
     let mut outcome = resolve(fighter, &defender, &mut w.rng);
     outcome.thrown = fighter.skill() == SKILL_THROWING;
     outcome.speed = fighter.speed();
@@ -3768,6 +3801,20 @@ mod tests {
         assert!((0..200).all(|_| { let o = resolve(&fated, &nimble, &mut rng); o.hit && o.critical && !o.dodged }), "hit, critical, never dodged");
         let doomed = Fighter { levels: vec![(SKILL_MELEE, 20)], fate: Fate::CriticalMiss, ..Default::default() };
         assert!((0..200).all(|_| { let o = resolve(&doomed, &Fighter::default(), &mut rng); !o.hit && o.fumbled }), "a critical miss");
+    }
+
+    #[test]
+    fn a_called_shot_is_harder_and_lands_where_aimed() {
+        let mut rng = HostRng::default();
+        let fighter = Fighter { levels: vec![(SKILL_MELEE, 4)], ..Default::default() };
+        let hits = |f: &Fighter, rng: &mut HostRng| (0..2000).filter(|_| resolve(f, &Fighter::default(), rng).hit).count();
+        let head = Fighter { aim: Some(BodyPart::Head), ..fighter.clone() };
+        let (plain, aimed) = (hits(&fighter, &mut rng), hits(&head, &mut rng));
+        assert!(plain > 850 && aimed < 50, "45 % plain, 0 % at the head (45 - 50): {plain} {aimed}");
+        let legs = Fighter { levels: vec![(SKILL_MELEE, 20)], aim: Some(BodyPart::Legs), ..Default::default() };
+        let crits: Vec<AttackOutcome> = (0..2000).map(|_| resolve(&legs, &Fighter::default(), &mut rng)).filter(|o| o.critical).collect();
+        assert!(!crits.is_empty() && crits.iter().all(|o| o.part == BodyPart::Legs.number()), "criticals land on the legs");
+        assert_eq!((called_shot_penalty(BodyPart::Head), called_shot_penalty(BodyPart::Arms), aimed_part(0), aimed_part(1)), (50, 30, None, Some(BodyPart::Head)));
     }
 
     #[test]
