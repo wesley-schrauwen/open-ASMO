@@ -435,8 +435,14 @@ of `combat_design.md` come after the original's rules work.
      0x5fc26c); PCs carry no scripts here, so for them it is nothing.
    - Will kill on sight 22 on a noticing NPC (0x4ae179, checked: a 0 answer is "not hostile",
      0x4ae183): the fight starts after its answer.
-   - Not built: NPCs' weapons' scripts (their items are no script objects), 15 / 16 (0x4a8570,
-     their order unclear), 2 destroy for items destroyed in fights (0x43cd0e; script action 0x44
+   - Start combat 15 (`feat/start-combat-event`, `EVENT_START_COMBAT`): 0x4a8570 (from the NPC
+     think 0x4a84f0) runs it on every think of a leaderless NPC in a fight (0x4b3d50: `0xda`
+     bit 0x40000), triggerer its target, the answer ignored (0x4a86ac); in real time end
+     combat 16 first (0x4a866b, only when 0x5fc22c is 0). 13 / 14 are the edges (0x4aae29 /
+     0x4aaf32). Here: 15 once at the start of each of its turns (builder's call: the
+     original's think rate in turn-based play not traced); 16 never (turn-based only), not
+     for followers, none without a player behind the target.
+   - Not built: NPCs' weapons' scripts (their items are no script objects), 2 destroy for items destroyed in fights (0x43cd0e; script action 0x44
      runs it: `feat/destroy-event`), 22 in hostility checks other than noticing.
    - Finding, not built: 0x4b5a46 runs event 18 on a victim (triggerer the attacker, extra the
      weapon) in the damage path after 0x45d8d0; a 0 answer, or flags 0xda tests by the
