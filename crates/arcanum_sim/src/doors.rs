@@ -847,6 +847,21 @@ mod tests {
         }
 
         #[test]
+        fn a_fate_point_picks_a_lock_without_the_skill() {
+            let dir = tempfile::tempdir().unwrap();
+            write_map(dir.path());
+            let mut sim = booted(dir.path(), &[(7, t(89, 80))], BTreeMap::new());
+            // "Critical success at Pick locks" waiting (0x4c7365): no skill, yet it gives.
+            sim.app.world_mut().resource_mut::<WorldState>().0.as_mut().unwrap().players.get_mut(&PlayerId(7)).unwrap().blueprint.sheet.fate_pending = crate::fate_bit(crate::FATE_PICK_LOCKS);
+            sim.take_deltas();
+            sim.receive([(PlayerId(7), PlayerIntent::PickLock { tool: None, target: crate::LockTarget::Door(LOCKED), seq: 0 })]);
+            sim.update();
+            let deltas = sim.take_deltas();
+            assert!(deltas.contains(&(PlayerId(7), LedgerDelta::SkillResult { message: crate::PICK_SUCCEEDED })), "{deltas:?}");
+            assert_eq!(sim.app.world().resource::<WorldState>().0.as_ref().unwrap().players[&PlayerId(7)].blueprint.sheet.fate_pending, 0, "used up");
+        }
+
+        #[test]
         fn the_unlocking_cantrip_unlocks_the_door_and_costs_fatigue() {
             let dir = tempfile::tempdir().unwrap();
             write_map(dir.path());

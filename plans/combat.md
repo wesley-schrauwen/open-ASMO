@@ -228,6 +228,11 @@ of `combat_design.md` come after the original's rules work.
      0x4b36a2) makes the blow a critical hit whatever came before (0x4b36b4: flags | 0x6), used
      up on that blow; else a PC target's "critical failure on next opponent attack" (3, 0x4b36e0)
      turns an NPC's blow into a critical miss (0x4b36f2-0x4b36f5 → 0x4b6410).
+   - Fate on skills (`feat/fate-skills`, `take_fate`): 0x4c7160 asks it for PCs after the roll
+     (0x4c72ef-0x4c737c): Gambling 6, Heal 7, Pick pocket 8, Pick locks 10, Disarm traps 11
+     (Repair 9 too), each making the roll a critical success (0x4c7388). Built for Pick pocket,
+     Pick locks and Disarm traps. Not built: Repair (here no roll: it restores by its chance),
+     Gambling, Heal (no rolls kept).
 5. **Noticing** (built, `feat/combat-notice`).
    - Every 15 ticks (builder's call: the original's noticing is in its target search 0x4ab460) each NPC not fighting,
      following, talking or dead looks for a PC within reach (`clamp(PE, 1, 10)` tiles, Perception

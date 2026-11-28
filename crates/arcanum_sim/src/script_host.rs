@@ -1322,6 +1322,11 @@ impl ScriptHost<'_, '_> {
     /// Runs the script of an item `player`'s PC carries, for `event` (wield 24, unwield 25):
     /// the item is the script's own object, the PC the triggerer (0x4677b0 / 0x467cb0). The
     /// answer is ignored, as the original's is; the item's script counters are not kept.
+    /// The sheets changed this tick, to send on ([`ScriptSheets`]).
+    pub fn changed_sheets(&mut self) -> &mut ScriptSheets {
+        &mut self.changed_sheets
+    }
+
     pub fn item_hook(&mut self, world: &mut WorldState, map: &mut LoadedMap, outbox: &mut crate::Outbox, player: PlayerId, prototype: u32, event: u32) -> HookResult {
         let Some(mut attachment) = map.prototypes.get(prototype).and_then(|p| attachments(p, &map.prototypes).get(&event).copied()) else { return HookResult::RunDefault };
         if attachment.number == 0 {
