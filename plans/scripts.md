@@ -374,8 +374,10 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      sent (`ObjectArt`), redrawn.
    - **0x2f skill level** (0x448374): PCs the rules' level; NPCs points × 4 up to 20 (their stat
      cap not applied).
-   - **0x44 destroy** (0x448d19 → 0x43cca0): flag 0x1 (hidden, not blocking, NPCs gone). The
-     destroy event (2) is not run.
+   - **0x44 destroy** (0x448d19 → 0x43cca0): flag 0x1 (hidden, not blocking, NPCs gone). Not
+     one destroyed already (0x43ccfa); its destroy event (2) first, itself the triggerer and
+     attachee (0x43cd0e), "skip" keeping it (0x43cd18; `feat/destroy-event`). Real data: eight
+     objects of the start map's loaded sectors attach it (containers, generic items, an NPC).
    - **0x6e / condition 0x2e**: flip / test entry N of the 256-entry table 0x5fc350 (bit 0x80),
      kept as `ScriptGlobals::switches`. Its other users read objects' bits 21+ (probably monster
      generators; not traced).
@@ -516,7 +518,9 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      original's result 4; its message is not shown). Picking, keys and the Unlocking spell do
      not run it.
    - **Not built:** examine (0, 0x57cd60: a PC only, before the description; "skip" shows
-     none) — there is no examine yet; destroy (2, 0x43cca0, before; "skip" keeps the object).
+     none) — there is no examine yet. Destroy (2) runs for
+     action 0x44 (`feat/destroy-event`); the original's other 56 callers of 0x43cca0 (a
+     weapon destroyed in a fight, an item worn to nothing, 0x43f1c0) do not run it here.
 4n. **The written window** (built, `feat/written-windows`; client `written_window`).
    - Actions 0x40 (book), 0x41 (image: the number is its interface art) and 0x72 (plaque) send
      `LedgerDelta::Written { kind, line }` to the reader's player (they went to the message box
