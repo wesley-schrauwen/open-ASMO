@@ -67,7 +67,7 @@ of `combat_design.md` come after the original's rules work.
 - **Resistance** (0x4b6860): type by table 0x5b5804 (damage, poison, electrical, fire,
   damage); fatigue three quarters; damage less its percent.
 - **Critical multiplier** (0x4b5f40): `X` the weapon's field 0x83 (`weapon_magic_crit_hit_effect`,
-  not for ranged weapons) + 10 on a called shot; × 3 on a roll up to `X + 10`, else × 2 on a
+  not for ranged weapons) + 10 on a called shot (dead in the original); × 3 on a roll up to `X + 10`, else × 2 on a
   second up to `X + 30`, else × 1.5 (checked: + 0xa, + 0x14, + 0x1e steps); an NPC's on a PC
   × 1.5.
 - **Critical effects** (0x4b5f40 sets bits, 0x4b4390 applies them; not for `critter_flags` 0x4):
@@ -761,18 +761,16 @@ of `combat_design.md` come after the original's rules work.
    - Terms for weapon skills: the weapon's to-hit bonus and 5 a Strength point short (built);
      the target helpless −50 (dead or down, `critter_flags` 0x40 / 0x1000) or −30 (stunned
      0x20, or it sees and hears no attacker: 0x4af260 / 0x4af470); a called-shot table
-     (0x5b5798: built, `feat/called-shots`); armour; ranged only: past the weapon's range a sure miss, 5 a tile
+     (0x5b5798: dead in the original, not built: see below); armour; ranged only: past the weapon's range a sure miss, 5 a tile
      past half the attacker's Perception (not for a Master of the skill), the missile line's
      cost (0x4ade00) or a sure miss with a blocker; light `(255 − L) × 30 / 255` (melee
      Experts and better spared); injuries (built).
-   - Called shots (`feat/called-shots`, `PlayerIntent::Aim`, `Fighter::aim`): an aimed blow (A
-     flag 0x1, part at A+0x40, 0x4b3510 / 0x4b3529) is harder by table 0x5b5798 (0x4b5f30 at
-     0x4c870e, subtracted at 0x4c8739): head 50, arms or legs 30, the torso not aimable; for
-     weapon skills (table bit 0x1). Its critical chance gains a fifth of that (0x4c81f8-0x4c821d:
-     10 or 6), its critical base 10 (0x4b6088), and it lands where aimed (0x4b31ee). An aim lasts
-     one blow (0x4b23b0 zeroes it). Firearms from Expert pay two thirds (`feat/aimed-firearms`:
-     0x4c871a tests the tech index, stored at 0x4c84aa, for 1, and 0x4c871f the rank, 0x4c84d6,
-     for 2). Not built: the client's way to aim (the original's not found: owner's call).
+   - Called shots are dead code in the original (not built; #214 / #215 removed by
+     `feat/no-called-shots`). A blow is aimed only if its hit location (A+0x40) is set before
+     0x4b3170 (0x4b31ee: set → flag 0x1; unset → 0x4b65a0 rolls one). No caller sets it: a
+     ranged blow passes 0 (0x42ac82 into 0x4b3c00); a melee blow passes the goal's +0x88
+     (0x42a658 into 0x4b3bb0), zeroed at 0x44d46e and given no value by the attack goal's pusher
+     (0x434b00). No UI strings for aiming. Untraced: goals restored from a save or the network.
    - Armour (`feat/armour-class`, `Fighter::armour_class`): half the target's armour class in
      the attacker's chance (0x4c875c-0x4c878b). Armour class (0x43d880): the `AC` field, worn
      armour's `armor_ac_adj` + `armor_magic_ac_adj` (0x465ba0, the magick part unscaled), and

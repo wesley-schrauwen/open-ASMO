@@ -51,9 +51,6 @@ pub enum PlayerIntent {
     /// Attack critter `target` ([`crate::combat`]): starts a fight if none runs; on the PC's
     /// turn it strikes, walking next to it first for melee. `seq` is the move sent with it.
     Attack { target: crate::NetId, seq: u32 },
-    /// Aim the PC's next blow at body part `part` (1 head, 2 arms, 3 legs; 0 takes it back): a
-    /// called shot ([`crate::combat::aimed_part`]).
-    Aim { part: u8 },
     /// End the PC's turn in a fight.
     EndTurn,
     /// Cast `spell` on a door or container from where the PC stands ([`crate::magick`]).
