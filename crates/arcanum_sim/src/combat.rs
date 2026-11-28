@@ -539,6 +539,10 @@ pub struct AttackOutcome {
     /// A thrown weapon's blow (the attack animation 14, 0x42bacb).
     #[serde(default)]
     pub thrown: bool,
+    /// The attacker's weapon speed (0x465cf0: 10 bare-handed; the weapon's + 5 when trained),
+    /// for the swing's frame time ([`swing_frame_millis`]).
+    #[serde(default)]
+    pub speed: i32,
 }
 
 /// [`AttackOutcome::effects`]: stunned (`combat.mes` 16, `critter_flags` 0x20), knocked down
@@ -3130,6 +3134,13 @@ pub fn dark_to_hit(skill: usize, rank: u8, critter_flags: i32, dark_sight: bool,
     p.max(0)
 }
 
+/// A swing's time a frame in milliseconds (0x432700, 0x43285e-0x4328c2): the art's
+/// `1000 / rate`, 10 ms less a point of weapon speed over 10, kept within 30-800.
+pub fn swing_frame_millis(frame_rate: u32, speed: i32) -> u32 {
+    let base = 1000 / frame_rate.max(1) as i32;
+    (base - 10 * (speed - 10)).clamp(30, 800) as u32
+}
+
 /// A fate point waiting on a blow ([`Fighter::fate`]).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Fate {
@@ -3161,6 +3172,7 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     let fighter = &Fighter { situation, stab, fate, ..fighter.clone() };
     let mut outcome = resolve(fighter, &defender, &mut w.rng);
     outcome.thrown = fighter.skill() == SKILL_THROWING;
+    outcome.speed = fighter.speed();
     if let Some(weapon) = fighter.weapon.as_ref().filter(|w| w.uses_ammo()) {
         w.spend_ammo(attacker, weapon.ammo_type, weapon.ammo_per_shot);
     }
@@ -3756,6 +3768,11 @@ mod tests {
         assert!((0..200).all(|_| { let o = resolve(&fated, &nimble, &mut rng); o.hit && o.critical && !o.dodged }), "hit, critical, never dodged");
         let doomed = Fighter { levels: vec![(SKILL_MELEE, 20)], fate: Fate::CriticalMiss, ..Default::default() };
         assert!((0..200).all(|_| { let o = resolve(&doomed, &Fighter::default(), &mut rng); !o.hit && o.fumbled }), "a critical miss");
+    }
+
+    #[test]
+    fn a_quick_weapon_swings_faster() {
+        assert_eq!((swing_frame_millis(10, 10), swing_frame_millis(10, 15), swing_frame_millis(10, 0), swing_frame_millis(10, 30), swing_frame_millis(1, 0)), (100, 50, 200, 30, 800));
     }
 
     #[test]
