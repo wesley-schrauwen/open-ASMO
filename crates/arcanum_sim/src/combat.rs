@@ -1070,6 +1070,9 @@ pub struct ScriptChecks {
 pub const EVENT_DYING: u32 = 12;
 pub const EVENT_ENTER_COMBAT: u32 = 13;
 pub const EVENT_EXIT_COMBAT: u32 = 14;
+/// Start / end combat (0x4a8570): each think of a leaderless NPC in a fight.
+pub const EVENT_START_COMBAT: u32 = 15;
+pub const EVENT_END_COMBAT: u32 = 16;
 
 /// Runs the fight's script events with the host.
 /// Runs the fight's script events with the host; asks the held hits' and would-be foes' scripts.
@@ -2157,6 +2160,16 @@ fn npc_turn(commands: &mut Commands, w: &mut CombatWorld, npc: &Seen, all: &[See
     let Some(source) = npc.npc else { return false };
     if !npc.fighting {
         return false;
+    }
+    // A leaderless NPC's think in a fight runs its start-combat script (15), triggerer its
+    // target, the answer ignored (0x4a8570 at 0x4a86ac); here once at the start of each of its
+    // turns (builder's call: the original thinks more often). End combat (16, 0x4a866b) runs
+    // only in real time.
+    if fresh && npc.leader.is_none()
+        && let Some(target) = npc.target.and_then(|t| all.iter().find(|c| c.net_id == t))
+        && let Some(player) = target.player.or(target.leader)
+    {
+        w.events.0.push((source.object(), EVENT_START_COMBAT, player, object_of(target)));
     }
     let row = w.ai_row(source);
     if fresh {

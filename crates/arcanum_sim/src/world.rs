@@ -1798,6 +1798,47 @@ mod tests {
     }
 
     #[test]
+    fn a_fighting_npc_runs_its_start_combat_script_each_turn() {
+        use crate::script::tests::{always, block, n, op};
+        use arcanum_formats::object::{ObjectId, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let folder = dir.path().join("maps").join(MAP);
+        let at = |x: u32, y: u32| Value::Int64(Some(i64::from(x) | (i64::from(y) << 32)));
+        let mut foe = ObjectBuilder::new(TYPE_NPC).field("current_aid", Value::Int32(0x2800_2000)).field("location", at(72, 70)).field("hp_pts", Value::Int32(500));
+        foe.id = ObjectId { kind: ObjectId::KIND_GUID, payload: [3; 16] };
+        std::fs::write(folder.join("G_0F.mob"), foe.build()).unwrap();
+        let mut sim = SimApp::new(RulesData::default());
+        sim.use_manual_clock();
+        sim.app.insert_resource(vfs(dir.path()));
+        sim.boot(save(&[(1, "A", TileLoc { x: 71, y: 70 })]));
+        sim.update();
+        sim.update();
+        let sector = SectorId::new(1, 1);
+        let (npc, index) = {
+            let world = sim.app.world_mut();
+            let map = world.resource::<LoadedMap>();
+            let index = map.mobiles[&sector].iter().position(|o| o.object_type == TYPE_NPC).unwrap() as u32;
+            (*world.query::<(&NetId, &crate::NpcSource)>().iter(world).find(|(_, s)| s.index == index).unwrap().0, index)
+        };
+        // Its script 15 counts in global variable 1.
+        sim.app.world_mut().resource_mut::<LoadedMap>().set_attachment(crate::ScriptObject::Mobile { sector, index }, crate::combat::EVENT_START_COMBAT, crate::Attachment::new(0, 0, 708));
+        let count = always(block(0xb, &[op(1, 1), op(1, 1), n(1)]));
+        sim.app.world_mut().resource_mut::<crate::Scripts>().0.get_or_insert_with(Default::default).insert(708, arcanum_formats::script::Script { description: String::new(), flags: 0, lines: vec![count] });
+        let var = |sim: &SimApp| sim.app.world().resource::<WorldState>().0.as_ref().unwrap().scripts.var(1);
+        assert_eq!(var(&sim), 0, "not before the fight");
+        let mut npc_turns = 0;
+        for seq in 0..40 {
+            sim.receive([(PlayerId(1), crate::PlayerIntent::Attack { target: npc, seq })]);
+            sim.update();
+            npc_turns += sim.take_deltas().iter().filter(|(_, d)| matches!(d, LedgerDelta::Attacked { attacker, .. } if *attacker == npc)).count();
+        }
+        assert!(npc_turns > 0, "the NPC fights back");
+        assert!(var(&sim) > 0, "once a turn of its own");
+    }
+
+    #[test]
     fn a_pc_raises_another_and_heals_an_npc_by_spell() {
         use arcanum_formats::object::{ObjectId, Value};
         use arcanum_formats::test_util::ObjectBuilder;
