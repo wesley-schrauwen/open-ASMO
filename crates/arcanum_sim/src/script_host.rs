@@ -425,6 +425,10 @@ impl ScriptContext for HostWorld<'_> {
     /// is not kept (builder's call: they have no hit point state yet). Armour and resistances
     /// are not applied.
     fn damage(&mut self, object: ScriptObject, amount: i32, kind: i32) {
+        if let ScriptObject::Mobile { sector, index } = object {
+            self.damage_npc(sector, index, amount.max(0), kind);
+            return;
+        }
         let ScriptObject::Pc(p) = object else { return };
         let Some(saved) = self.players.get_mut(&p) else { return };
         let sheet = &mut saved.blueprint.sheet;
@@ -818,16 +822,31 @@ impl ScriptContext for HostWorld<'_> {
         }
     }
 
-    fn trap_spotted(&mut self, object: ScriptObject) -> bool {
-        map_place(object).and_then(|(sector, index, mobile)| self.map.object_flags(sector, index, mobile)).is_some_and(|f| f & crate::OF_TRAP_SPOTTED != 0)
+    fn trap_flags(&mut self, object: ScriptObject) -> i32 {
+        map_place(object).and_then(|(sector, index, mobile)| self.map.object_flags(sector, index, mobile)).unwrap_or(0)
     }
 
-    fn spot_trap(&mut self, pc: ScriptObject, magical: bool) -> bool {
-        let ScriptObject::Pc(p) = pc else { return false };
-        let Some(sheet) = self.players.get(&p).map(|s| s.blueprint.sheet.clone()) else { return false };
-        // The light where the PC stands (builder's call: the trapped object's own not looked up).
-        let light = self.tile_of(pc).and_then(|at| self.map.luminance_at(at, self.now));
-        crate::trap::roll_spot(self.rules, &sheet, magical, light, self.rng)
+    fn spot_trap(&mut self, critter: ScriptObject, magical: bool) -> bool {
+        // The light where the critter stands (builder's call: the trapped object's own not
+        // looked up).
+        let light = self.tile_of(critter).and_then(|at| self.map.luminance_at(at, self.now));
+        match critter {
+            ScriptObject::Pc(p) => {
+                let Some(sheet) = self.players.get(&p).map(|s| s.blueprint.sheet.clone()) else { return false };
+                crate::trap::roll_spot(self.rules, &sheet, magical, light, self.rng)
+            }
+            // An NPC with its own skill (0x4bbe40 takes types 15 and 16).
+            ScriptObject::Mobile { sector, index } => {
+                let Some(o) = self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)) else { return false };
+                if o.object_type != arcanum_formats::object::TYPE_NPC {
+                    return false;
+                }
+                let (level, training) = crate::combat::npc_skill(o, &self.map.prototypes, crate::SKILL_SPOT_TRAP);
+                let intelligence = crate::combat::npc_stat(o, &self.map.prototypes, 4);
+                crate::trap::roll_spot_at(level, intelligence, training, magical, light, self.rng)
+            }
+            _ => false,
+        }
     }
 
     /// The object's flag is kept and sent to every player (the original keeps it per PC in
@@ -1049,6 +1068,33 @@ pub fn with_art_number(art: arcanum_formats::art_id::ArtId, n: i32) -> Option<ar
 }
 
 impl HostWorld<'_> {
+    /// The same on an NPC (a sprung trap's, action 0x3c's): poison, fatigue, or hit points;
+    /// with none left it dies as action 0x3a kills (builder's call: without experience or its
+    /// dying script, 12).
+    fn damage_npc(&mut self, sector: arcanum_formats::map::SectorId, index: u32, amount: i32, kind: i32) {
+        if !self.map.mobiles.get(&sector).and_then(|m| m.get(index as usize)).is_some_and(|o| o.object_type == arcanum_formats::object::TYPE_NPC) || self.map.is_dead(sector, index) {
+            return;
+        }
+        match kind {
+            1 => {
+                let level = self.map.npc_poison(sector, index) + amount;
+                self.map.set_npc_poison(sector, index, level);
+            }
+            4 => {
+                let Some((left, max)) = self.map.npc_fatigue(sector, index) else { return };
+                self.map.set_npc_fatigue_damage(sector, index, max - left + amount);
+            }
+            _ => {
+                let Some((left, _)) = self.map.npc_hp(sector, index) else { return };
+                self.map.hurt_npc(sector, index, amount.min(left.max(0)));
+                if left - amount <= 0 {
+                    ScriptContext::kill(self, ScriptObject::Mobile { sector, index });
+                }
+            }
+        }
+        self.sectors.insert(sector);
+    }
+
     /// Where an object stands.
     fn tile_of(&self, object: ScriptObject) -> Option<arcanum_formats::map::TileLoc> {
         if let Some(c) = self.critters.iter().find(|c| c.0 == object) {

@@ -241,7 +241,7 @@ pub fn apply_moves(
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Facing(pub usize);
 
-type WalkerQuery<'a> = (Entity, &'a mut Position, Option<&'a PlayerControlled>, Option<&'a Gait>, Option<&'a mut Walking>);
+type WalkerQuery<'a> = (Entity, &'a mut Position, Option<&'a PlayerControlled>, Option<&'a Gait>, Option<&'a mut Walking>, Option<&'a crate::NpcSource>);
 
 /// An NPC that stopped walking since the last state sync: the next sync includes it once.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
@@ -252,7 +252,7 @@ pub struct JustStopped;
 /// stops and a sync is due; a PC's position goes into the save. PCs out of combat move at the
 /// party's pace.
 pub fn walk(mut commands: Commands, map: Res<LoadedMap>, pace: Res<crate::PartyPace>, mut clock: ResMut<SyncClock>, mut world: ResMut<WorldState>, mut trapped: ResMut<crate::trap::SteppedOnTraps>, mut pcs: Query<WalkerQuery>) {
-    for (entity, mut position, player, gait, walking) in &mut pcs {
+    for (entity, mut position, player, gait, walking, npc) in &mut pcs {
         let Some(mut walking) = walking else { continue };
         let own = gait.copied().unwrap_or(Gait::human(walk_fps(8, 0)));
         // Out of combat the party moves at its leader's pace (there is no combat yet).
@@ -278,11 +278,17 @@ pub fn walk(mut commands: Commands, map: Res<LoadedMap>, pace: Res<crate::PartyP
             }
             position.0 = next;
             walking.progress -= needed;
-            // A PC's walk ends on a trap object's tile (0x430cf7), which it then uses.
-            if let Some(player) = player
+            // A walker's walk ends on a trap object's tile (0x430cf7), which it then uses; not
+            // one of `spell_flags` 0x2 / 0x4 (0x430ca8).
+            let walker = match (player, npc) {
+                (Some(p), _) => Some(crate::ScriptObject::Pc(p.0)),
+                (None, Some(n)) if map.mobiles.get(&n.sector).and_then(|m| m.get(n.index as usize)).and_then(|o| map.prototypes.int(o, "spell_flags")).unwrap_or(0) & crate::trap::OSF_SPARES_TRAPS == 0 => Some(n.object()),
+                _ => None,
+            };
+            if let Some(walker) = walker
                 && crate::trap::trap_object_at(&map, next).is_some()
             {
-                trapped.0.push((player.0, next));
+                trapped.0.push((walker, next));
                 walking.steps.clear();
                 break;
             }

@@ -2945,6 +2945,43 @@ mod tests {
     }
 
     #[test]
+    fn an_npc_stepping_onto_a_trap_object_springs_it() {
+        use arcanum_formats::object::{Object, TYPE_TRAP, Value};
+        use arcanum_formats::test_util::ObjectBuilder;
+        let dir = tempfile::tempdir().unwrap();
+        write_map(dir.path());
+        let mut sim = booted(dir.path(), save(&[(7, "Virgil", TileLoc { x: 70, y: 70 })]));
+        let sector = SectorId::new(1, 1);
+        let (entity, npc_index, at) = {
+            let world = sim.app.world_mut();
+            let (e, s, p) = world.query::<(Entity, &crate::NpcSource, &Position)>().iter(world).find(|(_, s, _)| s.sector == sector).unwrap();
+            (e, s.index, p.0)
+        };
+        let next = TileLoc { x: at.x + 1, y: at.y };
+        // A mechanical trap of 2 damage on the tile next to the NPC, which has no leader.
+        let index = {
+            let mut map = sim.app.world_mut().resource_mut::<LoadedMap>();
+            let trap = Object::parse_instance(&ObjectBuilder::new(TYPE_TRAP).field("location", Value::Int64(Some(i64::from(next.x) | (i64::from(next.y) << 32)))).build()).unwrap();
+            let list = map.mobiles.entry(sector).or_default();
+            list.push(trap);
+            let index = list.len() as u32 - 1;
+            map.set_attachment(crate::ScriptObject::Mobile { sector, index }, crate::EVENT_USE, crate::Attachment { flags: 0, counters: [2, 2, 0, 0], number: 30001 });
+            index
+        };
+        let trap = arcanum_formats::script::Script { description: "Mechanical trap".into(), flags: crate::TRAP_MECHANICAL | arcanum_formats::script::RUN_ONCE, lines: vec![] };
+        sim.app.world_mut().resource_mut::<crate::Scripts>().0.get_or_insert_with(Default::default).insert(30001, trap);
+        let max = sim.app.world().resource::<LoadedMap>().npc_hp(sector, npc_index).unwrap().1;
+        sim.app.world_mut().entity_mut(entity).insert(crate::Walking { steps: [next, TileLoc { x: next.x + 1, y: next.y }].into(), progress: 0.0 });
+        for _ in 0..ticks_for(3) {
+            sim.update();
+        }
+        let map = sim.app.world().resource::<LoadedMap>();
+        assert_eq!(map.npc_hp(sector, npc_index).unwrap(), (max - 2, max), "sprung on the NPC: it knows the trap, so does not roll (0x4bbfe0)");
+        assert_ne!(map.object_flags(sector, index, true).unwrap() & crate::OF_DESTROYED, 0, "the trap object destroyed");
+        assert_eq!(sim.app.world().get::<Position>(entity).unwrap().0, next, "its walk ends on the trap");
+    }
+
+    #[test]
     fn players_learn_which_npcs_their_pc_has_met() {
         let dir = tempfile::tempdir().unwrap();
         write_map(dir.path());
