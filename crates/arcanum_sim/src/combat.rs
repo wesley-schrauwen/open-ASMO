@@ -348,6 +348,10 @@ pub struct Fighter {
     pub knocked_down: bool,
     /// Its Backstab level and training rank.
     pub backstab: (i32, u8),
+    /// A fate point waits on this blow (attackers only, 0x4b3697-0x4b36f5): a PC's "critical
+    /// success on next attack" (option 2) makes it a critical hit whatever the roll and the
+    /// dodge; a PC target's "critical failure on next opponent attack" (3) a critical miss.
+    pub fate: Fate,
     /// Its level (stat 0x11), against an unnoticed stab's critical (0x4c829c).
     pub level: i32,
     /// This blow's stab ([`stab_of`]; attackers only).
@@ -590,7 +594,19 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
     let armour = if attacker.stab == Stab::Unnoticed && attacker.backstab.1 >= 1 { 0 } else { defender.armour_class.max(0) / 2 * chance / 100 };
     let difficulty = -weapon.to_hit + 5 * short + injury_difficulty(attacker.injuries) + armour - defender.helpless + attacker.situation;
     let mut out = AttackOutcome { multiplier: 100, ..Default::default() };
-    if rng.range(1, 100) + difficulty > chance {
+    let missed = match attacker.fate {
+        Fate::CriticalHit => false,
+        Fate::CriticalMiss => true,
+        Fate::None => rng.range(1, 100) + difficulty > chance,
+    };
+    if missed {
+        if attacker.fate == Fate::CriticalMiss {
+            out.fumbled = true;
+            if rng.range(1, 100) <= 50 {
+                fumble(attacker, &weapon, &mut out, rng);
+            }
+            return out;
+        }
         out.fumbled = rng.range(1, 100) <= fumble_chance(chance, attacker.weapon.as_ref());
         if out.fumbled && rng.range(1, 100) <= 50 {
             fumble(attacker, &weapon, &mut out, rng);
@@ -600,8 +616,11 @@ pub fn resolve(attacker: &Fighter, defender: &Fighter, rng: &mut HostRng) -> Att
     // A combat skill's critical chance is a twentieth of it (0x4c81a0: skill flag 0x400), plus
     // the weapon's magick part (unscaled: 0x461590 not read).
     out.critical = rng.range(1, 100) <= chance / 20 + weapon.crit_chance + stab_critical(attacker.stab, attacker.backstab, defender.level);
+    if attacker.fate == Fate::CriticalHit {
+        out.critical = true;
+    }
     let dodge = weapon_chance(SKILL_DODGE, defender.level(SKILL_DODGE), defender.intelligence);
-    if dodge > 0 && rng.range(1, 100) <= dodge {
+    if attacker.fate != Fate::CriticalHit && dodge > 0 && rng.range(1, 100) <= dodge {
         out.dodged = true;
         return out;
     }
@@ -1317,6 +1336,7 @@ impl CombatWorld<'_, '_> {
                 backstab: (rules.skill_level(sheet, SKILL_BACKSTAB), sheet.training[SKILL_BACKSTAB]),
                 level: sheet.level,
                 stab: Stab::None,
+                fate: Fate::None,
                 injuries: sheet.injuries,
                 helmet: item(inv, HELMET_SLOT).is_some(),
                 undead: false,
@@ -1352,6 +1372,7 @@ impl CombatWorld<'_, '_> {
             backstab: npc_skill(o, prototypes, SKILL_BACKSTAB),
             level: npc_stat(o, prototypes, 0x11),
             stab: Stab::None,
+            fate: Fate::None,
             injuries: prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_INJURIES,
             helmet: item(&inv, HELMET_SLOT).is_some(),
             undead: prototypes.int(o, "critter_flags").unwrap_or(0) & OCF_UNDEAD != 0,
@@ -1413,6 +1434,16 @@ impl CombatWorld<'_, '_> {
         }
         let row = self.npc_int(source, "npc_ai_data").max(0) as usize;
         self.ai.0.as_ref()?.get(row).copied()
+    }
+
+    /// Uses up PC `player`'s waiting fate `option` (0x4f5270), its sheet sent on.
+    fn consume_fate(&mut self, player: PlayerId, option: u8) -> bool {
+        let Some(saved) = self.world.0.as_mut().and_then(|w| w.players.get_mut(&player)) else { return false };
+        let used = crate::consume_fate(&mut saved.blueprint.sheet, option);
+        if used {
+            self.sheets.0.insert(player);
+        }
+        used
     }
 
     /// What the dark adds to `attacker`'s blow at `victim` with `skill` ([`dark_to_hit`]): the
@@ -3099,6 +3130,19 @@ pub fn dark_to_hit(skill: usize, rank: u8, critter_flags: i32, dark_sight: bool,
     p.max(0)
 }
 
+/// A fate point waiting on a blow ([`Fighter::fate`]).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Fate {
+    #[default]
+    None,
+    CriticalHit,
+    CriticalMiss,
+}
+
+/// The fate options of `mes/fate_ui.mes` a blow uses (0x4b36a2 / 0x4b36e0).
+pub const FATE_NEXT_ATTACK: u8 = 2;
+pub const FATE_OPPONENT_FAILS: u8 = 3;
+
 /// The two helpless amounts (0x4c864a / 0x4c86d9: 0x32, 0x1e).
 pub const HELPLESS_DOWN: i32 = 50;
 pub const HELPLESS_UNAWARE: i32 = 30;
@@ -3108,7 +3152,13 @@ fn strike(commands: &mut Commands, w: &mut CombatWorld, all: &[Seen], attacker: 
     let ranged = fighter.weapon.as_ref().is_some_and(|wp| wp.range > 1);
     let situation = if ranged { w.shot_difficulty(all, attacker, victim, fighter.skill()) } else { 0 } + w.dark_difficulty(attacker, victim, fighter.skill());
     let stab = stab_of(fighter, attacker, victim, !w.notices_quietly(victim, attacker));
-    let fighter = &Fighter { situation, stab, ..fighter.clone() };
+    // A waiting fate use (0x4b3697): the PC attacker's own, else a PC target's against an NPC.
+    let fate = match (attacker.player, victim.player) {
+        (Some(p), _) if w.consume_fate(p, FATE_NEXT_ATTACK) => Fate::CriticalHit,
+        (None, Some(p)) if w.consume_fate(p, FATE_OPPONENT_FAILS) => Fate::CriticalMiss,
+        _ => Fate::None,
+    };
+    let fighter = &Fighter { situation, stab, fate, ..fighter.clone() };
     let mut outcome = resolve(fighter, &defender, &mut w.rng);
     outcome.thrown = fighter.skill() == SKILL_THROWING;
     if let Some(weapon) = fighter.weapon.as_ref().filter(|w| w.uses_ammo()) {
@@ -3695,6 +3745,17 @@ mod tests {
         assert_eq!(armed_art(true, Some(&inv), &prototypes), (3, true), "a sword (kind 3) and a shield");
         assert_eq!(armed_art(true, None, &prototypes), (1, false), "bare hands");
         assert_eq!(armed_art(false, Some(&inv), &prototypes), (0, false), "out of combat mode");
+    }
+
+    #[test]
+    fn fate_makes_a_blow_critical_or_a_critical_miss() {
+        let mut rng = HostRng::default();
+        let novice = Fighter { levels: vec![(SKILL_MELEE, 0)], ..Default::default() };
+        let nimble = Fighter { levels: vec![(SKILL_DODGE, 20)], armour_class: 95, ..Default::default() };
+        let fated = Fighter { fate: Fate::CriticalHit, ..novice.clone() };
+        assert!((0..200).all(|_| { let o = resolve(&fated, &nimble, &mut rng); o.hit && o.critical && !o.dodged }), "hit, critical, never dodged");
+        let doomed = Fighter { levels: vec![(SKILL_MELEE, 20)], fate: Fate::CriticalMiss, ..Default::default() };
+        assert!((0..200).all(|_| { let o = resolve(&doomed, &Fighter::default(), &mut rng); !o.hit && o.fumbled }), "a critical miss");
     }
 
     #[test]
