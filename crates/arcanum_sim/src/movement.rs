@@ -251,7 +251,7 @@ pub struct JustStopped;
 /// just before it is taken (see the module docs). One that reaches the end or cannot go on
 /// stops and a sync is due; a PC's position goes into the save. PCs out of combat move at the
 /// party's pace.
-pub fn walk(mut commands: Commands, map: Res<LoadedMap>, pace: Res<crate::PartyPace>, mut clock: ResMut<SyncClock>, mut world: ResMut<WorldState>, mut pcs: Query<WalkerQuery>) {
+pub fn walk(mut commands: Commands, map: Res<LoadedMap>, pace: Res<crate::PartyPace>, mut clock: ResMut<SyncClock>, mut world: ResMut<WorldState>, mut trapped: ResMut<crate::trap::SteppedOnTraps>, mut pcs: Query<WalkerQuery>) {
     for (entity, mut position, player, gait, walking) in &mut pcs {
         let Some(mut walking) = walking else { continue };
         let own = gait.copied().unwrap_or(Gait::human(walk_fps(8, 0)));
@@ -278,6 +278,14 @@ pub fn walk(mut commands: Commands, map: Res<LoadedMap>, pace: Res<crate::PartyP
             }
             position.0 = next;
             walking.progress -= needed;
+            // A PC's walk ends on a trap object's tile (0x430cf7), which it then uses.
+            if let Some(player) = player
+                && crate::trap::trap_object_at(&map, next).is_some()
+            {
+                trapped.0.push((player.0, next));
+                walking.steps.clear();
+                break;
+            }
         }
         if stopped || walking.steps.is_empty() {
             commands.entity(entity).remove::<Walking>();

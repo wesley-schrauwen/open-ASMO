@@ -603,8 +603,32 @@ impl ScriptLibrary {
 /// default runs.
 pub fn run_hook<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, invocation: Invocation<C::Object>) -> ScriptRun {
     let mut unsupported = Vec::new();
+    let had = attachment.number != 0;
     let result = run(ctx, attachment, invocation, 0, &mut unsupported);
+    // A trap object whose use script is gone after the run (a run-once trap sprung) is destroyed
+    // (0x441a5f-0x441a80: field 0x14f, the type, 17).
+    if had && attachment.number == 0 && invocation.event == 1 && ctx.object_type(invocation.attachee) == 17 {
+        destroy_object(ctx, invocation.attachee, 0, &mut unsupported);
+    }
     ScriptRun { result, unsupported }
+}
+
+/// Destroys `o` (0x43cca0): not one destroyed already (0x43ccfa); its destroy script (2) first,
+/// itself the triggerer (0x43cd0e), and "skip" keeps it (0x43cd18).
+fn destroy_object<C: ScriptContext>(ctx: &mut C, o: C::Object, depth: usize, unsupported: &mut Vec<Unsupported>) {
+    if ctx.destroyed(o) {
+        return;
+    }
+    let mut called = ctx.attachment(o, EVENT_DESTROY);
+    if called.number != 0 && depth < MAX_DEPTH {
+        let invocation = Invocation { attachee: o, triggerer: o, other: None, event: EVENT_DESTROY, start_line: 0 };
+        let kept = self::run(ctx, &mut called, invocation, depth + 1, unsupported) == HookResult::SkipDefault;
+        ctx.set_attachment(o, EVENT_DESTROY, called);
+        if kept {
+            return;
+        }
+    }
+    ctx.destroy(o);
 }
 
 /// How a line ended.
@@ -1246,22 +1270,10 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
             }
             Step::Next
         }
-        // Destroy one object (0x448d19 → 0x43cca0): not one destroyed already (0x43ccfa); its
-        // destroy script (2) first, itself the triggerer (0x43cd0e), and "skip" keeps it.
+        // Destroy one object (0x448d19 → 0x43cca0).
         0x44 => {
-            if let Some(o) = objects(run, ops[0], line, unsupported)?.first().copied()
-                && !ctx.destroyed(o)
-            {
-                let mut called = ctx.attachment(o, EVENT_DESTROY);
-                let mut kept = false;
-                if called.number != 0 && depth < MAX_DEPTH {
-                    let invocation = Invocation { attachee: o, triggerer: o, other: None, event: EVENT_DESTROY, start_line: 0 };
-                    kept = self::run(ctx, &mut called, invocation, depth + 1, unsupported) == HookResult::SkipDefault;
-                    ctx.set_attachment(o, EVENT_DESTROY, called);
-                }
-                if !kept {
-                    ctx.destroy(o);
-                }
+            if let Some(o) = objects(run, ops[0], line, unsupported)?.first().copied() {
+                destroy_object(ctx, o, depth, unsupported);
             }
             Step::Next
         }
