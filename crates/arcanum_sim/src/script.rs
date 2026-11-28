@@ -75,6 +75,9 @@ pub const LOCAL_VARS: usize = 10;
 /// Calls of scripts from scripts, deepest.
 pub const MAX_DEPTH: usize = 8;
 
+/// An object's destroy event (0x43cd0e).
+pub const EVENT_DESTROY: u32 = 2;
+
 /// The state every script shares: global variables and flags and the story state (saved).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ScriptGlobals {
@@ -386,6 +389,10 @@ pub trait ScriptContext {
     fn kill(&mut self, _object: Self::Object) {}
     /// Destroys `object` (0x44 → 0x43cca0).
     fn destroy(&mut self, _object: Self::Object) {}
+    /// Whether `object` is destroyed already (`flags` 0x1, 0x43ccfa).
+    fn destroyed(&mut self, object: Self::Object) -> bool {
+        self.object_int(object, "flags").is_some_and(|f| f & crate::OF_DESTROYED != 0)
+    }
     /// Whether `object` wears an item whose `name` is `name` (slots 1000-1008, 0x4649c0).
     fn wears_item_named(&mut self, _object: Self::Object, _name: i32) -> bool {
         false
@@ -1239,10 +1246,22 @@ fn action<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, run: &mut 
             }
             Step::Next
         }
-        // Destroy one object (0x448d19).
+        // Destroy one object (0x448d19 → 0x43cca0): not one destroyed already (0x43ccfa); its
+        // destroy script (2) first, itself the triggerer (0x43cd0e), and "skip" keeps it.
         0x44 => {
-            if let Some(o) = objects(run, ops[0], line, unsupported)?.first().copied() {
-                ctx.destroy(o);
+            if let Some(o) = objects(run, ops[0], line, unsupported)?.first().copied()
+                && !ctx.destroyed(o)
+            {
+                let mut called = ctx.attachment(o, EVENT_DESTROY);
+                let mut kept = false;
+                if called.number != 0 && depth < MAX_DEPTH {
+                    let invocation = Invocation { attachee: o, triggerer: o, other: None, event: EVENT_DESTROY, start_line: 0 };
+                    kept = self::run(ctx, &mut called, invocation, depth + 1, unsupported) == HookResult::SkipDefault;
+                    ctx.set_attachment(o, EVENT_DESTROY, called);
+                }
+                if !kept {
+                    ctx.destroy(o);
+                }
             }
             Step::Next
         }
@@ -1941,6 +1960,10 @@ pub(crate) mod tests {
         fn rename(&mut self, object: u32, name: i32) {
             self.orders.push(format!("{object} is {name}"));
         }
+        fn destroy(&mut self, object: u32) {
+            self.orders.push(format!("{object} destroyed"));
+            *self.ints.entry((object, "flags".into())).or_default() |= crate::OF_DESTROYED;
+        }
     }
 
     pub fn op(tag: i8, value: i32) -> Operand {
@@ -2267,6 +2290,23 @@ pub(crate) mod tests {
         assert!(invoke(&mut w, &mut Attachment::new(0, 0, 100)).unsupported.is_empty());
         assert_eq!(w.orders, ["50 walks to 32257,62248", "1 uses 14 with Some(50) on 2", "50 is 2805"]);
         assert!(w.globals.game_ended);
+    }
+
+    #[test]
+    fn destroying_runs_the_destroy_script_first() {
+        // Destroy the attachee (0x44); its destroy script (2) answers by global flag 5.
+        let mut w = world(vec![always(block(0x44, &[op(1, 0)]))], 0);
+        w.scripts.insert(200, Arc::new(Script { description: String::new(), flags: 0, lines: vec![line(block(4, &[op(4, 5), n(1)]), block(2, &[]), block(1, &[]))] }));
+        w.attachments.insert((50, EVENT_DESTROY), Attachment::new(0, 0, 200));
+        invoke(&mut w, &mut Attachment::new(0, 0, 100));
+        assert!(w.orders.is_empty(), "skip keeps it (0x43cd18)");
+        w.globals.set_flag(5, true);
+        invoke(&mut w, &mut Attachment::new(0, 0, 100));
+        assert_eq!(w.orders, ["50 destroyed"]);
+        w.globals.set_flag(5, false);
+        w.attachments.remove(&(50, EVENT_DESTROY));
+        invoke(&mut w, &mut Attachment::new(0, 0, 100));
+        assert_eq!(w.orders, ["50 destroyed"], "not twice (0x43ccfa)");
     }
 
     #[test]

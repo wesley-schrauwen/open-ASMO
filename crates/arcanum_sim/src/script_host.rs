@@ -549,12 +549,16 @@ impl ScriptContext for HostWorld<'_> {
         }
     }
 
-    /// Objects of the map: flagged destroyed (0x1), so hidden, not blocking, NPCs gone. The
-    /// destroy event (2) is not run.
+    /// Objects of the map: flagged destroyed (0x1), so hidden, not blocking, NPCs gone (its
+    /// destroy event ran first, in the action).
     fn destroy(&mut self, object: ScriptObject) {
         let Some((sector, index, mobile)) = map_place(object) else { return };
         let Some(flags) = self.map.object_flags(sector, index, mobile) else { return };
         self.toggle_flags(object, !flags & crate::OF_DESTROYED);
+    }
+
+    fn destroyed(&mut self, object: ScriptObject) -> bool {
+        map_place(object).and_then(|(sector, index, mobile)| self.map.object_flags(sector, index, mobile)).is_some_and(|f| f & crate::OF_DESTROYED != 0)
     }
 
     fn wears_item_named(&mut self, object: ScriptObject, name: i32) -> bool {
