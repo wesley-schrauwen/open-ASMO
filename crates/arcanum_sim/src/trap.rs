@@ -17,11 +17,12 @@
 //! - **Spotting while walking** (0x427110, each step): a PC about to step onto a tile with a
 //!   trap object (type 17, list mask 0x20000) it has not spotted rolls Spot Trap, once a tile;
 //!   spotting it stops the walk before the step. Doors and containers are not checked this way.
-//!   NPCs know their traps (0x4bbfe0); the original's followers roll too (not built).
+//!   NPCs and followers do not roll while walking here; the original's followers do (0x427110).
 //!
 //! - **Stepping onto a trap object** (0x4305d0, 0x430ca8-0x430d0f): the walk ends on its tile
-//!   and the PC uses it (event 1) ([`spring_stepped_traps`]). The original lets any walker do
-//!   it; here PCs only (builder's call).
+//!   and the walker, PC or NPC, uses it (event 1) ([`spring_stepped_traps`]); not one of
+//!   `spell_flags` 0x2 / 0x4. NPCs without a leader know every trap a PC did not set, so spring
+//!   them; followers roll their own Spot Trap first.
 //!
 //! Not built: the recovered trap
 //! parts on a critical success for an Expert or Master (0x4bc9c0, table
@@ -59,8 +60,12 @@ pub fn spot_chance(level: i32, intelligence: i32) -> i32 {
 /// `light`: the luminance where the trap is (the dark adds to the roll below Apprentice,
 /// [`crate::light::skill_dark`]).
 pub fn roll_spot(rules: &arcanum_rules::RulesData, sheet: &arcanum_rules::CharacterSheet, magical: bool, light: Option<i32>, rng: &mut crate::HostRng) -> bool {
-    let chance = spot_chance(rules.skill_level(sheet, SKILL_SPOT_TRAP), rules.stats(sheet)[4]);
-    let training = sheet.training[SKILL_SPOT_TRAP];
+    roll_spot_at(rules.skill_level(sheet, SKILL_SPOT_TRAP), rules.stats(sheet)[4], sheet.training[SKILL_SPOT_TRAP], magical, light, rng)
+}
+
+/// The same for a skill `level`, `intelligence` and `training` (an NPC's).
+pub fn roll_spot_at(level: i32, intelligence: i32, training: u8, magical: bool, light: Option<i32>, rng: &mut crate::HostRng) -> bool {
+    let chance = spot_chance(level, intelligence);
     let dark = crate::light::skill_dark(training, 1, light);
     let mut spotted = rng.range(1, 100) + dark <= chance;
     if !spotted && training >= MASTER {
@@ -152,9 +157,14 @@ pub fn spot_traps_walking(
     }
 }
 
-/// PCs that stepped onto a trap object this tick, and the tile ([`crate::walk`] stops them there).
+/// Walkers that stepped onto a trap object this tick, and the tile ([`crate::walk`] stops them
+/// there).
 #[derive(Resource, Debug, Default)]
-pub struct SteppedOnTraps(pub Vec<(PlayerId, arcanum_formats::map::TileLoc)>);
+pub struct SteppedOnTraps(pub Vec<(crate::ScriptObject, arcanum_formats::map::TileLoc)>);
+
+/// `spell_flags` 0x2 / 0x4: a walker of either springs no trap object it steps on (0x430ca8;
+/// the spells not identified).
+pub const OSF_SPARES_TRAPS: i32 = 0x6;
 
 /// The first trap object (type 17) on tile `at`, not off or destroyed (0x430cba: list mask
 /// 0x20000, its first object only).
@@ -166,14 +176,18 @@ pub fn trap_object_at(map: &LoadedMap, at: arcanum_formats::map::TileLoc) -> Opt
     Some((sector, index as u32))
 }
 
-/// A PC that stepped onto a trap object uses it (0x4305d0 at 0x430ce3: event 1, the walker the
-/// triggerer; its answer ignored): the trap's script rolls the PC's Spot Trap if it has not
-/// spotted it, a spotted trap or a failed roll springs it, and a sprung trap object is then
-/// destroyed ([`crate::run_hook`]).
+/// A walker that stepped onto a trap object uses it (0x4305d0 at 0x430ce3: event 1, the walker
+/// the triggerer; its answer ignored): the trap's script rolls the walker's Spot Trap if it does
+/// not know the trap, a known trap or a failed roll springs it, and a sprung trap object is then
+/// destroyed ([`crate::run_hook`]). An NPC's runs for the first player (scripts run on the host).
 pub fn spring_stepped_traps(mut stepped: ResMut<SteppedOnTraps>, mut map: ResMut<LoadedMap>, mut world: ResMut<WorldState>, mut host: crate::script_host::ScriptHost, mut outbox: ResMut<Outbox>) {
-    for (player, at) in std::mem::take(&mut stepped.0) {
-        if let Some((sector, index)) = trap_object_at(&map, at) {
-            host.hook(&mut world, &mut map, &mut outbox, crate::ScriptObject::Mobile { sector, index }, crate::EVENT_USE, player);
+    for (walker, at) in std::mem::take(&mut stepped.0) {
+        let player = match walker {
+            crate::ScriptObject::Pc(p) => Some(p),
+            _ => world.0.as_ref().and_then(|w| w.players.keys().next().copied()),
+        };
+        if let (Some(player), Some((sector, index))) = (player, trap_object_at(&map, at)) {
+            host.hook_by(&mut world, &mut map, &mut outbox, crate::ScriptObject::Mobile { sector, index }, crate::EVENT_USE, player, walker);
         }
     }
 }

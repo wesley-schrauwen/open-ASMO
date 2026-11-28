@@ -476,12 +476,13 @@ pub trait ScriptContext {
     fn is_open(&mut self, _object: Self::Object) -> bool {
         false
     }
-    /// The trap on `object` has been spotted (object flag 0x2000000, 0x4bbfe0).
-    fn trap_spotted(&mut self, _object: Self::Object) -> bool {
-        false
+    /// The `flags` of trapped `object`: spotted 0x2000000, set by a PC 0x1000000 (0x4bbfe0).
+    fn trap_flags(&mut self, _object: Self::Object) -> i32 {
+        0
     }
-    /// PC `pc` rolls Spot Trap against a trap (0x4bbe40); true when it spots it.
-    fn spot_trap(&mut self, _pc: Self::Object, _magical: bool) -> bool {
+    /// Critter `critter` (a PC or an NPC, 0x4bbe40) rolls Spot Trap against a trap; true when
+    /// it spots it.
+    fn spot_trap(&mut self, _critter: Self::Object, _magical: bool) -> bool {
         false
     }
     /// Marks the trap on `object` spotted, telling `by` (0x4bc090).
@@ -734,12 +735,23 @@ pub fn is_trap(number: u32, script: &Script) -> bool {
     TRAP_SCRIPTS.contains(&number) && script.flags & (TRAP_MECHANICAL | TRAP_MAGICAL) != 0
 }
 
+/// Whether `critter` knows the trap on `trapped` (0x4bbfe0), so does not roll for it: a PC, or
+/// an NPC with a leader, when it is spotted or a PC set it (0x4bc050; the original keeps the
+/// spotting per PC in multiplayer); an NPC without one unless a PC set it; nothing else.
+fn knows_trap<C: ScriptContext>(ctx: &mut C, trapped: C::Object, critter: C::Object) -> bool {
+    let flags = ctx.trap_flags(trapped);
+    match ctx.object_type(critter) {
+        16 if ctx.leader(critter).is_none() => flags & crate::OF_TRAP_PLACED_BY_PC == 0,
+        15 | 16 => flags & (crate::OF_TRAP_SPOTTED | crate::OF_TRAP_PLACED_BY_PC) != 0,
+        _ => false,
+    }
+}
+
 /// A trap instead of the script's lines (0x441980 / 0x4bcb70); `None` when it is no trap.
 ///
-/// - **Spotting** (a use, event 1, 0x441980): a PC using an object whose trap it has not spotted
-///   rolls Spot Trap (0x4bbe40); spotting it cancels the use. A trap spotted before springs like
-///   any other (a critical failure to disarm springs it this way, 0x4bc7b0). NPCs do not roll
-///   (0x4bbfe0 counts them as knowing it).
+/// - **Spotting** (a use, event 1, 0x441980): a critter using an object whose trap it does not
+///   know ([`knows_trap`]) rolls Spot Trap (0x4bbe40); spotting it cancels the use. A known trap
+///   springs like any other (a critical failure to disarm springs it this way, 0x4bc7b0).
 /// - **Springing** (0x4bcb70): "Trap!" floats over the triggerer; each victim (the triggerer, or
 ///   the critters within the header's radius of the trap: flag 0x20 one tile, 0x40 two, 0x80
 ///   four; no trap in the data has one) takes `random(byte 0, byte 1)` damage of the trap's
@@ -750,7 +762,7 @@ fn trap<C: ScriptContext>(ctx: &mut C, attachment: &mut Attachment, script: &Scr
         return None;
     }
     let (triggerer, trapped) = (invocation.triggerer, invocation.attachee);
-    if invocation.event == 1 && ctx.object_type(triggerer) == 15 && !ctx.trap_spotted(trapped) && ctx.spot_trap(triggerer, script.flags & TRAP_MAGICAL != 0) {
+    if invocation.event == 1 && !knows_trap(ctx, trapped, triggerer) && ctx.spot_trap(triggerer, script.flags & TRAP_MAGICAL != 0) {
         ctx.mark_trap_spotted(trapped, triggerer);
         return Some(HookResult::SkipDefault);
     }
@@ -1972,6 +1984,15 @@ pub(crate) mod tests {
         fn rename(&mut self, object: u32, name: i32) {
             self.orders.push(format!("{object} is {name}"));
         }
+        fn object_type(&mut self, object: u32) -> i32 {
+            self.ints.get(&(object, "type".into())).copied().unwrap_or(0)
+        }
+        fn leader(&mut self, object: u32) -> Option<u32> {
+            self.followers.iter().find(|(_, f)| f.contains(&object)).map(|(&l, _)| l)
+        }
+        fn trap_flags(&mut self, object: u32) -> i32 {
+            self.ints.get(&(object, "flags".into())).copied().unwrap_or(0)
+        }
         fn destroy(&mut self, object: u32) {
             self.orders.push(format!("{object} destroyed"));
             *self.ints.entry((object, "flags".into())).or_default() |= crate::OF_DESTROYED;
@@ -2319,6 +2340,22 @@ pub(crate) mod tests {
         w.attachments.remove(&(50, EVENT_DESTROY));
         invoke(&mut w, &mut Attachment::new(0, 0, 100));
         assert_eq!(w.orders, ["50 destroyed"], "not twice (0x43ccfa)");
+    }
+
+    #[test]
+    fn who_knows_a_trap() {
+        // 1 a PC, 60 a leaderless NPC, 61 a follower of 1, 70 a door; trap object 50.
+        let mut w = world(vec![], 0);
+        for (o, t) in [(1, 15), (60, 16), (61, 16), (70, 1)] {
+            w.ints.insert((o, "type".into()), t);
+        }
+        w.followers.insert(1, vec![61]);
+        let knows = |w: &mut TestWorld, o| knows_trap(w, 50, o);
+        assert_eq!([1, 60, 61, 70].map(|o| knows(&mut w, o)), [false, true, false, false], "unspotted");
+        w.ints.insert((50, "flags".into()), crate::OF_TRAP_SPOTTED);
+        assert_eq!([1, 60, 61, 70].map(|o| knows(&mut w, o)), [true, true, true, false], "spotted");
+        w.ints.insert((50, "flags".into()), crate::OF_TRAP_PLACED_BY_PC);
+        assert_eq!([1, 60, 61, 70].map(|o| knows(&mut w, o)), [true, false, true, false], "set by a PC");
     }
 
     #[test]

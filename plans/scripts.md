@@ -355,7 +355,9 @@ Decoded so far, with confidence; the rest are named by the helper they call.
    `feat/script-gaps-5`).
    - **0x3c damage** (0x4489f9 → 0x4b2210 / 0x4b4390): objects, amount, kind (0 normal, 2
      electrical, 3 fire: hit points; 1 poison, stat 0x18; 4 fatigue). PCs take it on the sheet,
-     hit points down to 0. Not built: armour and resistances, death, NPCs' damage.
+     hit points down to 0. NPCs (`feat/npcs-spring-traps`) in the sector's changes: poison,
+     fatigue, hit points; with none left they die as 0x3a kills (builder's call: no
+     experience, no dying script). Not built: armour and resistances, PCs' death.
    - **0x3d spell on a target, no caster** (0x448ab7 → 0x455a20 / 0x455ac0): here Minor /
      Major Healing (5 / 40, no aptitude) and Halt Poison on PCs; other spells not built (the
      script goes on).
@@ -477,7 +479,10 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      roll Spot Trap (0x4bbe40, skill 7: a basic skill, 0x4c62e0, 4 a level, 0x4c6350; corrected
      in `feat/spot-chance` from Pick Locks' 6); spotting it cancels the use. Otherwise, spotted or not,
      the trap springs (corrected 2026-11-25: the agent's "spotted cancels" is wrong; 0x441980
-     rolls only when 0x4bbfe0 says not spotted). NPCs never roll and spring traps too.
+     rolls only when 0x4bbfe0 says not spotted). Who knows a trap (0x4bbfe0, `knows_trap`,
+     `feat/npcs-spring-traps`): a PC or an NPC with a leader when it is spotted or a PC set it;
+     an NPC without one unless a PC set it. One that does not rolls its own Spot Trap
+     (0x4bbe40 takes types 15 and 16).
    - **Springing** (0x4bcb70 / 0x4bcdc0): `mes/trap.mes` 1 "Trap!" over the triggerer; the
      victims are the triggerer, or the critters within the header's radius (0x20 / 0x40 / 0x80:
      1 / 2 / 4 tiles; no trap in the data has one); each takes `random(byte 0, byte 1)` of the
@@ -504,9 +509,9 @@ Decoded so far, with confidence; the rest are named by the helper they call.
      attachee the trap; the answer ignored). The use runs the trap as above: the Spot Trap roll
      when not spotted (a success keeps it, 0x4419d6), else it springs. After the run a trap
      object whose script number is now 0 is destroyed (0x441a5f-0x441a80, field 0x14f the
-     type 17; through 0x43cca0, so its destroy event too). The original lets any walker spring
-     one (no type test; the mover's field 0x14 bits 6 clear, 0x430ca8, not decoded); here PCs
-     only (builder's call).
+     type 17; through 0x43cca0, so its destroy event too). Any walker, PC or NPC
+     (`feat/npcs-spring-traps`), but one of `spell_flags` 0x2 / 0x4 (0x430ca8, read at
+     0x43086f; the spells not identified). An NPC's use runs for the first player.
    - **Not built:** the arrow
      trap's attack roll (0x4b3170 from its source object, 30007); recovered parts on a critical
      success (0x4bc9c0, table 0x5b5f80); setting traps (0x4bc480, table 0x5b5f60); the eye candy
