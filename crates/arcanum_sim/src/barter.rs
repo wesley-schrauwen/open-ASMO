@@ -300,6 +300,7 @@ pub struct BarterWorld<'w> {
     rng: ResMut<'w, crate::HostRng>,
     clock: Res<'w, crate::GameClock>,
     caught: ResMut<'w, crate::pickpocket::CaughtThieves>,
+    sheets: ResMut<'w, crate::script_host::ScriptSheets>,
 }
 
 /// The restock delay's bounds, in game milliseconds (0x4640c0: 43,200,000 to 86,400,000).
@@ -613,7 +614,11 @@ fn steal(w: &mut BarterWorld, player: PlayerId, sheet: &arcanum_rules::Character
     let kind = info(item.prototype);
     let training = sheet.training[SKILL_PICK_POCKET];
     let difficulty = crate::pickpocket::steal_difficulty(from, kind.map_or((1, 1), |k| k.cells), training);
-    let outcome = crate::roll_pick(chance, difficulty, &mut w.rng);
+    let mut outcome = crate::roll_pick(chance, difficulty, &mut w.rng);
+    // A waiting "critical success at Pick pocket" (0x4c7325) makes it succeed.
+    if crate::take_fate(&mut w.world, &mut w.sheets, player, crate::FATE_PICK_POCKET) {
+        outcome = crate::PickOutcome::Success;
+    }
     if outcome != crate::PickOutcome::Success {
         w.outbox.0.push((player, LedgerDelta::SkillResult { message: STEAL_FAILED }));
         let noticed = outcome == crate::PickOutcome::Jammed || (training == 0 && w.rng.range(1, 20) <= perception);

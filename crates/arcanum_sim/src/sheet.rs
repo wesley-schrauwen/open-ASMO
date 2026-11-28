@@ -259,6 +259,25 @@ pub fn consume_fate(sheet: &mut CharacterSheet, option: u8) -> bool {
     true
 }
 
+/// The skills' fate options (0x4c72ef-0x4c737c, PCs only): "critical success at" Gambling 6,
+/// Heal 7, Pick pocket 8, Repair 9, Pick locks 10, Disarm traps 11; used up on the roll, which
+/// then succeeds (0x4c7388: success and critical).
+pub const FATE_PICK_POCKET: u8 = 8;
+pub const FATE_REPAIR: u8 = 9;
+pub const FATE_PICK_LOCKS: u8 = 10;
+pub const FATE_DISARM: u8 = 11;
+
+/// Uses up PC `player`'s waiting fate `option` in the save, its sheet sent on
+/// ([`crate::script_host::ScriptSheets`]).
+pub fn take_fate(world: &mut crate::WorldState, sheets: &mut crate::script_host::ScriptSheets, player: PlayerId, option: u8) -> bool {
+    let Some(saved) = world.0.as_mut().and_then(|w| w.players.get_mut(&player)) else { return false };
+    let used = consume_fate(&mut saved.blueprint.sheet, option);
+    if used {
+        sheets.0.insert(player);
+    }
+    used
+}
+
 /// Fate requests taken from the inbox: player, option, spend (else take back).
 #[derive(Resource, Debug, Default)]
 pub struct FateRequests(pub Vec<(PlayerId, u8, bool)>);

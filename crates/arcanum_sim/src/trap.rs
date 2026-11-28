@@ -218,7 +218,12 @@ pub fn disarm_traps(
         }
         let sheet = &sheet.0;
         let chance = crate::tech_chance(crate::TECH_DISARM_TRAPS, rules.0.skill_level(sheet, SKILL_DISARM_TRAPS), rules.0.stats(sheet)[4]);
-        match roll_disarm(chance, sheet.training[SKILL_DISARM_TRAPS], map.luminance_at(location, clock.now), host.rng()) {
+        let mut outcome = roll_disarm(chance, sheet.training[SKILL_DISARM_TRAPS], map.luminance_at(location, clock.now), host.rng());
+        // A waiting "critical success at Disarm traps" (0x4c737c) makes it succeed.
+        if crate::take_fate(&mut world, host.changed_sheets(), player, crate::FATE_DISARM) {
+            outcome = crate::PickOutcome::Success;
+        }
+        match outcome {
             crate::PickOutcome::Success => {
                 map.set_attachment(object, crate::EVENT_USE, crate::Attachment { number: 0, ..attachment });
                 if let Some((sector, ..)) = place {
