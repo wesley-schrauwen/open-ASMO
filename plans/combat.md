@@ -222,7 +222,12 @@ of `combat_design.md` come after the original's rules work.
    - A PC at 0 hit points lies down as an unconscious one does until healed (builder's call,
      replaced by step 11's owner's call).
    - Real data: all 2399 scripts run to an end.
-   - Not built: hit / miss events (7 / 8 not traced), the fate points that wait on attacks.
+   - Not built: hit / miss events (7 / 8 not traced).
+   - Fate on blows (`feat/fate-attacks`, `combat::Fate`): after the roll and the dodge 0x4b3170
+     asks 0x4f5270 (field 0xfe): a PC attacker's "critical success on next attack" (option 2,
+     0x4b36a2) makes the blow a critical hit whatever came before (0x4b36b4: flags | 0x6), used
+     up on that blow; else a PC target's "critical failure on next opponent attack" (3, 0x4b36e0)
+     turns an NPC's blow into a critical miss (0x4b36f2-0x4b36f5 → 0x4b6410).
 5. **Noticing** (built, `feat/combat-notice`).
    - Every 15 ticks (builder's call: the original's noticing is in its target search 0x4ab460) each NPC not fighting,
      following, talking or dead looks for a PC within reach (`clamp(PE, 1, 10)` tiles, Perception
